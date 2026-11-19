@@ -238,6 +238,10 @@ fn bundle_global_lines(source: &str) -> Vec<usize> {
             syn::visit::visit_item_mod(self, node);
         }
         fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
+            if node.attrs.iter().any(|attribute| matches!(&attribute.meta,
+                syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test")) {
+                return;
+            }
             let mut bundle = BundleType(false);
             bundle.visit_type(&node.ty);
             if bundle.0 {

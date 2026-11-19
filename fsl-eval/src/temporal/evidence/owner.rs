@@ -31,7 +31,7 @@ const PACKAGE_REVISION: &str = fsl_package::CHECKED_PACKAGE_V2;
 
 mod activation;
 mod completeness;
-pub(super) use activation::ActivationInstance;
+pub(super) use activation::{ActivationCapture, ActivationInstance};
 
 struct TraceDefinition<'a> {
     package_identity: &'a str,
@@ -1090,6 +1090,20 @@ mod tests {
         event_positions: bool,
         scale: &filament_exact::Rational,
     ) -> Result<OwnerObservation, CallFailure> {
+        let producer = super::super::producer::producer_bundle()
+            .expect("producer selection")
+            .admit()
+            .expect("producer admission");
+        admitted_by(&producer, positions, cover, event_positions, scale)
+    }
+
+    fn admitted_by(
+        producer: &filament_observation::AdmittedStaticBundle,
+        positions: &[EvidencePosition],
+        cover: ClockCover,
+        event_positions: bool,
+        scale: &filament_exact::Rational,
+    ) -> Result<OwnerObservation, CallFailure> {
         use crate::temporal::finite_window::{
             LowerBoundary, TimestampedObservation, Watermark, WindowClock, WindowProgress,
         };
@@ -1158,11 +1172,7 @@ mod tests {
             },
         )
         .expect("admitted trace");
-        let producer = super::super::producer::producer_bundle()
-            .expect("producer selection")
-            .admit()
-            .expect("producer admission");
-        admit_defined(&producer, &definition, positions, cover, &binding, &trace)
+        admit_defined(producer, &definition, positions, cover, &binding, &trace)
     }
 
     fn position(label: &str, stamp: u64, valuation: Valuation) -> EvidencePosition {
@@ -1868,12 +1878,12 @@ mod tests {
             vec![
                 ActivationCapture {
                     name: "a",
-                    declared_type: "Integer",
+                    declared_type: "Integer".to_owned(),
                     fact: json!({"value":1}),
                 },
                 ActivationCapture {
                     name: "b",
-                    declared_type: "Integer",
+                    declared_type: "Integer".to_owned(),
                     fact: json!({"fault":"missing"}),
                 },
             ]
@@ -1936,5 +1946,23 @@ mod tests {
                 .expect("capture")
                 .source_observation_identity
         );
+    }
+
+    #[test]
+    #[ix_trace_rs::trace("TC-3036", "FR-944-AC-15")]
+    fn two_runs_clone_one_caller_admitted_producer_selection() {
+        let producer = super::super::producer::producer_bundle()
+            .expect("selection")
+            .admit()
+            .expect("caller admission");
+        let positions = [position("three", 3, Valuation::True)];
+        let scale = filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("scale");
+        let first = admitted_by(&producer, &positions, ClockCover::Exact, false, &scale)
+            .expect("first run");
+        let second = admitted_by(&producer, &positions, ClockCover::Exact, false, &scale)
+            .expect("second run");
+        assert_eq!(first.request.producer, producer);
+        assert_eq!(second.request.producer, producer);
+        assert_eq!(first.request, second.request);
     }
 }
