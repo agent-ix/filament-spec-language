@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":20,"category":"refusal","last_stage":"S6a","code":"invalid_runtime_input","cause":"wrong-role-mapping"}
+{"verb":"run","exit_code":20,"category":"refusal","last_stage":"S6a","code":"dangling_reference","cause":"absent-target-in-complete-population"}
