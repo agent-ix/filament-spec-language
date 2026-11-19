@@ -201,10 +201,16 @@ mod source_journeys {
                 "pending",
             ),
             (
-                "NamedClock",
-                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                "Captured",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(false)]}}),
                 0,
                 "tested",
+            ),
+            (
+                "Captured",
+                json!({"lasso":{"prefix":[sample(false)],"loop":[sample(true)]}}),
+                10,
+                "refuted",
             ),
         ] {
             let (actual_exit, document, _) =

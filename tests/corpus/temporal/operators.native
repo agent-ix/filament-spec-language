@@ -10,6 +10,7 @@ temporal Nested using t over (r: Reading) clock "steps" on origin {
 temporal NextDerived using t over (r: Reading) clock "steps" on origin {
   eventually[1,1] holds(r.ready)
 }
-temporal NamedClock using t over (r: Reading) clock "ms" on origin {
-  eventually[0,2] holds(r.ready)
+temporal Captured using t over (r: Reading) clock "steps" on origin {
+  capture initial: Boolean = r.ready;
+  eventually[1,1] holds(r.ready = initial)
 }
