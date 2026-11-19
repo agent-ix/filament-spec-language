@@ -239,7 +239,21 @@ pub(super) fn search_integer_domain(
         }
 
         visited = visited.saturating_add(1);
-        if satisfies(&candidate) {
+        let accepted = satisfies(&candidate);
+        if limits
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return SearchResult {
+                disposition: SearchDisposition::Incomplete {
+                    cause: "deadline_ms",
+                    value: 0,
+                },
+                visited,
+                work: visited,
+            };
+        }
+        if accepted {
             return SearchResult {
                 disposition: SearchDisposition::Candidate(candidate),
                 visited,
@@ -916,6 +930,33 @@ mod tests {
         );
         assert_eq!(result.visited, 0);
         assert_eq!(result.work, 0);
+    }
+
+    /// FR-823: an evaluation that runs beyond the request deadline is counted
+    /// as consumed work, but cannot produce a candidate result.
+    #[test]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
+    fn deadline_expiring_during_evaluation_reports_consumed_work() {
+        let result = search_integer_domain(
+            &digit_domain(),
+            SearchLimits {
+                deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(1)),
+                ..SearchLimits::default()
+            },
+            |_| {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                true
+            },
+        );
+        assert_eq!(
+            result.disposition,
+            SearchDisposition::Incomplete {
+                cause: "deadline_ms",
+                value: 0,
+            }
+        );
+        assert_eq!(result.visited, 1);
+        assert_eq!(result.work, 1);
     }
 
     #[test]
