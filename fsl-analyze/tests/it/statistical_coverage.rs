@@ -15,6 +15,10 @@ use crate::prob_world::{self, World};
 const CLAIM: &str = "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
     with alpha 0.1, beta 0.1, indifference 0.2 \
     { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }";
+const FALSE_CLAIM: &str =
+    "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
+    with alpha 0.1, beta 0.1, indifference 0.2 \
+    { probability >= 0.5 [ always[0,0] holds(c.v = 1) ] }";
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
@@ -25,8 +29,8 @@ fn sampler() -> DefinitionRef {
         .expect("a valid sampler reference")
 }
 
-fn world() -> World {
-    World::new(&prob_world::coin(CLAIM))
+fn world(claim: &str) -> World {
+    World::new(&prob_world::coin(claim))
 }
 
 fn decide(world: &World, seed: u64) -> StatisticalVerdict {
@@ -57,7 +61,7 @@ fn decide(world: &World, seed: u64) -> StatisticalVerdict {
 #[trace("TC-624", "FR-189-AC-16")]
 #[test]
 fn clopper_pearson_coverage() {
-    let world = world();
+    let world = world(CLAIM);
     let true_probability = ratio(1, 1);
     let mut covered = 0_u64;
 
@@ -85,7 +89,7 @@ fn clopper_pearson_coverage() {
 #[trace("TC-628", "FR-193-AC-2")]
 #[test]
 fn clopper_pearson_witness_replays() {
-    let world = world();
+    let world = world(FALSE_CLAIM);
     let verdict = decide(&world, 7);
     assert_eq!(verdict.basis.method, StatisticalMethod::ClopperPearson);
     assert!(!verdict.witnesses.is_empty(), "the sample has a witness");
