@@ -109,7 +109,11 @@ fn stand_in(name: &str) -> FunctionDeclaration {
 fn package(functions: Vec<FunctionDeclaration>) -> CheckedPackage {
     CheckedPackage::link(
         declarations(functions)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap(),
     )
 }
@@ -258,7 +262,11 @@ fn located_dependency() -> CheckedPackage {
             declarations.functions = vec![declaration];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap(),
     )
 }
@@ -281,7 +289,11 @@ fn registration_is_decided_from_the_packages_admitted_signature() {
         DeclaredClauseKind::Body,
     );
     let graph = declarations(vec![f(), guard])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .unwrap();
     let guard_key = graph.function_identity("internal_guard").expect("declared");
     let root = CheckedPackage::link_with(
