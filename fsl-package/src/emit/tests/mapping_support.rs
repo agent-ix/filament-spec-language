@@ -307,6 +307,78 @@ fn an_unsupported_result_retains_the_native_subject() {
     assert_eq!(*package, before);
 }
 
+/// FR-527-AC-4 (TC-1322 row 4), FR-045-AC-7 (TC-3022): under the
+/// infinite-trace profile a clause whose only operators are closed-interval
+/// past operators is `Supported` with `mltl.infinite-trace/v1` under both
+/// closures; one reaching a future operator, an interval-less or `[a,*]` past
+/// operator, or no operator stays `Unsupported` naming `InfiniteTrace`, with
+/// `MixedDirection` beside it for a past and a future operator; the
+/// event-position past row keeps its target.
+#[trace("FR-527-AC-4", "TC-1322", "FR-045-AC-7", "TC-3022")]
+#[test]
+#[ignore = "QSL-2505: the infinite-trace bounded-past row (mltl.infinite-trace/v1) is not classified yet"]
+fn an_infinite_trace_closed_past_clause_maps_to_the_infinite_trace_target() {
+    let supported_bodies = [
+        format!("once[1,1] not {P}"),
+        format!("historically[0,2] {P}"),
+        format!("{P} since[0,2] {Q}"),
+        format!("{P} triggered[1,2] {Q}"),
+        format!("once[0,2] {P} and historically[1,1] not {Q}"),
+    ];
+    for body in &supported_bodies {
+        for surrounding in [Closure::Complete, Closure::Open] {
+            let classified = classify(INFINITE, body, surrounding);
+            let Support::Supported {
+                target,
+                total_sample_valuation,
+                premises,
+            } = classified.support
+            else {
+                panic!("{body} {surrounding:?}: {:?}", classified.support);
+            };
+            assert_eq!(target.identity(), "mltl.infinite-trace/v1", "{body}");
+            assert!(!total_sample_valuation, "{body}");
+            assert_eq!(premises, OUTSTANDING_PREMISES, "{body}");
+        }
+    }
+    let unsupported_bodies = [
+        (
+            format!("always[0,2] {P}"),
+            unsupported(&[Unmatched::InfiniteTrace]),
+        ),
+        (
+            format!("eventually[0,2] {P}"),
+            unsupported(&[Unmatched::InfiniteTrace]),
+        ),
+        (
+            format!("once {P}"),
+            unsupported(&[Unmatched::InfiniteTrace]),
+        ),
+        (
+            format!("once[1,*] {P}"),
+            unsupported(&[Unmatched::InfiniteTrace]),
+        ),
+        (P.to_owned(), unsupported(&[Unmatched::InfiniteTrace])),
+        (
+            format!("once[0,1] eventually[0,1] {P}"),
+            unsupported(&[Unmatched::InfiniteTrace, Unmatched::MixedDirection]),
+        ),
+    ];
+    for (body, expected) in unsupported_bodies {
+        for surrounding in [Closure::Complete, Closure::Open] {
+            assert_eq!(
+                classify(INFINITE, &body, surrounding).support,
+                expected,
+                "{body} {surrounding:?}"
+            );
+        }
+    }
+    assert_eq!(
+        classify(EVENT, &format!("once[1,1] {P}"), Closure::Complete).support,
+        supported(Target::OriginCompleteHistory, false)
+    );
+}
+
 fn unit_each() -> String {
     unit(
         INFINITE,
