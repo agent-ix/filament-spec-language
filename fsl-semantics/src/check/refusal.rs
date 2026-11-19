@@ -3192,7 +3192,7 @@ pub enum CheckCause {
     VerificationPlanInapplicableMethod {
         /// The method's authored name.
         method: String,
-        /// The step's source span.
+        /// The method's source span.
         span: Span,
     },
     /// `invalid_package` / `invalid-value`: a supplied [`super::DispatchTable`]

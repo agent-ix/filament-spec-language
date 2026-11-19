@@ -1941,7 +1941,7 @@ fn verification_plan_refusal(
         {
             return Some(CheckCause::VerificationPlanInapplicableMethod {
                 method: step.method.name.clone(),
-                span: step.span,
+                span: step.method.span,
             });
         }
         if !package.declared_type_spans.contains_key(&step.domain.name)
