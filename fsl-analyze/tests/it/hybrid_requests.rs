@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex};
 
 use filament_exact::{Integer, Rational, ScalarLimits};
 use fsl_analyze::analyze::{BackendTool, Engine, HybridProcessExchange};
-use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
+use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict};
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::ModeIndex;
+use fsl_semantics::check::{ModeIndex, VariableIndex};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
@@ -817,9 +817,95 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
 /// same located `unsupported` as the in-process fixture.
 #[test]
 #[trace("TC-3035", "FR-750-AC-7")]
-#[ignore = "QSL-2532: `Engine::hybrid_process` does not exist yet"]
 fn a_process_unsupported_entry_settles_a_located_expression_form() {
-    todo!("QSL-2532: process half of FR-750-AC-7");
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Braking using p {\n\
+           mode Moving invariant { v >= 0 and a >= 0 } flow { v' = -a / (1 + v); a' = 0; }\n\
+         }\n\
+         temporal Positive using p over (h: Braking) clock \"model-time\" on origin { always holds(h.v > 0) }\n";
+    let response = Arc::new(Mutex::new(None));
+    let capture = Arc::clone(&response);
+    let (probe, _) = answering("hybrid-probe", move |request| {
+        let position = request
+            .graph
+            .hybrid_claims()
+            .iter()
+            .position(|claim| claim == request.claim)
+            .expect("the request claim is in its graph");
+        let locus = fsl_replay::hybrid_locus_wire(
+            request.graph,
+            request.wire,
+            position,
+            &fsl_replay::ExpressionLocus {
+                site: fsl_replay::ExpressionSite::Rate {
+                    mode: 0,
+                    variable: 0,
+                },
+                term: fsl_replay::TermLocus::default(),
+            },
+        )
+        .expect("the flow rate has a wire locus");
+        let entry = json!({"request_index": 0, "result": "unsupported", "diagnostic": {
+            "code": "unsupported_construct", "cause": "expression-form",
+            "detail": {"form": "division", "declaration": "Braking", "mode": "Moving",
+                "variable": "v", "locus": locus}}});
+        *capture.lock().expect("response capture is not poisoned") = Some(entry);
+        HybridAnswer {
+            verdict: HybridVerdict::Unsupported(fsl_replay::UnsupportedConstruct {
+                form: "division".to_owned(),
+                site: fsl_replay::ExpressionSite::Rate {
+                    mode: 0,
+                    variable: 0,
+                },
+                term: fsl_replay::TermLocus::default(),
+                mode: ModeIndex::new(0),
+                variable: Some(VariableIndex::new(0)),
+            }),
+            certificate: None,
+        }
+    });
+    let (_, in_process) = first_item(
+        "hybrid-750-7-probe",
+        unit,
+        named("Positive", "hybrid-probe"),
+        json!({}),
+        vec![probe],
+    );
+    assert_eq!(
+        in_process["record"]["result"], "unsupported",
+        "{in_process}"
+    );
+    let entry = response
+        .lock()
+        .expect("response capture is not poisoned")
+        .clone()
+        .expect("probe captured a process entry");
+    let (_, item) = first_item(
+        "hybrid-750-7-process",
+        unit,
+        named("Positive", "hybrid-process"),
+        json!({}),
+        vec![process_fixture("hybrid-process", &entry)],
+    );
+    assert_eq!(item["record"]["result"], "unsupported", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "unsupported_construct",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "expression-form",
+        "{item}"
+    );
+    let detail = &item["record"]["diagnostic"]["detail"];
+    assert_eq!(detail["form"], "division", "{item}");
+    assert_eq!(detail["declaration"], "Braking", "{item}");
+    assert_eq!(detail["mode"], "Moving", "{item}");
+    assert_eq!(detail["variable"], "v", "{item}");
+    assert!(detail["backend"].is_string(), "{item}");
+    assert!(detail["locus"]["node"].is_string(), "{item}");
+    assert!(item.get("counterexample").is_none(), "{item}");
+    assert!(item.get("replay").is_none(), "{item}");
 }
 
 /// FR-750-AC-9 (reader and irrational instant): the plugin reader reads a
