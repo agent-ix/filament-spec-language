@@ -96,6 +96,30 @@ pub struct UnsupportedConstruct {
 pub trait HybridProvider: fmt::Debug + Send + Sync {
     /// Decide one request.
     fn solve(&self, request: &HybridSolveRequest<'_>, cancel: &Cancel) -> HybridAnswer;
+
+    /// Refuse an item's `options` whose value lies outside the domain of an
+    /// option the provider publishes (FR-750, FSpec FR-779). `analyze` calls
+    /// it after FR-967's `unknown-option` check and before [`Self::solve`],
+    /// so a refused item runs no solver step. The default admits every value.
+    ///
+    /// # Errors
+    ///
+    /// [`OptionRefusal`] naming the least refused option and its value.
+    fn check_options(&self, _options: &BTreeMap<String, String>) -> Result<(), OptionRefusal> {
+        Ok(())
+    }
+}
+
+/// An option value outside its domain, as [`HybridProvider::check_options`]
+/// refuses it: the item settles `invalid-request`
+/// `invalid_capability`/`invalid-option-value` (FSpec FR-779-AC-2).
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("option `{option}` does not admit the value `{value}`")]
+pub struct OptionRefusal {
+    /// The option's name.
+    pub option: String,
+    /// The refused value, as the item wrote it.
+    pub value: String,
 }
 
 /// Why a hybrid result entry was not read into an answer.

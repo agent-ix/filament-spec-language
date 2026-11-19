@@ -969,6 +969,7 @@ dependencies = [
  "filament-exact",
  "fsl-replay",
  "fsl-semantics",
+ "ix-trace-rs",
 ]
 
 [[package]]

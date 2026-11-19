@@ -202,12 +202,12 @@ pub use hybrid::{
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
-    HybridVerdict, NegativeHorizon, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
+    HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
-    ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
+    polynomial_class_gap, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
     HybridTrace, JsonPointer, ReplayRecord, Root, StaticCheck, StaticReplay, TermLocus,
     TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,

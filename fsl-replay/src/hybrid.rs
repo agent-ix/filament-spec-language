@@ -34,7 +34,7 @@ pub use locus::{
     hybrid_counterexample_locus, hybrid_locus_site, hybrid_locus_wire, hybrid_term_at_locus,
 };
 pub use provider::{
-    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict, OptionRefusal,
     UnsupportedConstruct,
 };
 pub use process_request::{
