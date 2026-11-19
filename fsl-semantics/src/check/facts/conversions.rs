@@ -100,6 +100,9 @@ impl Definedness<'_> {
         {
             return Ok(());
         }
+        if matches!(node.value_type(), ValueType::Rational(_)) {
+            return Err(Self::refuse(node, Obligation::RationalRange));
+        }
         let required = match node.value_type() {
             ValueType::Int(target) => Interval::of_domain(target),
             _ => Interval::unbounded(),
