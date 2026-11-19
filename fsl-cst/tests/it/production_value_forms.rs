@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Executable value, dimension, graph, hybrid and implementation-binding forms.
 
-use fsl_cst::{CompleteCause, CompleteCode, CstElement, CstNode, Limits, ParsedSource, Production};
+use fsl_cst::{
+    CompleteCause, CompleteCode, CstElement, CstNode, Limits, ParsedSource, Production, TokenKind,
+};
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
@@ -1153,11 +1155,14 @@ fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
 #[test]
 #[trace("FSpec-FR-339-AC-1")]
 fn verification_steps_keep_claim_method_domain_dependencies_and_bounds_separate() {
-    for options in [
-        "",
-        " depends [Initial]",
-        " bound 0",
-        " depends [Initial, Safety] bound 12",
+    for (options, names_and_bound) in [
+        ("", vec!["Follow"]),
+        (" depends [Initial]", vec!["Follow", "Initial"]),
+        (" bound 0", vec!["Follow", "0"]),
+        (
+            " depends [Initial, Safety] bound 12",
+            vec!["Follow", "Initial", "Safety", "12"],
+        ),
     ] {
         let step = format!(
             "check Follow claim Plant::Safe method Engine::Finite domain Inputs::Bounded{options};"
@@ -1175,6 +1180,17 @@ fn verification_steps_keep_claim_method_domain_dependencies_and_bounds_separate(
             children(&source, &parsed, step, Production::QualifiedName),
             ["Plant::Safe", "Engine::Finite", "Inputs::Bounded"]
         );
+        let direct_values: Vec<&str> = step
+            .children()
+            .iter()
+            .filter_map(|child| match child {
+                CstElement::Token(index) => Some(&parsed.cst().tokens()[*index]),
+                CstElement::Node(_) => None,
+            })
+            .filter(|token| matches!(token.kind(), TokenKind::Identifier | TokenKind::Integer))
+            .map(|token| &source[token.span().start..token.span().end])
+            .collect();
+        assert_eq!(direct_values, names_and_bound);
     }
     let first = "check Initial claim Plant::Start method Engine::Finite domain Inputs::Bounded;";
     let second = "check Safety claim Plant::Safe method Engine::Finite domain Inputs::Bounded depends [Initial];";
