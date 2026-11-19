@@ -74,7 +74,7 @@ The containing spec supplies the profile declaration and model import.
 
 A version's parent, when it has one, always has a lower version number.
 
-```ix:native
+```ix:native stage=parse
 invariant ParentOrder using v on Config::ConfigVersion at current {
   present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber
 }
@@ -123,7 +123,8 @@ the first example.
 and pure functions. `Float32` and `Float64` support `exact`, `nearest-even`,
 `nearest-away`, `toward-zero`, `toward-positive` and `toward-negative` rounding modes.
 
-```
+```fsl stage=compile
+profile v = "filament.value.complete/v1";
 type Digit = Int[0, 9];
 record Point { x: Digit; y: Digit; }
 function px using v(p: Point): Digit pure { if p.x > p.y then p.x else p.y }
@@ -132,7 +133,7 @@ function px using v(p: Point): Digit pure { if p.x > p.y then p.x else p.y }
 **State.** Invariants over the current objects, `pre`/`post` rules around
 operations, and sums and sizes over collections.
 
-```
+```fsl stage=parse
 invariant Healthy using G on M::Workflow at current {
     size<M::Tally>(self.receipts) <= 5
     and sum<M::Total>(receipt in self.receipts: receipt) <= self.total
@@ -143,7 +144,7 @@ invariant Healthy using G on M::Workflow at current {
 bounded windows. This one says the ratio stays allowed for the 30 events after
 the origin:
 
-```
+```fsl stage=parse
 temporal Due using T over (view: M::Workflow) clock "events" on origin {
     always[0,30] holds(Allowed(view.ratio))
 }
@@ -154,7 +155,7 @@ and delivery bounds, sequences, choices, parallel branches, retries, timeouts
 and compensation. The profile declaration and model import come from the
 containing spec:
 
-```
+```fsl stage=parse
 protocol Orders using P over (view: M::WorkflowView) on each (started: M::StartView) when (started.ready) {
   role OrdersService on M::OrderService;
   role PaymentsService on M::PaymentService;
