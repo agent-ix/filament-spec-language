@@ -4083,6 +4083,7 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::GlobalConformance(_)
         | super::Counterexample::Hybrid(_)
         | super::Counterexample::TaskProduct(_) => json!({"state_clause": qualified}),
+        super::Counterexample::FiniteHyper(_) => json!({"hyperproperty": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }
