@@ -25,9 +25,8 @@ use fsl_semantics::model::observation::{
 };
 
 use super::{
-    ReplayRefusal, check_envelope_target, consumed, domain_packages, recompile, wrong_target,
+    check_envelope_target, consumed, domain_packages, recompile, wrong_target, ReplayRefusal,
 };
-use crate::WitnessEnvelope;
 use crate::bounds::ReplayLimits;
 use crate::identity::DefinitionSourceRef;
 use crate::request::{ReplayRequest, ReplayRequestWire};
@@ -36,11 +35,12 @@ use crate::result::{
     SeparationReason, SeparationRefusal, Verdict, WitnessArmResult, WitnessCheck, WitnessFailure,
 };
 use crate::spine::{
-    CallOutcome, CallRefusal, CallValue, ClauseCheck, ClauseDisposition, CompiledRun,
-    check_clause_admitted, convert_outcome,
+    check_clause_admitted, convert_outcome, CallOutcome, CallRefusal, CallValue, ClauseCheck,
+    ClauseDisposition, CompiledRun,
 };
 use crate::target::{ReplayEntry, TargetMember};
 use crate::witness::{EnvelopeSource, StateClauseCounterexample};
+use crate::WitnessEnvelope;
 use filament_eval::{CallFailure, FamilyOutcome};
 use filament_exact::{Meter, Outcome};
 use filament_semantic_value::catalog::Category;
@@ -707,7 +707,7 @@ pub(crate) fn stopped_reason(
         })?;
     Ok(match outcome {
         CallOutcome::Incomplete(_) => None,
-        CallOutcome::Undefined { reason } => Some(SeparationReason::UndefinedEvaluation {
+        CallOutcome::Undefined { reason, .. } => Some(SeparationReason::UndefinedEvaluation {
             expression: location.ok_or_else(|| fault("undefined-evaluation-is-located"))?,
             cause: reason.to_owned(),
         }),

@@ -264,6 +264,8 @@ pub enum CallOutcome {
     Undefined {
         /// The reason's tabled spelling.
         reason: &'static str,
+        /// The expression location retained by the evaluator, when present.
+        location: Option<Location>,
     },
     /// `Outcome::Incomplete(i)`: `incomplete`, exit 22.
     Incomplete(CallIncomplete),
@@ -1829,6 +1831,7 @@ pub(crate) fn convert_outcome_resolving(
         )?)),
         FamilyOutcome::Evaluated(Outcome::Undefined(reason)) => Ok(CallOutcome::Undefined {
             reason: kernel_undefined_reason(reason),
+            location,
         }),
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             Ok(CallOutcome::Incomplete(CallIncomplete {
@@ -1848,6 +1851,7 @@ pub(crate) fn convert_outcome_resolving(
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
             Ok(CallOutcome::Undefined {
                 reason: cause.undefined_record().reason.as_str(),
+                location,
             })
         }
         // FR-063: no arm for the probe variant under `--cfg seam_probe`
