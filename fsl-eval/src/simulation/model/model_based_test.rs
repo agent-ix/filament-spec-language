@@ -1597,7 +1597,7 @@ where
             add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
             let result = oracle(&trace)?;
             if matches!(result, CaseResult::Pass | CaseResult::Fail(_)) {
-                cover_field_partitions(
+                cover_trace_partitions(
                     system,
                     &trace,
                     &mut partitions,
@@ -1696,7 +1696,7 @@ where
         add_trace_checks(system, clause, &trace, omitted_clause.as_ref(), &mut checks)?;
         let outcome = oracle(&trace)?;
         if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
-            cover_field_partitions(
+            cover_trace_partitions(
                 system,
                 &trace,
                 &mut partitions,
@@ -1819,13 +1819,43 @@ fn record_partition(
     }
 }
 
-fn cover_field_partitions(
+fn cover_trace_partitions(
     system: &ModelSystem<'_>,
     trace: &ModelTrace,
     partitions: &mut [ModelBoundaryPartition],
     case: u64,
     omitted: Option<&NodeKey>,
 ) -> Result<(), ModelBasedTestError> {
+    for partition in partitions.iter_mut() {
+        if matches!(
+            partition.status,
+            Some(ModelPartitionStatus::Covered { .. } | ModelPartitionStatus::Refused { .. })
+        ) || matches!(
+            partition.kind,
+            super::ModelBoundaryKind::LowerRefusal | super::ModelBoundaryKind::UpperRefusal
+        ) {
+            continue;
+        }
+        let Some((operation, parameter)) = partition_operation(system, partition) else {
+            continue;
+        };
+        let Some(expected) =
+            partition_native_value(partition, system).and_then(|value| super::value_json(&value))
+        else {
+            continue;
+        };
+        if trace.trace.steps.iter().any(|step| {
+            step.transition.operation() == operation
+                && step
+                    .transition
+                    .arguments()
+                    .get(parameter)
+                    .and_then(|argument| serde_json::from_str::<serde_json::Value>(argument).ok())
+                    .is_some_and(|value| value == expected)
+        }) {
+            partition.status = Some(ModelPartitionStatus::Covered { first_case: case });
+        }
+    }
     let candidates: Vec<_> = partitions
         .iter()
         .enumerate()

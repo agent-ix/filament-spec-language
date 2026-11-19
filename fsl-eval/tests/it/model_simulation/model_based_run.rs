@@ -1291,6 +1291,10 @@ fn contract_cases_start_with_ordered_domain_partitions() {
         result.partitions[1].status,
         Some(fsl_eval::simulation::model::ModelPartitionStatus::Covered { first_case: 2 })
     );
+    assert_eq!(
+        result.partitions[5].status,
+        Some(fsl_eval::simulation::model::ModelPartitionStatus::Covered { first_case: 2 })
+    );
 }
 
 /// Text count-table work is charged before any caller-sized allocation.
