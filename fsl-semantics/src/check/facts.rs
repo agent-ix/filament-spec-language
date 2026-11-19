@@ -21,6 +21,7 @@ use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
+mod conversions;
 mod persistent;
 
 use self::persistent::PersistentMap;
@@ -615,6 +616,8 @@ pub(crate) struct Definedness<'a> {
     /// body, so one table serves every path of the walk and no `let` copies
     /// the facts of the paths above it.
     aliases: BTreeMap<Slot, StablePath>,
+    /// Exact numeric literals bound by a `let`, used for membership proofs.
+    numeric_literals: BTreeMap<Slot, Value>,
     /// The facts a walk begins with: a postcondition's transferred
     /// precondition facts (FR-577), empty elsewhere.
     initial: Facts,
@@ -640,6 +643,7 @@ impl<'a> Definedness<'a> {
             observations: None,
             components: None,
             aliases: BTreeMap::new(),
+            numeric_literals: BTreeMap::new(),
             initial: Facts::default(),
             mode: CheckMode::Linked,
         }
@@ -1362,6 +1366,9 @@ impl<'a> Definedness<'a> {
                 }
             }
             NodeKind::Let { slot, value, body } => {
+                if let Some(value) = self.numeric_literal(node.at(*value)) {
+                    self.numeric_literals.insert(*slot, value);
+                }
                 if let Some(path) = self.stable_path(node.at(*value), facts) {
                     self.aliases.insert(*slot, path);
                 }
@@ -1410,6 +1417,9 @@ impl<'a> Definedness<'a> {
 
     fn discharge_node(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
         match node.kind() {
+            NodeKind::ConvertScalar(_, operand) => {
+                self.discharge_conversion(node, node.at(*operand), facts)
+            }
             NodeKind::Coerce(operand, target) => {
                 let proved = self.interval(node.at(*operand), facts);
                 let required = Interval::of_domain(target);

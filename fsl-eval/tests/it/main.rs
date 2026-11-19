@@ -61,6 +61,7 @@ mod model_reference_queries;
 mod model_simulation;
 mod monitor_vs_infinite_trace;
 mod named_population;
+mod narrowing_conversions;
 mod native_literals;
 mod native_scalar_equality;
 mod observation_owner;

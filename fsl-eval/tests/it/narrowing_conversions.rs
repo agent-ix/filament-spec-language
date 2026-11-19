@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Checked standalone narrowing preserves exact values and domain backstops.
+use filament_eval::{Evaluation, FamilyOutcome};
+use filament_exact::{Decimal, Integer, Meter, Outcome, Rational, Refusal, Value};
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName, S6aRewardEvaluator};
+use fsl_foundation::SourceIdentity;
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::model::intake::SelectedModels;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::trace;
+
+fn package(source: &str, mode: CheckMode) -> CheckedPackage {
+    let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{source}");
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("test", "narrowing"),
+        "narrowing.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .unwrap();
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "narrowing-test".to_owned(),
+        fsl_forms::build_unit(&parsed).unwrap(),
+        SelectedModels::default(),
+        Vec::new(),
+    )
+    .unwrap();
+    CheckedPackage::link(
+        declarations
+            .check(mode, CheckingLimits::default(), &S6aRewardEvaluator)
+            .unwrap(),
+    )
+}
+
+fn call(package: &CheckedPackage, value: Value) -> Evaluation {
+    package
+        .call(
+            &QualifiedName::unqualified("f").unwrap(),
+            vec![value],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(super::quantity_literals::UNLIMITED),
+        )
+        .unwrap()
+}
+
+#[trace("FR-093-AC-4", "FSpec-FR-149")]
+#[test]
+fn guarded_narrowing_evaluates_the_same_integer_at_both_endpoints() {
+    let package = package("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 9 then convert<Int[0,9]>(n) else 0 }", CheckMode::Linked);
+    for n in [0, 5, 9] {
+        let result = call(&package, Value::Integer(Integer::from(n)));
+        assert!(result.losses.is_empty());
+        match result.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => {
+                assert_eq!(value, Integer::from(n))
+            }
+            other => panic!("expected unchanged integer {n}: {other:?}"),
+        }
+    }
+}
+
+#[trace("FR-093-AC-4", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn kernel_narrowing_refuses_both_outside_integer_endpoints() {
+    let package = package(
+        "function f using v(n: Integer): Int[0,9] pure { convert<Int[0,9]>(n) }",
+        CheckMode::Kernel,
+    );
+    for n in [-1, 10] {
+        let result = call(&package, Value::Integer(Integer::from(n)));
+        assert!(result.location.is_some());
+        match result.outcome {
+            FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain { target })) => {
+                assert_eq!(target.lower(), &Integer::from(0));
+                assert_eq!(target.upper(), &Integer::from(9));
+            }
+            other => panic!("expected domain refusal for {n}: {other:?}"),
+        }
+    }
+}
+
+#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn rational_narrowing_checks_normalized_parts_and_refuses_each_bad_part() {
+    let package = package("function f using v(x: Rational[-20,20;1,20]): Rational[0,10;1,10] pure { convert<Rational[0,10;1,10]>(x) }", CheckMode::Kernel);
+    let normalized = Rational::new(Integer::from(-6), Integer::from(-4)).unwrap();
+    let result = call(&package, Value::Rational(normalized.clone()));
+    assert!(result.losses.is_empty());
+    match result.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Rational(value))) => {
+            assert_eq!(value, normalized)
+        }
+        other => panic!("expected 3/2: {other:?}"),
+    }
+    for (n, d) in [(11, 1), (1, 11), (-1, 1)] {
+        let result = call(
+            &package,
+            Value::Rational(Rational::new(Integer::from(n), Integer::from(d)).unwrap()),
+        );
+        assert!(
+            matches!(
+                result.outcome,
+                FamilyOutcome::Evaluated(Outcome::Refused(Refusal::RationalOutOfDomain { .. }))
+            ),
+            "{n}/{d}: {:?}",
+            result.outcome
+        );
+    }
+}
+
+#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn decimal_narrowing_preserves_values_without_rounding_or_clamping() {
+    let package = package("function f using v(d: Decimal[-20,20;0,0;nearest-even]): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(d) }", CheckMode::Kernel);
+    let result = call(&package, Value::Decimal(Decimal::new(Integer::from(5), 0)));
+    assert!(result.losses.is_empty());
+    match result.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Decimal(value))) => {
+            assert_eq!(value.normalized().coefficient(), &Integer::from(5))
+        }
+        other => panic!("expected decimal 5: {other:?}"),
+    }
+    let result = call(&package, Value::Decimal(Decimal::new(Integer::from(10), 0)));
+    assert!(
+        matches!(
+            result.outcome,
+            FamilyOutcome::Evaluated(Outcome::Refused(Refusal::DecimalOutOfDomain { .. }))
+        ),
+        "{:?}",
+        result.outcome
+    );
+}

@@ -3473,7 +3473,47 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         &value,
                         &self.units,
                         self.meter,
-                    )?;
+                    )
+                    .map_err(|stop| {
+                        // Standalone narrowing can meet an unproved obligation
+                        // in Kernel mode. Equality's target-admission invariant
+                        // is instead the ordinary domain refusal here.
+                        use filament_exact::CheckedInvariantCause;
+                        let numeric_source = matches!(
+                            source_type,
+                            ValueType::Integer
+                                | ValueType::Int(_)
+                                | ValueType::Rational(_)
+                                | ValueType::Decimal(_)
+                        );
+                        let narrowing = numeric_source
+                            && !filament_semantic_value::declaration::admits_equality_conversion(
+                                source_type,
+                                target_type,
+                                &self.units,
+                            );
+                        match (&stop, target_type) {
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause:
+                                        CheckedInvariantCause::EqualityOperandTargetNotAdmitted
+                                        | CheckedInvariantCause::EqualityConversionShapeMismatch,
+                                }),
+                                ValueType::Int(target),
+                            ) if narrowing => Stop::Refused(Refusal::IntegerOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Rational(target),
+                            ) if narrowing => Stop::Refused(Refusal::RationalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            _ => stop,
+                        }
+                    })?;
                     // FSpec FR-322-AC-384: a bounded result checks the exact
                     // converted magnitude against both inclusive endpoints.
                     match (target_type, converted) {

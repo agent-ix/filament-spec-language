@@ -81,6 +81,7 @@ mod composition;
 mod dispatch_link;
 pub mod footprint;
 mod guarantee;
+mod numeric_conversion;
 mod rust_syntax;
 pub use abstraction::{
     AbstractionKey, AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation,

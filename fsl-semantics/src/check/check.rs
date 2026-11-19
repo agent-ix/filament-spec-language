@@ -5430,14 +5430,29 @@ impl<'a> Typer<'a> {
                     location,
                 ))
             }
-            (ValueType::Rational(_) | ValueType::Decimal(_), ValueType::Decimal(decimal))
-                if !admits_equality_conversion(&operand.value_type, target, &self.units) =>
-            {
-                Ok(node(
-                    NodeKind::ConvertDecimal(self.push(operand), decimal.clone()),
-                    target.clone(),
-                    location,
-                ))
+            (
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+                ValueType::Integer
+                | ValueType::Int(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_),
+            ) => {
+                use super::numeric_conversion::{classify, Class};
+                let class = classify(&operand.value_type, target).ok_or_else(|| {
+                    CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                })?;
+                let kind =
+                    if let (Class::ScaleReduction, ValueType::Decimal(decimal)) = (class, target) {
+                        NodeKind::ConvertDecimal(self.push(operand), decimal.clone())
+                    } else {
+                        let converted =
+                            EqualityOperand::converted(operand.value_type.clone(), target.clone());
+                        NodeKind::ConvertScalar(converted, self.push(operand))
+                    };
+                Ok(node(kind, target.clone(), location))
             }
             (
                 ValueType::Quantity(_) | ValueType::CarriedQuantity(_),

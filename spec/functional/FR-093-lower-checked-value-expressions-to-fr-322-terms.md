@@ -551,7 +551,7 @@ to `x`'s node.
 | `Order(operator, kind)` (`<`, `<=`, `>`, `>=`) | `binary` | `filament.op.<f>.lt`, `.le`, `.gt`, `.ge`, where `<f>` is `integer`, `rational`, `decimal`, `enum`, `text` or `quantity` for `kind` `Integers`, `Rationals`, `Decimals`, `Enums`, `Texts`, `Quantities` | for `text`: law `text_profile`, mode `text_profile` = the operands' profile | `[ref(l), ref(r)]` |
 | `Equality(operator, schedule)` (`=`, `!=`) | `binary` | `filament.op.<f>.eq` or `.ne` for an operand family `<f>` of `boolean`, `integer`, `rational`, `decimal`, `text`, `enum`, `quantity`, `reference`, `string`, `uuid` or `timestamp`; `filament.op.structural.eq` or `.ne` for an `option`, record, tuple, union or collection operand | for `text`: law `text_profile`, mode `text_profile`; for `string`, `uuid` and `timestamp`: no law, no mode, no member and no leaves; for `structural`: leaves `operand:0`, the compared type's text-leaf list | `[ref(l), ref(r)]` |
 | `Coerce(e, interval)` (an integer admitted into an `Int[..]` that does not contain its type, or an `e` whose lowered type is `Integer` because it is an integer `div`, `rem` or `mod` application, a control node yielding one, or a read of a `let` binder bound to either, admitted into any `Int[..]`, FR-495) | `convert` | `filament.op.numeric.narrow` | member `type_argument{declaration: T(Int[interval])}` | `[ref(e)]` |
-| `ConvertScalar(target, e)` whose operand type is an exact numeric type other than the target | `convert` | `filament.op.numeric.convert` | member `type_argument` of the target type node | `[ref(e)]` |
+| `ConvertScalar(target, e)` whose operand type is an exact numeric type other than the target | `convert` | `filament.op.numeric.convert` for an exact conversion, `filament.op.rational.narrow` for rational narrowing, `filament.op.numeric.narrow` for range narrowing, selected by FSpec FR-149's Conversion classes | member `type_argument` of the target type node; no mode | `[ref(e)]` |
 | `ConvertScalar(target, e)` whose operand is a quantity | `convert` | `filament.op.quantity.convert` | member `type_argument` of the target type node; mode `rounding` = `exact` for a `Quantity<u>` target, and the carried node's `rounding` for a `Quantity<u, C>` target (FR-497) | `[ref(e)]` |
 | `ConvertText(target, e)` (`convert<T>(e)` whose operand has a `Text[..]` or `String` type, FSpec FR-478) | `convert` | `filament.op.text.to_<k>` for a `Text[..]` operand, `filament.op.string.to_<k>` for a `String` operand, where `<k>` is `integer` (`Integer`, `Int[..]`), `decimal` (`Decimal[lo, hi; smin, smax; mode]`), `rational` (`Rational[lo, hi; dmin, dmax]`), `float32`, `float64` or `quantity` (`Quantity<u>`) for the target. The unbounded `Decimal` and `Rational` of FSpec FR-478 have no FSL source spelling and no checked value type, so no FSL `ConvertText` targets them | law `text_profile` for a `Text[..]` operand, then law `ieee_profile` for a `float32` or `float64` target; mode `rounding` = the target's mode for a decimal or IEEE target (`exact` when an IEEE target omits it) and `exact` for a quantity target, no mode for an integer or rational target; member `type_argument` of the target type node | `[ref(e)]` |
 | `ConvertDecimal(e, target)` (`convert<T>(e)` to a decimal) | `convert` | `filament.op.numeric.convert` when exact, `filament.op.numeric.convert_rounding` when FR-149 classifies it as scale reduction | member `type_argument` of `target`'s node; for `convert_rounding`, mode `rounding` = `target`'s mode | `[ref(e)]` |
@@ -685,6 +685,18 @@ contains is admitted with no node, except an operand whose lowered type is
 `Int[..]`, a containing one included, lowers to exactly one narrow over the
 operand. A `ConvertScalar` whose operand type equals its target builds no
 node. Where no node is built, the parent references the operand's node.
+
+**Explicit numeric narrowing.** The checker SHALL classify an explicit exact-numeric
+conversion by FSpec FR-149's first-match Conversion classes, using the operand's
+declared type. Guard facts discharge membership obligations without changing that
+class. Rational narrowing proves membership of the normalized numerator and
+positive denominator; range narrowing proves membership of the converted value.
+An unproved narrowing SHALL refuse `undefined_expression`/`unproved-range` at
+the conversion. Only scale reduction builds `ConvertDecimal` and carries a
+rounding mode. A decimal source with nonzero maximum scale has no conversion to
+an integer type under the current table. Direct operands of `=` and `!=` retain
+the separate equality conversion admission table, even under a guard; a
+conversion reached through a `let` remains standalone.
 
 **Converted equality operand.** An `Equality` operand written `convert<T>(e)`,
 whose `e` has an exact numeric or quantity type other than `T`, is checked as
