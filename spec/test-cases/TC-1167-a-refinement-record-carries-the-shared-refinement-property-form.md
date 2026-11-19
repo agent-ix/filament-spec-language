@@ -3,14 +3,14 @@ id: TC-1167
 title: "A refinement record carries the shared Refinement property form"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: verifies
 ---
 # TC-1167: A refinement record carries the shared Refinement property form
 
 ## Description
 
-Verify that a refinement item's requirement record carries QSV FR-121's
+Verify that a refinement item's requirement record carries FSV FR-121's
 `PropertyForm::Refinement { liveness }`, that it encodes as
 `{"refinement":{"liveness":<bool>}}` and orders after `Liveness`.
 

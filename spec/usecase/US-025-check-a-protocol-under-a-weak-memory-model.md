@@ -3,31 +3,31 @@ id: US-025
 title: "Check a protocol under a weak memory model"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-223
+  - target: ix://agent-ix/filament-spec-language/FR-223
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-224
+  - target: ix://agent-ix/filament-spec-language/FR-224
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-226
+  - target: ix://agent-ix/filament-spec-language/FR-226
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-227
+  - target: ix://agent-ix/filament-spec-language/FR-227
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-228
+  - target: ix://agent-ix/filament-spec-language/FR-228
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-309
+  - target: ix://agent-ix/filament-spec-language/FR-309
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-025: Check a protocol under a weak memory model
@@ -101,5 +101,5 @@ small.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-434 to
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-434 to
   FR-439 (Linear STD-138).

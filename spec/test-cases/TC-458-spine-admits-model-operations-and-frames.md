@@ -3,7 +3,7 @@ id: TC-458
 title: "Spine intake and assembly admit operations and frames"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: verifies
 ---
 # TC-458: Spine intake and assembly admit operations and frames
@@ -19,8 +19,8 @@ Scope: FR-103-AC-1 to FR-103-AC-6.
 
 The fixture is `examples/config-version/model.semantic-ir.json` (FR-108): a
 Semantic IR 2.0.0 document for package `example/config-version` version `1`
-with constructs bound to `quire.meaning.model.object-type/v1`,
-`quire.meaning.model.value-type/v1` and `quire.meaning.model.population/v1`,
+with constructs bound to `filament.meaning.model.object-type/v1`,
+`filament.meaning.model.value-type/v1` and `filament.meaning.model.population/v1`,
 declaring:
 
 - value type `VersionNumber`, integer `0..=1000`;
@@ -29,7 +29,7 @@ declaring:
   `[1, 1]`);
 - population `config_history` over `ConfigVersion`, extent `closed`;
 - operation `attemptUpdate` on `ConfigVersion`, no `params`, `returns`
-  `ix://quire/native/Boolean`, `frame` `{modifies:
+  `ix://filament/native/Boolean`, `frame` `{modifies:
   ["ix://example/config-version/ConfigVersion/versionNumber"], creates: [],
   deletes: []}`.
 
@@ -44,10 +44,10 @@ declares `model Config = ...` over it.
    `[".../Supersedes"]`; then set `creates` to `[".../Supersedes"]`; then set both `modifies` to
    `[".../ConfigVersion/missing"]` and `creates` to
    `[".../ConfigVersion/versionNumber"]`.
-3. Add parameter `note` typed `ix://quire/native/Decimal`; then replace it
+3. Add parameter `note` typed `ix://filament/native/Decimal`; then replace it
    with parameter `delta` typed `VersionNumber`. (`Decimal`, not `Text`: the
    FCD schema validator's native-scalar vocabulary has no `Text`
-   entry -- it spells the concept `String`, which QSL's own `NativeValueType`
+   entry -- it spells the concept `String`, which FSL's own `NativeValueType`
    in turn has no variant for -- so a `Text` typeRef cannot reach even I1
    through the real pipeline; that cross-repo vocabulary gap is QSL-290, not
    this ticket's.)

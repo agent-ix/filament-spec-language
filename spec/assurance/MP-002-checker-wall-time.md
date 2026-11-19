@@ -4,23 +4,23 @@ title: S3 checker wall time
 type: MeasurementPlan
 status: active
 owner: peter
-metric: qsl.bench.checker.wall_time
-definition_version: qsl.bench.checker.wall_time-v2
+metric: fsl.bench.checker.wall_time
+definition_version: fsl.bench.checker.wall_time-v2
 stage: baseline
 ground_truth_kind: mechanical
 objective:
   direction: lower
 subject_identity:
-  name: qsl-semantics S3 checker (PackageDeclarations::check)
-  version: "qsl-semantics/Cargo.toml"
+  name: fsl-semantics S3 checker (PackageDeclarations::check)
+  version: "fsl-semantics/Cargo.toml"
 statistical_design:
   population: >-
-    The fixed, generated inputs of qsl-bench/benches/checker.rs, one
+    The fixed, generated inputs of fsl-bench/benches/checker.rs, one
     dimension per criterion benchmark id; every input is deterministic.
   sampling: >-
     criterion defaults unless the bench sets them: 3 s warm-up, then
     linearly growing iteration batches until the sample count is reached;
-    the whole suite is run as one `cargo bench -p qsl-bench --bench checker`
+    the whole suite is run as one `cargo bench -p fsl-bench --bench checker`
     invocation per repetition.
   repetitions: 5
   estimator: median
@@ -34,9 +34,9 @@ statistical_design:
     comparator: lt
     baseline: prior-collection
 protected_apparatus:
-  - qsl-bench/benches/checker.rs
-  - qsl-bench/src/check.rs
-  - qsl-bench/Cargo.toml
+  - fsl-bench/benches/checker.rs
+  - fsl-bench/src/check.rs
+  - fsl-bench/Cargo.toml
 negative_controls:
   - kind: gain-within-noise
     description: >-
@@ -44,7 +44,7 @@ negative_controls:
       interleaved session that alternates the baseline revision and the
       candidate revision, five rounds each, on one machine: its median must
       be below the baseline revision's same-session median by more than
-      the session noise computed from those same-session A/B observations, as defined in qsl-bench/BENCHMARKING.md. A smaller change is recorded as no change.
+      the session noise computed from those same-session A/B observations, as defined in fsl-bench/BENCHMARKING.md. A smaller change is recorded as no change.
   - kind: apparatus-edit
     description: >-
       The bench file, its input generator and the bench crate manifest are
@@ -59,7 +59,7 @@ negative_controls:
       Every recorded collection names the machine it ran on; a result from
       another machine is not compared with this paired session.
 relationships:
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: measures
 ---
 
@@ -67,11 +67,11 @@ relationships:
 
 ## Decision Use
 
-A performance claim compares current main with the candidate in one interleaved same-session A/B run. It uses only the session noise defined in qsl-bench/BENCHMARKING.md; measurements from earlier sessions are not comparison thresholds. This plan grades no release and gates no merge.
+A performance claim compares current main with the candidate in one interleaved same-session A/B run. It uses only the session noise defined in fsl-bench/BENCHMARKING.md; measurements from earlier sessions are not comparison thresholds. This plan grades no release and gates no merge.
 
 ## Population
 
-Every criterion benchmark in `qsl-bench/benches/checker.rs`: one
+Every criterion benchmark in `fsl-bench/benches/checker.rs`: one
 `PackageDeclarations::check` over a whole generated package: an N-function call
 chain (`checker/chain/N`) or N independent functions (`checker/independent/N`).
 Each benchmark id is one observation dimension. Inputs are generated, not
@@ -86,6 +86,6 @@ seconds per call.
 
 ## Interpretation
 
-The decision rule’s `prior-collection` is the current-main side of the same interleaved session. The margin is the session noise computed from that paired run, as stated in `qsl-bench/BENCHMARKING.md`; no earlier collection is used.
+The decision rule’s `prior-collection` is the current-main side of the same interleaved session. The margin is the session noise computed from that paired run, as stated in `fsl-bench/BENCHMARKING.md`; no earlier collection is used.
 A refused input (a parse that returns `resource_exhausted`) is still timed. The
 time to reach the refusal is part of the measured outcome; a fix that makes the input parse changes what the benchmark measures.

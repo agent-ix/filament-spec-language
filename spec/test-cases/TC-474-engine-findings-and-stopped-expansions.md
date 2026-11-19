@@ -3,9 +3,9 @@ id: TC-474
 title: "The engine records findings, stops on an expansion stop, and replays a stopped trace"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-474: The engine records findings, stops on an expansion stop, and replays a stopped trace
@@ -21,9 +21,9 @@ Scope: FR-101-AC-12, FR-101-AC-13, FR-101-AC-14, FR-097-AC-5 (`Stopped`).
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/` through `explore_request`,
+Integration tests in `fsl-eval/tests/it/` through `explore_request`,
 `sample_request` and `replay`, with an empty `domains` set, `Limits` of 100
-each and the `quire.simulation.sampler/v1` `DefinitionRef`. A
+each and the `filament.simulation.sampler/v1` `DefinitionRef`. A
 test system is an integer graph whose `successors` returns a configured
 `Expansion` or `ExpansionStop` per state.
 
@@ -43,7 +43,7 @@ test system is an integer graph whose `successors` returns a configured
    against the stopping chain.
 6. Sample step 2's graph from `0` with seed `424246`, trace `0` and
    `max_steps` 2, then replay the trace with `"f"` removed from its
-   findings. Seed `424246`'s step-0 draw with `n = 2` selects index 1 (read from QSpec's
+   findings. Seed `424246`'s step-0 draw with `n = 2` selects index 1 (read from FSpec's
    sampler vector for that seed), the successor `2` in canonical order.
 
 Tag the tests `#[trace("TC-474", "FR-101-AC-n")]` and, for step 1's

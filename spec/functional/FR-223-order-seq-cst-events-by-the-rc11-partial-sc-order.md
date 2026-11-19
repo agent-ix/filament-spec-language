@@ -3,22 +3,22 @@ id: FR-223
 title: "Order seq_cst accesses and fences under ra by the RC11 partial SC order"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-437
+  - target: ix://agent-ix/filament-specification/FR-437
     type: depends_on
 ---
 # FR-223: Order seq_cst accesses and fences under ra by the RC11 partial SC order
 
 ## Description
 
-Under `ra`, `Ra` SHALL implement QSpec FR-437's RC11 partial SC order: the
+Under `ra`, `Ra` SHALL implement FSpec FR-437's RC11 partial SC order: the
 live SC events, the acyclic graph `P` over them, the per-location summary
 `F(ℓ)`, the happens-before frontiers carried by views, the `owed` sets that keep a
 collected event's predecessors, the pruning of a
@@ -55,7 +55,7 @@ verdict holds under RC11.
   component, with each event named by its thread and message position.
 - When a step occurs, `Ra` SHALL update `P`, `F(ℓ)`, the frontiers and the
   `owed` sets by
-  QSpec FR-437's new-event, frontier and collection rules.
+  FSpec FR-437's new-event, frontier and collection rules.
 - When a `seq_cst` access or fence `x` of thread `b` executes, `Ra` SHALL add
   to `P` an edge to `x` from each live SC event of `b`; from each live SC event
   on `x`'s location that happens before `b`'s current view; from each live
@@ -73,12 +73,12 @@ verdict holds under RC11.
   with an SC fence at one end whose `scb` step is an `mo` or `rb` step with a
   non-SC access at its fence-side end.
 - `Ra` SHALL enable a `seq_cst` access or fence with a given message or
-  slot choice only when QSpec FR-437's acyclicity check on the resulting
+  slot choice only when FSpec FR-437's acyclicity check on the resulting
   `P` passes, and SHALL give no step for a pruned choice.
 - When garbage collection removes an SC event, `Ra` SHALL keep its live
   predecessors as predecessors of every later SC event of its thread; of every
   later SC write to its location; and of every later SC event on its location
-  by a thread whose current view's frontier covers the removed event, by QSpec
+  by a thread whose current view's frontier covers the removed event, by FSpec
   FR-437's collection rule.
 - While some view, at rest or in flight on a channel, has a `seq_cst` fence as
   the latest live fence of its thread that the view's frontier covers,
@@ -105,9 +105,9 @@ verdict holds under RC11.
 
 - ADR-025 §15 PSC-1 to PSC-7, RA-5, RA-7.
 - FR-222 (`Ra`), FR-229 (state key).
-- QSpec FR-437 owns RC11's `seq_cst` semantics under `ra` and its litmus
+- FSpec FR-437 owns RC11's `seq_cst` semantics under `ra` and its litmus
   vectors.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-437 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-437 (Linear STD-138).

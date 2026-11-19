@@ -29,7 +29,7 @@
         "members": {
           "identityFields": "required"
         },
-        "meaning": "quire.meaning.model.object-type/v1"
+        "meaning": "filament.meaning.model.object-type/v1"
       }
     },
     {
@@ -44,7 +44,7 @@
         "members": {
           "identityFields": "optional"
         },
-        "meaning": "quire.meaning.model.record-value-type/v1"
+        "meaning": "filament.meaning.model.record-value-type/v1"
       }
     },
     {
@@ -57,7 +57,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.value-type/v1"
+        "meaning": "filament.meaning.model.value-type/v1"
       }
     },
     {
@@ -70,7 +70,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.population/v1"
+        "meaning": "filament.meaning.model.population/v1"
       }
     }
   ],
@@ -206,7 +206,7 @@
           }
         }
       ],
-      "target": "ix://quire/unit/U"
+      "target": "ix://filament/unit/U"
     },
     {
       "identity": "ix://agent-ix/checked-handoff/Total",
@@ -262,7 +262,7 @@
           }
         }
       ],
-      "target": "ix://quire/unit/U"
+      "target": "ix://filament/unit/U"
     },
     {
       "identity": "ix://agent-ix/checked-handoff/Tally",
@@ -291,7 +291,7 @@
           "operands": {
             "value": "0"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.min",
           "origin": {
             "generated": {
@@ -309,7 +309,7 @@
           "operands": {
             "value": "5"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.max",
           "origin": {
             "generated": {
@@ -350,7 +350,7 @@
           "operands": {
             "value": "-9223372036854775808"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.min",
           "origin": {
             "generated": {
@@ -368,7 +368,7 @@
           "operands": {
             "value": "9223372036854775807"
           },
-          "appliesTo": "ix://quire/native/Integer",
+          "appliesTo": "ix://filament/native/Integer",
           "diagnosticCode": "bound.max",
           "origin": {
             "generated": {
@@ -407,7 +407,7 @@
         {
           "identity": "ix://agent-ix/checked-handoff/Notice/ready",
           "name": "ready",
-          "typeRef": "ix://quire/native/Boolean",
+          "typeRef": "ix://filament/native/Boolean",
           "presence": "required",
           "nullable": false,
           "defaultKind": "none",
@@ -574,7 +574,7 @@
         {
           "identity": "ix://agent-ix/checked-handoff/Workflow/ready",
           "name": "ready",
-          "typeRef": "ix://quire/native/Boolean",
+          "typeRef": "ix://filament/native/Boolean",
           "presence": "required",
           "nullable": false,
           "defaultKind": "none",
@@ -717,7 +717,7 @@
             }
           ],
           "returns": {
-            "typeRef": "ix://quire/native/Boolean",
+            "typeRef": "ix://filament/native/Boolean",
             "multiplicity": {
               "lower": 1,
               "upper": 1,
@@ -731,7 +731,7 @@
           "origin": {
             "source": {
               "sourceIdentity": "ix://agent-ix/checked-handoff/spec",
-              "path": "spec.qspec",
+              "path": "spec.fspec",
               "startLine": 1,
               "startColumn": 1
             }

@@ -3,7 +3,7 @@ id: TC-233
 title: "Systems classification reports every no-kind cascade, not only the first"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: verifies
 ---
 # TC-233: Systems classification reports every no-kind cascade, not only the first
@@ -18,7 +18,7 @@ three, not only the first cascade encountered. Scope: FR-086-AC-1.
 
 Every fixture record here is a state real intake can produce: a component's
 `has_part_signature` is set unconditionally at intake from the construct's
-own Quire meaning id (`qsl-semantics/src/model/intake.rs`'s `read_component`), so no fixture
+own Quire meaning id (`fsl-semantics/src/model/intake.rs`'s `read_component`), so no fixture
 in this test constructs a component that intake could never emit; the two
 no-kind cascades instead come from endpoint-level conditions intake genuinely
 leaves open (an absent `direction` field, a producer-emitted `owner`

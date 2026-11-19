@@ -3,20 +3,20 @@ id: TC-1093
 title: "A consumer sets a named stage limit through the replay root"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-399
+  - target: ix://agent-ix/filament-spec-language/FR-399
     type: verifies
 ---
 # TC-1093: A consumer sets a named stage limit through the replay root
 
 ## Description
 
-Verify a consumer naming only the `qsl_replay` root raises `s1.input_bytes`
+Verify a consumer naming only the `fsl_replay` root raises `s1.input_bytes`
 by name and compiles a source over the default, and that the name is checked.
 Scope: FR-399-AC-1 to FR-399-AC-6.
 
 ## Test Procedure
 
-1. From an integration test that names only the `qsl_replay` root, generate a
+1. From an integration test that names only the `fsl_replay` root, generate a
    valid unit padded with comments to just over 1 MiB and compile it through
    `compile_admitted` with default limits.
 2. Compile it with `StageLimits::default().with_named("s1.input_bytes", n)` and

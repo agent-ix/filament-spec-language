@@ -3,7 +3,7 @@ id: TC-822
 title: "S3 refuses each exhaustiveness obligation with its payload and locus"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-318
+  - target: ix://agent-ix/filament-spec-language/FR-318
     type: verifies
 ---
 # TC-822: S3 refuses each exhaustiveness obligation with its payload and locus
@@ -20,7 +20,7 @@ Over `union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }` and `union
 2. an arm `Other::X` plus all `Shape` members;
 3. `Circle(a, b)` plus the other members;
 4. arms for `Empty` and `Circle` only.
-5. Run QSpec TC-264's cases (tag `QSpec-TC-264`).
+5. Run FSpec TC-264's cases (tag `FSpec-TC-264`).
 
 Tag each test `#[trace("TC-822", "<AC id>")]`.
 

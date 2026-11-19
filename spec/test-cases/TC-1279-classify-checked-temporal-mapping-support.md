@@ -3,7 +3,7 @@ id: TC-1279
 title: "Classify temporal mapping support from checked declarations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: verifies
 ---
 # TC-1279: Classify temporal mapping support from checked declarations

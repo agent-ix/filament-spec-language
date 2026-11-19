@@ -3,7 +3,7 @@ id: TC-541
 title: "S3 checks a refinement's step rows, over a model subject and a protocol subject"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-136
+  - target: ix://agent-ix/filament-spec-language/FR-136
     type: verifies
 ---
 # TC-541: S3 checks a refinement's step rows, over a model subject and a protocol subject

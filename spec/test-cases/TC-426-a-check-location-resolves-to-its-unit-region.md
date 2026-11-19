@@ -3,14 +3,14 @@ id: TC-426
 title: "A check location resolves to the region of the unit it was read from, or to none"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-426: A check location resolves to the region of the unit it was read from, or to none
 
 ## Description
 
-Verify FR-096's `quire_semantic_value::location::ExpressionLocation` resolution: a body or measure location
+Verify FR-096's `filament_semantic_value::location::ExpressionLocation` resolution: a body or measure location
 follows its child path to the node's span under the unit's `RawSourceRef`,
 the checked package resolves the same way, and a position in a tree not
 read from the unit has no region. This catches a resolver that returns the
@@ -39,7 +39,7 @@ Tag the tests `#[trace("TC-426", "FR-096-AC-1")]`.
 A span the map splits (layout deletions) resolves to no single region.
 No production caller builds a multi-segment map today. No production
 caller sets `embedding` yet either, so a real embedded-document unit
-still resolves under its own body reference until `qsl-source`'s document
+still resolves under its own body reference until `fsl-source`'s document
 map is wired to the assembler.
 
 ## Expected Results

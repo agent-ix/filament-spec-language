@@ -3,21 +3,23 @@ id: FR-203
 title: "Bound an exact run and settle its verdict"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/FR-741
+    type: references
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: depends_on
 ---
 # FR-203: Bound an exact run and settle its verdict
@@ -27,7 +29,7 @@ relationships:
 EN-5's cost SHALL be bounded only by `ExactProbLimits`, ADR-014 B-5 budgets
 that the request sets, each with a published default (ADR-028 LM-1 to
 LM-3). Reaching one SHALL stop the run and name the budget, its value and
-the request setting that raises it. QSL SHALL settle every item routed to
+the request setting that raises it. FSL SHALL settle every item routed to
 EN-5 as exactly one FR-331 terminal record with ADR-018's verdict kinds and
 the `ProofBasis` members `ExactValue` and `ValueBounds` (XV-1 to XV-7),
 never with ADR-024's `measured`.
@@ -67,8 +69,10 @@ pub enum ExactProbLimit { MaxStates, MaxTransitions, MaxAutomatonStates, MaxIter
 pub enum BoundsMethod { BackwardInduction { precision_bits: u32 }, IntervalIteration { precision_bits: u32, sweeps: u64 } }
 // IncompleteCause gains: PrecisionBudget { lower: Rational, upper: Rational }
 
-// UnsupportedCause gains: ZeroWeightComponent, StrictClockConstraint, DelayDistribution,
-//   ZeroDelayCycle, TimedFormShape
+// UnsupportedCause gains: DelayDistribution (exact evidence over a continuous
+//   delay distribution only; FR-204). Zero-weight components (FR-199), strict
+//   constraints, form shapes, zero-delay cycles and time-locks (FR-204) settle
+//   verdicts.
 pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub value: ExactOrBounds, pub extremum: Option<Extremum> } // Extremum: Min or Max
 ```
 
@@ -80,9 +84,9 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
   default above when omitted. Every member's setting name SHALL be
   `exact_prob.` followed by the member name, the `model` members included
   (`exact_prob.max_states`, `exact_prob.max_transitions`,
-  `exact_prob.max_automaton_states`), as QSpec FR-411's flat limits object
+  `exact_prob.max_automaton_states`), as FSpec FR-411's flat limits object
   names them (FR-255's engine table); the `model` members keep FR-126's
-  defaults. QSpec FR-411 owns each limit and its setting name; QSL
+  defaults. FSpec FR-411 owns each limit and its setting name; FSL
   publishes the default values. No member SHALL be fixed by the language, and none
   enters the obligation identity. The method choices the budgets drive
   SHALL be recorded in the result.
@@ -108,7 +112,13 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 | Another limit reached | `incomplete`, execution `resource-incomplete` | `unavailable` | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
 | Cancelled through the `Cancel` handle | `incomplete`, `cancelled{source}` | `unavailable` | `Incomplete(Cancelled{source})` (ADR-018 V-7) | incomplete |
 | Certificate rejected; replay disagrees or refuses | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})`, `Inconclusive(ReplayParity)`, `Inconclusive(ReplayRefused)` | inconclusive |
-| `NotMarkov`, `ZeroWeightComponent`, a timed cause (FR-204) | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported |
+| `NotMarkov`, `DelayDistribution` (FR-204) | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported |
+
+- A `proved` record SHALL carry its accepted certificate (FR-201) and a
+  `refuted` record its replayed witness (FR-202) as members of the item's
+  result in the `fsl analyze` result document (FR-741), so the evidence that
+  settled the item leaves the run with it and can be checked again later by
+  `fsl-probability-check`.
 
 ### Build refusals and stops
 
@@ -158,11 +168,12 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 |----|----------|--------------|
 | FR-203-AC-1 | §15.2 at `5 ms` settles `proved`, `closed-scope`, `Proved{ExactValue{24233/25000}, Certified}`, success, with one entry. §15.1 with `max_rational_bits` 1,024 settles `Proved{ValueBounds{…, BackwardInduction{64}}, Certified}`. §15.4's `Deliver` settles `refuted`, `decisive-counterexample`, after FR-202's replay, with an entry marked `Min`. | Test (TC-638) |
 | FR-203-AC-2 | FR-197-AC-4's straddling run settles `Incomplete(PrecisionBudget{lower, upper})` with `lower < 99/100 < upper`. §15.3's per-window claim with `max_states` 1,000 stops before the product completes and no partial evidence settles it: `Incomplete(ResourceExhausted)` naming `limits.max_states` and 1,000. A request omitting every limit runs with the defaults above. | Test (TC-638) |
-| FR-203-AC-3 | FR-201-AC-1's rejected certificate settles `inconclusive`, `CertificateRejected`; FR-202-AC-2's prefix-duplicated path set settles `inconclusive`, `ReplayParity`; FR-199-AC-3's zero-weight variant settles `unsupported`, `ZeroWeightComponent`. None of these records carries a `measured` value. | Test (TC-638) |
+| FR-203-AC-3 | FR-201-AC-1's rejected certificate settles `inconclusive`, `CertificateRejected`; FR-202-AC-2's prefix-duplicated path set settles `inconclusive`, `ReplayParity`; FR-204-AC-3's exponential delay with exact evidence requested settles `unsupported`, `DelayDistribution`. None of these records carries a `measured` value. | Test (TC-638) |
 | FR-203-AC-4 | A request whose proof summary holds AC-1's two proofs counts 2 proved items. `P95` with and without stated confidence parameters have different obligation identities, and the same claim requested with `exact` and with a changed `precision_bits` has one obligation identity. | Test (TC-638) |
 | FR-203-AC-5 | FR-196-AC-5's refutation settles `refuted`, `decisive-counterexample`, `Refuted`, category violation, with cause `UndefinedEvaluation{where: 1, cause: absent-key}`, after FR-202's replay; the claim's threshold plays no part. | Test (TC-641) |
 | FR-203-AC-6 | A build stopped at `max_automaton_states` settles `incomplete`, `Incomplete(LimitReached{MaxAutomatonStates, value, exact_prob.max_automaton_states})`; a cancelled build settles `Incomplete(Cancelled{source})`; a build that meets an undecided successor settles `inconclusive`, `Inconclusive(UndecidedSuccessor)`; an expansion stop naming no limit settles `failed`, as an internal fault `runtime_invariant`/`established-invariant-broken` and otherwise with the stop's own cause; an `Internal` refusal settles `failed`. | Test (TC-638) |
-| FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (QSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
+| FR-203-AC-7 | The build-result map is exhaustive over `ProductRefusal` and `ClauseOutcome` with no `_` arm. A build whose expansion stops at `max_candidates` 2 settles `incomplete`, `Incomplete(LimitReached{max_candidates, 2, expansion.max_candidates})`. A build whose `ProductRefusal`, asserted before settling, is `Expansion(stop)` naming `EvaluationMeter` (a subject whose successor expansion charges the meter before the claim reads any predicate, under an accounting bound `B` of `work_units` its first expansion exceeds) settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, naming the exhausted counter, `B` and the setting `accounting.<counter>` by FR-255 Behavior 9's rule (FSpec FR-461-AC-5); a build whose `ProductRefusal`, asserted before settling, is `PredicateRefused(Incomplete(i))` (the expansion fits under `B`, the predicate read's charge is the first one denied) settles the same way for `i`'s counter. A predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a constructed `PredicateRefused(NotBoolean)`, `PredicateRefused(KernelRefused(CheckedInvariant))` and `Translation` error each settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal return no terminal record. | Test (TC-1166) |
+| FR-203-AC-8 | The `proved` record of FR-203-AC-1 carries its `Exact` certificate in its item result, and those certificate bytes are accepted by `fsl-probability-check` in a later process; the `refuted` record of FR-203-AC-5 carries its witness, which replays. | Test (TC-2065) |
 
 ## Dependencies
 
@@ -176,7 +187,7 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub valu
 
 ## References
 
-- QSpec half, which owns `ExactProbLimits` and its setting names in the
-  request, while QSL publishes the default values, and the result content
-  onto FR-331 and FR-243: QSpec FR-411 (Linear STD-137).
+- FSpec half, which owns `ExactProbLimits` and its setting names in the
+  request, while FSL publishes the default values, and the result content
+  onto FR-331 and FR-243: FSpec FR-411 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

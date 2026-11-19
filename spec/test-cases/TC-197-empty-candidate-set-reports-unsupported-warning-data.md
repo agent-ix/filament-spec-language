@@ -3,7 +3,7 @@ id: TC-197
 title: "Empty candidate set carries the data an unsupported warning needs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: verifies
 ---
 # TC-197: Empty candidate set carries the data an unsupported warning needs

@@ -3,7 +3,7 @@ id: TC-800
 title: "Abstraction bindings with malformed parameter or field maps refuse malformed-declaration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-800: Abstraction bindings with malformed parameter or field maps refuse malformed-declaration

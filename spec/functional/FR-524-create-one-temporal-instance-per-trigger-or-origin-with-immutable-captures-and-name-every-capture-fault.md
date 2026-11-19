@@ -3,27 +3,27 @@ id: FR-524
 title: "Create one temporal instance per semantic trigger or execution origin with immutable captures, and name every activation fault"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-053
+  - target: ix://agent-ix/filament-spec-language/FR-053
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-specification/FR-093
+  - target: ix://agent-ix/filament-specification/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-094
+  - target: ix://agent-ix/filament-specification/FR-094
     type: references
 ---
 # FR-524: Create one temporal instance per semantic trigger or execution origin with immutable captures, and name every activation fault
@@ -43,7 +43,7 @@ dispositions, and none of the four carries a truth value.
 
 This is the spine successor of FR-044-AC-1 to AC-9 and the activation half of
 FR-052-AC-10 and FR-053-AC-7 to AC-9. It adds the instance model that
-`qsl-eval`'s `on each` and `on origin` position activation (FR-327) does not
+`fsl-eval`'s `on each` and `on origin` position activation (FR-327) does not
 have: the instance is keyed by the opaque trigger identity, not by a position.
 
 ## Use case
@@ -59,7 +59,7 @@ third time, the retained amount is still the one it kept.
 
 ## Semantic authority and boundary
 
-QSpec FR-093 and FR-094 own activation, guard and capture meaning. FR-053 owns
+FSpec FR-093 and FR-094 own activation, guard and capture meaning. FR-053 owns
 the opaque trigger identity. `evaluate_temporal_evidence` (FR-516) carries an
 ordered `deliveries` list for a clause that activates `on each` and an `origins`
 list for a clause that activates `on origin`, and calls `activate` once with them.
@@ -69,7 +69,7 @@ that call.
 
 ## Inputs
 
-`qsl_eval::temporal::activation::activate`, over the clause's `Activation`
+`fsl_eval::temporal::activation::activate`, over the clause's `Activation`
 (FR-515: `Origin`, or `Each { trigger, guard }`) and its ordered captures, with an
 `ActivationInput`:
 
@@ -334,7 +334,7 @@ No output holds a truth value.
   FR-523 (the counters `captures`, `instances`, `evaluation_steps`).
 - FR-516 carries the lists and the entry that calls `activate` and is a reference,
   not a dependency, of this requirement.
-- QSpec FR-093 and FR-094.
+- FSpec FR-093 and FR-094.
 
 ## References
 

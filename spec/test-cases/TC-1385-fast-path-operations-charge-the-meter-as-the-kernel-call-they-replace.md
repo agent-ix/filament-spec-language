@@ -3,7 +3,7 @@ id: TC-1385
 title: "Fast-path operations charge the meter as the kernel call they replace"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-562
+  - target: ix://agent-ix/filament-spec-language/FR-562
     type: verifies
 ---
 # TC-1385: Fast-path operations charge the meter as the kernel call they replace

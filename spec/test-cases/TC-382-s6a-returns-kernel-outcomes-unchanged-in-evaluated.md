@@ -3,7 +3,7 @@ id: TC-382
 title: "S6a returns each kernel outcome unchanged in FamilyOutcome::Evaluated"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-382: S6a returns each kernel outcome unchanged in FamilyOutcome::Evaluated
@@ -17,10 +17,10 @@ and each `o` is a fixed, literal expected outcome. The hook's
 `Evaluated(Outcome::Incomplete(i))`. Scope: FR-090-AC-1.
 
 The fixture uses an IEEE-to-rational conversion because the checker's
-definedness pass puts no obligation on it: `qsl-semantics/src/check/facts.rs` raises
+definedness pass puts no obligation on it: `fsl-semantics/src/check/facts.rs` raises
 obligations only for `Nonzero`, `Presence`, integer `Range`, `RationalRange`
 and `NonemptyReduction`. The same conversion already runs through a checked
-package in `qsl-eval/tests/it/total_functions.rs`
+package in `fsl-eval/tests/it/total_functions.rs`
 (`p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits`),
 giving `Undefined(IeeeNotFinite)` for NaN, `Refused(IeeeRationalOutOfDomain)`
 for 20.0 and `Completed(1/2)` for 0.5. A zero divisor or an out-of-domain

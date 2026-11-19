@@ -3,7 +3,7 @@ id: TC-794
 title: "Unit compile refuses ambiguous and inapplicable dispatch with no checked package"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-794: Unit compile refuses ambiguous and inapplicable dispatch with no checked package

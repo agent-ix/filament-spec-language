@@ -1,0 +1,437 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-767: explicit laws reach lifecycle checking and Markdown bodies.
+
+use filament_exact::Cancel;
+#[cfg(feature = "quire-extraction")]
+use filament_semantic_value::catalog::Category;
+#[cfg(feature = "quire-extraction")]
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
+use ix_trace_rs::trace;
+
+const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction q using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a div b }\nfunction r using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a rem b }\n";
+
+#[test]
+#[trace("TC-2197", "FR-767-AC-11")]
+fn check_operation_takes_the_supplied_law() {
+    let identity = SourceIdentity::new("agent-ix", "division-check");
+    let cancel = Cancel::new();
+    let limits = SpineLimits::default();
+    let parsed = spine::parse(
+        &ParseRequest {
+            source: &identity,
+            path: "unit.fsl",
+            bytes: UNIT.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
+        .unwrap()
+        .into_value();
+    let dependencies = DependencyInput::default();
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    let checked = spine::check_with_integer_division(
+        &parsed,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        &law,
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let emitted = spine::package(&checked, limits.package, &cancel)
+        .unwrap()
+        .into_value();
+    let wire: serde_json::Value = serde_json::from_slice(emitted.package().bytes()).unwrap();
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let laws: Vec<_> = nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node["body"]["operation"]["identity"].as_str(),
+                Some("filament.op.integer.div" | "filament.op.integer.rem")
+            )
+        })
+        .map(|node| {
+            node["body"]["operation"]["laws"][0]["definition"]["identity"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(laws, vec!["filament.value.integer-division.floor/v1"; 2]);
+    let error = spine::check(
+        &parsed,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        limits,
+        &cancel,
+    )
+    .unwrap_err();
+    let refusal = spine::refusal_or_fault(error).unwrap();
+    assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusal.cause(), Some("missing-selection"));
+    let spine::CompileRefusal::Check { refusals, .. } = *refusal else {
+        panic!("expected both operator check refusals");
+    };
+    assert_eq!(refusals.len(), 2);
+    assert!(refusals.iter().all(|refusal| {
+        refusal.cause.code() == fsl_foundation::Code::MissingDeclaration
+            && refusal.cause.cause() == Some("missing-selection")
+    }));
+    assert_ne!(refusals[0].location, refusals[1].location);
+}
+
+#[test]
+#[trace("TC-2196", "FR-767-AC-8")]
+fn multi_unit_checker_takes_one_caller_selection() {
+    let cancel = Cancel::new();
+    let limits = SpineLimits::default();
+    let dependencies = DependencyInput::default();
+    let units = ["first", "second"]
+        .into_iter()
+        .map(|name| {
+            let identity = SourceIdentity::new("agent-ix", name);
+            let text = UNIT
+                .replace("function q ", &format!("function q_{name} "))
+                .replace("function r ", &format!("function r_{name} "));
+            spine::parse(
+                &ParseRequest {
+                    source: &identity,
+                    path: "unit.fsl",
+                    bytes: text.as_bytes(),
+                },
+                limits.source,
+                &cancel,
+            )
+            .unwrap()
+            .into_value()
+        })
+        .collect();
+    let admitted = spine::admit_parsed_unit_list(units, &dependencies).unwrap();
+    let models = spine::select_units(
+        &admitted,
+        &Default::default(),
+        limits.model,
+        limits.source,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    let checked = spine::check_units_with_integer_division(
+        &admitted,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        &law,
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let mut laws = Vec::new();
+    for unit in checked {
+        let emitted = spine::package(&unit, limits.package, &cancel)
+            .unwrap()
+            .into_value();
+        let wire: serde_json::Value = serde_json::from_slice(emitted.package().bytes()).unwrap();
+        for node in wire["semantic_graph"]["nodes"].as_array().unwrap() {
+            if matches!(
+                node["body"]["operation"]["identity"].as_str(),
+                Some("filament.op.integer.div" | "filament.op.integer.rem")
+            ) {
+                laws.push(
+                    node["body"]["operation"]["laws"][0]["definition"]["identity"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    assert_eq!(laws, vec!["filament.value.integer-division.floor/v1"; 4]);
+    let refusal = spine::check_units(
+        &admitted,
+        "division-check".to_owned(),
+        &models,
+        &dependencies,
+        limits,
+        &cancel,
+    )
+    .unwrap_err();
+    let refusal = spine::refusal_or_fault(refusal).unwrap();
+    let spine::CompileRefusal::Check { refusals, .. } = *refusal else {
+        panic!("expected every unit's missing-selection refusals");
+    };
+    assert_eq!(refusals.len(), 4);
+    assert!(refusals
+        .iter()
+        .all(|refusal| refusal.cause.cause() == Some("missing-selection")));
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-2197", "FR-767-AC-11")]
+fn every_fence_takes_the_supplied_law() {
+    let text = format!(
+        "## Invariants\n### First\n```ix:native\n{UNIT}```\n### Second\n```ix:native\n{UNIT}```\n"
+    );
+    let original = fsl_foundation::Source::read(
+        SourceIdentity::new("agent-ix", "doc"),
+        "spec.md",
+        text.as_bytes(),
+        text.len(),
+    )
+    .unwrap();
+    let packages = Default::default();
+    let dependencies = DependencyInput::default();
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    let mut request = spine::NativeFenceRequest {
+        original: &original,
+        packages: &packages,
+        dependencies: &dependencies,
+        extensions: None,
+        integer_division: Some(&law),
+    };
+    let report = spine::check_native_fences(&request, Default::default(), &Cancel::new())
+        .unwrap()
+        .into_value();
+    assert_eq!(report.fences.len(), 2);
+    assert_eq!(
+        report
+            .fences
+            .iter()
+            .map(|fence| fence.category)
+            .collect::<Vec<_>>(),
+        vec![Category::Success; 2]
+    );
+    assert_eq!(report.fences[0].body.identity, "doc#First");
+    assert_eq!(report.fences[1].body.identity, "doc#Second");
+    assert_eq!(
+        fsl_replay::OutcomeDocument::from_native_fences(&report).native_fences(),
+        Some(&report)
+    );
+    let document: serde_json::Value = serde_json::from_slice(
+        &fsl_replay::OutcomeDocument::from_native_fences(&report)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(document["operation"], "check");
+    assert_eq!(document["items"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        document["items"][0]["unit"]["body"]["identity"],
+        "doc#First"
+    );
+    request.integer_division = None;
+    let report = spine::check_native_fences(&request, Default::default(), &Cancel::new())
+        .unwrap()
+        .into_value();
+    assert_eq!(report.fences.len(), 2);
+    for fence in report.fences {
+        assert_eq!(fence.category, Category::Refusal);
+        assert!(fence
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.diagnostic.cause() == Some("missing-selection")));
+        assert!(!fence.diagnostics[0].original_regions.is_empty());
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-1743", "FR-662-AC-1")]
+fn refused_fence_keeps_body_span_and_original_coordinates() {
+    let healthy = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction good using v(): Boolean pure { true }\n";
+    let broken = healthy.replace("true", "1 + true");
+    let text = format!(
+        "## Invariants\n   ### Healthy\n```ix:native\n{healthy}```\n   ### Broken\n```ix:native\n{broken}```\n```text\nignored\n```\n"
+    );
+    let original = fsl_foundation::Source::read(
+        SourceIdentity::new("agent-ix", "doc"),
+        "spec.md",
+        text.as_bytes(),
+        text.len(),
+    )
+    .unwrap();
+    let report = spine::check_native_fences(
+        &spine::NativeFenceRequest {
+            original: &original,
+            packages: &Default::default(),
+            dependencies: &Default::default(),
+            extensions: None,
+            integer_division: None,
+        },
+        Default::default(),
+        &Cancel::new(),
+    )
+    .unwrap()
+    .into_value();
+    assert_eq!(report.fences.len(), 2);
+    assert_eq!(report.fences[0].category, Category::Success);
+    assert!(report.fences[0].diagnostics.is_empty());
+    let refused = &report.fences[1];
+    assert_eq!(refused.category, Category::Refusal);
+    assert_eq!(refused.body.identity, "doc#Broken");
+    let diagnostic = &refused.diagnostics[0];
+    assert_eq!(diagnostic.diagnostic.code(), "ill_typed");
+    assert_eq!(diagnostic.unit.document, *original.identity());
+    assert_eq!(diagnostic.unit.path, "spec.md");
+    assert_eq!(diagnostic.unit.clause.as_deref(), Some("Broken"));
+    assert_eq!(diagnostic.unit.body.identity, "doc#Broken");
+    let Some(fsl_replay::OutcomeLocus::Region { start, end, .. }) = diagnostic.diagnostic.locus()
+    else {
+        panic!("expected body byte coordinates");
+    };
+    let body_start = text.find(&broken).unwrap();
+    let original_start = body_start + usize::try_from(*start).unwrap();
+    let original_end = body_start + usize::try_from(*end).unwrap();
+    let [fsl_replay::OutcomeLocus::Located { file, span }] = diagnostic.original_regions.as_slice()
+    else {
+        panic!("expected one verified original region");
+    };
+    assert_eq!(file, "spec.md");
+    assert_eq!(Some(span.start), original.position(original_start));
+    assert_eq!(Some(span.end), original.position(original_end));
+    let document = fsl_replay::OutcomeDocument::from_native_fences(&report);
+    assert_eq!(document.category(), Category::Refusal);
+    let wire: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+    assert_eq!(wire["operation"], "check");
+    assert_eq!(wire["items"].as_array().unwrap().len(), 2);
+    assert_eq!(wire["items"][1]["diagnostics"][0]["code"], "ill_typed");
+    assert_eq!(wire["category"], "refusal");
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-1743", "FR-662-AC-1", "FR-662-AC-2")]
+fn native_fence_headings_accept_at_most_three_leading_spaces() {
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    for indentation in ["", " ", "  ", "   ", "    ", "\t"] {
+        let text = format!("{indentation}### Indented\n```ix:native\n{UNIT}```\n");
+        let original = fsl_foundation::Source::read(
+            SourceIdentity::new("agent-ix", "doc"),
+            "spec.md",
+            text.as_bytes(),
+            text.len(),
+        )
+        .unwrap();
+        let report = spine::check_native_fences(
+            &spine::NativeFenceRequest {
+                original: &original,
+                packages: &Default::default(),
+                dependencies: &Default::default(),
+                extensions: None,
+                integer_division: Some(&law),
+            },
+            Default::default(),
+            &Cancel::new(),
+        )
+        .unwrap()
+        .into_value();
+        let [fence] = report.fences.as_slice() else {
+            panic!("expected one native fence for indentation {indentation:?}");
+        };
+        assert_eq!(fence.document, *original.identity());
+        assert_eq!(fence.path, "spec.md");
+        assert_eq!(fence.first_line, 3);
+        if indentation.len() <= 3 && !indentation.contains('\t') {
+            assert_eq!(fence.clause.as_deref(), Some("Indented"));
+            assert_eq!(fence.body.identity, "doc#Indented");
+            assert_eq!(fence.category, Category::Success, "{indentation:?}");
+            assert!(fence.diagnostics.is_empty());
+        } else {
+            assert_eq!(fence.clause, None);
+            assert_eq!(fence.category, Category::Refusal);
+            assert_eq!(
+                fence.diagnostics[0].diagnostic.cause(),
+                Some("missing-name")
+            );
+        }
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-1743", "FR-662-AC-2")]
+fn duplicate_and_headless_fences_refuse_independently_and_cancel_returns_no_report() {
+    let text = format!("```ix:native\n{UNIT}```\n## Invariants\n### Duplicate\n```ix:native\n{UNIT}```\n```ix:native\n{UNIT}```\n### Good\n```ix:native\n{UNIT}```\n```text\nignored\n```\n");
+    let original = fsl_foundation::Source::read(
+        SourceIdentity::new("agent-ix", "doc"),
+        "spec.md",
+        text.as_bytes(),
+        text.len(),
+    )
+    .unwrap();
+    let packages = Default::default();
+    let dependencies = DependencyInput::default();
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    let request = spine::NativeFenceRequest {
+        original: &original,
+        packages: &packages,
+        dependencies: &dependencies,
+        extensions: None,
+        integer_division: Some(&law),
+    };
+    let first = spine::check_native_fences(&request, Default::default(), &Cancel::new())
+        .unwrap()
+        .into_value();
+    assert_eq!(
+        first,
+        spine::check_native_fences(&request, Default::default(), &Cancel::new())
+            .unwrap()
+            .into_value()
+    );
+    assert_eq!(first.fences.len(), 4);
+    assert_eq!(
+        first.fences[0].diagnostics[0].diagnostic.cause(),
+        Some("missing-name")
+    );
+    for fence in &first.fences[1..3] {
+        assert_eq!(fence.actual, Some(2));
+        assert_eq!(
+            fence.diagnostics[0].diagnostic.cause(),
+            Some("extraction-clause-count")
+        );
+        assert_eq!(
+            fence.diagnostics[0].diagnostic.code(),
+            Code::ExtractionClauseCount.as_str()
+        );
+    }
+    assert_eq!(first.fences[3].category, Category::Success);
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    assert!(matches!(
+        spine::check_native_fences(&request, Default::default(), &cancel),
+        Err(fsl_foundation::diagnostic::StageFailure::Cancelled(
+            filament_exact::CancelCause::Requested
+        ))
+    ));
+}

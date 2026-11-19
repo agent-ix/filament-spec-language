@@ -3,7 +3,7 @@ id: TC-1294
 title: "The FR-042 successor map is complete and true"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-500
+  - target: ix://agent-ix/filament-spec-language/FR-500
     type: verifies
 ---
 # TC-1294: The FR-042 successor map is complete and true

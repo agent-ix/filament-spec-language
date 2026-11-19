@@ -78,7 +78,7 @@ macro_rules! cases {
     ($($name:ident => $spec:expr),+ $(,)?) => {
         /// Explicit authored scenarios; expected results live in the integration test.
         #[derive(Clone, Copy, Debug)]
-        pub enum Case { $($name),+ }
+        pub enum Case { $(#[doc = "One case of the catalog."] $name),+ }
 
         /// Every declared case, in deterministic generation order.
         pub const CASES: &[Case] = &[$(Case::$name),+];
@@ -164,7 +164,7 @@ cases! {
         input: Input::Update { pre: HEALTHY, post: &[ROOT, Row { parent: None, ..CHILD }] },
         ..PARENT_CASE
     },
-    // FR-108's QSpec FR-180-AC-4 boundary cases: 0, 1000 (in range) and
+    // FR-108's FSpec FR-180-AC-4 boundary cases: 0, 1000 (in range) and
     // -1, 1001 (out of range) against ConfigVersion's own `Int[0, 1000]`
     // bound.
     BoundaryZero => CaseSpec {

@@ -3,15 +3,15 @@ id: FR-016
 title: "Check native types and prove guarded definedness"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-006
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
 ---
 # FR-016: Check native types and prove guarded definedness
@@ -68,7 +68,7 @@ implicitly converted from IR Length's different integer type.
 When a field of an admitted domain package is typed, the native checker shall
 read its optionality from the field's declared `presence` and never from its
 multiplicity, as [FR-056](FR-056-admit-domain-package-model-declarations.md)
-states (QSpec `model-complete.md` Presence row). Multiplicity `[1, 1]` gives
+states (FSpec `model-complete.md` Presence row). Multiplicity `[1, 1]` gives
 the field's leaf type, multiplicity `[0, u]` gives a sequence of at most `u`
 leaf elements, and an `optional` presence wraps that type in an option. A
 multiplicity lower bound of `0` never gives an option.
@@ -94,7 +94,7 @@ does not lower their execution semantics. Unsupported shapes and input validatio
 requirements remain explicit. A checked package is not an IR executable package
 and contains no healthy/violating assessment of an unsupplied population.
 
-**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state clauses), FR-172 (hyper and relation clauses) and FR-096 (stage limits and refusal loci), with FR-091 and FR-495 owning the unreachable-branch behavior of FR-016-AC-7, checked by the qsl-semantics suites tagged with those requirements.
+**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state clauses), FR-172 (hyper and relation clauses) and FR-096 (stage limits and refusal loci), with FR-091 and FR-495 owning the unreachable-branch behavior of FR-016-AC-7, checked by the fsl-semantics suites tagged with those requirements.
 
 ## Acceptance Criteria
 

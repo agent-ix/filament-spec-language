@@ -3,7 +3,7 @@ id: TC-177
 title: "The proof-result envelope maps every FR-331 outcome to its exact O-16 category"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: verifies
 ---
 # TC-177: The proof-result envelope maps every FR-331 outcome to its exact O-16 category
@@ -37,7 +37,7 @@ of keeping it distinct within the `success` category. Scope: FR-069-AC-1.
 1. Construct minimal FR-331 terminal records for each of the nine wire
    values FR-331's `results` vocabulary admits: `proved` (with at least one
    SUCCESS check), `proved` with zero SUCCESS checks (vacuous), `tested`,
-   `refuted`, `declined` (with a typed refusal cause and a QSL catalog code),
+   `refuted`, `declined` (with a typed refusal cause and an FSL catalog code),
    `declined` (with a typed refusal cause and a STD-001 registry code, one
    unregistered), `unsupported` (with a
    typed unavailability cause), `incomplete` (timeout cause), `incomplete`
@@ -85,6 +85,6 @@ of keeping it distinct within the `success` category. Scope: FR-069-AC-1.
   vacuity. A vacuous Kani `proved` keeps
   `Proved { basis: Checks { success_checks: 0 }, certification: Certified }`,
   distinct from ValueValidity's `Inconclusive` record.
-- A `declined` record with a QSL catalog code and one with a STD-001 registry
+- A `declined` record with an FSL catalog code and one with a STD-001 registry
   code (including an unregistered one) both map to `refusal`, keep their own
   code, and compare unequal: no code is remapped across registries.

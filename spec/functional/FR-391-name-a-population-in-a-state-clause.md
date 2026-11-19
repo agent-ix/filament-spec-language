@@ -3,31 +3,33 @@ id: FR-391
 title: "Name a domain-package population in a state clause or a holds atom"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-380
+  - target: ix://agent-ix/filament-spec-language/FR-380
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-883
     type: references
 ---
 # FR-391: Name a domain-package population in a state clause or a holds atom
@@ -35,11 +37,15 @@ relationships:
 ## Description
 
 `allInstances<T>(p)` and `lookup<T>(p, r)` read an explicit population
-binding `p` (QSpec FR-153). A function names one through a
+binding `p` (FSpec FR-153). A function names one through a
 `Population<T>[N]` parameter. A **population position** is the body of a
 unit-level state clause (an invariant, a precondition, a postcondition or a
 step's clause, FR-102), the predicate of a `terminal when` declaration
-(FR-124), which reads `current`, or a `holds` atom of a temporal clause. The invariant
+(FR-124), which reads `current`, a `holds` atom of a temporal clause, or a
+protocol slot that reads model state: a protocol, registration or activation
+capture, an event or `send` constraint, and a `finish` constraint (FSpec
+FR-464 stage table; FR-883). In a protocol slot the population is bound to
+the model state of the protocol state the slot is evaluated in. The invariant
 of a record value type or an event type (FR-366) is not a population
 position: it keeps FR-366's refusal of a population read, since such a value
 is evaluated with no object universe. In a population
@@ -48,13 +54,13 @@ declares by the qualified name `M::P`, where `M` is a model alias of the unit
 and `P` is a population of `M`'s domain package. The name is the same
 `M::member` spelling that `bound` (FR-380) uses for a population.
 
-"QSpec unchanged" holds for syntax only: the complete-V1 `primary` already
+"FSpec unchanged" holds for syntax only: the complete-V1 `primary` already
 derives `qualified-name` without a call, and FR-091 builds it as a `Name`,
-so S1 and S2 need no new production. The meaning is QSL's own, and it agrees
-with QSpec FR-153: the name selects the population declaration and the
+so S1 and S2 need no new production. The meaning is FSL's own, and it agrees
+with FSpec FR-153: the name selects the population declaration and the
 binding is not ambient. Here the binding of `M::P` comes from the admitted
 observation (FR-106), and in a checked package the name is the population
-reference of QSpec FR-322 ("Population references").
+reference of FSpec FR-322 ("Population references").
 
 A population is a binding, not a value. The name therefore denotes the
 population only where a population is read: as the population operand of
@@ -64,6 +70,14 @@ position. It is no operand of any other operator, no `let` initializer and no
 result. A function body is not a population position: a function names a
 population only through a `Population<T>[N]` parameter, so no population is
 ambient in a function.
+
+A protocol slot that bars model state (the activation and trigger guards, the
+retry relation, the recovery predicate, a `choice` or `repeat` guard, a
+`visible` entry, a `check` condition and a FIFO key) is not a population
+position. A population read there keeps FSpec FR-464's refusal,
+`ill_typed`/`operator-ineligible` at the read, rather than this
+requirement's `missing-name`, because the name resolves and only the slot
+bars it.
 
 The data predicate of a timed model's `time invariant when` and `urgent when`
 is a population position, read at `current` like a unit-level invariant. It
@@ -98,7 +112,7 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   whose population operand `e` is a `Name` with two segments, or a quantifier
   or population form whose domain is such a `Name`.
 - The unit's model aliases and the populations of each alias's admitted
-  domain package (FR-084; QSpec FR-153).
+  domain package (FR-084; FSpec FR-153).
 
 ## Outputs
 
@@ -143,9 +157,13 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   population is `[0, N]` and of a `sum` with summand bounded by `[lo, hi]` is
   `[min(0, N*lo), max(0, N*hi)]`, for the authored maximum `N` (FR-380); with
   no authored maximum the result is unbounded above (and below, for a sum).
-- The checker SHALL refuse `seq` in a clause outside a refinement
-  declaration `unsupported_construct`/`expression-form` at its span: it ranges
-  over integers, has no population domain and is not a population form here.
+- The checker SHALL admit `seq(i in lo .. hi: e)` in a population position
+  with FR-139's typing: it ranges over integers and reads no population, so
+  the reason a population form is confined to population positions does not
+  restrict it, and a clause body may build a sequence as a refinement row
+  does. In a population position `only(` and `seq(` followed by `ident in`
+  read as the forms, as they do in a refinement row, and so hide a pure
+  function of the same name there.
 - The checker SHALL check `T` of `allInstances<T>` and `lookup<T>` as it does
   for a parameter operand (FR-084); the queried type need not be `U`, only
   covered by a member type of the population at evaluation, where an
@@ -173,14 +191,30 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   `Population<U>[N]` type node is anonymous, keyed by `(U, N)` alone (FR-094),
   so the type node cannot identify the population. `allInstances<Counter>(M::counters)`
   and `allInstances<Counter>(M::archive)` therefore check to different terms.
-  Package emission (S4) SHALL emit the term as QSpec FR-322's population
+  Package emission (S4) SHALL emit the term as FSpec FR-322's population
   reference, the `relation`/`population` node keyed by the declaration key
-  alone, as operand 0 of the `quire.op.model.all_instances` or
-  `quire.op.model.lookup` application, with the authored maximum `N` entering
+  alone, as operand 0 of the `filament.op.model.all_instances` or
+  `filament.op.model.lookup` application, with the authored maximum `N` entering
   through the application's `result_type` and not through the population
   reference. A population read as a domain emits the population reference, the
   `all_instances` application over it and the quantifier or population form
   over that application, as FR-322 "Quantifier domain" states.
+
+### Lowering of population forms
+
+- Lowering SHALL lower every checked population form (`count`, `sum`,
+  `exists`, `all`, `only` and `seq`) and every population domain in each
+  position where it checks, a refinement row (FR-139) or a population
+  position, and SHALL NOT refuse it as a checked form with no S4
+  representation. A population form over `M::P` lowers as the same form over
+  the `all_instances` application above: `count`, `sum`, `exists` and `all` to
+  the FR-093 collection rows `count`, `sum`, `exists` and `forall` with the
+  condition as a `filter` of the domain, and `only` to the FR-093 `Query{visit: Only}` row, the catalogued
+  `filament.op.collection.only` (FR-998); `seq(i in lo .. hi: e)` lowers to the FR-093 sequence construction over
+  the integer range `lo .. hi` with `e` as its element term. A refinement
+  row's read of a history field lowers as that history field's read under
+  FR-139 and FSpec FR-322. A checked form that lowering cannot place is an
+  internal fault (`runtime_invariant`), never `unknown_required_feature`.
 
 ### Evaluation
 
@@ -195,9 +229,15 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   `Incomplete` with `incomplete_population`/`incomplete-scope` before
   evaluation, a population with no row in the snapshot returns `Incomplete`
   with `incomplete_population`/`missing-required-artifact` (FR-106 check 7;
-  QSpec FR-153-AC-14), and an admitted one is a closed binding in FR-084's sense.
+  FSpec FR-153-AC-14), and an admitted one is a closed binding in FR-084's sense.
+- The protocol evaluator SHALL evaluate the same operations and domains in a
+  protocol slot that is a population position, reading the population named
+  by the operand term's declaration key from the model state of the protocol
+  state the slot is evaluated in (FR-883). That model state's population row
+  is the binding, under the same `complete`, missing-row and coverage rules
+  as a snapshot's.
 - The result, the coverage check of `T` and the `population.visit` charges
-  per member are FR-084's and QSpec's `value-accounting.md`, unchanged: the
+  per member are FR-084's and FSpec's `value-accounting.md`, unchanged: the
   coverage check charges nothing, each member visited charges once.
 
 ### Requirements
@@ -224,11 +264,13 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
 | FR-391-AC-2 | `M::nothing` as the operand refuses `missing_declaration`/`missing-name` at `nothing`; an alias `M` that is also an enum name refuses `ambiguous_declaration`/`ambiguous-name` at the name. | Test (TC-1076) |
 | FR-391-AC-3 | `M::counters = M::counters`, `let q = M::counters in allInstances<M::Counter>(q)`, `size(M::counters)` and a clause body that is `M::counters` each refuse `ill_typed`/`operator-ineligible` at the name, because a population is no value; `M::Counter = M::Counter` refuses `missing_declaration`/`missing-name` at `Counter`, since `Counter` is a type. | Test (TC-1076) |
 | FR-391-AC-4 | With `bound B on M::counters [3]` the operand is `Population<Counter>[3]` and `allInstances<M::Counter>(M::counters)` is `Set<Reference<Counter>>[0,3]`; the record's `counters` domain is `Population(Some(3))`. With a second population `archive` of `Counter`, a clause on `M::Counter` refuses `ambiguous_declaration`/`ambiguous-name` at its `on` (FR-104-AC-5) whichever population its body names. With a type `Widget` that only a population `widgets` covers, a clause on `M::Widget` whose body names `M::counters` records `widgets` (the context population) and `counters` as its two domains. | Test (TC-1076) |
-| FR-391-AC-5 | Evaluated at S6a over a snapshot whose `counters` holds `a`, `b` and `c`, the precondition of AC-1 decides over exactly those three, in canonical reference-key order; over a snapshot in which `counters` is not marked `complete`, it returns `Incomplete` with `incomplete_population`/`incomplete-scope`, as for a parameter operand; `allInstances<M::Other>(M::counters)` with `Other` uncovered by the population is FR-084's typed incomplete result, whose QSpec code and cause are `incomplete_population`/`unclosed-subtypes` (FR-084-AC-2); a snapshot with no row for `counters` returns `incomplete_population`/`missing-required-artifact`. | Test (TC-1076) |
-| FR-391-AC-6 | With populations `counters` and `archive` of `Counter` and an operation `grow` on `Widget`, a type covered only by `widgets`, the preconditions `pre A using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` and `pre B using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::archive) : true) }` check to two different terms, each carrying its own population's declaration key, and of the populations `A` reads `AnyMembership{counters}` and not `AnyMembership{archive}`, and `B` the reverse (each footprint also holds the receiver's own `Membership` per FR-155); a third precondition `pre C using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` in the same unit reads `counters` a second time; the precondition of FR-155-AC-2 over `counters`, in a unit without `archive` (with it, a clause on `M::Counter` is ambiguous, AC-4), holds `AnyField{v}` and `AnyMembership{counters}`. The emitted package of the `A`, `B`, `C` unit holds one population reference per declared population read, so `A` and `B` reference two nodes and `C` references the same node as `A`; the package is admitted by the full reader (QSpec FR-322-AC-83). | Test (TC-1076) |
+| FR-391-AC-5 | Evaluated at S6a over a snapshot whose `counters` holds `a`, `b` and `c`, the precondition of AC-1 decides over exactly those three, in canonical reference-key order; over a snapshot in which `counters` is not marked `complete`, it returns `Incomplete` with `incomplete_population`/`incomplete-scope`, as for a parameter operand; `allInstances<M::Other>(M::counters)` with `Other` uncovered by the population is FR-084's typed incomplete result, whose FSpec code and cause are `incomplete_population`/`unclosed-subtypes` (FR-084-AC-2); a snapshot with no row for `counters` returns `incomplete_population`/`missing-required-artifact`. | Test (TC-1076) |
+| FR-391-AC-6 | With populations `counters` and `archive` of `Counter` and an operation `grow` on `Widget`, a type covered only by `widgets`, the preconditions `pre A using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` and `pre B using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::archive) : true) }` check to two different terms, each carrying its own population's declaration key, and of the populations `A` reads `AnyMembership{counters}` and not `AnyMembership{archive}`, and `B` the reverse (each footprint also holds the receiver's own `Membership` per FR-155); a third precondition `pre C using v on M::Widget::grow { forall(o in allInstances<M::Counter>(M::counters) : true) }` in the same unit reads `counters` a second time; the precondition of FR-155-AC-2 over `counters`, in a unit without `archive` (with it, a clause on `M::Counter` is ambiguous, AC-4), holds `AnyField{v}` and `AnyMembership{counters}`. The emitted package of the `A`, `B`, `C` unit holds one population reference per declared population read, so `A` and `B` reference two nodes and `C` references the same node as `A`; the package is admitted by the full reader (FSpec FR-322-AC-83). | Test (TC-1076) |
 | FR-391-AC-7 | On the `Counter` unit with `bound B on M::counters [3]` and a `Watch` type with population `watchers`: `post P using v on M::Counter::bump { forall(o in M::counters : o.v < 2) }` checks as a `Postcondition` reading `post`; `pre Q using v on M::Counter::bump { exists(o in M::counters : o.v = 2) }` checks as a `Precondition` reading `pre`; `invariant Cap using v on M::Counter at current { count(o in M::counters where o.v = 0) < 4 }` checks with the `count` result typed `Int[0,3]`, and without the bound the result is unbounded above; `temporal C using t0 over (w: M::Watch) clock "model-steps" on origin { eventually holds(forall(x in M::counters : x.v < 2)) }` checks with `counters` a domain of the temporal clause's record. Each is evaluated at S6a over a snapshot whose `counters` is `complete` to the same result as its `allInstances<M::Counter>(M::counters)` spelling, and over a `counters` that is not `complete` it returns `Incomplete` with `incomplete_population`/`incomplete-scope`. | Test (TC-1076) |
-| FR-391-AC-8 | `M::counters` in a function body and in the type-level invariant of an object type refuses `missing_declaration`/`missing-name` at `counters`, and `seq(i in 0 .. 2: i)` in an invariant refuses `unsupported_construct`/`expression-form` at its span. | Test (TC-1076) |
+| FR-391-AC-8 | `M::counters` in a function body and in the type-level invariant of an object type refuses `missing_declaration`/`missing-name` at `counters`. | Test (TC-1076) |
 | FR-391-AC-9 | On the `Counter` unit, `terminal Done using v on M when { forall(c in M::counters : c.v = 2) };` checks to `When` with `counters` as a domain read at `current`, and is evaluated over the snapshot's population as the `allInstances` spelling is; `M::counters` in a record-value invariant still refuses as AC-8 states. | Test (TC-1076) |
+| FR-391-AC-10 | On the `Counter` unit with `bound B on M::counters [3]`: `invariant S using v on M::Counter at current { size(seq(i in 0 .. 2: i)) = 3 }` checks with the `seq` typed `Sequence<Int[0, 2]>[0, 3]`, and `invariant C using v on M::Counter at current { count(o in M::counters where o.v = 2) <= 3 }`, `invariant E using v on M::Counter at current { exists(o in M::counters where o.v = 2) or true }` and `invariant O using v on M::Counter at current { only(o in M::counters where o.v = 2: o.v) = 2 }` each check and emit a checked package with no refusal: the population forms lower over the `all_instances` application of the `counters` population reference, and no refusal has code `unknown_required_feature`. | Test (TC-1904) |
+| FR-391-AC-11 | On the `Counter` unit, a protocol `protocol W using p over (c: M::Counter) on origin` whose capture `n: Integer = size(allInstances<M::Counter>(M::counters))`, whose registration or activation capture `o: Option<M::Counter> = lookup<M::Counter>(M::counters, c)`, whose `send` constraint `count(x in M::counters where x.v = 0) >= 1` and whose `finish` constraint `forall(x in M::counters : x.v < 3)` each name `M::counters` checks with no refusal, each read resolving to the `counters` population reference; evaluated over a protocol state whose model state holds counters `a` and `b`, the capture binds 2 and `lookup` binds `a`'s reference for `c` = `a`. The same `M::counters` read in a `choice` guard refuses `ill_typed`/`operator-ineligible` at the read, not `missing-name`. | Test (TC-2832) |
 
 ## Dependencies
 
@@ -236,5 +278,5 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   FR-094 (lowering and type nodes), FR-104 (state clause checking and the
   requirement record), FR-380 (the authored bound); FR-230 (the timed
   predicates whose population scope this requirement gives).
-- QSpec FR-153 and `shared-grammar.md` (`qualified-name` primary,
+- FSpec FR-153 and `shared-grammar.md` (`qualified-name` primary,
   `allInstances<T>(p)`).

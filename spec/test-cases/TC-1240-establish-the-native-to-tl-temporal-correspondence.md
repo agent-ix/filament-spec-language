@@ -3,13 +3,13 @@ id: TC-1240
 title: "Establish the native-to-TL temporal correspondence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-contract-ir/FR-350
+  - target: ix://agent-ix/filament-contract-ir/FR-350
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: references
-  - target: ix://agent-ix/quire-specification/FR-092
+  - target: ix://agent-ix/filament-specification/FR-092
     type: references
-  - target: ix://agent-ix/quire-specification/FR-095
+  - target: ix://agent-ix/filament-specification/FR-095
     type: references
 ---
 # TC-1240: Establish the native-to-TL temporal correspondence
@@ -17,26 +17,26 @@ relationships:
 ## Description
 
 These are the public Rust API controls for the Contract IR correspondence
-requirement `quire-contract-ir:FR-350`, using the QSL `mapping_support`
+requirement `filament-contract-ir:FR-350`, using the FSL `mapping_support`
 classification (FR-527) over the checked package.
 
 Each case compiles a real native temporal declaration and emits a strict
-`quire.compiled-protocol/2` package. It classifies the declaration through
+`filament.compiled-protocol/2` package. It classifies the declaration through
 `mapping_support_v2`, then projects it with `temporal::project_tl` against
 an FR-043 trace built independently. The native and TL results are joined
 with `temporal::join_tl`.
 
 The TL formula, trace or history and request are admitted by the real
-tl-syntax, tl-mltl and quire-mltl public readers, and are evaluated by those
+tl-syntax, tl-mltl and filament-mltl public readers, and are evaluated by those
 owners. The compiler evaluates no TL artifact.
 
 Expected truths come from the authored source and the profile definitions,
 never from either evaluator's output.
 
-The complete bounded-past operator set is defined by QSpec FR-092; strong
+The complete bounded-past operator set is defined by FSpec FR-092; strong
 previous is `once[1,1]`.
 
-Scope: Contract IR FR-350; QSL FR-045 supplies the classification and owner
+Scope: Contract IR FR-350; FSL FR-045 supplies the classification and owner
 inputs.
 
 ## Test Procedure
@@ -44,7 +44,7 @@ inputs.
 1. Emit and admit `always[0,1] holds(p)` under the event-position profile.
    Classify it under a complete surrounding execution and under an open one,
    and project each. Require the formula, trace and request to pass their
-   owner readers. Over every member of QSpec FR-095-AC-1's exhaustive
+   owner readers. Over every member of FSpec FR-095-AC-1's exhaustive
    bounded-future formula and trace population, evaluate natively with
    `evaluate_v2` and through the TL owner, and join the two results
    (FR-350-AC-1).

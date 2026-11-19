@@ -2,27 +2,28 @@
 //! TC-1173 (FR-404): the context names an item by a member's request index, which
 //! is also the index of the
 //! item `items_from_requirements` writes for that member (FR-075). These
-//! need `qsl-route`, which only the root crate's tests hold.
+//! need `fsl-route`, which only the root crate's tests hold.
 
+use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use ix_trace_rs::trace;
-use qsl_foundation::{BackendId, SourceIdentity};
-use qsl_replay::spine::default_accounting;
-use qsl_replay::{
+use filament_exact::Cancel;
+use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::supplied_stop::SuppliedLimits;
+use fsl_foundation::{BackendId, SourceIdentity};
+use fsl_replay::spine::default_accounting;
+use fsl_replay::{
     replay, run_with_replay_context, Call, CallArgument, CallerLimits, CanonicalAssignment,
     DependencyInput, InconclusiveCause, Integer, ObjectEnvironment, ReplayLimits, TerminalRecord,
     TerminalValue, Value, WitnessValue,
 };
-use qsl_route::request::items_from_requirements;
-use qsl_route::Registry;
-use qsl_semantics::check::PackageDeclarations;
-use quire_exact::Cancel;
-use quire_semantic_value::checking::CheckingLimits;
-use quire_semantic_value::supplied_stop::SuppliedLimits;
+use fsl_route::request::items_from_requirements;
+use fsl_route::Registry;
+use fsl_semantics::check::PackageDeclarations;
+use ix_trace_rs::trace;
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
     function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
 
 /// A member's request, built from the item `items_from_requirements` writes
@@ -33,6 +34,9 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 #[test]
 fn a_members_item_bounds_build_a_request_that_replays() {
     let call = Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: "q".to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),
@@ -40,7 +44,8 @@ fn a_members_item_bounds_build_a_request_that_replays() {
         }],
         accounting: default_accounting(1_000_000),
         supplied: SuppliedLimits::default(),
-        backend: quire_eval::ExecutionBackendChoice::Interpreter,
+        backend: filament_eval::ExecutionBackendChoice::Interpreter,
+        live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
     };
     let result = run_with_replay_context(
         SourceIdentity::new("a", "u"),
@@ -56,24 +61,24 @@ fn a_members_item_bounds_build_a_request_that_replays() {
     )
     .expect("the call runs");
 
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
         SOURCE.as_bytes(),
-        qsl_cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
     let raw = parsed.source().reference().clone();
-    let unit = qsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = qsl_semantics::model::intake::admit_unit(
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
         &unit.selections().models,
         &BTreeMap::new(),
-        qsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
     .expect("the model is admitted");
     let graph = PackageDeclarations::assemble(raw, "fixture".to_string(), unit, models, Vec::new())
         .expect("the unit assembles")
-        .check(CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("the unit checks");
     let items = items_from_requirements(graph.requirements(), &Registry::new(), None);
 

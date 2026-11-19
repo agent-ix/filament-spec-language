@@ -3,7 +3,7 @@ id: TC-568
 title: "Initial states not closed under the generators settle SymmetryBroken; a finer class admits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: verifies
 ---
 # TC-568: Initial states not closed under the generators settle SymmetryBroken; a finer class admits

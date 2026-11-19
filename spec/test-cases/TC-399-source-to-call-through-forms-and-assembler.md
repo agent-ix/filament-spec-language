@@ -3,7 +3,7 @@ id: TC-399
 title: "Source compiled through S1, S2 and the assembler checks and evaluates a called function"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-399: Source compiled through S1, S2 and the assembler checks and evaluates a called function
@@ -29,7 +29,7 @@ alias is `v`.
 1. Source: `type Digit = Int[0, 9];`,
    `function inc using v(x: Digit): Int[0, 10] pure { x + 1 }` and
    `function two using v(): Int[0, 10] pure { inc(1) }`.
-2. Run `qsl_cst::parse`, then S2, then the assembler.
+2. Run `fsl_cst::parse`, then S2, then the assembler.
 3. Read `aliases`, the order of `functions`, and each function's resolved
    signature.
 4. Check the result with `PackageDeclarations::check`, link the checked

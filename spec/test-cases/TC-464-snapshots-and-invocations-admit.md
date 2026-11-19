@@ -3,7 +3,7 @@ id: TC-464
 title: "Snapshot and invocation documents read and admit into an observation set"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-464: Snapshot and invocation documents read and admit into an observation set

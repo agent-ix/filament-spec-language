@@ -3,7 +3,7 @@ id: TC-703
 title: "Closed-form verdicts settle only after check_closed_form recomputes their evidence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-248
+  - target: ix://agent-ix/filament-spec-language/FR-248
     type: verifies
 ---
 # TC-703: Closed-form verdicts settle only after check_closed_form recomputes their evidence

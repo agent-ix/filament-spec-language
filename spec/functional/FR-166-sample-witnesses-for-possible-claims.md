@@ -3,28 +3,28 @@ id: FR-166
 title: "Sample witnesses for possible claims before exploration (EN-1 phase 0)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: depends_on
 ---
 # FR-166: Sample witnesses for possible claims before exploration (EN-1 phase 0)
 
 ## Description
 
-When a request holds a `possible` item, `qsl-analyze`'s `model_check` SHALL
+When a request holds a `possible` item, `fsl-analyze`'s `model_check` SHALL
 draw seeded random walks for it before exploring the subject (ADR-022 GE-2): `witness_samples`
 walks per initial state, with FR-101's sampler. Each walk takes at most
 `max_walk_steps` steps, a caller-set budget with a published default of
@@ -71,11 +71,11 @@ pub struct ModelCheckRequest<'a> {
 }
 ```
 
-- `DEFAULT_WITNESS_SEED: u64 = 0`, the published default seed of QSpec
+- `DEFAULT_WITNESS_SEED: u64 = 0`, the published default seed of FSpec
   FR-392 (ADR-022 QS-7).
 - The subject (FR-125), its `ModelSystem` (FR-120), and each `Possible` item
   (FR-165) with its instances (FR-125).
-- The sampler `quire.simulation.sampler/v1`, which `sample_request` selects
+- The sampler `filament.simulation.sampler/v1`, which `sample_request` selects
   by identity (FR-101).
 
 ## Outputs
@@ -129,7 +129,7 @@ pub struct ModelCheckRequest<'a> {
 - When the request names no seed, the engine SHALL run under
   `DEFAULT_WITNESS_SEED`.
 - The engine SHALL record the seed and `witness_samples` the run used in
-  each item's terminal record on every run, as QSpec FR-392 states.
+  each item's terminal record on every run, as FSpec FR-392 states.
 - The engine SHALL check the request's `Cancel` handle (FR-276) before each
   walk; a cancelled handle SHALL stop the run with `Stopped{cause:
   Cancelled(cause)}`, as FR-276 states for every operation.
@@ -152,18 +152,18 @@ pub struct ModelCheckRequest<'a> {
 
 - ADR-022 §3 GE-2 and "Determinism", §4 GV-1, §10 RU-4 and RU-5; ADR-014 TR-1
   (`SampleProvenance`).
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (`sample_request`, `SampleProvenance`),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`ModelSystem`), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (`ModelCheckLimits`, the request, cancellation),
   [FR-165](FR-165-check-state-graph-claims-at-s3.md) (`Possible`).
 - FR-167 runs phase 1; FR-169 settles; FR-170 replays the witness.
-- QSpec FR-392 owns `witness_samples` with its default 64, the seed with its
+- FSpec FR-392 owns `witness_samples` with its default 64, the seed with its
   default 0, the horizon as a method parameter, and the settlement method in
   the terminal record (ADR-022 QS-7); `max_walk_steps` is ADR-022 GE-2's
-  budget, asked of QSpec in QS-7.
+  budget, asked of FSpec in QS-7.
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-392 (Linear STD-135; ADR-022 QS-7).
+- ADR-022. FSpec half: FSpec FR-392 (Linear STD-135; ADR-022 QS-7).

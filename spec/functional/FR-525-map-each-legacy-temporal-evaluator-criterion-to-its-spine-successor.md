@@ -3,39 +3,39 @@ id: FR-525
 title: "Map each legacy temporal evaluator criterion to its spine successor"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-045
+  - target: ix://agent-ix/filament-spec-language/FR-045
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-052
+  - target: ix://agent-ix/filament-spec-language/FR-052
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-053
+  - target: ix://agent-ix/filament-spec-language/FR-053
     type: references
-  - target: ix://agent-ix/quire-spec-language/NFR-008
+  - target: ix://agent-ix/filament-spec-language/NFR-008
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-499
+  - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-504
+  - target: ix://agent-ix/filament-spec-language/FR-504
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-516
+  - target: ix://agent-ix/filament-spec-language/FR-516
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-523
+  - target: ix://agent-ix/filament-spec-language/FR-523
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-526
+  - target: ix://agent-ix/filament-spec-language/FR-526
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-527
+  - target: ix://agent-ix/filament-spec-language/FR-527
     type: depends_on
 ---
 # FR-525: Map each legacy temporal evaluator criterion to its spine successor
@@ -79,7 +79,7 @@ QSL-858's train.
 | FR-043-AC-12 regressing watermark, conflicting completeness | FR-502-AC-1 to AC-11 | PORT (FR-502) |
 | FR-043-AC-13 one identity per input set | FR-522-AC-15 to AC-23; FR-501-AC-16 | PORT QSL-1502 |
 | FR-043-AC-14 `/2` authenticated clock configuration and report | FR-522-AC-4, AC-6, AC-9, AC-12 | PORT QSL-1502 |
-| FR-043-AC-14 `/1` entry points: parameter mutations not refused, no authenticated binding | none | RETIRE with the `/1` lane (structural reason: no caller of the `/1` entry points exists; Contract IR FR-350 and quire-protocol IT-001 consume the `/2` entry points; successor FR-522-AC-9, the authenticated form) |
+| FR-043-AC-14 `/1` entry points: parameter mutations not refused, no authenticated binding | none | RETIRE with the `/1` lane (structural reason: no caller of the `/1` entry points exists; Contract IR FR-350 and filament-protocol IT-001 consume the `/2` entry points; successor FR-522-AC-9, the authenticated form) |
 
 ## FR-044 criterion to successor
 

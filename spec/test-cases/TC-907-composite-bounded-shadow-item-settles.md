@@ -3,7 +3,7 @@ id: TC-907
 title: "A composite equality-parity claim settles Diverged, Agrees or refused when falsified, and by rows V-1 to V-5 when verified"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-358
+  - target: ix://agent-ix/filament-spec-language/FR-358
     type: verifies
 ---
 # TC-907: A composite equality-parity claim settles Diverged, Agrees or refused when falsified, and by rows V-1 to V-5 when verified
@@ -113,7 +113,7 @@ source form (the grammar takes only `K<T>[min, max]`), so the unbounded
     `Inconclusive(ReplayRefused(invalid_runtime_input))`).
   - F-4: `Incomplete { stage: Admission }` naming the counter
     (`Incomplete(ResourceExhausted)`), for both cases.
-  - F-5: `Incomplete { stage: ExactEvaluation }` naming QSL's counter
+  - F-5: `Incomplete { stage: ExactEvaluation }` naming FSL's counter
     (`Incomplete(ResourceExhausted)`), for both cases.
   - F-6: `Incomplete { stage: RefinementCeiling }`
     (`Incomplete(ResourceExhausted)`). The F-4, F-5 and F-6 reports differ in

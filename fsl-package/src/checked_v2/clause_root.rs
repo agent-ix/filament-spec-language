@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-337 "Outputs" and "Behavior", FR-337-AC-5 (TC-1079): the I2 lookup of
+//! a temporal clause's root from an admitted `filament.checked-package/v2`.
+//!
+//! Each `claim` occurrence of a `temporal`/`temporal_clause` node is one
+//! declaration of the clause: its identity triple is `[node, "claim",
+//! ordinal]` (an O-07 occurrence key), and its `over` node is the
+//! `value`/`parameter` node the first argument of its
+//! `filament.op.temporal.clause` application references. A consumer takes
+//! both from the package alone (FR-337 "Behavior"), never from its caller.
+//!
+//! A triple naming a node the package does not hold, a node that is not a
+//! `temporal`/`temporal_clause` node, or an occurrence the node does not
+//! carry (another role, another ordinal) is [`ClauseRootUnresolved`]: a
+//! lookup result, not an FR-370 package refusal, since the package itself
+//! is well formed. The caller decides what it means (FR-338).
+
+use filament_contract_model::{
+    CheckedNodeKind, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageV2,
+    CheckedSemanticNodeV2, CheckedTerm, TemporalForm,
+};
+
+use filament_exact::{NodeKey, Origin, Role};
+use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_semantics::check::wire_id::WireGraph;
+
+/// One declaration of an admitted temporal clause: its identity triple and
+/// its `over` node (FR-337 "Outputs").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClauseRoot {
+    occurrence: OccurrenceKey,
+    over: Option<NodeKey>,
+}
+
+impl ClauseRoot {
+    /// The identity triple `[node, "claim", ordinal]`.
+    pub fn occurrence(&self) -> &OccurrenceKey {
+        &self.occurrence
+    }
+
+    /// The `value`/`parameter` node of the clause's `over` parameter, or
+    /// `None` for a clause with no `over` parameter (a valid result, not a
+    /// refusal).
+    pub fn over(&self) -> Option<&NodeKey> {
+        self.over.as_ref()
+    }
+}
+
+/// `clause-root-unresolved`: a looked-up clause root names no `claim`
+/// occurrence of a `temporal`/`temporal_clause` node of the package
+/// (FR-337 "Behavior").
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("clause root {root} names no temporal clause of the package")]
+pub struct ClauseRootUnresolved {
+    /// The looked-up triple.
+    pub root: OccurrenceKey,
+}
+
+impl ClauseRootUnresolved {
+    /// The lookup refusal's tag.
+    pub const TAG: &'static str = "clause-root-unresolved";
+}
+
+/// A broken invariant between IR's admission and this lookup.
+const NODE_ID_FAULT: InternalFault = InternalFault::new("I2", "admitted-node-id-is-a-wire-node-id");
+
+/// Whether `node` is a `temporal`/`temporal_clause` node.
+fn is_clause(node: &CheckedSemanticNodeV2) -> bool {
+    CheckedNodeTag::from_wire(&node.node_tag)
+        .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
+        == Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause))
+}
+
+/// The `over` node of the clause node `node`: the `target` of its body
+/// application's first argument, which IR's reader admitted as a reference
+/// to a `value`/`parameter` node (FSpec FR-370 reader order). `None` when
+/// that argument names no target.
+fn over_of(
+    graph: &WireGraph,
+    node: &CheckedSemanticNodeV2,
+) -> Result<Option<NodeKey>, InternalFault> {
+    let CheckedTerm::Application { arguments, .. } = &node.body else {
+        return Ok(None);
+    };
+    let Some(CheckedTerm::Reference { target }) = arguments.first() else {
+        return Ok(None);
+    };
+    graph.key(target).map(Some).map_err(|_| NODE_ID_FAULT)
+}
+
+/// The clause root of `node`'s `claim` occurrence `occurrence`.
+fn root(node: NodeKey, occurrence: &CheckedOccurrence, over: Option<NodeKey>) -> ClauseRoot {
+    ClauseRoot {
+        occurrence: OccurrenceKey::new(
+            node,
+            Origin::new(
+                Role::new(super::role_spelling(&CheckedOccurrenceRole::Claim)),
+                occurrence.ordinal,
+            ),
+        ),
+        over,
+    }
+}
+
+/// Every declaration of every temporal clause of `package`: one
+/// [`ClauseRoot`] per `claim` occurrence, in graph order and then
+/// occurrence order.
+pub fn clause_roots(package: &CheckedPackageV2) -> Result<Vec<ClauseRoot>, InternalFault> {
+    let mut roots = Vec::new();
+    // A hyper clause's body wrapper is a `temporal_clause` node that is no
+    // clause root of its own (FR-488 "Outputs").
+    let wrappers = super::hyper_root::wrappers(package);
+    let graph = super::wire_graph(package).map_err(|_| NODE_ID_FAULT)?;
+    for (node, id) in package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .zip(graph.keys())
+        .filter(|(node, _)| is_clause(node) && !wrappers.contains(&node.node_id))
+    {
+        let over = over_of(&graph, node)?;
+        roots.extend(
+            node.occurrences
+                .iter()
+                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Claim)
+                .map(|occurrence| root(id.clone(), occurrence, over.clone())),
+        );
+    }
+    Ok(roots)
+}
+
+/// Resolve the clause root `triple` in `package`: the declaration it names,
+/// or [`ClauseRootUnresolved`] at `triple`.
+pub fn resolve_clause_root(
+    package: &CheckedPackageV2,
+    triple: &OccurrenceKey,
+) -> Result<ClauseRoot, ClauseRootUnresolved> {
+    let unresolved = || ClauseRootUnresolved {
+        root: triple.clone(),
+    };
+    let graph = super::wire_graph(package).map_err(|_| unresolved())?;
+    let node = graph
+        .index_of(triple.node())
+        .and_then(|at| {
+            package
+                .resolved_graph()
+                .nodes
+                .get(usize::try_from(at).ok()?)
+        })
+        .filter(|node| is_clause(node))
+        .ok_or_else(unresolved)?;
+    if super::hyper_root::wrappers(package).contains(&node.node_id) {
+        return Err(unresolved());
+    }
+    if super::occurrence_role(triple.origin().role().as_str()) != Some(CheckedOccurrenceRole::Claim)
+    {
+        return Err(unresolved());
+    }
+    let occurrence = node
+        .occurrences
+        .iter()
+        .find(|occurrence| {
+            occurrence.role == CheckedOccurrenceRole::Claim
+                && occurrence.ordinal == triple.origin().ordinal()
+        })
+        .ok_or_else(unresolved)?;
+    Ok(root(
+        triple.node().clone(),
+        occurrence,
+        over_of(&graph, node).map_err(|_| unresolved())?,
+    ))
+}

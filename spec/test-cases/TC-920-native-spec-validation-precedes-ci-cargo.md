@@ -3,7 +3,7 @@ id: TC-920
 title: "Native specification validation precedes aggregate Cargo execution"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-002
+  - target: ix://agent-ix/filament-spec-language/NFR-002
     type: verifies
 ---
 # TC-920: Native specification validation precedes aggregate Cargo execution
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify NFR-002-AC-1 through NFR-002-AC-4 with owned Rust fixtures,
-real Make and native Quire. Cargo process recording proves aggregate routing
+real Make and Filament. Cargo process recording proves aggregate routing
 and refusal before invocation; it does not qualify the compiler.
 
 ## Test Procedure

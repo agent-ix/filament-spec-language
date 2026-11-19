@@ -15,9 +15,9 @@
 //!
 //! Names that other crates legitimately define (`Limits`, `Ledger`,
 //! `Obligation`, `evaluate`, ...) are matched where the root crate's `temporal`
-//! module is named: after `quire_spec_language::temporal::`, after
+//! module is named: after `filament_spec_language::temporal::`, after
 //! `crate::temporal::` in the root `src/`, and after `temporal::` in a file
-//! that imports `quire_spec_language::temporal`, including inside a `{...}`
+//! that imports `filament_spec_language::temporal`, including inside a `{...}`
 //! import group.
 use ix_trace_rs::trace;
 use std::path::{Path, PathBuf};
@@ -191,7 +191,7 @@ fn no_workspace_source_names_a_retired_v1_temporal_entry_point() {
                 }
             }
             let in_root_src = path.starts_with(manifest_dir.join("src"));
-            if in_root_src || contents.contains("quire_spec_language::temporal") {
+            if in_root_src || contents.contains("filament_spec_language::temporal") {
                 for member in members_after_temporal(&contents) {
                     if members.contains(&member) {
                         offending.push((path.display().to_string(), member));

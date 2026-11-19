@@ -3,7 +3,7 @@ id: TC-1287
 title: "Carried quantities check, lower and convert"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-497
+  - target: ix://agent-ix/filament-spec-language/FR-497
     type: verifies
 ---
 # TC-1287: Carried quantities check, lower and convert
@@ -12,13 +12,13 @@ relationships:
 
 Verify that the `Quantity<u, C>` source form checks and lowers to the
 `carried_quantity` node, that conversion into it lowers with the node's
-rounding, and that the kernel gives the outcomes of QSpec FR-142-AC-28 to
+rounding, and that the kernel gives the outcomes of FSpec FR-142-AC-28 to
 AC-31, including the `inexact_conversion` refusal and the exact `Rational[..]`
 carrier. Scope: FR-497-AC-1 to FR-497-AC-9.
 
 ## Test Procedure
 
-1. Check and lower the type forms of QSpec `CQ-W01` to `CQ-W04` and the
+1. Check and lower the type forms of FSpec `CQ-W01` to `CQ-W04` and the
    `Rational[-3, 7; 1, 12]` carrier of `CQ-W16` by reference and compare the
    nodes with the vectors; check the ineligible carriers and
    carried-operand uses of FR-497-AC-2 from source, with `CQ-W13` as the
@@ -42,7 +42,7 @@ carrier. Scope: FR-497-AC-1 to FR-497-AC-9.
    unheld target and a target of another dimension.
 
 Tag the test `#[trace("FR-497-AC-1", "FR-497-AC-2", "FR-497-AC-3", "FR-497-AC-4", "FR-497-AC-5", "FR-497-AC-6", "FR-497-AC-7", "FR-497-AC-8", "FR-497-AC-9", "TC-1287")]`.
-Vectors are referenced by QSpec row ID, never copied.
+Vectors are referenced by FSpec row ID, never copied.
 
 ## Expected Results
 
@@ -52,7 +52,7 @@ Vectors are referenced by QSpec row ID, never copied.
   FR-497-AC-1 and AC-2 state.
 - Step 2: each conversion's `mode` equals the result node's `rounding`; none is
   `null` or another mode.
-- Step 3: every row gives the outcome its QSpec row states; an inexact exact-mode
+- Step 3: every row gives the outcome its FSpec row states; an inexact exact-mode
   value refuses `inexact_conversion` before `unit.target-domain`, also under a
   work limit that denies later charges.
 - Step 4: `25 cm` gives `1/4 m` and `-3 m` gives `-3 m`; `1 in`, `8 m` and

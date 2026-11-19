@@ -3,7 +3,7 @@
 //! the gate that keeps one definition per canonical public type.
 //!
 //! **The canonical set (FR-271).** A canonical type carries, in its outer doc
-//! comment, a line that reads exactly `quire:canonical` once the `///` marker
+//! comment, a line that reads exactly `filament:canonical` once the `///` marker
 //! and surrounding whitespace are taken off. The set is exactly the tagged
 //! definitions found in the scanned crates; no list of names is kept. A tag on
 //! anything but a `pub` `struct`, `enum`, `union`, `trait` or `type` alias,
@@ -13,7 +13,7 @@
 //! directory of the target's `src_path`) of every library, binary and
 //! proc-macro target of every workspace member, and the same for every
 //! resolved package that FR-059's `graph::classify` assigns to an ecosystem
-//! repository, and the shared leaves `quire-exact` and `quire-semantic-value`
+//! repository, and the shared leaves `filament-exact` and `filament-semantic-value`
 //! wherever they come from, each as its own ecosystem repository. Test, bench, example and
 //! build-script targets are test or
 //! build code, and test code under a root is excluded as `typestate_scan`
@@ -51,14 +51,18 @@ use crate::error::{Error, Result};
 use crate::typestate_scan::shipped_files;
 
 /// The doc line that marks a canonical type.
-const TAG: &str = "quire:canonical";
+const TAG: &str = "filament:canonical";
 
 /// The shared `no_std` leaf crates, each its own ecosystem repository,
-/// named by the crate. They hold canonical types of the QSL core, so the gate
+/// named by the crate. They hold canonical types of the FSL core, so the gate
 /// scans them wherever they are sourced from, as it scans IR's types. The
 /// `copy` rule holds them against the code that runs the gate; their own
 /// one-definition checks belong to their repositories.
-const SHARED_LEAVES: [&str; 3] = ["quire-exact", "quire-semantic-value", "quire-checked"];
+const SHARED_LEAVES: [&str; 3] = [
+    "filament-exact",
+    "filament-semantic-value",
+    "filament-checked",
+];
 
 /// Target kinds whose sources are shipped code.
 const SHIPPED_KINDS: [&str; 7] = [
@@ -817,10 +821,11 @@ mod tests {
 
     use super::*;
 
-    const IR_SOURCE: &str = "git+https://github.com/agent-ix/quire-contract-ir?branch=main#ea63488";
-    const QSL_SOURCE: &str =
-        "git+https://github.com/agent-ix/quire-spec-language?branch=main#e3fef8d";
-    const EXACT_SOURCE: &str = "git+https://github.com/agent-ix/quire-exact?branch=main#1098e44";
+    const IR_SOURCE: &str =
+        "git+https://github.com/agent-ix/filament-contract-ir?branch=main#ea63488";
+    const FSL_SOURCE: &str =
+        "git+https://github.com/agent-ix/filament-spec-language?branch=main#e3fef8d";
+    const EXACT_SOURCE: &str = "git+https://github.com/agent-ix/filament-exact?branch=main#1098e44";
 
     /// A fixture workspace: source files in a temporary directory and the
     /// `cargo metadata` output that describes them.
@@ -911,7 +916,7 @@ mod tests {
     }
 
     const TAGGED_METER: &str =
-        "/// A meter.\n/// quire:canonical\n/// Counts work.\npub struct Meter {\n    pub used: u64,\n}\n";
+        "/// A meter.\n/// filament:canonical\n/// Counts work.\npub struct Meter {\n    pub used: u64,\n}\n";
 
     /// TC-746 steps 1 and 2: the tag line anywhere in the doc comment puts
     /// a type in the set; a removed, plain-comment or longer tag line does
@@ -934,8 +939,8 @@ mod tests {
         );
         for untagged in [
             "/// A meter.\npub struct Meter {\n    pub used: u64,\n}\n",
-            "// quire:canonical\npub struct Meter {\n    pub used: u64,\n}\n",
-            "/// quire:canonical type\npub struct Meter {\n    pub used: u64,\n}\n",
+            "// filament:canonical\npub struct Meter {\n    pub used: u64,\n}\n",
+            "/// filament:canonical type\npub struct Meter {\n    pub used: u64,\n}\n",
         ] {
             let mut fixture = Fixture::new();
             fixture.member("a", untagged).member("b", "struct Meter;\n");
@@ -949,10 +954,10 @@ mod tests {
     #[trace("TC-746", "FR-271-AC-2")]
     fn tc_746_misplaced_and_duplicate_tags_are_findings() {
         for (source, item, line) in [
-            ("/// quire:canonical\npub fn plant() {}\n", "plant", 2),
-            ("/// quire:canonical\nstruct Hidden;\n", "Hidden", 2),
+            ("/// filament:canonical\npub fn plant() {}\n", "plant", 2),
+            ("/// filament:canonical\nstruct Hidden;\n", "Hidden", 2),
             (
-                "pub struct Holder {\n    /// quire:canonical\n    pub field: u8,\n}\n",
+                "pub struct Holder {\n    /// filament:canonical\n    pub field: u8,\n}\n",
                 "field",
                 2,
             ),
@@ -986,8 +991,8 @@ mod tests {
             .member("k", "mod value;\npub use self::value::{Outcome, Value};\n")
             .file(
                 "k/src/value.rs",
-                "/// quire:canonical\npub enum Value {\n    A,\n    B,\n}\n\
-                 /// quire:canonical\npub struct Outcome {\n    pub done: bool,\n}\n",
+                "/// filament:canonical\npub enum Value {\n    A,\n    B,\n}\n\
+                 /// filament:canonical\npub struct Outcome {\n    pub done: bool,\n}\n",
             );
         fixture
     }
@@ -1068,7 +1073,7 @@ mod tests {
     }
 
     const TAGGED_OPERATOR: &str =
-        "/// quire:canonical\npub enum ComparisonOperator {\n    Less,\n    LessOrEqual,\n    Equal,\n}\n";
+        "/// filament:canonical\npub enum ComparisonOperator {\n    Less,\n    LessOrEqual,\n    Equal,\n}\n";
 
     /// TC-747 step 2: a same-shaped copy in an ecosystem package is a
     /// `copy` finding whatever its docs, attributes, visibility and member
@@ -1077,7 +1082,7 @@ mod tests {
     #[test]
     #[trace("TC-747", "FR-272-AC-2")]
     fn tc_747_copy_rule_across_the_ecosystem() {
-        let e = "quire-contract-model/src/lib.rs";
+        let e = "filament-contract-model/src/lib.rs";
         let copy = |line| {
             vec![finding(
                 Rule::Copy,
@@ -1111,7 +1116,7 @@ mod tests {
         ] {
             let mut fixture = Fixture::new();
             fixture.member("k", TAGGED_OPERATOR).dependency(
-                "quire-contract-model",
+                "filament-contract-model",
                 IR_SOURCE,
                 source,
             );
@@ -1127,7 +1132,7 @@ mod tests {
     }
 
     /// TC-747 steps 2 and 3: each shared leaf is its own ecosystem
-    /// repository, wherever it is sourced from. A QSL workspace member with
+    /// repository, wherever it is sourced from. An FSL workspace member with
     /// the same-named type but other members gives no finding (the
     /// `identifier` rule applies inside the workspace only), and one with the
     /// same members gives a `copy` finding naming the leaf's definition.
@@ -1136,9 +1141,9 @@ mod tests {
     fn tc_747_shared_leaves_are_their_own_ecosystem_repositories() {
         let mut fixture = Fixture::new();
         fixture
-            .dependency("quire-exact", EXACT_SOURCE, TAGGED_OPERATOR)
+            .dependency("filament-exact", EXACT_SOURCE, TAGGED_OPERATOR)
             .dependency(
-                "quire-semantic-value",
+                "filament-semantic-value",
                 "path+file:///elsewhere",
                 "pub struct Other;\n",
             );
@@ -1151,12 +1156,12 @@ mod tests {
             repositories,
             [
                 (
-                    "quire-exact".to_owned(),
-                    Repository::Ecosystem("quire-exact")
+                    "filament-exact".to_owned(),
+                    Repository::Ecosystem("filament-exact")
                 ),
                 (
-                    "quire-semantic-value".to_owned(),
-                    Repository::Ecosystem("quire-semantic-value")
+                    "filament-semantic-value".to_owned(),
+                    Repository::Ecosystem("filament-semantic-value")
                 ),
             ]
         );
@@ -1167,7 +1172,7 @@ mod tests {
                 vec![finding(
                     Rule::Copy,
                     "ComparisonOperator",
-                    Some(site("quire-exact/src/lib.rs", 2)),
+                    Some(site("filament-exact/src/lib.rs", 2)),
                     site("w/src/lib.rs", 1),
                 )],
             ),
@@ -1175,32 +1180,32 @@ mod tests {
         ] {
             let mut fixture = Fixture::new();
             fixture
-                .dependency("quire-exact", EXACT_SOURCE, TAGGED_OPERATOR)
+                .dependency("filament-exact", EXACT_SOURCE, TAGGED_OPERATOR)
                 .member("w", member);
             assert_eq!(fixture.findings(), expected, "{member}");
         }
     }
 
-    /// FR-400: `quire-checked` is a shared leaf, so its `DeclarationKey` is a
-    /// canonical type of its own repository and a QSL crate that re-adds a
+    /// FR-400: `filament-checked` is a shared leaf, so its `DeclarationKey` is a
+    /// canonical type of its own repository and an FSL crate that re-adds a
     /// same-shaped copy is a `copy` finding.
     #[test]
     #[trace("TC-747", "FR-272-AC-2")]
-    fn tc_747_quire_checked_declaration_key_copy_is_flagged() {
-        let leaf = "/// The key.\n/// quire:canonical\npub struct DeclarationKey {\n    pub package: String,\n    pub node: String,\n}\n";
+    fn tc_747_filament_checked_declaration_key_copy_is_flagged() {
+        let leaf = "/// The key.\n/// filament:canonical\npub struct DeclarationKey {\n    pub package: String,\n    pub node: String,\n}\n";
         let mut fixture = Fixture::new();
-        fixture.dependency("quire-checked", "path+file:///elsewhere", leaf);
+        fixture.dependency("filament-checked", "path+file:///elsewhere", leaf);
         assert_eq!(
             fixture
                 .packages()
                 .into_iter()
                 .map(|package| package.repository)
                 .collect::<Vec<_>>(),
-            [Repository::Ecosystem("quire-checked")]
+            [Repository::Ecosystem("filament-checked")]
         );
         let mut fixture = Fixture::new();
         fixture
-            .dependency("quire-checked", "path+file:///elsewhere", leaf)
+            .dependency("filament-checked", "path+file:///elsewhere", leaf)
             .member(
                 "w",
                 "pub struct DeclarationKey {\n    pub package: String,\n    pub node: String,\n}\n",
@@ -1210,37 +1215,37 @@ mod tests {
             vec![finding(
                 Rule::Copy,
                 "DeclarationKey",
-                Some(site("quire-checked/src/lib.rs", 3)),
+                Some(site("filament-checked/src/lib.rs", 3)),
                 site("w/src/lib.rs", 1),
             )]
         );
     }
 
-    /// TC-747 step 3: a backend run finds the backend's copy of a QSL
-    /// canonical type and not its re-export through the QSL facade; over the
-    /// QSL workspace, IR's wire `ValueType` is not a copy.
+    /// TC-747 step 3: a backend run finds the backend's copy of an FSL
+    /// canonical type and not its re-export through the FSL facade; over the
+    /// FSL workspace, IR's wire `ValueType` is not a copy.
     #[test]
     #[trace("TC-747", "FR-272-AC-3")]
     fn tc_747_backend_run_and_ir_boundary_types() {
         let mut fixture = Fixture::new();
         fixture
             .dependency(
-                "quire-exact",
+                "filament-exact",
                 EXACT_SOURCE,
-                "/// quire:canonical\npub enum Value {\n    A,\n    B,\n}\n",
+                "/// filament:canonical\npub enum Value {\n    A,\n    B,\n}\n",
             )
-            // QSL's facade re-exports it; the backend reaches it there.
-            .dependency("qsl-replay", QSL_SOURCE, "pub use quire_exact::Value;\n")
+            // FSL's facade re-exports it; the backend reaches it there.
+            .dependency("fsl-replay", FSL_SOURCE, "pub use filament_exact::Value;\n")
             .member(
                 "backend",
-                "pub enum Value {\n    A(u8),\n    B,\n}\npub use qsl_replay::Value as Kernel;\n",
+                "pub enum Value {\n    A(u8),\n    B,\n}\npub use fsl_replay::Value as Kernel;\n",
             );
         assert_eq!(
             fixture.findings(),
             vec![finding(
                 Rule::Copy,
                 "Value",
-                Some(site("quire-exact/src/lib.rs", 2)),
+                Some(site("filament-exact/src/lib.rs", 2)),
                 site("backend/src/lib.rs", 1)
             )]
         );
@@ -1251,8 +1256,8 @@ mod tests {
         let metadata = cargo_metadata(root).expect("cargo metadata runs");
         let report = scan(root, packages(&metadata).expect("metadata reads")).expect("scan runs");
         assert!(report.packages.iter().any(|package| {
-            package.name == "quire-contract-model"
-                && package.repository == Repository::Ecosystem("quire-contract-ir")
+            package.name == "filament-contract-model"
+                && package.repository == Repository::Ecosystem("filament-contract-ir")
         }));
         // IR's wire `ValueType` is a boundary type: same name as the tagged
         // kernel `ValueType`, different members.

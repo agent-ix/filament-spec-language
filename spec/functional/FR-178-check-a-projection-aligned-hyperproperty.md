@@ -3,30 +3,30 @@ id: FR-178
 title: "Check a projection-aligned universal hyperproperty (EN-1)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
 ---
 # FR-178: Check a projection-aligned universal hyperproperty (EN-1)
 
 ## Description
 
-QSL's layer-A `qsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide an HP-6 item, a universal clause
+FSL's layer-A `fsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL decide an HP-6 item, a universal clause
 with a safety body and `align skip { O, … }`, over its projected product
 (ADR-023 PA-2 to PA-6): components take skipped steps one at a time, take
 visible steps together when `μ_U` holds, and the body's safety monitor reads
@@ -96,7 +96,7 @@ clause is proved.
   monitor's letters at every joint projected position through the one
   clause evaluator (FR-107).
 - If one evaluates `Undefined`, then the engine SHALL return `Violated`
-  with QSpec FR-400's `Undefined` counterexample ending there, one path per
+  with FSpec FR-400's `Undefined` counterexample ending there, one path per
   variable, the first such product state in breadth-first order; between it
   and a rejecting monitor state, the first in that order SHALL be returned
   (ADR-023 HV-8).
@@ -169,10 +169,10 @@ clause is proved.
   [FR-176](FR-176-check-a-universal-hyperproperty-by-self-composition.md)
   (pre-check, product keys), [FR-173](FR-173-classify-hyper-clauses-into-forms.md),
   [FR-184](FR-184-bound-hyper-runs-with-caller-budgets.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md).
-- QSpec owns projection alignment and its prefix reading (ADR-023 QS-2) and
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md).
+- FSpec owns projection alignment and its prefix reading (ADR-023 QS-2) and
   the `Projected` counterexample (QS-6).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-398 (Linear STD-136; ADR-023 QS-2, QS-6).
+- ADR-023. FSpec half: FSpec FR-398 (Linear STD-136; ADR-023 QS-2, QS-6).

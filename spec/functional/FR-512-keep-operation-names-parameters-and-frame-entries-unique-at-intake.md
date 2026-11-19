@@ -3,19 +3,19 @@ id: FR-512
 title: "Keep operation names, parameters and frame entries unique at intake"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-154
+  - target: ix://agent-ix/filament-specification/FR-154
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-208
+  - target: ix://agent-ix/filament-specification/FR-208
     type: depends_on
 ---
 # FR-512: Keep operation names, parameters and frame entries unique at intake
@@ -31,25 +31,25 @@ objects. The retired deletion table listed these as UNKNOWN on the spine. FR-103
 resolves each frame entry (missing name, wrong meaning) but states nothing
 about repeats. This requirement states each legacy rule as the spine rule the
 wire allows, and records which are satisfied by construction or by the IR
-reader before QSL intake.
+reader before FSL intake.
 
 The wire fixes four facts that shape every rule below. An operation is a member
 of its owner type's `operations[]`, never a record with an owner reference. A
-parameter's `name` equals the last segment of its identity (QSpec
+parameter's `name` equals the last segment of its identity (FSpec
 `model-complete.md`, Operation parameters), but the semantic-IR reader checks
 parameter names by name (`DUPLICATE_PARAM`) and identities by identity
-(`DUPLICATE_IDENTITY`), so a repeat can reach QSL as either. The `returns`
+(`DUPLICATE_IDENTITY`), so a repeat can reach FSL as either. The `returns`
 object holds only `typeRef`, `decimal`, `multiplicity` and `nullable`; it has
-no name. A frame entry written twice is one entry: QSpec's Frames row says so
+no name. A frame entry written twice is one entry: FSpec's Frames row says so
 for `modifies`, `modifies_receiver` and scoped `deletes`, and the reader's frame
 schema applies no uniqueness to any of the member lists.
 
 Reader diagnostics: a document the reader refuses admits no declaration and
 retains every reader diagnostic (FR-056-AC-19). Of those, a
-`DUPLICATE_IDENTITY` diagnostic is reported as the QSL refusal
+`DUPLICATE_IDENTITY` diagnostic is reported as the FSL refusal
 `invalid_model_binding`/`conflicting-binding` that FR-056 assigns to it; every
 other reader diagnostic, such as `DUPLICATE_PARAM`, is retained beside it as
-reader detail and is not a second QSL refusal. An intake check of this
+reader detail and is not a second FSL refusal. An intake check of this
 requirement on a member that carries a retained reader diagnostic does not run.
 
 ## Inputs
@@ -70,7 +70,7 @@ requirement on a member that carries a retained reader diagnostic does not run.
   operation cannot be owned by a population in a document the reader admits:
   the reader refuses the member and intake adds no refusal. An operation held
   by a type whose meaning declares no such operation is refused by that
-  meaning's rule (QSpec FR-208, "Other meanings"): an event type or namespace
+  meaning's rule (FSpec FR-208, "Other meanings"): an event type or namespace
   as `invalid_model_binding`/`malformed-declaration` at the operation, a record
   value type as `unsupported_construct`/`declaration-form`. The owner of an
   admitted operation is an object type, a process, a state machine or a
@@ -85,7 +85,7 @@ requirement on a member that carries a retained reader diagnostic does not run.
   naming both. An operation of a subtype with the name of an inherited one is
   not a repeat; it is a redefinition (FR-081, FR-103-AC-10).
 - **Distinct parameters.** Two parameters of one operation with equal names are
-  refused by the reader, as follows. If they share one identity, the QSL refusal
+  refused by the reader, as follows. If they share one identity, the FSL refusal
   is `invalid_model_binding`/`conflicting-binding` at the shared identity, path
   `TypeDefinition.operations[k].params[s]` for the second, with the reader's
   `DUPLICATE_PARAM` retained beside it. If their identities differ, the reader
@@ -94,7 +94,7 @@ requirement on a member that carries a retained reader diagnostic does not run.
   name/identity check below does not run for that member. A parameter whose
   `name` differs from the last segment of its identity, with no equal name
   among its operation's parameters, is `invalid_model_binding`/
-  `malformed-declaration` at the parameter's `name` (QSpec Operation
+  `malformed-declaration` at the parameter's `name` (FSpec Operation
   parameters row).
 - **Result name.** The wire gives the result no name, and a `post` clause binds
   it by the word `result`, which FR-104 admits only in a `post` clause of an
@@ -113,10 +113,10 @@ requirement on a member that carries a retained reader diagnostic does not run.
   `modifies` and `modifies_receiver` (the scope of a `modifies` entry is
   `every-object` in `modifies` and `receiver` in `modifies_receiver`,
   FR-154), `deletes_parameters`, and also `creates` and type-wide `deletes`.
-  QSpec's Frames row names only the first three; `creates` and `deletes` are
+  FSpec's Frames row names only the first three; `creates` and `deletes` are
   collapsed for two stated reasons: the reader's frame schema applies the same
   no-uniqueness rule to all member lists, and the checked package requires
-  `creates` and `deletes` duplicate-free (QSpec FR-340-AC-4), which collapse
+  `creates` and `deletes` duplicate-free (FSpec FR-340-AC-4), which collapse
   satisfies and a refusal would contradict the "written twice is one entry"
   rule the same schema states. The operation's `OperationEffect` holds the
   entry once, at the position of its first occurrence, so the frame's fields
@@ -141,7 +141,7 @@ requirement on a member that carries a retained reader diagnostic does not run.
 | FR-512-AC-5 | Two `Counter` operations named `bump` with the distinct identities `.../Counter/bump` and `.../Counter/bump2` refuse `ambiguous_declaration`/`ambiguous-name` at the second operation's `name`, naming both. | Test (TC-1307) |
 | FR-512-AC-6 | `Sub.bump` redefining `Counter.bump` through `redefines` is admitted. | Test (TC-1307) |
 | FR-512-AC-7 | Parameters `a` and `a` with one identity refuse `invalid_model_binding`/`conflicting-binding` at the shared identity, path `TypeDefinition.operations[k].params[1]`, with the reader's `DUPLICATE_PARAM` retained and no other refusal. | Test (TC-1307) |
-| FR-512-AC-8 | Parameters both named `a` with the identities `.../a` and `.../b` give the reader's `DUPLICATE_PARAM` at `/ir/types/i/operations/k/params/1/name` and no QSL intake refusal and no declaration. | Test (TC-1307) |
+| FR-512-AC-8 | Parameters both named `a` with the identities `.../a` and `.../b` give the reader's `DUPLICATE_PARAM` at `/ir/types/i/operations/k/params/1/name` and no FSL intake refusal and no declaration. | Test (TC-1307) |
 | FR-512-AC-9 | A parameter named `x` with identity `.../b`, and no equal name among the operation's parameters, refuses `invalid_model_binding`/`malformed-declaration` at its `name`. | Test (TC-1307) |
 | FR-512-AC-10 | A parameter named `result` on an operation that declares `returns` refuses `ambiguous_declaration`/`ambiguous-name` at its `name`. | Test (TC-1307) |
 | FR-512-AC-11 | A parameter named `result` on an operation with no `returns` refuses `ambiguous_declaration`/`ambiguous-name` at its `name`. | Test (TC-1307) |
@@ -155,7 +155,7 @@ requirement on a member that carries a retained reader diagnostic does not run.
 ## Dependencies
 
 - **Upstream:** FR-103 (frame resolution), FR-056 (intake order, same-identity
-  collisions and retained reader diagnostics), FR-154 (QSL receiver scope; QSpec
-  operation and frame vocabulary), QSpec FR-208 (meaning rules for an
-  operation's owner), QSpec FR-340 (duplicate-free checked frame), FR-104 (the
+  collisions and retained reader diagnostics), FR-154 (FSL receiver scope; FSpec
+  operation and frame vocabulary), FSpec FR-208 (meaning rules for an
+  operation's owner), FSpec FR-340 (duplicate-free checked frame), FR-104 (the
   `result` word), FR-015-AC-2 (the legacy behavior).

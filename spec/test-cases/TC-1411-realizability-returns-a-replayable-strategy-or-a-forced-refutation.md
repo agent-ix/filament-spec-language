@@ -3,9 +3,9 @@ id: TC-1411
 title: "Realizability returns a replayable strategy, a forced refutation or a non-conclusive result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-571
+  - target: ix://agent-ix/filament-spec-language/FR-571
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-175
+  - target: ix://agent-ix/filament-specification/FR-175
     type: references
 ---
 # TC-1411: Realizability returns a replayable strategy, a forced refutation or a non-conclusive result
@@ -15,7 +15,7 @@ relationships:
 Verify the strategy witness and its replay gate, both refutation forms,
 the premise rules and the environment quantification.
 
-Scope: FR-571-AC-1 to FR-571-AC-6; QSpec FR-175-AC-1 to AC-5.
+Scope: FR-571-AC-1 to FR-571-AC-8; FSpec FR-175-AC-1 to AC-5.
 
 ## Test Procedure
 
@@ -32,8 +32,16 @@ Scope: FR-571-AC-1 to FR-571-AC-6; QSpec FR-175-AC-1 to AC-5.
    common winning action.
 5. Decide a protocol that every sampled run completes but one admitted
    outcome defeats; and one under an `at-least-once` channel.
-6. Decide a protocol whose indistinguishable histories an earlier owner
-   choice could avoid; and one whose defeat depends on a cut choice.
+6. Decide the step 2 protocol that one admitted loss defeats and read
+   `defeats_per_branch`; and a protocol in which a role, in one branch,
+   can send while its receive is not yet enabled but another role's step
+   will enable it, and must receive in the other, both in one class.
+7. Write the step 1 protocol's unit as a checked handoff directory, compile
+   it back with `checked_handoff::compile`, build the subject with
+   `protocol_subject` and dispatch `realizability_item` through the
+   registered engines.
+8. Build the step 7 subject with the protocol name `Other`, then with a
+   memory selection naming `Flow::Nope`.
 
 Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
 
@@ -48,4 +56,10 @@ Tag the tests `#[trace("TC-1411", "FR-571-AC-n")]`.
   refuted or `inconclusive`, never in a witness.
 - Step 5: not realizable; a result depending on a cut count is
   `inconclusive`.
-- Step 6: both `inconclusive`.
+- Step 6: one entry; no owner choice exists to avoid a history or to be
+  cut, so FR-571-AC-6's cases do not arise; the protocol whose role can wait
+  is not refuted.
+- Step 7: `proved`, exhaustive and uncertified, as for the in-process
+  package.
+- Step 8: `SubjectRefusal::UnknownProtocol("Other")`; `SubjectRefusal::Memory`
+  with `NotAParallel` for entry 0, `Flow::Nope`; no subject either time.

@@ -3,7 +3,7 @@ id: TC-054
 title: "Bind decoded JSON occurrences to exact original source"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-017
+  - target: ix://agent-ix/filament-spec-language/FR-017
     type: verifies
 ---
 # TC-054: Bind decoded JSON occurrences to exact original source

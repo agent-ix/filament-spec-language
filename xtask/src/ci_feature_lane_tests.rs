@@ -38,7 +38,7 @@ const DEFAULT_COMMANDS: &[&[&str]] = &[
         "clippy",
         "--locked",
         "-p",
-        "qsl-semantics",
+        "fsl-semantics",
         "--all-targets",
         "--",
         "-D",
@@ -51,16 +51,16 @@ const DEFAULT_COMMANDS: &[&[&str]] = &[
         "xtask",
         "--",
         "test-suites",
-        "default-qsl-semantics",
+        "default-fsl-semantics",
         "--locked",
         "-p",
-        "qsl-semantics",
+        "fsl-semantics",
     ],
     &[
         "clippy",
         "--locked",
         "-p",
-        "qsl-cst",
+        "fsl-cst",
         "--all-targets",
         "--",
         "-D",
@@ -73,10 +73,10 @@ const DEFAULT_COMMANDS: &[&[&str]] = &[
         "xtask",
         "--",
         "test-suites",
-        "default-qsl-cst",
+        "default-fsl-cst",
         "--locked",
         "-p",
-        "qsl-cst",
+        "fsl-cst",
     ],
 ];
 const ALL_COMMANDS: &[&[&str]] = &[
@@ -529,7 +529,6 @@ fn repeated_switches_in_both_directions_keep_each_lane_directory() {
 fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
     let recipe = Recipe::new();
     let other_checks = [
-        "check-conformance-input",
         "conformance",
         "check-no-committed-binaries",
         "ci-clean-build",
@@ -540,9 +539,10 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
         "refinement-versioning",
         "cargo-deny-bans",
         "ci-docs",
-        "arch-lint-api-surface-qsl",
+        "arch-lint-api-surface-fsl",
         "arch-lint-qualified-core",
         "build-no-std",
+        "examples-check",
     ];
     let overrides: Vec<&str> = other_checks
         .iter()
@@ -597,7 +597,7 @@ fn clean_and_core_tooling_retain_their_own_target_and_features() {
                     "check",
                     "--locked",
                     "-p",
-                    "quire-spec-language",
+                    "filament-spec-language",
                     "--lib",
                     "--no-default-features",
                     "--features",
@@ -647,18 +647,13 @@ fn real_workspace_decisions_keep_every_package_whose_compile_changes() {
     };
     // Optional features no default build turns on.
     assert_eq!(
-        verdict("quire-spec-language"),
+        verdict("filament-spec-language"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
     assert_eq!(
-        verdict("qsl-source"),
+        verdict("fsl-source"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
-    // No optional features of its own, but a dependency's features change.
-    assert_eq!(
-        verdict("qsl-bench"),
-        &Verdict::Run(KeepReason::DependencyResolvesDifferently {
-            dependency: "qsl-replay".to_owned()
-        })
-    );
+    // The benchmark's counters feature is enabled only by the all-features lane.
+    assert_eq!(verdict("fsl-bench"), &Verdict::Run(KeepReason::OwnFeatures));
 }

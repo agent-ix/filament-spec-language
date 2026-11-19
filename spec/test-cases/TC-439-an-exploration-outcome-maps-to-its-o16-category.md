@@ -3,7 +3,7 @@ id: TC-439
 title: "An exploration outcome maps to its O-16 category and keeps its frontier"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-439: An exploration outcome maps to its O-16 category and keeps its frontier

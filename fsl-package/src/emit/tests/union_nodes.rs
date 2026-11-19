@@ -1,0 +1,451 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-320 (TC-827): the union type node, the construction node and the
+//! `case` node, lowered from source, emitted as `filament.checked-package/v2`
+//! and read back through FSL's whole I2 read.
+
+use super::*;
+use filament_semantic_value::checking::CheckMode;
+
+const SHAPE: &str = "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n";
+
+/// FR-318-AC-1's `area` and a function returning `Shape::Rect(2, 3)`.
+const FUNCTIONS: &str = "function area using v(s: Shape): Integer pure \
+     { case s { Empty: 0; Circle(r): r; Rect(w, h): w * h; } }\n\
+     function rect using v(): Shape pure { Shape::Rect(2, 3) }\n";
+
+/// `declarations` emitted.
+fn emitted(declarations: &str) -> Emission {
+    emit_from_text(declarations).1
+}
+
+/// The nodes of `wire` with `form`.
+fn of_form<'w>(wire: &'w Value, form: &str) -> Vec<&'w Value> {
+    nodes(wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == form)
+        .collect()
+}
+
+#[trace("FR-320-AC-1", "TC-827")]
+#[test]
+fn the_union_keeps_its_id_and_its_members_their_identities_through_emission_and_the_i2_read() {
+    let (_, package) = package_from_text(&format!("{SHAPE}{FUNCTIONS}"));
+    let emission = emit_checked(&package).expect("the package emits");
+    assert_eq!(emission.omitted, [], "nothing is omitted");
+    let wire = wire(&emission);
+
+    // FSpec's spelling: one `composite_type`/`union`, one `union_value`, one
+    // `expression`/`case`.
+    let [union] = of_form(&wire, "union")[..] else {
+        panic!("one union node")
+    };
+    assert_eq!(union["node_tag"], "composite_type");
+    assert_eq!(union["declaration"], json!({"qualified_name": ["Shape"]}));
+    assert_eq!(of_form(&wire, "union_value").len(), 1);
+    let [case] = of_form(&wire, "case")[..] else {
+        panic!("one case node")
+    };
+    assert_eq!(case["node_tag"], "expression");
+
+    // The I2 read admits it, and the id it exports is the emitted id.
+    let exports = verified_exports(&emission);
+    let union_id = fsl_foundation::node_wire::node_key_from_json(&union["node_id"])
+        .expect("a structural union key");
+    assert_eq!(exports["Shape"], union_id.to_string());
+
+    // Each member's identity, checked before emission, is the FR-441 key over
+    // the id the I2 read returned.
+    let graph = package.graph();
+    let types = graph.scope().types();
+    let declaration = types
+        .composites()
+        .find(|declaration| declaration.name() == "Shape")
+        .expect("Shape is declared");
+    assert_eq!(
+        types
+            .union_key(declaration.key())
+            .map(|key| key.to_string()),
+        Some(union_id.to_string())
+    );
+    let CompositeShape::Union(members) = declaration.shape() else {
+        panic!("Shape is a union")
+    };
+    for member in members {
+        let variant = member.member().expect("sealed").variant().clone();
+        assert_eq!(
+            variant,
+            fsl_semantics::value::enumeration::mint_union_variant_id(
+                union_id.clone(),
+                member.identifier(),
+            )
+            .expect("a union variant"),
+            "{}",
+            member.identifier()
+        );
+    }
+
+    // The same source recompiles to the same package bytes.
+    let (_, recompiled) = emit_from_text(&format!("{SHAPE}{FUNCTIONS}"));
+    assert_eq!(recompiled.package.bytes(), emission.package.bytes());
+}
+
+#[trace("FR-320-AC-2", "TC-827")]
+#[test]
+fn an_ir_that_cannot_decode_the_union_omits_it_and_every_node_naming_it() {
+    let (text, package) = package_from_text(&format!("{SHAPE}{FUNCTIONS}"));
+    let regions = |_: &Location| {
+        Some(SourceRegion::new(package.graph().source().clone(), 0, text.len() as u64).unwrap())
+    };
+    let cannot_decode_union = |tag: CheckedNodeTag, form: &str| {
+        !(tag == CheckedNodeTag::CompositeType && form == "union")
+            && CheckedNodeKind::decode(tag, form).is_some()
+    };
+    let emission = emit_package_decoding(
+        &package,
+        regions,
+        &cannot_decode_union,
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the remaining nodes emit");
+
+    let graph = package.graph().semantic_graph();
+    let id_of = |form: &str| -> CheckedNodeId {
+        let nodes: Vec<_> = graph
+            .nodes()
+            .filter(|node| node.semantic_form() == form)
+            .collect();
+        let [node] = nodes[..] else {
+            panic!("one {form} node")
+        };
+        node_id(node.key())
+    };
+    let union = id_of("union");
+    let cause_of = |id: &CheckedNodeId| {
+        emission
+            .omitted
+            .iter()
+            .find(|omission| omission.node == *id)
+            .map(|omission| &omission.cause)
+    };
+    assert!(matches!(
+        cause_of(&union),
+        Some(OmissionCause::UnsupportedForm {
+            node_tag: NodeTag::CompositeType,
+            semantic_form: "union"
+        })
+    ));
+    // Everything that names the union, directly or through the nodes that
+    // name it, is omitted for naming an omitted node: the construction, the
+    // `case`, both functions and the parameter typed at the union.
+    for form in ["union_value", "case", "parameter"] {
+        let omitted = graph
+            .nodes()
+            .filter(|node| node.semantic_form() == form)
+            .map(|node| node_id(node.key()))
+            .filter(|id| cause_of(id).is_some())
+            .count();
+        assert!(omitted >= 1, "a {form} node names the union");
+    }
+    let functions: Vec<_> = graph
+        .nodes()
+        .filter(|node| node.semantic_form() == "pure_function")
+        .map(|node| node_id(node.key()))
+        .collect();
+    assert_eq!(functions.len(), 2);
+    for function in &functions {
+        assert!(
+            matches!(cause_of(function), Some(OmissionCause::NamesOmittedNode(_))),
+            "{function:?}: {:?}",
+            emission.omitted
+        );
+    }
+    // The scalar `Integer` node names no union and is written.
+    let integer = id_of("integer");
+    assert_eq!(cause_of(&integer), None);
+
+    // The wire holds none of the omitted nodes and none names one.
+    let wire = wire(&emission);
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire).unwrap();
+    let written: BTreeSet<NodeKey> = graph.keys().iter().cloned().collect();
+    for omission in &emission.omitted {
+        let id = serde_json::to_value(&omission.node).expect("an omitted id encodes");
+        let key =
+            fsl_foundation::node_wire::node_key_from_json(&id).expect("an omitted structural key");
+        assert!(!written.contains(&key), "{omission:?}");
+    }
+    assert!(!written.is_empty());
+    for node in nodes(&wire) {
+        for dependency in node["dependencies"].as_array().expect("dependencies") {
+            let target = graph
+                .key_of_value(dependency)
+                .expect("a structural dependency");
+            assert!(written.contains(&target), "{node} names an omitted node");
+        }
+    }
+}
+
+#[trace("FR-320-AC-4", "FR-319-AC-4", "TC-827")]
+#[test]
+fn a_construction_is_emitted_with_its_application_preimage_key() {
+    let emission = emitted(&format!(
+        "{SHAPE}function empty using v(): Shape pure {{ Shape::Empty }}\n\
+         function rect using v(a: Integer, b: Integer): Shape pure {{ Shape::Rect(a, b) }}\n"
+    ));
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let values = of_form(&wire, "union_value");
+    assert_eq!(
+        values.len(),
+        2,
+        "the nullary and the reference-payload vector"
+    );
+    let [union] = of_form(&wire, "union")[..] else {
+        panic!("one union node")
+    };
+    for value in values {
+        let member = value["body"]["members"][0]["name"]
+            .as_str()
+            .expect("a member name");
+        let payload = &value["body"]["members"][0]["value"];
+        assert_eq!(value["body"]["term"], "aggregate", "{member}");
+        assert_eq!(value["body"]["members"].as_array().map(Vec::len), Some(1));
+        assert_eq!(payload["term"], "aggregate", "{member}");
+        let payload_terms = payload["members"].as_array().expect("payload terms");
+        assert_eq!(payload_terms.len(), if member == "Empty" { 0 } else { 2 });
+        assert!(
+            payload_terms.iter().all(|term| term["term"] == "reference"),
+            "{member}: payloads are reference terms"
+        );
+        assert_eq!(value["semantic_type"], union["node_id"], "{member}");
+        // No `declaration`, no `owner`, no recursion group.
+        assert!(value.get("declaration").is_none(), "{member}");
+        assert!(value.get("owner").is_none(), "{member}");
+        assert!(value.get("recursion_group").is_none(), "{member}");
+    }
+    // FSL's whole I2 read admits those keys.
+    verified_exports(&emission);
+}
+
+/// FR-062-AC-9 (TC-160 step 8): an unlocked enum and each node that names it
+/// are omitted; the independent function is written and reads back Verified.
+#[trace("TC-160", "FR-062-AC-9")]
+#[test]
+fn a_function_naming_an_omitted_node_is_omitted_and_the_other_is_written() {
+    let foreign = super::status_enum(
+        json!({"kind": "definition", "authority": "agent-ix", "identity": "example-model", "package_name": "example-model"}),
+        "Foreign",
+    );
+    let foreign_key = foreign.declaration.key();
+    let text = b"function area(value: Foreign): Boolean pure { value = Foreign::Ready }\n\
+                 function keep(): Boolean pure { true }\n";
+    let area_text = b"function area(value: Foreign): Boolean pure { value = Foreign::Ready }";
+    let area_type_text = b"Foreign";
+    let area_type_start = text
+        .windows(area_type_text.len())
+        .position(|window| window == area_type_text)
+        .expect("area parameter type is in source");
+    let area_body_text = b"value = Foreign::Ready";
+    let area_body_start = text
+        .windows(area_body_text.len())
+        .position(|window| window == area_body_text)
+        .expect("area body is in source");
+    let keep_start = text
+        .windows(b"function keep".len())
+        .position(|window| window == b"function keep")
+        .expect("keep declaration is in source");
+    let keep_text = b"function keep(): Boolean pure { true }";
+    let keep_body_text = b"true";
+    let keep_body_start = text[keep_start..]
+        .windows(keep_body_text.len())
+        .position(|window| window == keep_body_text)
+        .map(|offset| keep_start + offset)
+        .expect("keep body is in source");
+    let mut area_body_spans = ExpressionSpans::new(fsl_foundation::Span {
+        start: area_body_start,
+        end: area_body_start + area_body_text.len(),
+    })
+    .expect("area body span");
+    let area_body_root = area_body_spans.root();
+    let parameter_reference = b"value";
+    let parameter_reference_start = text[area_body_start..]
+        .windows(parameter_reference.len())
+        .position(|window| window == parameter_reference)
+        .map(|offset| area_body_start + offset)
+        .expect("area body parameter reference is in source");
+    area_body_spans
+        .push_child(
+            area_body_root,
+            fsl_foundation::Span {
+                start: parameter_reference_start,
+                end: parameter_reference_start + parameter_reference.len(),
+            },
+        )
+        .expect("parameter reference span is inside area body");
+    let ready_reference = b"Foreign::Ready";
+    let ready_reference_start = text[area_body_start..]
+        .windows(ready_reference.len())
+        .position(|window| window == ready_reference)
+        .map(|offset| area_body_start + offset)
+        .expect("area body Ready reference is in source");
+    area_body_spans
+        .push_child(
+            area_body_root,
+            fsl_foundation::Span {
+                start: ready_reference_start,
+                end: ready_reference_start + ready_reference.len(),
+            },
+        )
+        .expect("Ready reference span is inside area body");
+    let area = FunctionDeclaration::new(
+        "area",
+        vec![(
+            "value".to_owned(),
+            TypeForm::name(
+                "Foreign",
+                fsl_foundation::Span {
+                    start: area_type_start,
+                    end: area_type_start + area_type_text.len(),
+                },
+            ),
+        )],
+        boolean(),
+        None,
+        Expression::binary(BinaryOperator::Equal, name("value"), name("Foreign::Ready")),
+    )
+    .with_spans(DeclarationSpans {
+        declaration: fsl_foundation::Span {
+            start: 0,
+            end: area_text.len(),
+        },
+        body: area_body_spans,
+        measure: None,
+    })
+    .expect("area spans match its body");
+    let keep = FunctionDeclaration::new(
+        "keep",
+        Vec::new(),
+        boolean(),
+        None,
+        Expression::boolean(true),
+    )
+    .with_spans(DeclarationSpans {
+        declaration: fsl_foundation::Span {
+            start: keep_start,
+            end: keep_start + keep_text.len(),
+        },
+        body: ExpressionSpans::new(fsl_foundation::Span {
+            start: keep_body_start,
+            end: keep_body_start + keep_body_text.len(),
+        })
+        .expect("keep body span"),
+        measure: None,
+    })
+    .expect("keep spans match its body");
+    let source =
+        fsl_semantics::check::admitted_source(fsl_foundation::SourceIdentity::new("a", "u"), text);
+    let mut declarations =
+        PackageDeclarations::new(source, "pkg", fsl_foundation::IdentityLimits::default());
+    declarations.enums = vec![foreign];
+    declarations.functions = vec![area, keep];
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("the two functions check");
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package)
+        .expect("emit_checked omits the unlocked enum instead of trying to place it");
+    let exports = verified_exports(&emission);
+    assert_eq!(
+        exports.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        BTreeSet::from(["keep"]),
+        "the I2 read exports only the independent function"
+    );
+
+    let graph = package.graph().semantic_graph();
+    let id_for_key = |key: &NodeKey| node_id(key.clone());
+    let foreign_id = id_for_key(&foreign_key);
+    let area_id = id_for_key(
+        &package
+            .graph()
+            .function_identity("area")
+            .expect("area exists"),
+    );
+    let ready_key = graph
+        .nodes()
+        .find(|node| {
+            node.semantic_form() == "enum_value"
+                && fsl_foundation::node_wire::node_key_to_json(&node.key())
+                    .expect("an enum value key encodes")["path"]
+                    .as_array()
+                    .and_then(|path| path.last())
+                    == Some(&json!("Ready"))
+        })
+        .expect("the graph holds the Ready enum value")
+        .key();
+    let ready_id = id_for_key(&ready_key);
+    let parameter_id = id_for_key(
+        &graph
+            .nodes()
+            .find(|node| node.semantic_form() == "parameter")
+            .expect("area has a value parameter")
+            .key(),
+    );
+    let body_id = id_for_key(
+        &graph
+            .nodes()
+            .find(|node| node.semantic_form() == "binary")
+            .expect("area body is an equality")
+            .key(),
+    );
+    let keep_id = id_for_key(
+        &package
+            .graph()
+            .function_identity("keep")
+            .expect("keep exists"),
+    );
+    let cause_of = |id: &CheckedNodeId| {
+        emission
+            .omitted
+            .iter()
+            .find(|omission| omission.node == *id)
+            .map(|omission| &omission.cause)
+    };
+    assert!(matches!(
+        cause_of(&foreign_id),
+        Some(OmissionCause::UnlockedOwner)
+    ));
+    assert!(matches!(
+        cause_of(&area_id),
+        Some(OmissionCause::NamesOmittedNode(_))
+    ));
+    assert_eq!(
+        cause_of(&ready_id),
+        Some(&OmissionCause::NamesOmittedNode(foreign_id.clone())),
+        "Ready is omitted because its enum declaration is unlocked"
+    );
+    assert_eq!(
+        cause_of(&parameter_id),
+        Some(&OmissionCause::NamesOmittedNode(foreign_id.clone())),
+        "the value parameter is omitted because its type is unlocked"
+    );
+    assert_eq!(
+        cause_of(&body_id),
+        Some(&OmissionCause::NamesOmittedNode(ready_id.clone())),
+        "the equality body is omitted because it names Ready"
+    );
+    assert_eq!(
+        cause_of(&area_id),
+        Some(&OmissionCause::NamesOmittedNode(parameter_id)),
+        "the area declaration is omitted because its parameter is omitted"
+    );
+    assert_eq!(cause_of(&keep_id), None, "keep is written");
+
+    // The checked package itself is retained by the second emission path.
+    // This is the same package as the first half, but no source occurrence is
+    // placeable, so there are no bytes to return.
+    let refusal = emit_package(&package, |_| None).expect_err("the package has no placed regions");
+    assert!(
+        matches!(refusal, EmitRefusal::UnlocatedOccurrence { .. }),
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.code(), Code::UnsupportedProjection);
+}

@@ -3,7 +3,7 @@ id: TC-986
 title: "Unit compile joins operation bodies and clauses by resolved operation identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-986: Unit compile joins operation bodies and clauses by resolved operation identity

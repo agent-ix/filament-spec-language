@@ -3,21 +3,21 @@ id: FR-063
 title: "Make semantic-family extension exhaustive at the core dispatch seams"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
 ---
 # FR-063: Make semantic-family extension exhaustive at the core dispatch seams
 
 ## Description
 
-ADR-012 §5.1 closes four enums inside the QSL crate that every family
+ADR-012 §5.1 closes four enums inside the FSL crate that every family
 extension touches: the family catalogue (`FamilyKind`), the parsed form
 enum together with its leading-token kind enum, the checked node enum, and
-each family's own `Cause` enum. QSL SHALL make adding a variant to any of
+each family's own `Cause` enum. FSL SHALL make adding a variant to any of
 these four enums fail the build at every seam ADR-012 §5.1 lists for that
 enum (S1 to S4), and SHALL provide a probe mechanism that demonstrates this
 on every build of the full gate, not only by inspection of the source.
@@ -31,16 +31,16 @@ on every build of the full gate, not only by inspection of the source.
   `RUSTFLAGS`, not a Cargo feature (see this section's own correction note
   below), enabled only by the probe builds.
 - The `seam_probe_downstream` build-configuration flag: a second `--cfg`
-  name, set only by the probe builds of the root crate, `qsl-route` and
-  `qsl-eval`, that gives each seam `match` in `qsl-semantics` its probe arm
+  name, set only by the probe builds of the root crate, `fsl-route` and
+  `fsl-eval`, that gives each seam `match` in `fsl-semantics` its probe arm
   so that crate compiles in those builds.
 - The `seam_probe_eval_downstream` and `seam_probe_replay_downstream`
   build-configuration flags: the first, set by the probe builds of
-  the root crate and `qsl-replay`, gives each seam `match` in `qsl-eval` its
+  the root crate and `fsl-replay`, gives each seam `match` in `fsl-eval` its
   probe arm; the second, set only by the root crate's probe build, gives
-  `qsl-replay`'s seam its probe arm.
+  `fsl-replay`'s seam its probe arm.
 - The `seam_probe_forms` build-configuration flag: set only by
-  `qsl-forms`' own probe build, it adds `LeadingTokenKind::__SeamProbe`, so
+  `fsl-forms`' own probe build, it adds `LeadingTokenKind::__SeamProbe`, so
   `dispatch` is non-exhaustive there and in no other build.
 - A checked-in list of the seam functions the probe builds' compiler errors
   are expected to name.
@@ -89,32 +89,32 @@ SHALL construct or match on a probe variant, and the `seam_probe` and `seam_prob
 `xtask seam-probe` SHALL run six probe builds and collect every rustc
 `E0004` diagnostic location each reports:
 
-1. `qsl-forms` with `RUSTFLAGS=--cfg seam_probe_forms`, which
-   reports the parser's leading-token-kind table, `qsl-forms::dispatch::
+1. `fsl-forms` with `RUSTFLAGS=--cfg seam_probe_forms`, which
+   reports the parser's leading-token-kind table, `fsl-forms::dispatch::
    dispatch`. The cfg is separate from `seam_probe` so that seam does not stop
-   the crates above `qsl-forms` compiling in the other builds;
-2. `qsl-semantics` with `RUSTFLAGS=--cfg seam_probe`;
-3. the root crate (`quire-spec-language`) with `RUSTFLAGS=--cfg seam_probe
+   the crates above `fsl-forms` compiling in the other builds;
+2. `fsl-semantics` with `RUSTFLAGS=--cfg seam_probe`;
+3. the root crate (`filament-spec-language`) with `RUSTFLAGS=--cfg seam_probe
    --cfg seam_probe_downstream --cfg seam_probe_eval_downstream --cfg
-   seam_probe_replay_downstream`. The root crate depends on `qsl-replay`,
-   which depends on `qsl-eval`;
-4. `qsl-route` with `RUSTFLAGS=--cfg seam_probe --cfg
-   seam_probe_downstream`. The root crate names `qsl-route` only as a dev
+   seam_probe_replay_downstream`. The root crate depends on `fsl-replay`,
+   which depends on `fsl-eval`;
+4. `fsl-route` with `RUSTFLAGS=--cfg seam_probe --cfg
+   seam_probe_downstream`. The root crate names `fsl-route` only as a dev
    dependency, so building the root crate's library never compiles it;
-5. `qsl-eval` (layer 5) with `RUSTFLAGS=--cfg seam_probe --cfg
-   seam_probe_downstream`, which reports `qsl-eval`'s own seams. The root
-   crate's build reaches `qsl-eval` through `qsl-replay` but sets
+5. `fsl-eval` (layer 5) with `RUSTFLAGS=--cfg seam_probe --cfg
+   seam_probe_downstream`, which reports `fsl-eval`'s own seams. The root
+   crate's build reaches `fsl-eval` through `fsl-replay` but sets
    `seam_probe_eval_downstream`, which gives those seams their probe arms,
    so only this build reports them;
-6. `qsl-replay` (layer 6) with `RUSTFLAGS=--cfg seam_probe --cfg
+6. `fsl-replay` (layer 6) with `RUSTFLAGS=--cfg seam_probe --cfg
    seam_probe_downstream --cfg seam_probe_eval_downstream`, which reports
    the replay executor's seam over `FamilyOutcome`.
 
 A crate that fails to compile stops every crate that depends on it, so one
-build cannot reach both `qsl-semantics`' seams and the seams of the crates
-above it that match over `qsl-semantics`' probe variants.
+build cannot reach both `fsl-semantics`' seams and the seams of the crates
+above it that match over `fsl-semantics`' probe variants.
 `seam_probe_downstream` exists only so builds 3 to 6
-compile `qsl-semantics`: under it, each seam `match` in `qsl-semantics` has
+compile `fsl-semantics`: under it, each seam `match` in `fsl-semantics` has
 an arm for its probe variant, and it gates nothing else. Every build SHALL
 fail. `xtask seam-probe` SHALL compare
 the union of their location sets against a checked-in list of seam
@@ -126,7 +126,7 @@ list that no build reports.
 
 ### Which seams the probe covers
 
-The six probe builds together report every S1 to S4 seam in the QSL
+The six probe builds together report every S1 to S4 seam in the FSL
 workspace crates (ADR-012 §1). The
 checked-in seam-function list SHALL include, at minimum, one entry for each
 of:
@@ -143,7 +143,7 @@ of:
 **Correction to merged spec (stage-participation table deleted, PR #262
 review, finding F7).** #214's first implementation pass built a
 stage-participation table --
-`stage_hooks(FamilyKind, Stage) -> HookStatus` in `qsl-semantics/src/family/mod.rs` -- as
+`stage_hooks(FamilyKind, Stage) -> HookStatus` in `fsl-semantics/src/family/mod.rs` -- as
 its own checked-in S1 location, distinct from `catalog_code_prefix`'s prefix
 arm. Review found that table's only non-test callers were three
 `assert_eq!(stage_hooks(...), Implemented)` sites, each passing a literal,
@@ -179,7 +179,7 @@ listed seam" because that is ADR-012 §5.1's own scoping, so a seam this
 requirement did not enumerate in a module it did not name is not covered by
 that denial (a residual this requirement inherits from its authority rather
 than exceeds). A crate-level `#![deny(clippy::wildcard_enum_match_arm)]` in
-the QSL crate's `lib.rs` removes that module-by-module scoping in one line,
+the FSL crate's `lib.rs` removes that module-by-module scoping in one line,
 covering every module including one added after this requirement lands; the
 implementing ticket may take that route, but does so as a deliberate choice
 recorded in the implementation, not as an accidental consequence of
@@ -197,9 +197,9 @@ comment.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-063-AC-1 | Building `qsl-forms` with `RUSTFLAGS=--cfg seam_probe_forms`, then `qsl-semantics` with `RUSTFLAGS=--cfg seam_probe`, and then the root crate, `qsl-route`, `qsl-eval` and `qsl-replay` each with `RUSTFLAGS=--cfg seam_probe --cfg seam_probe_downstream` (plus the layered downstream cfgs Behavior names for the root crate and `qsl-replay`), each fails to compile with rustc error code `E0004` specifically, and the six builds together report every seam function in the checked-in list and no other location; `seam_probe_downstream` gates only the probe arms that let builds 3 to 6 compile `qsl-semantics`, and `seam_probe_eval_downstream` and `seam_probe_replay_downstream` only those that let the builds above `qsl-eval` and `qsl-replay` compile them; a build that fails for any other reason (a typo, an unrelated compile error, a misconfigured build) does not satisfy this criterion merely by failing -- the error code and the exact sites must match. Removing one seam function's exhaustive-match arm from the checked-in list without removing the corresponding compiler error causes `xtask seam-probe` to fail with a diagnostic naming that location as unexpected-but-present. | Test (TC-161) |
+| FR-063-AC-1 | Building `fsl-forms` with `RUSTFLAGS=--cfg seam_probe_forms`, then `fsl-semantics` with `RUSTFLAGS=--cfg seam_probe`, and then the root crate, `fsl-route`, `fsl-eval` and `fsl-replay` each with `RUSTFLAGS=--cfg seam_probe --cfg seam_probe_downstream` (plus the layered downstream cfgs Behavior names for the root crate and `fsl-replay`), each fails to compile with rustc error code `E0004` specifically, and the six builds together report every seam function in the checked-in list and no other location; `seam_probe_downstream` gates only the probe arms that let builds 3 to 6 compile `fsl-semantics`, and `seam_probe_eval_downstream` and `seam_probe_replay_downstream` only those that let the builds above `fsl-eval` and `fsl-replay` compile them; a build that fails for any other reason (a typo, an unrelated compile error, a misconfigured build) does not satisfy this criterion merely by failing -- the error code and the exact sites must match. Removing one seam function's exhaustive-match arm from the checked-in list without removing the corresponding compiler error causes `xtask seam-probe` to fail with a diagnostic naming that location as unexpected-but-present. | Test (TC-161) |
 | FR-063-AC-2 | Adding a match arm for the probe variant at one seam function, without adding it at the others, leaves `xtask seam-probe` reporting that seam's location as no longer present while every other checked-in location still appears; `xtask seam-probe` fails, naming the missing location. | Test (TC-161) |
-| FR-063-AC-3 | Building the root crate, `qsl-route` and `qsl-eval` with no `RUSTFLAGS=--cfg seam_probe` set (the three normal builds) compiles cleanly, with `xtask seam-probe` confirming both that each build succeeds and that it reports zero `E0004` locations -- a probe variant reachable from a non-probe code path would surface as an `E0004` in this same build, not merely as an absent Cargo feature. A test inspects the repository for anything that could set `seam_probe` outside `xtask seam-probe`'s own build invocation -- a `[features]` table entry, `build.rs`, `.cargo/config.toml`, or a `RUSTFLAGS`/`rustflags` setting in any `Makefile` target or CI workflow -- and asserts none exists; this is a grep-shaped check over those specific files, not a proof that no code path anywhere could set the cfg (a `build.rs` added later, for instance, would need this check re-run, not exempt it from the pattern it greps for). | Test (TC-161) |
+| FR-063-AC-3 | Building the root crate, `fsl-route` and `fsl-eval` with no `RUSTFLAGS=--cfg seam_probe` set (the three normal builds) compiles cleanly, with `xtask seam-probe` confirming both that each build succeeds and that it reports zero `E0004` locations -- a probe variant reachable from a non-probe code path would surface as an `E0004` in this same build, not merely as an absent Cargo feature. A test inspects the repository for anything that could set `seam_probe` outside `xtask seam-probe`'s own build invocation -- a `[features]` table entry, `build.rs`, `.cargo/config.toml`, or a `RUSTFLAGS`/`rustflags` setting in any `Makefile` target or CI workflow -- and asserts none exists; this is a grep-shaped check over those specific files, not a proof that no code path anywhere could set the cfg (a `build.rs` added later, for instance, would need this check re-run, not exempt it from the pattern it greps for). | Test (TC-161) |
 | FR-063-AC-4 | `xtask seam-probe` runs to completion and exits non-zero when the checked-in list and the actual `E0004` location set differ in either direction (extra or missing), and exits zero only when the two sets are equal; a test with a deliberately wrong checked-in list (one entry removed) demonstrates the non-zero exit with a concrete example, not only an assertion that the tool "checks" the list. | Test (TC-161) |
 | FR-063-AC-5 | The full gate's own target list (the `Makefile`'s `ci:` target) names `seam-probe` as a prerequisite, whose own recipe runs `cargo xtask seam-probe`, and `xtask seam-probe`'s non-zero exit propagates to the full gate's own exit through `make`'s ordinary prerequisite-failure semantics -- a `.PHONY` aggregate target depending on a target whose recipe can fail. Both halves are checked directly: a grep-shaped check over the real `Makefile` confirms the prerequisite naming and the recipe, and a minimal fixture `Makefile` of the same `ci:`/`seam-probe:` shape demonstrates a failed prerequisite failing the aggregate target (and a succeeding one not failing it) -- without running the real, several-minutes seam-probe build itself. | Test (TC-161) |
 | FR-063-AC-6 | The checked-in seam-function list contains at least one entry for each of: the `FamilyKind` `catalog_code()` prefix arm; the S6a seam's `match` over the S6a family kind (`evaluate_declaration`); the parser's leading-token-kind entry table and the check seam over the parsed form enum; the checked node enum's evaluator, v2 emitter and requirement-derivation matches; and each family `Cause` enum's `catalog_code()`. A checked-in list missing the entry for any one of these categories, run against a real build that still has an `E0004` at that category's location (the source is unchanged), causes `xtask seam-probe` to fail, naming that category's location as present in the build but absent from the list (unexpected-but-present). | Test (TC-161) |

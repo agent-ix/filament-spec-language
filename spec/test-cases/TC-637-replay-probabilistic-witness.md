@@ -3,7 +3,7 @@ id: TC-637
 title: "replay_probabilistic_witness reproduces path-set and subsystem refutations and refuses altered witnesses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: verifies
 ---
 # TC-637: replay_probabilistic_witness reproduces path-set and subsystem refutations and refuses altered witnesses

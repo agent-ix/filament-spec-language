@@ -48,18 +48,18 @@ review checklist that omits any one of these does not satisfy FR-066-AC-1.
 FR-066-AC-2's three categories, per family:
 
 1. **The v2 emitter**: the family's checked-node variant's conversion into
-   `quire.checked-package/v2` bytes (ADR-013 O-17).
+   `filament.checked-package/v2` bytes (ADR-013 O-17).
 2. **The evaluator.** A family whose declarations S6a calls or selects
    implements the `evaluate` hook (`ReferenceEvaluation`). The hook converts
    a checked node plus its typing-context `Env` into the family's `Observed`
    outcome, or into the family's `Refused` reason. In the same change, reach
    it from S6a:
    - add the family's `S6aFamilyKind` variant to the `s6a_family_kinds!`
-     list in `qsl-eval/src/value/expression/s6a/mod.rs`, which also puts it
+     list in `fsl-eval/src/value/expression/s6a/mod.rs`, which also puts it
      in `S6aFamilyKind::ALL`;
    - add its `S6aFamilyKind::family` arm;
    - add its `evaluate_declaration` arm in
-     `qsl-eval/src/value/expression/mod.rs`;
+     `fsl-eval/src/value/expression/mod.rs`;
    - add its arm in TC-385's `s6a_family_name` match.
 
    Two families have no evaluator hook. `Relation` has none because S6a's
@@ -76,9 +76,9 @@ FR-066-AC-2's three categories, per family:
 For a family whose forms cross into IR, RT or CG (`StateModel`, `SumCase`,
 `TemporalTrace`, `ProtocolClause`, `Relation` all do, per ADR-012 §8's stage
 table), the wire and IR-side conversions belong to those repositories' own
-tickets, not to the QSL migration ticket: ADR-012 §14.1 names
-`agent-ix/quire-contract-ir#141` (IR tag/form enums at v2 intake) and
-`agent-ix/quire-contract-codegen#86` (CG enum matches) as the owners of
+tickets, not to the FSL migration ticket: ADR-012 §14.1 names
+`agent-ix/filament-contract-ir#141` (IR tag/form enums at v2 intake) and
+`agent-ix/filament-contract-codegen#86` (CG enum matches) as the owners of
 that side, and an RT ticket the RT owner opens separately.
 
 **A note on `requirements()`.** A function declaration carries no clause
@@ -88,7 +88,7 @@ records of a value function"). `ValueFunctionFamily::requirements()`
 returns one `ValueClaim` per such application, whose extent `check`
 classified with each domain keyed by binder; S3 keys each claim by the
 occurrence at its site and names each binder's parameter node
-(`qsl-semantics/src/check/claims.rs`). A family whose forms carry no
+(`fsl-semantics/src/check/claims.rs`). A family whose forms carry no
 FR-057 kind returns no claim.
 
 ## Removal condition
@@ -129,15 +129,15 @@ This ticket's own migration is the concrete instance of every category
 above.
 
 **Required tests, as delivered:**
-- Clause-level unit: `qsl-eval/src/value/expression/family.rs`'s
+- Clause-level unit: `fsl-eval/src/value/expression/family.rs`'s
   `family_contract_tests::value_function_family_checks_through_the_contract`,
-  and `qsl-semantics/src/check/family.rs`'s
+  and `fsl-semantics/src/check/family.rs`'s
   `checking_tests::two_contexts_from_the_same_declarations_check_identically`.
 - Builder-ordering: not applicable to this family -- a function declaration
   has no independently meaningful clause sequence (ADR-012 §4.1's test);
   this is recorded rather than silently skipped.
 - Seam-probe: `xtask/src/seam_probe.rs`'s checked-in `checked_in_locations()`
-  names `FamilyKind::catalog_code_prefix` (`qsl-semantics/src/family/mod.rs`)
+  names `FamilyKind::catalog_code_prefix` (`fsl-semantics/src/family/mod.rs`)
   as this migration's surviving S1 seam, demonstrated by a real failing
   build under `RUSTFLAGS=--cfg seam_probe` (FR-063). This migration's first
   implementation pass added a second S1 location, a `stage_hooks`
@@ -148,10 +148,10 @@ above.
   returns -- and it was deleted along with those callers (PR #262 review,
   finding F7; FR-063's own "Correction to merged spec" note), not kept
   checked-in to pad this list.
-- Wire-totality: `qsl-package/src/emit/tests.rs`'s
+- Wire-totality: `fsl-package/src/emit/tests.rs`'s
   `a_function_identity_survives_emission_and_the_i2_read` asserts the real
-  `qsl_package::emit_checked`/I2 round trip recovers the minted identity, and
-  `qsl-semantics/src/family/mod.rs`'s own `FamilyKind` `match`es (the
+  `fsl_package::emit_checked`/I2 round trip recovers the minted identity, and
+  `fsl-semantics/src/family/mod.rs`'s own `FamilyKind` `match`es (the
   seam-probe target above) have no `_` arm.
 - Backend-absence corpus: not applicable -- function declaration and
   application requests no FR-057 capability kind (see this document's
@@ -160,22 +160,22 @@ above.
   test category for real.
 
 **Required conversions, as delivered:**
-- v2 emitter: `qsl_package::emit_checked`, over the S4-linked
-  `CheckedPackage` (`qsl-package/src/emit.rs`). `FamilyContract::package`
+- v2 emitter: `fsl_package::emit_checked`, over the S4-linked
+  `CheckedPackage` (`fsl-package/src/emit.rs`). `FamilyContract::package`
   (and `ValueFunctionFamily`'s implementation of it) is deleted (PR #262
   review, findings F1/F2 -- see the entry below): the family's own
   now-deleted `emit_function_package_v2` originally called it into a scratch
   buffer nothing read, then built its real returned bytes independently, so
   the hook had no consumer.
 - Evaluator: `impl ReferenceEvaluation for ValueFunctionFamily` in
-  `qsl-eval/src/value/expression/family.rs` (`evaluate`); the trait is layer 5's, in
-  `qsl-eval/src/value/expression/s6a.rs` beside `S6aFamilyKind`, so the impl sits in
+  `fsl-eval/src/value/expression/family.rs` (`evaluate`); the trait is layer 5's, in
+  `fsl-eval/src/value/expression/s6a.rs` beside `S6aFamilyKind`, so the impl sits in
   the trait's crate (the orphan rule) while `ValueFunctionFamily` stays in
   layer-3 `check`. It is reached through the S6a
-  seam `evaluate_declaration` in `qsl-eval/src/value/expression/mod.rs`, which
+  seam `evaluate_declaration` in `fsl-eval/src/value/expression/mod.rs`, which
   `CheckedPackage::call` calls.
 - Requirement derivation: `FamilyContract::requirements` for
-  `ValueFunctionFamily` in `qsl-semantics/src/check/family.rs`, per this
+  `ValueFunctionFamily` in `fsl-semantics/src/check/family.rs`, per this
   document's own note above.
 
 **Real deleted symbols from this migration** (FR-066-AC-4). **Correction
@@ -200,22 +200,22 @@ The following, in contrast, existed in that first commit and were removed by a l
 commit on this branch, in the PR #262 review round -- real deletions
 someone can find:
 - `FamilyContract::package` and `ValueFunctionFamily`'s implementation of it
-  (`qsl-semantics/src/family/contract.rs`, `src/value/expression/family.rs`) -- deleted
+  (`fsl-semantics/src/family/contract.rs`, `src/value/expression/family.rs`) -- deleted
   because `emit_function_package_v2` never read its output (F1/F2 above).
-- `stage_hooks`, `Stage` and `HookStatus` (`qsl-semantics/src/family/mod.rs`) -- deleted
+- `stage_hooks`, `Stage` and `HookStatus` (`fsl-semantics/src/family/mod.rs`) -- deleted
   because their only non-test callers were three `assert_eq!` sites
   asserting a hand-written `match`'s own literal result against itself, and
   removing those fabricated callers left the table with no real reader
-  (PR #262 review, finding F7; see `qsl-semantics/src/family/mod.rs`'s own module doc and
+  (PR #262 review, finding F7; see `fsl-semantics/src/family/mod.rs`'s own module doc and
   FR-063's "Correction to merged spec" note on the seam-probe's checked-in
   list).
 - `FamilyKind::all()` and `assert_distinct_catalog_code_prefixes`
-  (`qsl-semantics/src/family/mod.rs`) -- deleted for the same reason as `stage_hooks`
+  (`fsl-semantics/src/family/mod.rs`) -- deleted for the same reason as `stage_hooks`
   (F7); the compile-time distinctness check `const _` in the same file
   replaces the property it asserted with one enforced on every build, not
   only under `cargo test`.
 - `StageFailure::Fault` and this crate's own `InternalFault`
-  (`qsl-semantics/src/family/outcome.rs`) -- deleted (F7): their one construction site
+  (`fsl-semantics/src/family/outcome.rs`) -- deleted (F7): their one construction site
   compared `mint_declaration_identity`'s output against itself, which
   cannot fail by construction, not by anything the runtime checked.
   `src/diagnostic.rs`'s own `InternalFault` (landed later, from `#213` S-5)
@@ -224,7 +224,7 @@ someone can find:
   `ValueFunctionFamily::check` (`src/value/expression/family.rs`) -- deleted
   along with `StageFailure::Fault` above, for the same reason.
 
-**Real test file added:** `qsl-eval/src/value/expression/family.rs`'s
+**Real test file added:** `fsl-eval/src/value/expression/family.rs`'s
 `family_contract_tests` module (added by this migration); `xtask/src/
 seam_probe.rs` (new file, this migration's seam-probe implementation).
 
@@ -235,4 +235,4 @@ FR-064 (`#[string_edge]`/`xtask string-edge`) is a cross-cutting gate, part of
 or converts the string to a closed enum or typed identity, and never adds a
 branch-gating allow-list entry. The attribute comes from `ix-trace-rs`
 (`use ix_trace_rs::string_edge;`), which the family crate declares as a
-dependency; QSL defines no marker of its own.
+dependency; FSL defines no marker of its own.

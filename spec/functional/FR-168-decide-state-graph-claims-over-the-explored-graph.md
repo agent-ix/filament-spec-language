@@ -3,24 +3,24 @@ id: FR-168
 title: "Decide state-graph claims over the explored graph"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-167
+  - target: ix://agent-ix/filament-spec-language/FR-167
     type: depends_on
 ---
 # FR-168: Decide state-graph claims over the explored graph
 
 ## Description
 
-When FR-167's exploration ends, `qsl-analyze`'s `model_check` SHALL decide each
+When FR-167's exploration ends, `fsl-analyze`'s `model_check` SHALL decide each
 state-graph item instance by one pass over the explored graph, linear in its
 nodes and edges (ADR-022 §3): backward reachability for `possible` and
 `always possible`, and path counting for `unique path`. It SHALL return
@@ -103,7 +103,7 @@ Each carries its instance's `over` binding.
 ### Canonical order
 
 - Edges out of a node SHALL be ordered by their transition identity's
-  canonical bytes (QSpec FR-181), then by the post-state's state-key bytes.
+  canonical bytes (FSpec FR-181), then by the post-state's state-key bytes.
 
 ### `possible` and `always possible`: backward reachability
 
@@ -171,12 +171,12 @@ Each carries its instance's `over` binding.
   evaluator (FR-107) at every explored node.
 - If a predicate evaluates `Undefined` at an explored node, then the engine
   SHALL return `Undefined` with the canonical breadth-first path to the
-  first such node in discovery order, with `where` and `cause` as QSpec
+  first such node in discovery order, with `where` and `cause` as FSpec
   FR-391 states them: the predicate, the node's state key and the
   locus of the expression with no value, and the catalogued reason
   (ADR-022 GV-7, ADR-018 UE-1).
 - The engine SHALL also treat as evaluated at an explored node the
-  subject's own expressions (QSpec FR-391 "Undefined evaluation"): the
+  subject's own expressions (FSpec FR-391 "Undefined evaluation"): the
   guard, the effective precondition, of each transition enabled-tested at
   the node; the `terminal when` predicate (FR-124) at a node with no enabled
   transition; and a selected state constraint (ADR-021) that restricts the
@@ -188,7 +188,7 @@ Each carries its instance's `over` binding.
   names the node's state key and the locus of the expression with no
   value, plus the FR-181 transition identity for a guard and neither a
   predicate nor a transition for the `terminal when` predicate or a state
-  constraint (QSpec FR-393).
+  constraint (FSpec FR-393).
 - The engine SHALL NOT read an undefined guard as a disabled transition, and
   SHALL NOT read an undefined `terminal when` predicate as a non-terminal
   node.
@@ -196,7 +196,7 @@ Each carries its instance's `over` binding.
   `Holds` and `HoldsReduced`, whether the witnesses were sampled or explored. When a trap
   or a path pair is found at a node earlier in discovery order, the engine
   SHALL return that evidence instead. A node that is undefined and also a
-  trap or a count-2 node SHALL return `Undefined` (QSpec FR-391).
+  trap or a count-2 node SHALL return `Undefined` (FSpec FR-391).
 
 ### Partial runs
 
@@ -244,13 +244,13 @@ Each carries its instance's `over` binding.
   (the explored graph and open nodes),
   [FR-166](FR-166-sample-witnesses-for-possible-claims.md) (sampled
   witnesses), [FR-165](FR-165-check-state-graph-claims-at-s3.md) (forms),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (canonical discovery order).
 - FR-169 settles the outcome; FR-170 replays its evidence.
-- QSpec FR-390 and FR-391 own the graph semantics and which evidence is
+- FSpec FR-390 and FR-391 own the graph semantics and which evidence is
   decisive on a partial run (ADR-022 QS-2, QS-3).
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-390 and FR-391 (Linear STD-135; ADR-022
+- ADR-022. FSpec half: FSpec FR-390 and FR-391 (Linear STD-135; ADR-022
   QS-2, QS-3).

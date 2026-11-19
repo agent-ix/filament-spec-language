@@ -3,7 +3,7 @@ id: TC-591
 title: "Phase 0 samples seeded witnesses for possible claims, on by default"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: verifies
 ---
 # TC-591: Phase 0 samples seeded witnesses for possible claims, on by default

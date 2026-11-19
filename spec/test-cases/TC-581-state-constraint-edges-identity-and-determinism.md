@@ -3,7 +3,7 @@ id: TC-581
 title: "Undefined, absent and initially-false constraints, bounds, identity and determinism"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: verifies
 ---
 # TC-581: Undefined, absent and initially-false constraints, bounds, identity and determinism
@@ -39,7 +39,7 @@ Tag the tests `#[trace("TC-581", "FR-158-AC-n")]`.
 - Step 2: equal obligation identities and different request identities, so neither result settles the other; `Low` in the method; equal outcomes and boundary counts.
 - Step 3: under `sc`, 3 stored states and `ConstraintReached{boundary_states: 2}`; under `tso`, `Violated` with counterexample `Sx`, `Sy`, `Lx`, `Ly`; under `ra`, 3 stored states and `ConstraintReached{boundary_states: 2}` with no counterexample; the constraint offered; `invalid_runtime_input`/`invalid-value` naming the absent constraint with no state expanded.
 - Step 4: a `state_clause` node of clause `constraint` anchored at
-  `Counter` binding `[self]`, read by QSL's I2 read; a record for `Wide`
+  `Counter` binding `[self]`, read by FSL's I2 read; a record for `Wide`
   only; AC-1's outcome with `Low`'s node key as `reductions.constraint`;
   `invalid_runtime_input`/`invalid-value` naming the constraint twice, no
   state expanded; `invalid_syntax`; `truth: true`.

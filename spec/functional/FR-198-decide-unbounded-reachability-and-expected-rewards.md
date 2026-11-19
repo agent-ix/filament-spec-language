@@ -3,13 +3,13 @@ id: FR-198
 title: "Decide unbounded reachability and expected rewards"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: depends_on
 ---
 # FR-198: Decide unbounded reachability and expected rewards
@@ -165,6 +165,6 @@ checked on the original subject continuation, not an absorbed goal sink.
 
 ## References
 
-- QSpec half, which owns the semantics of the unbounded forms and the
-  `+∞` rule: QSpec FR-411 (Linear STD-137).
+- FSpec half, which owns the semantics of the unbounded forms and the
+  `+∞` rule: FSpec FR-411 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

@@ -3,7 +3,7 @@ id: TC-743
 title: "Replay re-derives a state-clause witness and checks that the element separates the clause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-268
+  - target: ix://agent-ix/filament-spec-language/FR-268
     type: verifies
 ---
 # TC-743: Replay re-derives a state-clause witness and checks that the element separates the clause
@@ -34,8 +34,9 @@ provision.
    member; with the deciding element 700 at index 1; with 0 at
    index 0. Repeat FR-265-AC-1's record over variants of `AllBelow` whose
    domain expression evaluates `undefined` on `high`, whose body evaluates
-   `undefined` for `mid`, and whose domain is refused (a `count` into
-   `Int[0, 0]` of a one-element collection); then over `AllBelow` with the
+   `undefined` for `mid`, and whose domain is refused (it calls `z`, whose body is a `count` into
+   `Int[0, 0]` of a one-element collection, in a package checked under
+   `CheckMode::Kernel`; FR-268-AC-3); then over `AllBelow` with the
    evaluation meter one unit below step 2's need.
 4. TC-517 step 1's `VersionUnchanged` and `ParentOrder` envelopes; an
    `AllBelow` envelope whose reader bound is smaller than its encoded
@@ -54,5 +55,6 @@ Tag the tests `#[trace("TC-743", "FR-268-AC-n")]`.
 - Step 3: pass; then failures at steps 1, 3, 3, 3 and 4; then failures at
   step 2 (`UndefinedEvaluation`), step 4 (`UndefinedEvaluation`) and step 2
   (the refusal record); then `inconclusive` with `NoValue`.
-- Step 4: no record on either envelope or result and FR-122-AC-1's
+- Step 4: FR-266-AC-2's comparison record on each envelope and its
+  `Witness`-arm result, and FR-122-AC-1's
   settlements; a decode refusal under FR-070-AC-7; equal results.

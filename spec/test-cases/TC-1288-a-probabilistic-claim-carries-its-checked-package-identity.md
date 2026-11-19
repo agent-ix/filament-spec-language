@@ -3,7 +3,7 @@ id: TC-1288
 title: "A probabilistic claim carries its checked-package identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-498
+  - target: ix://agent-ix/filament-spec-language/FR-498
     type: verifies
 ---
 # TC-1288: A probabilistic claim carries its checked-package identity
@@ -20,7 +20,7 @@ FR-498-AC-1 to FR-498-AC-4.
 ## Test Procedure
 
 1. Compile one unit with three probabilistic claims: two sharing a declared
-   name and differing in written content (the QSL counterpart of QSpec
+   name and differing in written content (the FSL counterpart of FSpec
    TC-233 `PC-01` and `PC-02`, referenced by ID; one source cannot give two
    declarations equal spans) and a third with another name. Emit the package
    and record each claim's `{declaration, occurrence}`, telling the claims
@@ -41,7 +41,7 @@ FR-498-AC-1 to FR-498-AC-4.
    a node of the emitted graph with that node's own `claim` occurrence.
 
 Tag the test `#[trace("FR-498-AC-1", "FR-498-AC-2", "FR-498-AC-3", "FR-498-AC-4", "TC-1288")]`.
-Vectors are referenced by QSpec case ID, never copied.
+Vectors are referenced by FSpec case ID, never copied.
 
 ## Expected Results
 

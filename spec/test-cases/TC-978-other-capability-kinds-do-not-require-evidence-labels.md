@@ -3,7 +3,7 @@ id: TC-978
 title: "Other capability kinds do not require evidence labels"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-978: Other capability kinds do not require evidence labels

@@ -3,7 +3,7 @@ id: TC-782
 title: "inspect builds each typed view from the source map"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-297
+  - target: ix://agent-ix/filament-spec-language/FR-297
     type: verifies
 ---
 # TC-782: inspect builds each typed view from the source map
@@ -16,7 +16,7 @@ stopped requests.
 
 Scope: [FR-297](../functional/FR-297-inspect-packages-outcomes-and-traces-as-typed-views.md)
 AC-1 through AC-10. This is the authored acceptance procedure; passing
-evidence requires executable tests over the public `qsl-inspect` API. A
+evidence requires executable tests over the public `fsl-inspect` API. A
 missing producer, including E11 for retained state graphs, leaves its checks
 pending.
 

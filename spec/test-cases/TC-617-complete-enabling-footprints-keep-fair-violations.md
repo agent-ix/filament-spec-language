@@ -3,7 +3,7 @@ id: TC-617
 title: "Complete enabling footprints and membership keep fair violations under partial-order reduction"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-157
+  - target: ix://agent-ix/filament-spec-language/FR-157
     type: verifies
 ---
 # TC-617: Complete enabling footprints and membership keep fair violations under partial-order reduction

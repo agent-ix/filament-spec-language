@@ -3,7 +3,7 @@ id: TC-802
 title: "A frame binding checks without a naming clause and relates to the frame and anchor when one exists"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-305
+  - target: ix://agent-ix/filament-spec-language/FR-305
     type: verifies
 ---
 # TC-802: A frame binding checks without a naming clause and relates to the frame and anchor when one exists

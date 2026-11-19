@@ -3,11 +3,11 @@ id: TC-673
 title: "Flush and visibility fairness join every infinite-trace fairness set"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-228
+  - target: ix://agent-ix/filament-spec-language/FR-228
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: verifies
 ---
 # TC-673: Flush and visibility fairness join every infinite-trace fairness set

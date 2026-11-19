@@ -3,15 +3,15 @@ id: FR-139
 title: "Type and evaluate population-valued expressions in a refinement"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
 ---
 # FR-139: Type and evaluate population-valued expressions in a refinement
@@ -19,11 +19,11 @@ relationships:
 ## Description
 
 Inside a refinement declaration (field rows, step-row receivers and
-arguments, history updates), QSL SHALL admit a concrete population name as
+arguments, history updates), FSL SHALL admit a concrete population name as
 the set of that population's objects in the current state, read through the
 forms `count`, `sum`, `exists`, `all`, `only` and `seq` (ADR-020 RM-8). S3
 types each form; the clause evaluator evaluates it. Their meaning and
-typing rules are QSpec's (ADR-020 QS-10); QSL implements them as QSpec
+typing rules are FSpec's (ADR-020 QS-10); FSL implements them as FSpec
 states them. Outside a refinement declaration, FR-391 governs population
 names and the forms with a population domain in state clauses and temporal
 `holds` atoms.
@@ -49,7 +49,7 @@ one mapping row.
   symbolic and the request's subject fixes.
 - Checked forms: `count(x in P where c)`, `sum(x in P where c: e)`,
   `exists(x in P where c)`, `all(x in P where c)`, `only(x in P where c:
-  e)` and `seq(i in lo .. hi: e)`, each with the type QSpec gives it.
+  e)` and `seq(i in lo .. hi: e)`, each with the type FSpec gives it.
 - At evaluation, a value, or undefined for an `only` that finds no object or
   several.
 
@@ -70,9 +70,12 @@ one mapping row.
   for `n` and check the recorded bounds, refusing
   `ill_typed`/`type-mismatch` naming the row, the population and its
   universe size when a result's bounds do not conform to its use.
-- The checker SHALL refuse `seq` in a clause outside a refinement
-  declaration `unsupported_construct`/`expression-form` at its span. FR-391
-  admits the other population names and forms there.
+- Outside a refinement declaration, FR-391 admits all six forms, `seq`
+  included, in a population position, with the typing and evaluation stated
+  here. `seq` reads no population, so nothing about it depends on being in a
+  refinement row. Every checked population reference and form lowers to
+  FSpec FR-322 terms in every position where it checks (FR-391 "Lowering of
+  population forms"); lowering never refuses one.
 - Each form SHALL bind its variable to `Reference<T>` (for `x in P`) or to
   an integer within the bounds of `lo` and `hi` (for `seq`), and SHALL check
   `c` as `Boolean` and `e` by its own type, refusing `ill_typed`/
@@ -83,7 +86,7 @@ one mapping row.
   includes 0 even when `lo` and `hi` are both positive or both negative.
   The `count` bound is `[0, n]`.
 - `seq`'s declared maximum length SHALL be computed from the static bounds
-  of `lo` and `hi`, as QSpec states it.
+  of `lo` and `hi`, as FSpec states it.
 - The form's result SHALL be checked against its use (an abstract field, a
   parameter, a history field) as FR-135 checks a field row.
 
@@ -97,9 +100,9 @@ one mapping row.
 - `only` SHALL evaluate to `e` for the one object satisfying `c`; when no
   object or more than one satisfies it, the form SHALL evaluate undefined,
   so the row that contains it evaluates undefined and the refinement settles
-  `refuted` with `UndefinedEvaluation` (FR-140, FR-142; QSpec FR-376).
+  `refuted` with `UndefinedEvaluation` (FR-140, FR-142; FSpec FR-376).
 - That undefined result SHALL carry the `UndefinedRecord` reason
-  `only-not-one`, for no object and for several alike, with a payload naming the population binding, the `only` locus and the enclosing row and no match count (QSpec native-diagnostics "Undefined reasons"), so FR-140's
+  `only-not-one`, for no object and for several alike, with a payload naming the population binding, the `only` locus and the enclosing row and no match count (FSpec native-diagnostics "Undefined reasons"), so FR-140's
   `MappingFailure::Undefined` and the refinement counterexample's `cause`
   name it.
 - `seq(i in lo .. hi: e)` SHALL evaluate to the sequence of `e` for each
@@ -113,7 +116,7 @@ Fixture: ADR-020 §8's `RingIsQueue` with universes `rings = {r}` and `slots
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-139-AC-1 | `RingIsQueue`'s `items` row checks at S3 with `n` symbolic, and at subject admission with `slots = {s0, s1}` `R::slots` is typed `Set<Reference<R::Slot>>[0, 2]` and the `seq` form's declared maximum length 2, conforming to `Sequence<Int[0, 1]>[0, 2]`. `count(s in R::slots where s.ring = self)` checks as an integer and `exists(s in R::slots where s.value = 1)` as `Boolean`. | Test (TC-544) |
-| FR-139-AC-2 | `only(s in R::slots where s.index: s.value)` refuses `ill_typed`/`type-mismatch` at `s.index`. A `seq` in an invariant of `R::Ring` refuses `unsupported_construct`/`expression-form`. | Test (TC-544) |
+| FR-139-AC-2 | `only(s in R::slots where s.index: s.value)` refuses `ill_typed`/`type-mismatch` at `s.index`. A `seq(i in 0 .. 1: i)` in an invariant of `R::Ring` checks as `Sequence<Int[0, 1]>[0, 2]` (FR-391-AC-10). | Test (TC-544) |
 | FR-139-AC-3 | At the state `head = 1`, `size = 2`, `s0.value = 0`, `s1.value = 1`, `items` evaluates to `[1, 0]`; at `head = 0`, `size = 0` it evaluates to `[]`; `count(s in R::slots where s.ring = self)` evaluates to 2 and `all(s in R::slots where s.value = 1)` to `false`. | Test (TC-544) |
 | FR-139-AC-4 | `only(s in R::slots where s.ring = self: s.value)` is undefined at every state of the fixture (two slots satisfy it), and `only(s in R::slots where s.ring = self and s.index = self.head + 2: s.value)` is undefined (no slot satisfies it). | Test (TC-544) |
 | FR-139-AC-5 | A row `count(s in R::slots where s.ring = self)` mapped to an abstract field of type `Int[0, 2]` checks at S3 with `n` symbolic; a request whose subject admits `slots = {s0, s1}` admits it, and one that admits `slots = {s0, s1, s2}` refuses `ill_typed`/`type-mismatch` before exploration, naming the row, `R::slots` and universe size 3. | Test (TC-544) |
@@ -130,4 +133,4 @@ Fixture: ADR-020 §8's `RingIsQueue` with universes `rings = {r}` and `slots
 
 ## References
 
-- The QSpec half (the forms, their typing and `seq`'s maximum length): QSpec FR-376 (Linear STD-133).
+- The FSpec half (the forms, their typing and `seq`'s maximum length): FSpec FR-376 (Linear STD-133).

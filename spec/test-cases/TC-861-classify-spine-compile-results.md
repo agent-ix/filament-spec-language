@@ -3,7 +3,7 @@ id: TC-861
 title: "Spine compile results classify into exactly one refinement class, reading every cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-341
+  - target: ix://agent-ix/filament-spec-language/FR-341
     type: verifies
 ---
 # TC-861: Spine compile results classify into exactly one refinement class, reading every cause

@@ -3,13 +3,13 @@ id: TC-1231
 title: "Bytes, JsonObject and Duration natives: payloads, literals, equality, length and concat"
 type: TC
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-056"
+  - target: "ix://agent-ix/filament-spec-language/FR-056"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-091"
+  - target: "ix://agent-ix/filament-spec-language/FR-091"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-093"
+  - target: "ix://agent-ix/filament-spec-language/FR-093"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-106"
+  - target: "ix://agent-ix/filament-spec-language/FR-106"
     type: verifies
 ---
 # TC-1231: Bytes, JsonObject and Duration natives: payloads, literals, equality, length and concat
@@ -158,11 +158,11 @@ ordering and arithmetic, and the lowering of each admitted form.
   one unit are one value.
 - Step 5: each D-row gives its stated result; a Duration is the type
   `Quantity<s>` and has no node of its own.
-- Step 6: the comparisons lower to `quire.op.bytes.eq`/`.ne` and
-  `quire.op.json_object.eq`/`.ne` with result `boolean`, arguments
+- Step 6: the comparisons lower to `filament.op.bytes.eq`/`.ne` and
+  `filament.op.json_object.eq`/`.ne` with result `boolean`, arguments
   `[ref(a), ref(b)]` and no law, mode, member or leaves; `length` lowers to
-  `quire.op.bytes.length` with result `Integer`, `concat` to
-  `quire.op.bytes.concat` with result `bytes`; the literals lower to
+  `filament.op.bytes.length` with result `Integer`, `concat` to
+  `filament.op.bytes.concat` with result `bytes`; the literals lower to
   `value`/`literal` nodes of `value_kind` `bytes` and `json_object` with the
   canonical text as `value`; no text-profile definition is referenced.
 - Step 7: each S-row gives its stated outcome.

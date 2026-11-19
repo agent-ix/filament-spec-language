@@ -3,7 +3,7 @@ id: TC-1332
 title: "Evaluate temporal evidence from the checked package's own nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-532
+  - target: ix://agent-ix/filament-spec-language/FR-532
     type: verifies
 ---
 # TC-1332: Evaluate temporal evidence from the checked package's own nodes

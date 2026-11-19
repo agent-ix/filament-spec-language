@@ -3,9 +3,9 @@ id: TC-865
 title: "An unsupported or incomplete superseding run is unresolved, never holds, and names its limit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: verifies
 ---
 # TC-865: An unsupported or incomplete superseding run is unresolved, never holds, and names its limit

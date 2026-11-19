@@ -3,7 +3,7 @@ id: TC-1300
 title: "Admit bounded Rational value types and refuse inconsistent bounds"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-505
+  - target: ix://agent-ix/filament-spec-language/FR-505
     type: verifies
 ---
 # TC-1300: Admit bounded Rational value types and refuse inconsistent bounds
@@ -16,7 +16,7 @@ parameter and foreign-constraint restatement, value admission, the unchanged
 bare native, tuple positions and variant payloads, the unit-bearing carried quantity and its comparison through
 `convert<Quantity<u>>`, and the resolution of a bare unit name against the
 source and the selected packages, a package unit being reached only
-through its alias. Scope: FR-505-AC-1 to FR-505-AC-12. The QSpec vectors
+through its alias. Scope: FR-505-AC-1 to FR-505-AC-12. The FSpec vectors
 are TC-981 `RV-01` to `RV-12`, referenced by row id and never copied.
 
 ## Test Procedure
@@ -46,10 +46,10 @@ Each row below mutates `R0` as stated and admits it.
 | 12 | `level` adds its own `maxDenominator` constraint; `delta` adds its own constraint | `invalid_model_binding`/`malformed-declaration` at `Field.constraints`; the same at `Operation.params[0].constraints` |
 | 13 | add alias `Level2` of `Ratio` with a constraint | `invalid_model_binding`/`malformed-declaration` at the alias node and `TypeDefinition.constraints` |
 | 14 | add value type `Other` carrying a constraint whose `appliesTo` is `Ratio` | `invalid_model_binding`/`malformed-declaration` at `Other` and `Constraint.appliesTo`; `Ratio` admitted |
-| 15 | add a field typed bare `ix://quire/native/Rational` and one typed row 3's empty-constraint value type, then a clause that uses each | admitted; each clause refuses `ill_typed`/`operator-ineligible`; every other declaration's node identity equals row 1's |
-| 16 | `Ratio` with `unit` `ix://quire/unit/m`; add a second equal-bounds value type with unit `ix://quire/unit/m`, `Ratio` without unit, and an equal-bounds value type with unit `ix://quire/unit/cm` | `level` has type `Quantity<m, Rational[-3, 7; 1, 12]>`, the `scalar_type`/`carried_quantity` node over `m`'s unit node, row 1's `rational_range` node and `rounding` `exact`; the second `m` type names that node; the no-unit and `cm` types name two other nodes |
-| 17 | `unit` `ix://quire/unit/nosuch` | `missing_declaration`/`missing-name` at the value type node and `TypeDefinition.unit` |
-| 18 | `unit` `m`; `unit` `1`; `unit` `ix://quire/native/Rational`; `unit` `ix://quire/unit/m` on a value type of `scalar` `string`; `unit` `m` with `minNumerator` 8 | each of the first four `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.unit`; the last only the bounds refusal |
+| 15 | add a field typed bare `ix://filament/native/Rational` and one typed row 3's empty-constraint value type, then a clause that uses each | admitted; each clause refuses `ill_typed`/`operator-ineligible`; every other declaration's node identity equals row 1's |
+| 16 | `Ratio` with `unit` `ix://filament/unit/m`; add a second equal-bounds value type with unit `ix://filament/unit/m`, `Ratio` without unit, and an equal-bounds value type with unit `ix://filament/unit/cm` | `level` has type `Quantity<m, Rational[-3, 7; 1, 12]>`, the `scalar_type`/`carried_quantity` node over `m`'s unit node, row 1's `rational_range` node and `rounding` `exact`; the second `m` type names that node; the no-unit and `cm` types name two other nodes |
+| 17 | `unit` `ix://filament/unit/nosuch` | `missing_declaration`/`missing-name` at the value type node and `TypeDefinition.unit` |
+| 18 | `unit` `m`; `unit` `1`; `unit` `ix://filament/native/Rational`; `unit` `ix://filament/unit/m` on a value type of `scalar` `string`; `unit` `m` with `minNumerator` 8 | each of the first four `invalid_model_binding`/`malformed-declaration` at `TypeDefinition.unit`; the last only the bounds refusal |
 | 19 | row 16's `Ratio`, with the units declared in the model document that declares `Ratio`, selected under the alias `Config`, and none in the source, typing fields `a` and `b`, with invariants `self.a = self.b`, `self.a < self.b`, `self.a + self.b = self.a`; then `convert<Quantity<Config::m>>(self.a) = convert<Quantity<Config::m>>(self.b)`, `convert<Quantity<Config::m>>(self.a) < convert<Quantity<Config::m>>(self.b)` and `convert<Quantity<Config::cm>>(self.a) = 100 Config::cm`; then the bare `convert<Quantity<m>>(self.a) = convert<Quantity<m>>(self.b)` | the first three each `ill_typed`/`type-mismatch` at the expression; the next three check, `Config::m` naming the document's `m` unit node; the bare form refuses `missing_declaration`/`missing-name` at the first `m` with `UnresolvedUnitName { name: "m", packages: [<the document's identity>] }` |
 | 20 | a source function parameter typed `Rational[8, 7; 1, 12]`; one typed `Rational[0, 7; 0, 12]`; the types `Quantity<m, Rational[8, 7; 1, 12]>` and `Quantity<m, Rational[0, 7; 0, 12]>` | each `ill_typed` at the `Rational[..]` type |
 | 24 | add tuple type `P` with position `p0` typed `Ratio` and variant type `V` with case `c` whose `payloadType` is `Ratio` | admitted; `p0` and `c`'s payload type `Rational[-3, 7; 1, 12]`, naming row 1's node |
@@ -71,7 +71,7 @@ packages.
 | Row | Fixture | Expected |
 | --- | --- | --- |
 | 27 | row 19's model document; the compiling unit declares `dimension Time;` and `unit m : Time = rational(1, 1);`; the invariant `convert<Quantity<Config::cm>>(self.a) = 100 Config::cm`, first without those source declarations | without them the invariant checks; with them the package is admitted with no refusal, `Ratio`'s members are typed over the source `m` of `Time`, and the invariant refuses `ill_typed`/`type-mismatch` at the conversion |
-| 28 | packages `acme/a` (alias `A`) and `acme/b` (alias `B`), selected in that order, each declaring a base dimension and a unit `x`; the compiling unit declares no `x`; `function f using v(d: Quantity<U>): Boolean pure { d = d }` for `U` = `x`, `A::x`, `B::x`; the literal `1 x`; `convert<Quantity<x>>(1 A::x)`; then `acme/b` declaring `y` in place of `x`, for `U` = `x` and `nosuch`; then the first packages with the compiling unit declaring `dimension L;` and `unit x : L = rational(1, 1);`, for `U` = `x`; then the first packages with `acme/a` declaring a value type typed `unit` `ix://quire/unit/x` | `x`, `1 x` and the `convert` target: one refusal each, `missing_declaration`/`missing-name` at `x`, cause `UnresolvedUnitName { name: "x", packages: ["acme/a", "acme/b"] }`, no `PackageDeclarations`; `A::x` and `B::x` assemble; with `y`, `x` refuses with `packages: ["acme/a"]` and `nosuch` with `packages: []`; with the source `x`, `x` resolves to the source unit with no refusal; the value type's members are typed over `acme/a`'s `x` with no refusal |
+| 28 | packages `acme/a` (alias `A`) and `acme/b` (alias `B`), selected in that order, each declaring a base dimension and a unit `x`; the compiling unit declares no `x`; `function f using v(d: Quantity<U>): Boolean pure { d = d }` for `U` = `x`, `A::x`, `B::x`; the literal `1 x`; `convert<Quantity<x>>(1 A::x)`; then `acme/b` declaring `y` in place of `x`, for `U` = `x` and `nosuch`; then the first packages with the compiling unit declaring `dimension L;` and `unit x : L = rational(1, 1);`, for `U` = `x`; then the first packages with `acme/a` declaring a value type typed `unit` `ix://filament/unit/x` | `x`, `1 x` and the `convert` target: one refusal each, `missing_declaration`/`missing-name` at `x`, cause `UnresolvedUnitName { name: "x", packages: ["acme/a", "acme/b"] }`, no `PackageDeclarations`; `A::x` and `B::x` assemble; with `y`, `x` refuses with `packages: ["acme/a"]` and `nosuch` with `packages: []`; with the source `x`, `x` resolves to the source unit with no refusal; the value type's members are typed over `acme/a`'s `x` with no refusal |
 
 Tag the test `#[trace("FR-505-AC-1", "FR-505-AC-2", "FR-505-AC-3", "FR-505-AC-4", "FR-505-AC-5", "FR-505-AC-6", "FR-505-AC-7", "FR-505-AC-8", "FR-505-AC-9", "FR-505-AC-10", "FR-505-AC-11", "FR-505-AC-12", "TC-1300")]`.
 

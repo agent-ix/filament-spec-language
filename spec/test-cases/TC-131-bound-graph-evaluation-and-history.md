@@ -3,7 +3,7 @@ id: TC-131
 title: "Bound graph evaluation and preserve historical profiles"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-047, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-047, type: verifies }
 ---
 # TC-131: Bound graph evaluation and preserve historical profiles
 
@@ -15,7 +15,7 @@ ConfigVersion compatibility.
 ## Test Procedure
 
 Measure successful true and false depth-first traversals under
-`quire.value.accounting/v1`, then rerun each with zero, exact and one-step-
+`filament.value.accounting/v1`, then rerun each with zero, exact and one-step-
 insufficient `accounting.value_occurrences` (graph expansion),
 `accounting.work_units` (edge inspection) and `accounting.result_units` (result)
 while keeping other counters sufficient. Raise each setting above its FR-255

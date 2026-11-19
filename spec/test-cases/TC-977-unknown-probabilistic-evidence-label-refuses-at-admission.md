@@ -3,7 +3,7 @@ id: TC-977
 title: "Unknown probabilistic evidence labels refuse at admission"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-977: Unknown probabilistic evidence labels refuse at admission

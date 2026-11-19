@@ -6,7 +6,7 @@
     {
       "construct": {
         "identity": "none",
-        "meaning": "quire.meaning.model.object-type/v1",
+        "meaning": "filament.meaning.model.object-type/v1",
         "members": {
           "identityFields": "required"
         },
@@ -60,7 +60,7 @@
             }
           },
           "presence": "required",
-          "typeRef": "ix://quire/native/Integer"
+          "typeRef": "ix://filament/native/Integer"
         },
         {
           "defaultKind": "none",
@@ -83,7 +83,7 @@
             }
           },
           "presence": "required",
-          "typeRef": "ix://quire/native/Boolean"
+          "typeRef": "ix://filament/native/Boolean"
         }
       ],
       "identity": "ix://test/orders/Switch",
@@ -136,7 +136,7 @@
                 }
               },
               "presence": "required",
-              "typeRef": "ix://quire/native/Boolean"
+              "typeRef": "ix://filament/native/Boolean"
             }
           ],
           "post": [],
@@ -183,7 +183,7 @@
                 }
               },
               "presence": "required",
-              "typeRef": "ix://quire/native/Boolean"
+              "typeRef": "ix://filament/native/Boolean"
             }
           ],
           "post": [],

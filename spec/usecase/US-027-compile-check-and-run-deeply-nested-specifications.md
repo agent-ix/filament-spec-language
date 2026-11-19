@@ -3,38 +3,38 @@ id: US-027
 title: "Compile, check, run and replay deeply nested specifications under limits I can raise"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-256
+  - target: ix://agent-ix/filament-spec-language/FR-256
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-257
+  - target: ix://agent-ix/filament-spec-language/FR-257
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-258
+  - target: ix://agent-ix/filament-spec-language/FR-258
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-261
+  - target: ix://agent-ix/filament-spec-language/FR-261
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-263
+  - target: ix://agent-ix/filament-spec-language/FR-263
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-264
+  - target: ix://agent-ix/filament-spec-language/FR-264
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-356
+  - target: ix://agent-ix/filament-spec-language/FR-356
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-027: Compile, check, run and replay deeply nested specifications under limits I can raise
 
 ## Story
 
-**As a** QSL caller (a specification author using the driver CLI `quire`, a
+**As a** FSL caller (a specification author using the driver CLI `quire`, a
 library caller, or a proof pipeline replaying a proved package)
 **I want** expressions, types, values and JSON documents of any nesting depth
 to compile, check, emit, evaluate and replay, bounded only by resource limits
@@ -46,8 +46,8 @@ setting that raises it, so I can run it again.
 
 ## Context
 
-QSL expressions are binary trees, so a chain of `n` terms is about `n` deep.
-ADR-030 decides that depth is never a limit in QSL: every walk runs over an
+FSL expressions are binary trees, so a chain of `n` terms is about `n` deep.
+ADR-030 decides that depth is never a limit in FSL: every walk runs over an
 explicit heap stack or over a representation whose depth its schema fixes,
 and every stage is bounded by caller-configurable resource limits with
 published defaults. The defaults are sized for realistic specifications. A
@@ -87,7 +87,7 @@ deeper input states the limits it needs.
 
 - **Given** a semantic-IR package document or an observation document nested
   100,000 deep, within its byte limit.
-- **When** QSL admits it.
+- **When** FSL admits it.
 - **Then** it is admitted or refused on its content, and never because of
   its depth.
 

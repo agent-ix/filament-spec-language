@@ -3,7 +3,7 @@ id: TC-660
 title: "ProtocolSystem implements TransitionSystem with canonical identities and the shared application rule"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: verifies
 ---
 # TC-660: ProtocolSystem implements TransitionSystem with canonical identities and the shared application rule

@@ -3,41 +3,41 @@ id: FR-183
 title: "Replay a hyper counterexample through ModelSystem"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
 ---
 # FR-183: Replay a hyper counterexample through ModelSystem
 
 ## Description
 
-QSL SHALL replay a hyper counterexample through the layer-6 replay facade
-(FR-098) at ADR-011 E9: `qsl_replay::replay_model_trace_tuple` takes
+FSL SHALL replay a hyper counterexample through the layer-6 replay facade
+(FR-098) at ADR-011 E9: `fsl_replay::replay_model_trace_tuple` takes
 FR-098's request with one subject's inputs per alias and a
 `WitnessEnvelope<HyperCounterexample>` whose source is
 `ReplaySource::ModelTraceTuple` (ADR-023 HX-1). It re-executes every trace
@@ -46,7 +46,7 @@ fairness, and evaluates the body over the tuple (ADR-023 HX-2, HX-3, HX-5,
 PA-7). For a `WitnessExhausted` counterexample it recomputes the witness
 sets along the universal traces, so the absence of a matching existential
 run is checked with no engine present. Replay needs no model checker and no
-solver. The same crate, `qsl-replay` (ADR-029 CB-2), holds the
+solver. The same crate, `fsl-replay` (ADR-029 CB-2), holds the
 product-closure certificate checker of FR-163, which an EN-1 `proved` must
 pass before it settles (ADR-023 HX-7). The crate also holds the
 match-witness check that an HP-2 `k`-induction proof with a non-empty `μ_U`
@@ -67,10 +67,10 @@ no matching partner run survives past the named position.
 - A `WitnessEnvelope<HyperCounterexample>` (FR-070):
 
 ```rust
-pub struct HyperCounterexample {          // QSpec FR-400, member for member
+pub struct HyperCounterexample {          // FSpec FR-400, member for member
     pub kind: HyperCounterexampleKind,
     pub instance: Vec<(Name, Key)>,       // object parameter binding
-    pub traces: Vec<HyperTrace>,          // as QSpec FR-400 states for the kind
+    pub traces: Vec<HyperTrace>,          // as FSpec FR-400 states for the kind
     pub trace_position: u64,
 }
 
@@ -126,7 +126,7 @@ pub fn check_match_witness(
 
 ### Common
 
-- The reader SHALL refuse an envelope that breaks QSpec FR-400's
+- The reader SHALL refuse an envelope that breaks FSpec FR-400's
   validation rules, with the code and member FR-400 names, before any
   replay runs.
 
@@ -145,9 +145,10 @@ pub fn check_match_witness(
 
 ### Undefined evaluation
 
+- A replayable `Undefined` from a division in a hyper `match` body comes from a Kernel-checked function the body calls, because declared clauses are always checked Linked (FR-952) and Linked refuses an unproved integer division `Unproved(Nonzero)` before evaluation (FR-495-AC-3); replay records `check_mode: kernel` on that function node (FR-098-AC-34).
 - For an `Undefined` counterexample, each trace SHALL be a finite path from
   an initial state, one per trace or execution variable of the clause,
-  universal and existential, as QSpec FR-400 states. The executor SHALL
+  universal and existential, as FSpec FR-400 states. The executor SHALL
   re-execute each path through its alias's `ModelSystem` with FR-128's
   step refusals, then evaluate `μ_U`, `μ_E`, the body's letters and each
   universal component's contract conjunctions at the joint positions up to
@@ -276,11 +277,11 @@ pub fn check_match_witness(
 | FR-183-AC-3 | Refusals settle no result: §8.1's counterexample with one trace one step shorter; with `b`'s inputs changed to 1 at both steps (`μ_U` false at joint step 1; changing only the first input leaves the loop open and refuses earlier); a `Projected` counterexample with a `step` marked skipped. An HP-2 counterexample under `fair { weak V::Vault::reset }` on `a` whose loop never takes or disables `reset` refuses as unfair. | Test (TC-608) |
 | FR-183-AC-4 | A hand-built `Lockstep` envelope over the leaky vault with `a` and `b` both from `(0, 0)` taking `step(0)`, loop entry 1, on which `l` stays equal, settles `inconclusive`, `Verdicts`; a hand-built `WitnessExhausted{position: 1}` envelope for `Opaque` over the secure vault, with `a`'s lasso `(0, 0) -step(0)-> (0, 0)`, recomputes a non-empty `X_1` and settles `inconclusive`, `Verdicts`; §8.2's leaky counterexample replayed with `max_witness_set` 0 returns the replay result stopped with `max_witness_set` and value 0. Replaying one envelope twice gives equal results. | Test (TC-608) |
 | FR-183-AC-5 | FR-179-AC-4's `Undefined` counterexample, with one path per execution variable, replays to `reproduced-with-evaluated-witness` with its `UndefinedEvaluation` as the value; the same payload with its cause changed to `precondition-false` settles `inconclusive`, `Verdicts`. | Test (TC-610) |
-| FR-183-AC-6 | FR-177-AC-5's `Undefined` counterexample, whose traces include the existential variable's path to the state where `μ_E` has no value, replays to `reproduced-with-evaluated-witness`; with the existential trace removed the reader refuses it as `invalid_runtime_input`/`invalid-value` before replay. | Test (TC-602) |
+| FR-183-AC-6 | FR-177-AC-5's `Undefined` counterexample, whose `match` body calls the Kernel-checked function `q` and whose traces include the existential variable's path to the state where `μ_E` has no value, replays to `reproduced-with-evaluated-witness`, the replay recording `check_mode: kernel` on `q`'s function node (FR-098-AC-34); with the existential trace removed the reader refuses it as `invalid_runtime_input`/`invalid-value` before replay. | Test (TC-602) |
 | FR-183-AC-7 | FR-178-AC-9's `Undefined` counterexample, whose paths each hold a skipped `mix` and a visible `step(0)`, is refused with `unsupported_construct`/`not-yet-implemented` and settles no result; it is not replayed as a lockstep counterexample. | Test (TC-608) |
 | FR-183-AC-8 | Over ADR-023 §8's secure vault and `NonInterference` at instance `v`, the matched witness, with `a` and `b` each from initial `(0, 0)` taking `step(0)` twice and `loop_entry` 0, is `Accepted` without evaluating the body. The unmatched witness, with `a` the same and `b` from `(0, 0)` taking `step(1)` then `step(0)` and `loop_entry` 0, re-executes, since each loop closes, and is `Refused` with `invalid_runtime_input`/`invalid-value` at joint step 1, where `μ_U` is false. A witness whose `instance` binds `v` to a key outside the `vaults` universe is `Refused` with `invalid_runtime_input`/`invalid-value` before any trace is re-executed. Checking either witness twice gives equal results. | Test (TC-608) |
-| FR-183-AC-9 | `μ_U` before the letter. Over ADR-023 §8's leaky vault, `NonInterference` with FR-176-AC-4's added `match` conjunct and the body `always holds(1 mod (1 + v.l @ a - v.l @ b) = 0)`, a hand-built `Undefined` envelope with `a` from `(0, 0)` and `b` from `(1, 0)`, one joint step `(step(0), step(0))` and `trace_position` 1, at which the conjunct and the letter both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the `match` conjunct with cause `division-by-zero`; the same envelope with its locus changed to the body atom settles `inconclusive`, `Verdicts`. | Test (TC-608) |
-| FR-183-AC-10 | The letter before a contract conjunction. Over the leaky vault with the added `pre G using v on V::Vault::step { 1 mod (1 - self.l) = 0 }` and the AC-9 body, under the §8.1 `match`, the hand-built `Undefined` envelope of AC-9's paths, at whose position 1 the letter and `b`'s `G` both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the body atom; with its locus changed to `G` with `b`'s `step` transition it settles `inconclusive`, `Verdicts`. | Test (TC-608) |
+| FR-183-AC-9 | `μ_U` before the letter. Over ADR-023 §8's leaky vault, `NonInterference` with FR-176-AC-4's added `match` conjunct and the body `always holds(q(1 + v.l @ a - v.l @ b) = 0)`, where `q` is the Kernel-checked function `function q using v(x: Integer): Integer pure { 1 mod x }` (FR-495-AC-3, FR-952), a hand-built `Undefined` envelope with `a` from `(0, 0)` and `b` from `(1, 0)`, one joint step `(step(0), step(0))` and `trace_position` 1, at which the conjunct and the letter both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the `match` conjunct with cause `division-by-zero`; the same envelope with its locus changed to the body atom settles `inconclusive`, `Verdicts`. | Test (TC-608) |
+| FR-183-AC-10 | The letter before a contract conjunction. Over the leaky vault with the added `pre G using v on V::Vault::step { q(1 - self.l) = 0 }` and the AC-9 body, under the §8.1 `match`, the hand-built `Undefined` envelope of AC-9's paths, at whose position 1 the letter and `b`'s `G` both have no value, replays to `reproduced-with-evaluated-witness` when its locus is the body atom; with its locus changed to `G` with `b`'s `step` transition it settles `inconclusive`, `Verdicts`. | Test (TC-608) |
 | FR-183-AC-11 | Contract conjunctions in quantifier order. Over the secure vault with AC-10's `G` and `NonInterference`'s body, a hand-built `Undefined` envelope with `a` and `b` from `(0, 0)`, one joint step `(step(1), step(1))` and `trace_position` 1, at which the letter holds and `G` has no value on both components, replays to `reproduced-with-evaluated-witness` when its locus is `G` with `a`'s transition and only `a` named; with `b`'s transition and only `b` named it settles `inconclusive`, `Verdicts`. | Test (TC-608) |
 | FR-183-AC-12 | `μ_U` before `μ_E`. Over the secure vault, `Opaque` with FR-176-AC-4's conjunct added to its `match`, which reads `a` alone and so is a `μ_U` conjunct, and FR-177-AC-5's conjunct, which reads `b` and so is a `μ_E` conjunct: a hand-built `Undefined` envelope with `a` and `b` from `(0, 0)`, each taking `step(0)`, and `trace_position` 1, at which both conjuncts have no value, settles `inconclusive`, `Verdicts` when its locus is the `μ_E` conjunct, since `μ_U` over the same joint step is read first. The envelope whose `b` path ends at `(0, 0)` before the step, as FR-177 shapes an undefined `μ_U`, with its locus the `μ_U` conjunct and cause `division-by-zero`, replays to `reproduced-with-evaluated-witness`. | Test (TC-602) |
 
@@ -291,14 +292,14 @@ pub fn check_match_witness(
 - [FR-098](FR-098-execute-a-replay-request.md),
   [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md),
   [FR-072](FR-072-implement-typed-replay-result.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-128](FR-128-replay-a-model-counterexample.md) (shared refusals),
   [FR-175](FR-175-evaluate-a-body-over-a-tuple-of-behaviours.md),
   [FR-184](FR-184-bound-hyper-runs-with-caller-budgets.md).
-- QSpec owns the `HyperCounterexample` wire and its replay rules (ADR-023
+- FSpec owns the `HyperCounterexample` wire and its replay rules (ADR-023
   QS-6).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-400 and FR-401 (Linear STD-136; ADR-023 QS-6).
+- ADR-023. FSpec half: FSpec FR-400 and FR-401 (Linear STD-136; ADR-023 QS-6).

@@ -3,8 +3,8 @@ id: TC-142
 title: "Evaluate compensation slots after strict package read-back"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-049, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-390, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-049, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-390, type: references }
 ---
 # TC-142: Evaluate compensation slots after strict package read-back
 

@@ -3,7 +3,7 @@ id: TC-244
 title: "compile_fail matrix over every forbidden typestate construction (R-10, O-15)"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-244: compile_fail matrix over every forbidden typestate construction (R-10, O-15)

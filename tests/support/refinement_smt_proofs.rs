@@ -5,11 +5,11 @@
 //! tests.
 #![allow(dead_code, reason = "each including test crate uses a subset")]
 
-use qsl_eval::model_subject::ModelSubject;
-use qsl_eval::smt::{
+use fsl_eval::model_subject::ModelSubject;
+use fsl_eval::smt::{
     encode_refinement_query, RefinementCertificateRequest, RefinementQueryKind, SmtEncodingRefusal,
 };
-use qsl_replay::{ProofFormat, RefinementSmtCertificate, RefutedQuery};
+use fsl_replay::{ProofFormat, RefinementSmtCertificate, RefutedQuery};
 
 use crate::refinement_fixture::{World, SPEC, UNLIMITED};
 

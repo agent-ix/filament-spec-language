@@ -3,32 +3,32 @@ id: FR-167
 title: "Explore a state-graph subject once and track its open nodes (EN-1 phase 1)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: depends_on
 ---
 # FR-167: Explore a state-graph subject once and track its open nodes (EN-1 phase 1)
 
 ## Description
 
-`qsl-analyze`'s `model_check` SHALL explore a model subject's state graph
+`fsl-analyze`'s `model_check` SHALL explore a model subject's state graph
 once for all of its state-graph items (ADR-022 GE-1, GM-1). It runs at stage
 S6c over edge E10, as FR-126 does. The exploration retains every edge, labels
 every node with the truth of each item's predicates under each instance's
@@ -63,7 +63,7 @@ pub struct ExploredStateGraph {
 }
 
 pub struct GraphNode {
-    pub key: StateKey,                      // quire.simulation.state-key/v1: canonical RFC 8785 bytes of the state
+    pub key: StateKey,                      // filament.simulation.state-key/v1: canonical RFC 8785 bytes of the state
     pub depth: u64,
     pub labels: Vec<PredicateLabel>,        // per item, instance and predicate
 }
@@ -187,7 +187,7 @@ pub enum RunEnd {
 - ADR-022 §2 GM-1, GM-2, GM-6, GM-8; §3 GE-1 and "Placement in
   negotiation"; §6 GR-1 and GR-4; ADR-011 §1 and §6.1 (S6c, E10, layer A
   `model_check`) as amended by ADR-018.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md),
   [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
@@ -196,11 +196,11 @@ pub enum RunEnd {
   [FR-075](FR-075-compute-candidates-from-registered-backends.md)
   (manifest registration).
 - The reductions and state constraints themselves are ADR-021's.
-- QSpec owns open and closed nodes and the state-graph forms in the
+- FSpec owns open and closed nodes and the state-graph forms in the
   provider manifest (ADR-022 QS-3, QS-7) and the explored graph as the
   subject of state-graph claims (QS-6).
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-390, FR-391 and FR-392 (Linear STD-135;
+- ADR-022. FSpec half: FSpec FR-390, FR-391 and FR-392 (Linear STD-135;
   ADR-022 QS-3, QS-6, QS-7, QS-9).

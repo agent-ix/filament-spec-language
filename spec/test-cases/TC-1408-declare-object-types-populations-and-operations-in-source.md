@@ -1,33 +1,33 @@
 ---
 id: TC-1408
-title: "Declare object types, populations and operations in QSL source"
+title: "Declare object types, populations and operations in FSL source"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-569
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
-# TC-1408: Declare object types, populations and operations in QSL source
+# TC-1408: Declare object types, populations and operations in FSL source
 
 ## Description
 
 Verify that a unit's own source declares object types with fields, identity,
 supertypes, populations and operations; that they resolve, refuse
 collisions, check and evaluate on the source route as a domain package's
-object types do; that S4 refuses such a unit with the single
-`SourceObjectEmission` refusal until ADR-013 QC-30 lands; and, once it lands,
-that S4 emits the target emission (source-owned `model`/`object_type` nodes,
-clause functions, effects, dispatch tables and identity rows). Scope:
-FR-569-AC-1 to FR-569-AC-11, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
-fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4, 7, 8 and 9 run
-and pass now; steps 5 and 6 wait on QC-30.
+object types do; that S4 emits such a unit per FR-995 and FR-996 (the target emission: source-owned `model`/`object_type` nodes,
+clause functions, effects, dispatch tables and identity rows, source declaration keys, the clock-place join and source operation_bodies rows). Scope:
+FR-569-AC-1 to FR-569-AC-11, FR-569-AC-16, FR-569-AC-17, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
+fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4 and 7 to 9 run
+and pass now; steps 5 and 6 wait on QC-30, except the part of FR-569-AC-16 that
+needs no intake (the emission's `operations` entries, their `operation_effects`
+rows, and the reader's refusal of a malformed `operations` member), which runs now.
 
 Catches a source type that silently resolves to a model type of the same
 name, a redefinition that skips conformance, a node id derived from member
@@ -37,7 +37,7 @@ type.
 ## Test Procedure
 
 Fixture **S** is this unit, after the header and `profile P =
-"quire.state.core/v1";`:
+"filament.state.core/v1";`:
 
 ```
 object Order identity (total) {
@@ -106,7 +106,9 @@ Variants, each one change to S (or D):
 6. **waits on QC-30.** Read the `source_objects` and `source_operations` rows
    of S's and D's emissions and of `identities.json`; run the refusal
    suppliers of FR-569-AC-8 and the fixture-S suppliers of FR-390-AC-72.
-   (FR-569-AC-8, FR-390-AC-70, FR-390-AC-72)
+   Read each row's `operations` and check them against the
+   `operation_effects` rows. (FR-569-AC-8, FR-569-AC-16, FR-390-AC-70,
+   FR-390-AC-72)
 7. Admit the snapshots of AC-9 over S and over S-M. (FR-569-AC-9)
 8. Evaluate vectors V1 to V6 over S and D on the source route, with the
    current snapshot `orders` = {`o1` (`Order`, `total` 3), `o2` (`Sub`,
@@ -117,6 +119,10 @@ Variants, each one change to S (or D):
    in the post snapshot (a frame violation). (FR-569-AC-10)
 9. Run S4 over S, S-R, S-P, S-M and D. (FR-569-AC-11, FR-105-AC-18,
    FR-383-AC-67, FR-390-AC-70)
+10. Emit FR-230-AC-65's timed unit with `arm` added; read the `source_objects`
+   row of `O` and the `source_records` row of `W` from the emission and from
+   `identities.json`, and run the supplier whose `O` row omits `d`.
+   (FR-569-AC-17)
 
 Tag each test with the criteria it asserts and `TC-1408`, for example
 `#[trace("FR-569-AC-8", "TC-1408")]`.
@@ -149,7 +155,7 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
   changed by the rename of `Order`; S's and D's `Order` ids differ; IR's
   strict reader admits every package.
 - Step 6: three source-object rows over S with the members, identity fields
-  and populations AC-8 states, and none over D; one source-operation row
+  and populations AC-8 states and the operations AC-16 states, and none over D; one source-operation row
   (`Order::bump`) over S and none over D; the file round-trips equal; each
   refusal supplier gives the reason FR-569-AC-8 or FR-390-AC-72 states at the
   `Package` locus, with no view and no charge.
@@ -157,7 +163,4 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
 - Step 8: V1 true, V2 true, V3 true, V4 true, V5 `7`, V6 `frame_violation`/
   `unauthorized-change` naming `o2.total` (FR-154), each with equal
   outcomes and equal ordered charge logs over S and D.
-- Step 9: S, S-R, S-P and S-M are each refused with exactly one refusal,
-  `unsupported_construct`/`not-yet-implemented` naming
-  `SourceObjectEmission` at `object Order`, and none writes a package,
-  `identities.json` or handoff directory; D emits as before.
+- Step 9: S, S-R, S-P and S-M each emit: the source declaration keys `{package: I, node: "ix://I/<Type>"}` for `Order`, `Sub` and `Shape`, the source identity rows of `identities.json`, the source clock-place join and the source `operation_bodies` rows (FSpec FR-788 to FR-790), and the handoff directory, with no `SourceObjectEmission` refusal; a refusal arises only for a case FR-995 or FR-996 names. D emits as before.

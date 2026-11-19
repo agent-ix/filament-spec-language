@@ -3,7 +3,7 @@ id: TC-418
 title: "Clause function nodes key to the structural-key vectors with the operation member's ModelOwner"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: verifies
 ---
 # TC-418: Clause function nodes key to the structural-key vectors with the operation member's ModelOwner

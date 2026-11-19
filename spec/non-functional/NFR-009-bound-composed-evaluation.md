@@ -4,9 +4,9 @@ title: "Bound composed state evaluation work and retained values"
 type: NFR
 quality_attribute: performance_efficiency
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-046, type: constrains }
-  - { target: ix://agent-ix/quire-spec-language/FR-047, type: constrains }
-  - { target: ix://agent-ix/quire-spec-language/FR-049, type: constrains }
+  - { target: ix://agent-ix/filament-spec-language/FR-046, type: constrains }
+  - { target: ix://agent-ix/filament-spec-language/FR-047, type: constrains }
+  - { target: ix://agent-ix/filament-spec-language/FR-049, type: constrains }
 ---
 # NFR-009: Bound checked-term evaluation work and retained values
 
@@ -20,8 +20,8 @@ outcome without a completed partial value.
 ## Scope
 
 One checked-term call, family evaluation or protocol-slot operation, using the
-caller-owned `quire.value.accounting/v1` meter. The ten `ScalarLimits` counters,
-setting names and defaults are the single table in FR-255 and QSpec FR-323;
+caller-owned `filament.value.accounting/v1` meter. The ten `ScalarLimits` counters,
+setting names and defaults are the single table in FR-255 and FSpec FR-323;
 this requirement adds no second counter set or alternate accounting identity.
 Each applicable counter is inclusive, independently caller-settable above or
 below its default, and has no ceiling (ADR-030 D-1). A protocol operation that
@@ -32,7 +32,7 @@ materialized value. Checked packages and immutable environments are reusable.
 Input document reading and model normalization are separate admission stages:
 FR-106 owns snapshot/invocation byte, object and value limits, and FR-056 owns
 model normalization limits. Their counters are not evaluation meter counters.
-This NFR does not preserve the retired `quire.state.evaluation-work/1`
+This NFR does not preserve the retired `filament.state.evaluation-work/1`
 accounting identity or its `StateView` input-validation charges.
 
 ## Measurement and Evaluation
@@ -75,7 +75,7 @@ exhaustion returns the same value with a fresh meter and unchanged inputs.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| NFR-009-AC-1 | Every applicable `quire.value.accounting/v1` counter is one of FR-255's ten accounting rows, uses that row's units/default/setting name, and can be lowered or raised independently; zero remains effective and a value above the default is used as given. The retired `quire.state.evaluation-work/1` identity is not exposed by checked-term evaluation. | Test (TC-137, TC-1073) |
+| NFR-009-AC-1 | Every applicable `filament.value.accounting/v1` counter is one of FR-255's ten accounting rows, uses that row's units/default/setting name, and can be lowered or raised independently; zero remains effective and a value above the default is used as given. The retired `filament.state.evaluation-work/1` identity is not exposed by checked-term evaluation. | Test (TC-137, TC-1073) |
 | NFR-009-AC-2 | For each applicable charged dimension, the independently counted exact case completes and the one-short case stops before the denied operation, retaining successful usage only and no completed partial value. | Test (TC-137, TC-131, TC-1073) |
 | NFR-009-AC-3 | A counter overflow (a charge that would carry a consumed counter past `u64::MAX`) and a charge denied for a reason other than a configured limit (the stand-in for an allocator refusal) reached by a checked-term call each return the meter's incomplete record naming the affected counter and charge point, with no completed value and no wrapped or saturated count; no caller classifies either from diagnostic text. | Test (TC-137) |
 | NFR-009-AC-4 | Re-evaluation starts with a fresh meter, leaves the checked package and immutable environment unchanged, and returns the same result and usage when inputs and effective limits are equal; sequential protocol slots share one meter as FR-390 requires. | Test (TC-137, TC-1073, TC-142) |

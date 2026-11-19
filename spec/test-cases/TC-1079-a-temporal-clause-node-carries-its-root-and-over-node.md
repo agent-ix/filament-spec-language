@@ -3,7 +3,7 @@ id: TC-1079
 title: "A temporal clause node carries the root and over node a closure check resolves"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: verifies
 ---
 # TC-1079: A temporal clause node carries the root and over node a closure check resolves
@@ -34,5 +34,5 @@ Tag the tests `#[trace("TC-1079", "FR-337-AC-5")]`.
 - Step 3: one node, two triples with distinct ordinals, each resolving to
   its own declaration; the clause with no `over` parameter refuses
   `invalid_syntax`/`unexpected-token` at the `clock` token and produces no node
-  (QSpec FR-370-AC-13).
+  (FSpec FR-370-AC-13).
 - Step 4: each lookup returns `clause-root-unresolved` at that triple.

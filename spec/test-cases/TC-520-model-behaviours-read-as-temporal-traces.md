@@ -3,9 +3,9 @@ id: TC-520
 title: "A model subject's behaviours read as temporal traces, with terminal stutter and interval wrap"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: verifies
 ---
 # TC-520: A model subject's behaviours read as temporal traces, with terminal stutter and interval wrap
@@ -84,7 +84,7 @@ Scope: FR-125-AC-1 to FR-125-AC-5 and FR-125-AC-7 to FR-125-AC-18; FR-361-AC-16.
     `always holds(x.value <= 0)`; repeat with `all = [e, c]` and compare the
     request identities (FR-125-AC-16).
 16. Using AC-12's `dogs` and `animals` subject, select the model profile and
-    define helper functions under `quire.value.complete/v1`; S3 derives the
+    define helper functions under `filament.value.complete/v1`; S3 derives the
     StateModel family for a function body that writes model constructs while
     retaining ordinary assembly refusals for unresolved or unsupported forms.
     Define an immutable `let`

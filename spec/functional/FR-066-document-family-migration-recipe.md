@@ -3,11 +3,11 @@ id: FR-066
 title: "Document the semantic-family migration recipe"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: traces_to
 ---
 # FR-066: Document the semantic-family migration recipe
@@ -16,7 +16,7 @@ relationships:
 
 Function declaration and application is this ticket's sole migrated family;
 `StateModel`, `SumCase`, `TemporalTrace`, `ProtocolClause` and `Relation`, and
-the remaining `Value` forms, migrate under their own tickets. QSL SHALL
+the remaining `Value` forms, migrate under their own tickets. FSL SHALL
 publish, as a checked-in document in this repository, the migration recipe
 those later tickets follow: the required tests, the required conversions,
 and the conditions under which a family's old composed-checker path is
@@ -85,7 +85,7 @@ from the ADRs.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-066-AC-1 | The recipe document exists at a checked-in path in this repository and names, for a migrating family, each of the five required-test categories (clause-level unit, builder-ordering, seam-probe, wire-totality, backend-absence corpus) by name, with a one-sentence description of what each verifies; a reviewer checklist that omits any one of the five categories does not satisfy this criterion. | Inspection (TC-165) |
-| FR-066-AC-2 | The recipe names each of the three required-conversion categories (v2 emitter, evaluator, requirement derivation) and states, for the family whose forms cross into IR, RT or CG, that the wire and IR-side conversions belong to those repositories' own tickets, not to the QSL migration ticket. | Inspection (TC-165) |
+| FR-066-AC-2 | The recipe names each of the three required-conversion categories (v2 emitter, evaluator, requirement derivation) and states, for the family whose forms cross into IR, RT or CG, that the wire and IR-side conversions belong to those repositories' own tickets, not to the FSL migration ticket. | Inspection (TC-165) |
 | FR-066-AC-3 | The recipe states the removal condition in the same terms as ADR-011 §7.3 M-6e (the old composed-checker path is deleted in the PR that lands the S3 family checker and S4 emission) and names, for each of `StateModel`, `SumCase`, `TemporalTrace`, `ProtocolClause` and `Relation`, at least one implementing ticket from ADR-012 §14.1. | Inspection (TC-165) |
 | FR-066-AC-4 | The recipe's worked example section names at least one actual test file and one actual deleted symbol from the function-application migration ([FR-065](FR-065-migrate-function-application-to-checked-family.md)'s implementation), not a hypothetical placeholder. | Inspection (TC-165) |
 

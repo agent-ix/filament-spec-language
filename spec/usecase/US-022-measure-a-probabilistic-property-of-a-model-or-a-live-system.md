@@ -3,38 +3,38 @@ id: US-022
 title: "Measure a probabilistic property of a model or a live system"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-185
+  - target: ix://agent-ix/filament-spec-language/FR-185
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-188
+  - target: ix://agent-ix/filament-spec-language/FR-188
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-190
+  - target: ix://agent-ix/filament-spec-language/FR-190
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-191
+  - target: ix://agent-ix/filament-spec-language/FR-191
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-192
+  - target: ix://agent-ix/filament-spec-language/FR-192
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-193
+  - target: ix://agent-ix/filament-spec-language/FR-193
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-194
+  - target: ix://agent-ix/filament-spec-language/FR-194
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-022: Measure a probabilistic property of a model or a live system
 
 ## Story
 
-**As a** verification operator with a QSL state model, a workload that says
+**As a** verification operator with an FSL state model, a workload that says
 how often each operation runs, and requirements such as "p95 latency under
 5 ms" or "available 99.9% of the time"
 **I want** those requirements stated as probabilistic claims over the
-model, measured with QSL's own simulator at the confidence the claim states,
+model, measured with FSL's own simulator at the confidence the claim states,
 and the same statistics monitored over the live system's trace
 **So that** I get a measurement that says it is a measurement, with its
 method, sample count and confidence, that fails my pipeline when it rejects
@@ -99,7 +99,7 @@ method reduces that cost.
 - [FR-185](../functional/FR-185-declare-random-parameters-workloads-and-rewards.md)
 - [FR-186](../functional/FR-186-check-probabilistic-claim-forms-at-s3.md)
 - [FR-187](../functional/FR-187-give-model-transitions-step-probabilities-and-rewards.md)
-- [FR-188](../functional/FR-188-draw-weighted-choices-with-the-qspec-sampler.md)
+- [FR-188](../functional/FR-188-draw-weighted-choices-with-the-fspec-sampler.md)
 - [FR-189](../functional/FR-189-decide-a-probabilistic-claim-by-statistical-model-checking.md)
 - [FR-190](../functional/FR-190-measure-a-long-run-fraction-by-regeneration.md)
 - [FR-191](../functional/FR-191-bound-and-reproduce-a-statistical-run.md)

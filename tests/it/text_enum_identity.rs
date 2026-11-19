@@ -8,23 +8,23 @@
 use std::cmp::Ordering;
 use std::num::NonZeroU64;
 
-use ix_trace_rs::trace;
-use qsl_cst::{Limits, ParsedSource};
-use qsl_foundation::{Code, SourceIdentity};
-use qsl_semantics::value::enumeration::{
-    AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
-};
-use qsl_semantics::value::{NodeOwner, NominalRefusal, OwnerSelection, OwnerSubject};
-use quire_exact::{
+use filament_exact::{
     admit_text, compare_text, ComparisonOperator, EmptyTextBounds, IllTyped, IllTypedCause,
     InvalidUtf8, Text, TextPayload, TextProfile, TextProvenance, TextType,
 };
-use quire_exact::{
+use filament_exact::{
     ChargePoint, Incomplete, InjectedDenial, Integer, LimitKind, Meter, Outcome, Refusal,
     ScalarLimits,
 };
-use quire_semantic_value::enumeration::{compare_enum, EnumValue};
-use quire_semantic_value::semantic_node::{InvalidSemanticGraph, SemanticGraphCause};
+use filament_semantic_value::enumeration::{compare_enum, EnumValue};
+use filament_semantic_value::semantic_node::{InvalidSemanticGraph, SemanticGraphCause};
+use fsl_cst::{Limits, ParsedSource};
+use fsl_foundation::{Code, SourceIdentity};
+use fsl_semantics::value::enumeration::{
+    AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
+};
+use fsl_semantics::value::{NodeOwner, NominalRefusal, OwnerSelection, OwnerSubject};
+use ix_trace_rs::trace;
 use unicode_normalization::UnicodeNormalization;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -52,7 +52,7 @@ fn runtime(text: &str) -> TextPayload {
 /// Decode a complete quoted source literal, such as `"é"`, the JSON string
 /// grammar the source lexer already delegates to: lone surrogates and raw
 /// controls refuse, and a spelling that is not exactly one quoted string
-/// refuses too. `quire_exact::text`'s own module doc states this
+/// refuses too. `filament_exact::text`'s own module doc states this
 /// decode step is a source-stage concern the kernel deliberately excludes
 /// (only this test still exercises it); the decoded text is tagged with the
 /// kernel's `TextPayload::from_source_literal(text, spelling)` constructor,
@@ -87,7 +87,7 @@ fn compared(operator: ComparisonOperator, left: &Text, right: &Text) -> bool {
 const E_ACUTE: &str = "\u{e9}";
 const E_COMBINING: &str = "e\u{301}";
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-1", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-1", "FSpec-FR-141-AC-4")]
 #[test]
 fn t01_scalar_profile_distinguishes_canonically_equivalent_text() {
     let (left, right) = (
@@ -101,7 +101,7 @@ fn t01_scalar_profile_distinguishes_canonically_equivalent_text() {
     assert_eq!(UnicodeScalars.table_definition(), None);
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-1")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-1")]
 #[test]
 fn t02_t03_normalizing_profiles_equate_equivalents_and_retain_normal_forms() {
     for (profile, retained) in [(Nfc, E_ACUTE), (Nfd, E_COMBINING)] {
@@ -119,7 +119,7 @@ fn t02_t03_normalizing_profiles_equate_equivalents_and_retain_normal_forms() {
     assert!(!compared(Equal, &value("\u{fb00}", Nfc), &value("ff", Nfc)));
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3", "FSpec-FR-141-AC-4")]
 #[test]
 fn t04_t05_profile_length_domains_admit_exact_bounds_and_refuse_one_over() {
     let one_scalar = admit(E_ACUTE, &text_type(1, 1, Nfc)).completed().unwrap();
@@ -162,12 +162,12 @@ fn t04_t05_profile_length_domains_admit_exact_bounds_and_refuse_one_over() {
 
 fn complete_source(declarations: &str) -> String {
     format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"quire.value.complete/v1\";\n{declarations}"
+        "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n{declarations}"
     )
 }
 
 fn parse(text: &str) -> ParsedSource {
-    qsl_cst::parse(
+    fsl_cst::parse(
         SourceIdentity {
             authority: "test".into(),
             identity: "test:tc-186".into(),
@@ -179,7 +179,7 @@ fn parse(text: &str) -> ParsedSource {
     .unwrap()
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3")]
 #[test]
 fn t05b_text_without_bounds_is_invalid_syntax_at_source_recognition() {
     let bounded = parse(&complete_source(
@@ -196,7 +196,7 @@ fn t05b_text_without_bounds_is_invalid_syntax_at_source_recognition() {
     assert_eq!(diagnostic.byte_span().unwrap().start, at);
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3", "FSpec-FR-141-AC-4")]
 #[test]
 fn t06_t06b_utf8_reader_refuses_invalid_bytes_and_payloads_keep_provenance() {
     assert_eq!(
@@ -236,7 +236,7 @@ fn t06_t06b_utf8_reader_refuses_invalid_bytes_and_payloads_keep_provenance() {
     assert_eq!(bytes.provenance(), &TextProvenance::Runtime);
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
 #[test]
 fn t10_equal_payloads_under_distinct_profiles_are_ill_typed() {
     let nfc = value(E_ACUTE, Nfc);
@@ -274,7 +274,7 @@ fn consumed(meter: &Meter) -> Vec<u64> {
         .collect()
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-6")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-6")]
 #[test]
 fn t11_text_accounting_exact_bounds_and_named_denials() {
     let (left, right) = (value(E_ACUTE, Nfc), value(E_COMBINING, Nfc));
@@ -354,7 +354,7 @@ fn t11_text_accounting_exact_bounds_and_named_denials() {
     assert_eq!(run(&mut Meter::new(T11)), Outcome::Completed(true));
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
 #[test]
 fn t12_lexicographic_order_is_selected_by_the_profile() {
     for profile in [UnicodeScalars, Nfc, Nfd, Nfkc, Nfkd] {
@@ -461,7 +461,7 @@ fn enum_compared(
         .map(|outcome| outcome.completed().unwrap())
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-2")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-2")]
 #[test]
 fn t07_equal_spellings_under_distinct_declarations_are_ill_typed() {
     let enum_a = fixture_declaration(["Example", "Status"], true, &["READY", "DONE"]);
@@ -490,7 +490,7 @@ fn t07_equal_spellings_under_distinct_declarations_are_ill_typed() {
 /// ordering are what tell them apart, so a value of either refuses to compare
 /// with a value of the other, and a value of one declaration admitted twice
 /// compares equal.
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-2")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-2")]
 #[test]
 fn t07b_same_key_declarations_with_different_members_or_order_are_distinct() {
     let base = fixture_declaration(["Example", "Status"], true, &["READY", "DONE"]);
@@ -559,7 +559,7 @@ fn t07b_same_key_declarations_with_different_members_or_order_are_distinct() {
     );
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3", "QSpec-FR-141-AC-5")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3", "FSpec-FR-141-AC-5")]
 #[test]
 fn t08_ordering_follows_ordered_declarations_only() {
     let ordered = fixture_declaration(["Example", "Status"], true, &["READY", "DONE"]);
@@ -587,7 +587,7 @@ fn t08_ordering_follows_ordered_declarations_only() {
     }
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-6")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-6")]
 #[test]
 fn enum_accounting_exact_bounds_and_named_denials() {
     const LIMITS: ScalarLimits = ScalarLimits {
@@ -705,11 +705,11 @@ fn oracle_length(profile: TextProfile, retained: &str) -> u64 {
 }
 
 #[trace(
-    "QSpec-TC-186",
-    "QSpec-FR-141-AC-1",
-    "QSpec-FR-141-AC-3",
-    "QSpec-FR-141-AC-4",
-    "QSpec-FR-141-AC-6"
+    "FSpec-TC-186",
+    "FSpec-FR-141-AC-1",
+    "FSpec-FR-141-AC-3",
+    "FSpec-FR-141-AC-4",
+    "FSpec-FR-141-AC-6"
 )]
 #[test]
 fn generated_text_profiles_match_the_unicode_17_oracle() {
@@ -786,11 +786,11 @@ fn generated_text_profiles_match_the_unicode_17_oracle() {
 }
 
 #[trace(
-    "QSpec-TC-186",
-    "QSpec-FR-141-AC-2",
-    "QSpec-FR-141-AC-3",
-    "QSpec-FR-141-AC-5",
-    "QSpec-FR-141-AC-6"
+    "FSpec-TC-186",
+    "FSpec-FR-141-AC-2",
+    "FSpec-FR-141-AC-3",
+    "FSpec-FR-141-AC-5",
+    "FSpec-FR-141-AC-6"
 )]
 #[test]
 fn generated_enums_follow_declaration_identity_and_order() {
@@ -877,7 +877,7 @@ fn generated_enums_follow_declaration_identity_and_order() {
     }
 }
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-4")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
 #[test]
 fn t13_scalar_length_is_measured_after_normalization() {
     let one_scalar = admit(E_COMBINING, &text_type(1, 1, Nfc))
@@ -922,7 +922,7 @@ type T16Case = (
     Incomplete,
 );
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3", "QSpec-FR-141-AC-6")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3", "FSpec-FR-141-AC-6")]
 #[test]
 fn t16_length_refusal_follows_the_last_charge_that_measures_the_length() {
     use ChargePoint::{TextDecodeScalars, TextInputBytes, TextNormalizeInput, TextNormalizeOutput};
@@ -1035,7 +1035,7 @@ const T14: ScalarLimits = ScalarLimits {
     result_units: 1,
 };
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-4", "QSpec-FR-141-AC-6")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4", "FSpec-FR-141-AC-6")]
 #[test]
 fn t14_non_normalizing_profiles_charge_no_normalization() {
     for profile in [UnicodeScalars, BinaryUtf8] {
@@ -1092,7 +1092,7 @@ const ZERO: ScalarLimits = ScalarLimits {
     result_units: 0,
 };
 
-#[trace("QSpec-TC-186", "QSpec-FR-141-AC-3", "QSpec-FR-141-AC-5")]
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-3", "FSpec-FR-141-AC-5")]
 #[test]
 fn t15_enum_type_refusals_precede_every_charge() {
     let unordered = fixture_declaration(["Example", "Status"], false, &["DONE", "READY"]);

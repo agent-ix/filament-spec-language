@@ -3,53 +3,53 @@ id: FR-255
 title: "Name the setting that raises a reached limit, at every entry point"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-191
+  - target: ix://agent-ix/filament-spec-language/FR-191
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-194
+  - target: ix://agent-ix/filament-spec-language/FR-194
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-247
+  - target: ix://agent-ix/filament-spec-language/FR-247
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-250
+  - target: ix://agent-ix/filament-spec-language/FR-250
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-297
+  - target: ix://agent-ix/filament-spec-language/FR-297
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-254
+  - target: ix://agent-ix/filament-spec-language/FR-254
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-531
+  - target: ix://agent-ix/filament-spec-language/FR-531
     type: references
 ---
 # FR-255: Name the setting that raises a reached limit, at every entry point
@@ -58,42 +58,43 @@ relationships:
 
 A limit outcome SHALL tell the caller everything needed to run the input
 again under a larger limit (ADR-030 D-3). Every configurable resource limit
-of QSL's front end and engines has one stable setting name. The same name
+of FSL's front end and engines has one stable setting name. The same name
 raises the limit from the library, from a replay request (every setting but
 `replay.input_bytes`) and from the driver CLI (`quire`, ADR-029 CB-1), which
-exposes the caller limits through QSL's settings operation, wherever that
+exposes the caller limits through FSL's settings operation, wherever that
 entry point takes the setting. Every `stage_limit_exceeded` outcome names the
 limit, its value and its setting. Each execution budget under
-`quire.value.accounting/v1` also has a setting name, `accounting.` and its
+`filament.value.accounting/v1` also has a setting name, `accounting.` and its
 counter name (see Accounting setting names), and a reached budget names it.
 
 The ecosystem rule that depth is never a limit kind, and that a reached
-limit names how to raise it, is QSpec's (ADR-030 D-1; QSpec FR-460 and
-FR-461). This requirement specifies how QSL's
+limit names how to raise it, is FSpec's (ADR-030 D-1; FSpec FR-460 and
+FR-461). This requirement specifies how FSL's
 compiler, readers and engines carry it.
 
 ## Setting names
 
-A setting name follows QSpec FR-461's naming rule. The table is the set of
-names QSL accepts at every entry point, and lists every limit of the
+A setting name follows FSpec FR-461's naming rule. The table is the set of
+names FSL accepts at every entry point, and lists every limit of the
 requirements named below. Each row's default is the published default a
 caller gets when it does not configure the limit (ADR-014 §2, "inherited").
 Every limit has no ceiling beyond the width of the quantity it bounds: a
 caller raises or lowers it, and the value is used as given (a limit over a
 `u32` quantity, `model.sequence_maximum`, takes at most `u32::MAX`; FR-506). The requirement that owns each limit defines its counter:
-NFR-001 (`s1.*`), NFR-011 (`s3.*`), FR-082 (`environment.*`), FR-260 (`intake.*`), FR-297 (`inspect.*`), FR-298 (`render.*`),
+NFR-001 (`s1.*`; FR-762 for `s1.diagnostics`), NFR-011 (`s3.*`), FR-082 (`environment.*`), FR-260 (`intake.*`), FR-297 (`inspect.*`), FR-298 (`render.*`),
 NFR-012 and FR-506 (`model.*`, `admission.*`), FR-106 (`observation.*`), FR-523 (`temporal_evidence.*`), FR-111
-(`library.*`), FR-099 (`dependency.*`), FR-098 (`replay.*`), FR-264 (`i2.*`, `emit.*`),
-FR-003 (`format.*`), FR-294 (`prepare.*`), and FR-101 (`explore.*`). Analysis
+(`library.*`), FR-099 (`dependency.*`), FR-098 (`replay.*`), FR-264 (`i2.*`, `emit.*`), FR-1015 (`export.*`),
+FR-003 (`format.*`), FR-294 (`prepare.*`), FR-101 (`explore.*`) and NFR-130 (`evaluation.live_occurrences`). Analysis
 engine limits and the typed inspection operation's limit have their own table
 (Engine limit setting names).
 
 | Setting | Stage | Limit kind | Library field | Default |
 | --- | --- | --- | --- | --- |
-| `s1.input_bytes` | S1 | input bytes | `qsl_cst::Limits` source bytes | 1048576 bytes |
-| `s1.tokens` | S1 | token count | `qsl_cst::Limits` tokens | 100000 tokens |
-| `s1.nodes` | S1 | node count | `qsl_cst::Limits` nodes | 50000 nodes |
-| `s1.work_units` | S1 | work budget | `qsl_cst::Limits` parser work | 288 units per significant token, plus 288 |
+| `s1.input_bytes` | S1 | input bytes | `fsl_cst::Limits` source bytes | 1048576 bytes |
+| `s1.tokens` | S1 | token count | `fsl_cst::Limits` tokens | 100000 tokens |
+| `s1.nodes` | S1 | node count | `fsl_cst::Limits` nodes | 50000 nodes |
+| `s1.work_units` | S1 | work budget | `fsl_cst::Limits` parser work | 288 units per significant token, plus 288 |
+| `s1.diagnostics` | S1 | diagnostic count | `fsl_cst::Limits` reported syntax diagnostics (FR-762; reaching it cuts the report and keeps the refusal) | 100 diagnostics |
 | `s3.nodes` | S3 | node count | `CheckingLimits` nodes | 100000 units |
 | `s3.input_bytes` | S3 | input bytes | `CheckingLimits` declaration preimage bytes | 16777216 bytes |
 | `s3.work_units` | S3 | work budget | `CheckingLimits` work budget | 16777216 units |
@@ -109,7 +110,6 @@ engine limits and the typed inspection operation's limit have their own table
 | `model.derivation_facts` | model normalization | node count | `ModelNormalizationLimitsV1` derivation_facts | 1600000 facts |
 | `model.effective_declarations` | model normalization | node count | `ModelNormalizationLimitsV1` effective_declarations | 1600000 declarations |
 | `model.dispatch_candidates` | model normalization | node count | `ModelNormalizationLimitsV1` dispatch_candidates | 1600000 candidates |
-| `model.hashed_bytes` | model normalization | input bytes | `ModelNormalizationLimitsV1` hashed_bytes (QSpec limit name) | 268435456 bytes |
 | `model.work_units` | model normalization | work budget | `ModelNormalizationLimitsV1` work_units | 16777216 units |
 | `model.ancestor_steps` | model normalization | edge count | `ModelNormalizationLimitsV1` ancestor_steps | 16777216 edges |
 | `model.family_steps` | model normalization | edge count | `ModelNormalizationLimitsV1` family_steps | 16777216 edges |
@@ -142,8 +142,8 @@ engine limits and the typed inspection operation's limit have their own table
 | `dependency.source_bytes` | S4 source resolution | input bytes | `DependencyLimits` source_bytes | 16777216 bytes |
 | `identity.input_bytes` | identity encoding | input bytes | `AssemblyLimits` identity (`IdentityLimits` input_bytes), carried into checking, bundle linking and exploration keys | 16777216 bytes |
 | `replay.input_bytes` | replay envelope readers | input bytes | the replay readers' encoded-byte bound | 1048576 bytes |
-| `format.output_bytes` | format | input bytes | `qsl_cst::format::FormatLimits` output_bytes | 1048576 bytes |
-| `render.output_bytes` | render | input bytes | `qsl_replay::RenderLimits` output_bytes | 16777216 bytes |
+| `format.output_bytes` | format | input bytes | `fsl_cst::format::FormatLimits` output_bytes | 1048576 bytes |
+| `render.output_bytes` | render | input bytes | `fsl_replay::RenderLimits` output_bytes | 16777216 bytes |
 | `i2.input_bytes` | I2 v2 reader | input bytes | the v2 read limits' artifact bytes | 16777216 bytes |
 | `i2.nodes` | I2 v2 reader | node count | the v2 read limits' nodes | 10000 nodes |
 | `i2.edges` | I2 v2 reader | edge count | the v2 read limits' edges | 100000 edges |
@@ -151,16 +151,20 @@ engine limits and the typed inspection operation's limit have their own table
 | `i2.diagnostics` | I2 v2 reader | diagnostic count | the v2 read limits' diagnostics | 10000 diagnostics |
 | `i2.work_units` | I2 v2 reader and native identity join | work budget | the v2 read limits' work; native-join budget work | 1000000 units |
 | `i2.native_join_storage` | I2 v2 reader native identity join | logical storage | `V2ReadLimits.storage`; native-join budget storage | 16777216 logical units |
-| `emit.output_bytes` | E4 emit | input bytes | `qsl_package::EmitLimits` output_bytes; `qsl_replay::spine::PackageLimits` output_bytes | 16777216 bytes |
+| `emit.output_bytes` | E4 emit | input bytes | `fsl_package::EmitLimits` output_bytes; `fsl_replay::spine::PackageLimits` output_bytes | 16777216 bytes |
+| `export.output_bytes` | export | input bytes | the export limits' output_bytes: the bytes of the TLA+ or Lean target text (FR-1015) | 16777216 bytes |
+| `export.nodes` | export | node count | the export limits' nodes: the nodes of the dependency closures the mapper reads | 100000 nodes |
+| `export.work_units` | export | work budget | the export limits' work: one unit per node mapped and per region written | 16777216 units |
 | `explore.states` | exploration | node count | exploration `Limits` max_states | 10000000 states |
 | `explore.transitions` | exploration | edge count | exploration `Limits` max_transitions | 100000000 transitions |
+| `evaluation.live_occurrences` | S6a evaluation | occurrence count | the evaluator's live-occurrence bound (NFR-130): call frames in progress and their bound argument values | 1048576 occurrences |
 | `prepare.compile_work_units` | execution-backend prepare | work budget | `PrepareLimits` compile_work_units | 16777216 units |
 | `prepare.code_bytes` | execution-backend prepare | input bytes | `PrepareLimits` code_bytes | 67108864 bytes |
 
 S2 has no limit of its own (FR-257). `replay.input_bytes` bounds the replay
 request and envelope bytes themselves, so it is raised from the library and
 the CLI, and a request's own `stage_limits` does not carry it. A configurable
-limit QSL adds later takes a name by the same rule and a row in this table.
+limit FSL adds later takes a name by the same rule and a row in this table.
 Another exception, besides the supplied-value ceilings of FR-277, is the monitor target's event rate, an exact fraction owned by
 FR-251 under the setting name `monitor.max_event_rate`: it is a member of the
 monitor target and not a table row, because every table row is an unsigned
@@ -186,14 +190,23 @@ published `i2.work_units` default. It does not create a second work setting or
 derive storage from input bytes.
 
 `emit.output_bytes` bounds the canonical bytes the E4 emitter writes for one
-`quire.checked-package/v2` package (FR-264 Behavior 5). `EmitLimits.output_bytes`
-is a required field with no `Default`, and every emit entry of `qsl-package`
+`filament.checked-package/v2` package (FR-264 Behavior 5). `EmitLimits.output_bytes`
+is a required field with no `Default`, and every emit entry of `fsl-package`
 takes the `EmitLimits` value as an argument, so no emit path below the outer
 configuration is unbounded. The published table default 16777216 applies only
 where the outer configuration supplies it: `PackageLimits::default()` of the
 compile lifecycle's E4 entry; no layer below that entry supplies one, and
 fixtures state explicit values. The bound is a `u64` allowance, used as given,
 from zero through `u64::MAX`.
+
+The `export.*` settings bound one TLA+ or Lean export (FR-1015, FSpec FR-817).
+Their defaults are the compile lifecycle's: `export.output_bytes` takes
+`emit.output_bytes`'s 16777216, `export.nodes` takes `s3.nodes`'s 100000 and
+`export.work_units` takes `s3.work_units`'s 16777216, so a model the default
+compile emits also exports under the defaults, and a caller who raised a
+compile limit raises the matching export limit by the same rule. An export
+request sets them in its `export.limits` member by these names, and
+`fsl export` through `--limit`. Each is a `u64` allowance, used as given.
 
 Both native-join bounds are `u64` allowances and accept every value from zero
 through `u64::MAX`. A native join that cannot admit its next work or storage
@@ -210,7 +223,7 @@ first unpaid charge's kind and attempted amount.
 
 ## Engine limit setting names
 
-Every limit member of an analysis engine's or separately typed operation's limits type is a limit (QSpec
+Every limit member of an analysis engine's or separately typed operation's limits type is a limit (FSpec
 FR-461 Behavior 5); a method setting such as FR-254's `q` is not a limit
 member. Its limit name is the member name, which matches the
 backend-provider `LimitName` pattern `^[a-z][a-z0-9_]*$`; its setting name
@@ -220,8 +233,8 @@ lists every engine limit. The FR-101 `Limits` that `ModelCheckLimits`
 embeds as `limits` are model-checker limits there: their settings are
 `model_check.max_states` and `model_check.max_transitions` wherever
 EN-1's `ModelCheckLimits` is read (EN-1 and the refinement checks of
-FR-141, FR-142 and FR-149). EN-5's `ExactProbLimits` is QSpec FR-411's
-flat limits object: every member, including the product bounds QSL holds
+FR-141, FR-142 and FR-149). EN-5's `ExactProbLimits` is FSpec FR-411's
+flat limits object: every member, including the product bounds FSL holds
 in `ExactProbLimits.model` (`max_states`, `max_transitions`,
 `max_automaton_states`), takes the setting `exact_prob.<member>`, so EN-5's
 product bounds are raised apart from EN-1's. EN-5 reads only those three
@@ -231,7 +244,7 @@ members (`witness_samples`, `max_walk_steps`, `max_witness_set`,
 row. `explore.states` and
 `explore.transitions` raise FR-101's exploration and simulation only.
 
-Each engine row's value is a positive count (QSpec backend-provider
+Each engine row's value is a positive count (FSpec backend-provider
 `PositiveCount`), except `model_check.witness_samples` and
 `exact_prob.max_witness_paths`, whose owners give 0 a meaning (FR-166 turns
 phase 0 off; FR-202 carries subsystem evidence in place of paths).
@@ -255,8 +268,8 @@ its row (FR-315 "Size limits").
 | `model_check.max_relation_tuples` | `max_relation_tuples` | EN-1 hyper runs | `ModelCheckLimits` max_relation_tuples | 16777216 tuples | FR-184 |
 | `model_check.max_live_instances` | `max_live_instances` | EN-1 protocol subjects | `ModelCheckRequest` max_live_instances | 3 instances | FR-209 |
 | `model_check.max_store_buffer` | `max_store_buffer` | EN-1 weak memory | `ModelCheckRequest` max_store_buffer | 4 entries | FR-225 |
-| `model_check.max_messages` | `max_messages` | EN-1 weak memory | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
-| `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it | FR-120 |
+| `model_check.max_messages` | `max_messages` | EN-1 weak memory and protocol channels: the live messages per location after garbage collection under `ra`, and each channel's occupancy, counted per channel | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
+| `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it; a clause-run request sets it from its `model` trace's `max_candidates`, 1000000 candidates when absent (FR-641) | FR-120 |
 | `exact_prob.max_states` | `max_states` | EN-5 product | `ExactProbLimits.model.limits` max_states | 10000000 states | FR-203 |
 | `exact_prob.max_transitions` | `max_transitions` | EN-5 product | `ExactProbLimits.model.limits` max_transitions | 100000000 transitions | FR-203 |
 | `exact_prob.max_automaton_states` | `max_automaton_states` | EN-5 product | `ExactProbLimits.model` max_automaton_states | 1048576 states | FR-203 |
@@ -280,9 +293,9 @@ its row (FR-315 "Size limits").
 | `certificate_check.max_rank` | `max_rank` | exact reachability document writer | closed-profile Count representability ceiling; a stop requires a different supported representation, not a larger Count | 9007199254740991 rank units | FR-201 |
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
-| `inspect.max_view_entries` | `max_view_entries` | typed view construction | `qsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
-| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250 |
-| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider | `hybrid.limits` max_solver_time | 60 seconds | FR-250 |
+| `inspect.max_view_entries` | `max_view_entries` | typed view construction | `fsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
+| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` and counts one step per Picard attempt (FR-1019) | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250, FR-1019 |
+| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` (FR-1019) | `hybrid.limits` max_solver_time | 60 seconds | FR-250, FR-1019 |
 | `smt_encoding.max_constants` | `max_constants` | SMT proof-query encoding | `SmtEncodingLimits` max_constants | 1048576 constants | FR-315 |
 | `smt_encoding.max_applications` | `max_applications` | SMT proof-query encoding | `SmtEncodingLimits` max_applications | 65536 applications | FR-315 |
 | `smt_encoding.max_monitor_atoms` | `max_monitor_atoms` | SMT proof-query encoding | `SmtEncodingLimits` max_monitor_atoms | 8 atoms | FR-315 |
@@ -291,9 +304,14 @@ its row (FR-315 "Size limits").
 | `smt_encoding.max_script_bytes` | `max_script_bytes` | SMT proof-query encoding | `SmtEncodingLimits` max_script_bytes | 268435456 bytes | FR-315 |
 | `smt.max_solver_steps` | `max_solver_steps` | SMT backend (EN-2, EN-3) | `SmtRunLimits` max_solver_steps | 100000000 steps | FR-315 |
 | `smt.max_solver_time` | `max_solver_time` | SMT backend (EN-2, EN-3) | `SmtRunLimits` max_solver_time | 60 seconds | FR-315 |
+| `plan_search.max_states` | `max_states` | plan search | `PlanSearchLimits` max_states | 10000000 search nodes | FR-1011 |
+| `plan_search.max_work` | `max_work` | plan search | `PlanSearchLimits` max_work | 100000000 work units | FR-1011 |
+| `plan_search.max_certificate_entries` | `max_certificate_entries` | plan search | `PlanSearchLimits` max_certificate_entries | 16777216 entries | FR-1011 |
+| `plan_search.max_check_work` | `max_check_work` | plan certificate checker | `PlanSearchLimits` max_check_work | 100000000 work units | FR-1011 |
+| `plan_search.max_state_key_bytes` | `max_state_key_bytes` | plan search | `PlanSearchLimits` max_state_key_bytes | 1048576 bytes | FR-1011 |
 
 The method bounds `max_live_instances` (FR-209), `max_store_buffer` and
-`max_messages` (FR-225) are members of QSpec's `TemporalLimits`, so they
+`max_messages` (FR-225) are members of FSpec's `TemporalLimits`, so they
 take rows; reaching one settles its owner's V-6 outcome
 (`InstanceBoundReached{bound, states}`, `MemoryBoundReached{bound,
 states}`), not `LimitReached`. That outcome names the request member and
@@ -301,23 +319,45 @@ its value, as FR-209 and FR-225 state (`bound: max_live_instances 1`), and
 carries no setting; the row's setting is the name the settings operation
 and a replay request accept to raise the bound. These request members are not limits and take
 no row: the search horizon `max_depth`, a method parameter that settles
-V-5 and is never a limit (QSpec FR-460); the method settings `q` (FR-254), the seed,
+V-5 and is never a limit (FSpec FR-460); the method settings `q` (FR-254), the seed,
 the statistical method, `min_cycles` and `max_witnesses` (FR-191), which
-stop no run; and the monitor target members `max_reading_gap` and
+stop no run; the worker counts `explore.workers`, `model_check.workers` and
+`statistical.workers`, which are resource choices that take no row in any limit table
+and no limit name (they are request settings registered below); and the monitor target members `max_reading_gap` and
 `max_event_rate` (FR-251). The evaluation meter an engine reads is the
 call's accounting limits, whose setting names are the accounting table's.
+
+## Worker count setting names
+
+A worker count is a resource choice, not a limit: it stops no run and
+changes no result (FR-101 "Workers"). Its settings are request settings,
+not engine limits, and they take no row in the engine limit table:
+
+| Setting | Member | Engine | Request member | Default | Owner |
+| --- | --- | --- | --- | --- | --- |
+| `explore.workers` | `workers` | exploration | `explore_request_parallel` `workers` | 1 | FR-101 |
+| `model_check.workers` | `workers` | EN-1 model checker | `ModelCheckRequest.workers` | 1 | FR-126 |
+| `statistical.workers` | `workers` | EN-4 | the statistical request's `workers` | 1 | FR-191 |
+
+The settings operation SHALL accept each name with a positive integer
+value, and SHALL refuse the value 0 with `invalid_runtime_input`/
+`invalid-value`. These names are the exception to the reservation of
+`explore.*`, `model_check.*` and `statistical.*` for engine limits; no
+other non-limit name is registered under those prefixes. FSpec FR-408 owns
+the statistical settings, so `statistical.workers` is FSL's name until FSpec
+registers it.
 
 ## Accounting setting names
 
 The S6a evaluation of a call charges the ten counters of
-`quire.value.accounting/v1` (QSpec FR-323 `limits`), which the call's
-accounting limits (`quire_exact::ScalarLimits`) bound. Each counter's
-setting name is `accounting`, a dot and its `quire.value.accounting/v1`
+`filament.value.accounting/v1` (FSpec FR-323 `limits`), which the call's
+accounting limits (`filament_exact::ScalarLimits`) bound. Each counter's
+setting name is `accounting`, a dot and its `filament.value.accounting/v1`
 member name, which is also the `ScalarLimits` field of the same name, for
-example `accounting.work_units` (QSpec FR-461 Behavior 6, FR-461-AC-5). That
+example `accounting.work_units` (FSpec FR-461 Behavior 6, FR-461-AC-5). That
 one name raises it in the library, in a replay request's `stage_limits` and on
-the CLI (QSpec FR-461 Behavior 3). The counters of the other accounting limit
-objects are setting-table rows named by their stage, as QSpec FR-461
+the CLI (FSpec FR-461 Behavior 3). The counters of the other accounting limit
+objects are setting-table rows named by their stage, as FSpec FR-461
 Behavior 6 names them: `PopulationAdmissionLimitsV1`'s as `admission.*` and
 `ModelNormalizationLimitsV1`'s as `model.*`, so `accounting.work_units`,
 `admission.work_units` and `model.work_units` are three settings of three
@@ -341,7 +381,7 @@ defaults FR-100 gives a `1-draft` run.
 | `accounting.result_units` | `result_units` | 18446744073709551615 (`u64::MAX`) |
 
 An accounting setting is not a stage limit. A reached budget settles the
-call `Incomplete`, never `LimitExceeded` (QSpec FR-461 Behavior 6), so
+call `Incomplete`, never `LimitExceeded` (FSpec FR-461 Behavior 6), so
 Behaviors 1 to 4 do not apply to this table. The settings operation sets
 these names through the same operand grammar as the stage settings
 (Behavior 8), and a replay request's `stage_limits` takes them as entries
@@ -350,7 +390,7 @@ these names through the same operand grammar as the stage settings
 ## Behavior
 
 1. **The outcome names the setting.** When a stage or operation refuses a charge because
-   it would exceed a configured limit, QSL SHALL return that stage's limit
+   it would exceed a configured limit, FSL SHALL return that stage's limit
    outcome carrying the limit kind, the configured bound, the count the
    refused charge would have reached, the setting name of that limit, and
    the locus FR-096 defines for the producer. For a stage limit the outcome
@@ -359,20 +399,21 @@ these names through the same operand grammar as the stage settings
 
    | Carrying type | Code | Settings |
    | --- | --- | --- |
-   | `ModelNormalizationLimitsV1`, `PopulationAdmissionLimitsV1` (caller budgets) | `resource_exhausted`/`insufficient-next-charge` for a denied charge, a walk ceiling (`model.ancestor_steps`, `model.family_steps`, `admission.ancestor_steps`) being a denied one-edge charge (FR-082-AC-3, FR-083, QSpec FR-150-AC-11), wherever the ceiling is read, observation admission's re-run walks included | `model.*`, `admission.*` |
+   | `ModelNormalizationLimitsV1`, `PopulationAdmissionLimitsV1` (caller budgets) | `resource_exhausted`/`insufficient-next-charge` for a denied charge, a walk ceiling (`model.ancestor_steps`, `model.family_steps`, `admission.ancestor_steps`) being a denied one-edge charge (FR-082-AC-3, FR-083, FSpec FR-150-AC-11), wherever the ceiling is read, observation admission's re-run walks included | `model.*`, `admission.*` |
    | the format, intake and library resolution budgets | `resource_exhausted`/`input-bytes-exceeded`, `resource_exhausted`/`intake-limit-exceeded`, `resource_exhausted`/`insufficient-next-charge` | `format.output_bytes`, `intake.input_bytes`, `library.*` |
    | a stage's or reader's own limits type | `stage_limit_exceeded` | `s1.*`, `s3.*`, `environment.*`, `i2.*`, `replay.input_bytes`, `observation.*`, `dependency.*`, `identity.input_bytes`, `inspect.max_view_entries`, `render.output_bytes`, `emit.output_bytes` |
    | the supplied-value limits type (pre-call phase budgets) | no catalog code: the phase-marked pre-call limit record of FR-277 (replay: `inconclusive`/`NoValue`), never a kernel charge point | FR-277's `supplied.admission_work_units` and `supplied.conversion_work_units`, which are not setting-table rows |
    | exploration limits | no catalog code: exploration returns `Outcome::Bounded` (FR-101) | `explore.*` |
    | `TemporalEvidenceLimits` and the progress ledger capacity (FR-523, FR-502) | no catalog code: the call returns `Incomplete(LimitReached{limit, value, setting})` with `limit` one of `node count`, `work budget`, `input bytes` or `tick count` (the kind of `temporal_evidence.history_span`) and the call's stop scope as FR-523 states | `temporal_evidence.*`, `progress.covered_positions` |
-   | an engine's limits type | no catalog code: the engine stops and the item settles `incomplete`, `LimitReached{limit, value, setting}` (FR-127 V-7, QSpec FR-461 Behavior 5) | the engine table's names |
+   | an engine's limits type | no catalog code: the engine stops and the item settles `incomplete`, `LimitReached{limit, value, setting}` (FR-127 V-7, FSpec FR-461 Behavior 5) | the engine table's names |
+   | the export limits (FR-1015) | no catalog code: the export stops with `status` `incomplete` naming the setting, no package and no target file, category incomplete (FSpec FR-817) | `export.output_bytes`, `export.nodes`, `export.work_units` |
    | `PrepareLimits`, an execution backend's prepare limits (FR-294) | `stage_limit_exceeded`, carried as `PrepareFailure::Limit` and, from `execute`, as `CallFailure::Limit(PrepareLimitReached)` | `prepare.compile_work_units`, `prepare.code_bytes` |
 
    Each `stage_limit_exceeded` outcome carries `kind`, `bound`, `actual` and
    `setting`. So does `resource_exhausted`/`intake-limit-exceeded`, wherever
    intake runs (replay `select`, the compile path and observation admission),
    because it is a size ceiling. A denied charge, `resource_exhausted`/
-   `insufficient-next-charge`, carries `setting`, `limit` (QSpec FR-272's
+   `insufficient-next-charge`, carries `setting`, `limit` (FSpec FR-272's
    canonical name for the effective limit), `actual` (the prior usage plus the
    denied amount), `stage`, `accounting_contract`, `limit_kind`, `consumed`, `next_charge`
    and `charge_point`, wherever the budget is read: the compile path, replay
@@ -391,8 +432,8 @@ these names through the same operand grammar as the stage settings
    `FormatLimits` SHALL map its `output_bytes` field to
    `format.output_bytes` through the shared `SettingLimits` interface; the
    formatter's byte-budget diagnostic SHALL use that mapping.
-3. **Rendering.** When QSL renders a `stage_limit_exceeded` diagnostic, the
-   text SHALL follow QSpec FR-461's rendering, filled from the outcome of
+3. **Rendering.** When FSL renders a `stage_limit_exceeded` diagnostic, the
+   text SHALL follow FSpec FR-461's rendering, filled from the outcome of
    Behavior 1.
 4. **The library raises every limit by its field.** Each stage's,
    operation's or engine's limits type SHALL offer a builder method for each
@@ -403,11 +444,15 @@ these names through the same operand grammar as the stage settings
    every entry through to its stage (FR-263).
 6. **The settings operation raises every limit by name.** The driver CLI
    exposes the caller limits as `--limit <name>=<value>`, repeatable
-   (ADR-029 CB-1). QSL SHALL provide the library settings operation that the
+   (ADR-029 CB-1). FSL SHALL provide the library settings operation that the
    driver CLI calls with those operands: given a list of `<name>=<value>`
-   operands, where `<name>` is a setting name from any of the three tables and `<value>` a
+   operands, where `<name>` is a setting name from any of the three tables or the
+   worker table of "Worker count setting names" and `<value>` a
    non-negative decimal integer, it SHALL return the caller limits with each
-   named limit at that value. For `format.output_bytes`, the returned caller
+   named limit at that value, and with each named worker count at that value
+   in `workers` (`WorkerCounts { explore, model_check, statistical }`, each
+   default 1, read by `explore_request_parallel`, `check_model` and
+   `check_statistical`). For `format.output_bytes`, the returned caller
    limits SHALL expose the resulting `FormatLimits` to the formatter, and
    for an engine-table name, the engine limits type that row's library field
    names (`ModelCheckLimits`, `ModelCheckRequest`'s method bounds,
@@ -416,12 +461,12 @@ these names through the same operand grammar as the stage settings
    `ScheduleLimits`, the monitor run's window limit, `hybrid.limits`,
    `InspectLimits`, `SmtEncodingLimits` or `SmtRunLimits`), with that member
    at `<value>` and every other member at its default. When
-   `<name>` is in none of the three tables, `<value>` is
+   `<name>` is in none of the three tables and not in the worker table, `<value>` is
    not a non-negative decimal integer, `<value>` is 0 for an engine row
    whose value is a positive count, or one name is given twice, it SHALL
-   return a usage refusal that names the operand, and no stage runs.
+   return a usage refusal that names the operand, and no stage runs; a worker name whose `<value>` is 0 returns that refusal with cause `invalid_runtime_input`/`invalid-value`.
 7. **Absent settings take their defaults.** When a caller does not
-   configure a limit at an entry point, QSL SHALL run the stage with that
+   configure a limit at an entry point, FSL SHALL run the stage with that
    limit at its default from the table, and a call with each accounting
    counter at its default from the accounting table.
 8. **The settings operation sets every accounting budget by name.** Given
@@ -436,7 +481,7 @@ these names through the same operand grammar as the stage settings
    bound; the same name given twice is refused at the second operand.
 9. **A reached budget names its setting.** When an evaluation charge would
    exceed an accounting counter's bound, the call SHALL settle `Incomplete`
-   (QSpec FR-461 Behavior 6), and the outcome SHALL name the counter, the
+   (FSpec FR-461 Behavior 6), and the outcome SHALL name the counter, the
    configured bound, the count the denied charge would have reached, and
    the setting `accounting.<counter>`, so the caller can raise it with
    `--limit accounting.<counter>=<n>`. An engine item stopped by the
@@ -463,7 +508,7 @@ these names through the same operand grammar as the stage settings
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-255-AC-1 | For each row of the setting table, driving its stage or operation past that limit at a configured bound `B` returns the code Behavior 1's table gives for the limit's carrying type, with the row's limit kind, bound `B`, the count the refused charge would have reached, and the row's setting name, and, for a `stage_limit_exceeded` row, its catalog record carries fields `kind`, `bound`, `actual` and `setting` holding those values; the caller-budget rows are as Behavior 1 states. The `explore.*` rows return their `Outcome::Bounded` instead, and the supplied-value ceilings, which are not setting-table rows and travel in the typed `limits.supplied` member, return FR-277's phase-marked pre-call limit record. The `format.output_bytes` case uses FR-003's `resource_exhausted` outcome over emitted UTF-8 bytes. | Test (TC-720, TC-931) |
-| FR-255-AC-2 | A function `f` whose body is `1 + 1 + 1` (five expression nodes), checked with `s3.nodes` at 4, renders as "S3 node limit 4 reached (5) at <locus>; raise it with `--limit s3.nodes=<n>` or the request's `stage_limits` entry `s3.nodes`", where <locus> renders FR-096's locus of the node whose entry failed, in QSpec FR-461's rendering. | Test (TC-720) |
+| FR-255-AC-2 | A function `f` whose body is `1 + 1 + 1` (five expression nodes), checked with `s3.nodes` at 4, renders as "S3 node limit 4 reached (5) at <locus>; raise it with `--limit s3.nodes=<n>` or the request's `stage_limits` entry `s3.nodes`", where <locus> renders FR-096's locus of the node whose entry failed, in FSpec FR-461's rendering. | Test (TC-720) |
 | FR-255-AC-3 | Each stage's and operation's limits type, including `FormatLimits`, and the call's accounting limits, maps every one of its fields to exactly one setting name, the names across all of them are distinct, and the union of those names equals the names of the setting table and the accounting table together, except that the supplied-value ceilings of FR-277 are not setting-table rows and travel in the typed `limits.supplied` member, and the monitor target's `max_event_rate` (setting name `monitor.max_event_rate`, FR-251) is not a setting-table row because it is an exact fraction and every table row is an unsigned integer. Setting a field through its builder method changes that field's bound and leaves every other field at its prior value. | Test (TC-720) |
 | FR-255-AC-4 | For each row of the setting table, an input or operation that reaches that limit at its default succeeds once the row's setting is raised to fit it, through each applicable entry point: the library limits type's builder method, the replay request's `stage_limits` entry of that name, and the settings operation given the operand `<name>=<value>`. `replay.input_bytes`, `format.output_bytes`, and a row whose stage a replay does not run are exercised through the builder and the settings operation; the formatter receives the resulting `FormatLimits`. The supplied-value ceilings of FR-277 are not setting-table rows and travel in the typed `limits.supplied` member, not in `stage_limits`. | Test (TC-721, TC-931) |
 | FR-255-AC-5 | The settings operation given `s9.nodes=1`, given `s3.nodes=ten`, given `s3.nodes=-1`, and given `s3.nodes=5` and `s3.nodes=6` together, each returns a usage refusal naming the offending operand, and no stage runs. | Test (TC-721) |
@@ -482,6 +527,8 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-18 | For an identity-join fixture with measured charges W (work) and S (storage), limits (W, S) admit the join, (W - 1, S) refuses it as a work-budget limit naming `i2.work_units`, and (W, S - 1) refuses it as a logical-storage limit naming `i2.native_join_storage`. | Test (TC-721) |
 | FR-255-AC-19 | A refused native join returns the `stage_limit_exceeded`-class refusal with `kind`, `bound`, `actual` and `setting` of FR-255 Behavior 1; IR's `ExactTypeProjectionError` has code `exhausted_work` or `exhausted_storage` and no separate public `cause` field, and `NativeJoinBudget::first_unpaid()` reports the first denied kind and amount. | Test (TC-721) |
 | FR-255-AC-20 | Setting `emit.output_bytes` through the emit limits' builder, a replay request's `stage_limits` and the settings operation changes only `EmitLimits.output_bytes` (`PackageLimits.output_bytes` of the compile lifecycle); `EmitLimits` has no `Default`, so a limits value built without an output-byte value does not compile and a fixture states an explicit value; the outer configuration's `PackageLimits::default()` supplies 16777216; and the setting accepts 0 and `u64::MAX`. | Test (TC-721) |
+| FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
+| FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 
 ## Status
 
@@ -524,7 +571,7 @@ here for QSL-600; their implementation is not yet complete.
   request's `stage_limits`.
 - [ADR-014](../decisions/ADR-014-temporal-trace-and-boundedness-architecture.md)
   §2: an absent bound is inherited from its published default.
-- QSpec FR-461 owns the naming rule and the rendering this requirement
+- FSpec FR-461 owns the naming rule and the rendering this requirement
   applies.
 - [FR-100](FR-100-run-a-named-function-through-the-spine.md) gives a call's
   accounting defaults and its request's `accounting` member, and
@@ -533,9 +580,9 @@ here for QSL-600; their implementation is not yet complete.
 
 ## References
 
-- QSpec FR-146: no checking depth limit, and a host stack limit is never an
+- FSpec FR-146: no checking depth limit, and a host stack limit is never an
   outcome.
-- QSpec FR-460, the ecosystem depth rule; FR-461, the limit, value and
+- FSpec FR-460, the ecosystem depth rule; FR-461, the limit, value and
   setting a reached limit names; and FR-323 `stage_limits`, the request's
   setting entries (Linear STD-143, which supersedes STD-125).
 - Linear QSL-381.

@@ -3,7 +3,7 @@ id: TC-218
 title: "Redefinition variance checking reports every failing axis, not only the first"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-218: Redefinition variance checking reports every failing axis, not only the first

@@ -3,7 +3,7 @@ id: TC-482
 title: "S2 builds dimension and unit forms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-482: S2 builds dimension and unit forms

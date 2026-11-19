@@ -3,7 +3,7 @@ id: TC-122
 title: "Evaluate bounded native temporal obligations under each selected profile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: verifies
 ---
 # TC-122: Evaluate bounded native temporal obligations under each selected profile
@@ -16,11 +16,11 @@ compiles real native temporal source through the existing parser, linker, checke
 and protocol-artifact emitter, then evaluates the emitted temporal body against an
 independently constructed observation trace. Expected truths, bases, support sets,
 premises and refusal causes come from the authored source and from the profile
-definitions under `resources/native-v1/proposals/quire-v1/definitions/`, never
+definitions under `resources/native-v1/proposals/filament-v1/definitions/`, never
 from the evaluator's own output or reported usage. Each numbered group
 corresponds to the matching acceptance criterion.
 
-The controls, `tests/composed_temporal_evaluation.rs`, were retired by QSL-858 PR 1 with the v1 evaluator; the successor tests are the ones FR-525 names for each criterion (qsl-eval `temporal_trace`, `finite_window`, `temporal_evidence`, `temporal_identity`). Traces are Rust
+The controls, `tests/composed_temporal_evaluation.rs`, were retired by QSL-858 PR 1 with the v1 evaluator; the successor tests are the ones FR-525 names for each criterion (fsl-eval `temporal_trace`, `finite_window`, `temporal_evidence`, `temporal_identity`). Traces are Rust
 values; no JSON fixture, shell step or installed CLI participates. A profile is
 selected per declaration by its authored `profile` alias, so a case comparing
 profiles compiles one declaration per profile from identical clause text.

@@ -1,0 +1,707 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-297 typed views over checked package and result data.
+//!
+//! Inspection only projects values produced by the compiler or an engine. It
+//! does not parse rendered text, read package bytes, rerun a producer, or
+//! confer package authority on a selector.
+
+use alloc::{string::String, vec::Vec};
+use core::fmt;
+use filament_contract_model::CheckedNodeId;
+use filament_exact::{Cancel, NodeKey};
+use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
+use fsl_foundation::{
+    diagnostic::{LimitExceeded, StageFailure, Staged},
+    setting::Setting,
+    source::provenance::{OccurrenceKey, SourceRegion, UnresolvedOccurrence},
+};
+use fsl_package::{CheckedPackage, Emission};
+use fsl_semantics::check::{RequirementRecord, SemanticNode};
+
+extern crate alloc;
+
+/// The inspection operation's cumulative materialized-entry limit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InspectLimits {
+    /// Maximum number of selected collection entries in one view.
+    pub max_view_entries: u64,
+}
+
+impl Default for InspectLimits {
+    fn default() -> Self {
+        Self {
+            max_view_entries: 10_000_000,
+        }
+    }
+}
+
+impl From<&fsl_replay::CallerLimits> for InspectLimits {
+    fn from(limits: &fsl_replay::CallerLimits) -> Self {
+        Self {
+            max_view_entries: limits.inspect_max_view_entries,
+        }
+    }
+}
+
+/// Why an inspection request cannot produce its selected typed view.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InspectCause {
+    /// The selected checked package has no node with this key.
+    UnknownNode {
+        /// The node selector that was not in the checked package.
+        selector: String,
+    },
+    /// The node exists but the requested role and ordinal are absent.
+    UnknownOccurrence {
+        /// The occurrence selector that was not in the checked package map.
+        selector: String,
+    },
+    /// The input and requested view do not have a compatible typed pairing.
+    IncompatibleSelection {
+        /// The requested view selector.
+        selector: String,
+    },
+    /// No retained state graph was supplied by its producer.
+    UnavailableRetainedContent,
+    /// The checked node has no source correspondence in the associated map.
+    SourceCorrespondence {
+        /// The node or occurrence selector that did not resolve.
+        selector: String,
+    },
+}
+
+impl CatalogCoded for InspectCause {
+    fn catalog_code(&self) -> CatalogCode {
+        match self {
+            Self::UnknownNode { .. } => CatalogCode::new("inspection_refused", "unknown-node"),
+            Self::UnknownOccurrence { .. } => {
+                CatalogCode::new("inspection_refused", "unknown-occurrence")
+            }
+            Self::SourceCorrespondence { .. } => {
+                CatalogCode::new("inspection_refused", "source-correspondence-unresolved")
+            }
+            Self::IncompatibleSelection { .. } => {
+                CatalogCode::new("inspection_refused", "incompatible-selection")
+            }
+            Self::UnavailableRetainedContent => {
+                CatalogCode::new("inspection_refused", "unavailable-retained-content")
+            }
+        }
+    }
+
+    fn catalog_fields(&self) -> Option<alloc::collections::BTreeMap<&'static str, String>> {
+        let mut fields = alloc::collections::BTreeMap::new();
+        match self {
+            Self::UnavailableRetainedContent => {}
+            Self::IncompatibleSelection { selector } => {
+                fields.insert("selector", selector.clone());
+            }
+            Self::UnknownNode { selector }
+            | Self::UnknownOccurrence { selector }
+            | Self::SourceCorrespondence { selector } => {
+                fields.insert("selector", selector.clone());
+            }
+        }
+        Some(fields)
+    }
+}
+
+impl fmt::Display for InspectCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncompatibleSelection { selector } => {
+                write!(f, "input is incompatible with the {selector} view")
+            }
+            Self::UnavailableRetainedContent => f.write_str("the producer retained no state graph"),
+            Self::UnknownNode { selector } => write!(f, "unknown node {selector}"),
+            Self::UnknownOccurrence { selector } => write!(f, "unknown occurrence {selector}"),
+            Self::SourceCorrespondence { selector } => {
+                write!(f, "source correspondence for {selector} is unavailable")
+            }
+        }
+    }
+}
+
+/// A package-scoped node selector. Printed names are deliberately absent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NodeSelector {
+    /// Select the checked node identity.
+    Node(NodeKey),
+    /// Select one mapped occurrence by its checked identity, role and ordinal.
+    Occurrence(OccurrenceKey),
+}
+
+/// A source-map occurrence and all regions in their stored order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OccurrenceView<'a> {
+    /// The occurrence identity.
+    pub key: OccurrenceKey,
+    /// The occurrence's regions, preserving order and multiplicity.
+    pub regions: &'a [SourceRegion],
+}
+
+/// A node projected from a checked package.
+#[derive(Clone, Debug)]
+pub struct NodeView<'a> {
+    /// The checked semantic node.
+    pub node: &'a SemanticNode,
+    /// All mapped source occurrences, separately keyed.
+    pub occurrences: Vec<OccurrenceView<'a>>,
+    /// Requirement records attached to the node's mapped occurrences.
+    pub requirements: Vec<(&'a OccurrenceKey, &'a RequirementRecord)>,
+}
+
+/// A typed view of the checked package and its own emitted metadata.
+#[derive(Clone, Debug)]
+pub struct PackageView<'a> {
+    /// Dependency closure, by library name in ascending order.
+    pub dependencies: Vec<(fsl_semantics::library::LibraryName, &'a CheckedPackage)>,
+    /// Selected domain models, in checked declaration order.
+    pub model_selections: &'a [fsl_semantics::model::domain_package::DomainPackageRef],
+    /// Exported declaration nodes from the checked semantic graph.
+    pub exports: Vec<&'a SemanticNode>,
+    /// Per-item requirement records retained by S3.
+    pub requirements: Vec<(&'a OccurrenceKey, &'a RequirementRecord)>,
+    /// The exact typed v2 capability report retained by the emitter.
+    pub capability_report: &'a [filament_contract_model::CheckedCapability],
+}
+
+/// A successful inspection result. The variants retain their owning types.
+#[derive(Clone, Debug)]
+pub enum View<'a, S = (), T = (), F = ()> {
+    /// A checked package view.
+    Package(PackageView<'a>),
+    /// A checked node view.
+    Node(NodeView<'a>),
+    /// A terminal outcome.
+    Outcome(OutcomeView<'a>),
+    /// A scalar counterexample.
+    Counterexample(CounterexampleView<'a>),
+    /// A finite trace or lasso.
+    Trace(TraceView<'a>),
+    /// A retained state graph.
+    StateGraph(StateGraphView<'a, S, T, F>),
+    /// A model-check state graph and its completion status.
+    ModelCheckStateGraph(ModelCheckStateGraphView<'a>),
+}
+
+mod result_views;
+pub use result_views::{
+    inspect_counterexample, inspect_model_check_graph, inspect_outcome, inspect_state_graph,
+    inspect_trace, AssignmentView, CounterexampleView, ModelCheckStateGraphView, OutcomeView,
+    StateGraphView, TracePositionView, TraceView,
+};
+
+mod render;
+pub use render::{render_outcome, render_view, RenderCause, RenderForm, RenderSources, Rendered};
+
+/// Inspect a checked package, using the package's typed emission metadata.
+pub fn inspect_package<'a>(
+    package: &'a CheckedPackage,
+    emission: &'a Emission,
+    limits: InspectLimits,
+    cancel: &Cancel,
+) -> Result<Staged<View<'a>>, StageFailure<InspectCause>> {
+    check_cancel(cancel)?;
+    let mut budget = EntryBudget::new(limits);
+    let mut dependencies = Vec::new();
+    for (identity, dependency) in package.dependencies() {
+        budget.charge(cancel)?;
+        dependencies.push((identity.clone(), dependency.as_ref()));
+    }
+    let graph = package.graph();
+    for _ in graph.model_selections() {
+        budget.charge(cancel)?;
+    }
+    let mut exports = Vec::new();
+    for node in graph.semantic_graph().nodes() {
+        if node.declaration().is_some() {
+            budget.charge(cancel)?;
+            exports.push(node);
+        }
+    }
+    let mut requirements = Vec::new();
+    for (key, record) in graph.requirements() {
+        budget.charge(cancel)?;
+        requirements.push((key, record));
+    }
+    for _ in emission.capability_report() {
+        budget.charge(cancel)?;
+    }
+    let view = PackageView {
+        dependencies,
+        model_selections: graph.model_selections(),
+        exports,
+        requirements,
+        capability_report: emission.capability_report(),
+    };
+    Ok(Staged::new(View::Package(view)))
+}
+
+/// Inspect one checked node or source occurrence without reparsing source.
+pub fn inspect_node<'a>(
+    package: &'a CheckedPackage,
+    emission: &'a Emission,
+    selector: &NodeSelector,
+    limits: InspectLimits,
+    cancel: &Cancel,
+) -> Result<Staged<View<'a>>, StageFailure<InspectCause>> {
+    check_cancel(cancel)?;
+    let source_map = emission.source_map();
+    let graph = package.graph();
+    let (node_key, selected_occurrence) = match selector {
+        NodeSelector::Node(key) => (key, None),
+        NodeSelector::Occurrence(key) => (key.node(), Some(key)),
+    };
+    let Some(node) = graph.semantic_graph().node(node_key.clone()) else {
+        return Err(StageFailure::Refused(InspectCause::UnknownNode {
+            selector: node_key.to_string(),
+        }));
+    };
+    if emission
+        .omitted()
+        .iter()
+        .any(|omitted| id_names_key(&omitted.node, node_key))
+    {
+        return Err(StageFailure::Refused(InspectCause::SourceCorrespondence {
+            selector: node_key.to_string(),
+        }));
+    }
+    let mut occurrences = Vec::new();
+    match selected_occurrence {
+        Some(key) => match source_map.regions(key) {
+            Some(regions) => {
+                let mut budget = EntryBudget::new(limits);
+                budget.charge(cancel)?;
+                for _ in regions {
+                    budget.charge(cancel)?;
+                }
+                occurrences.push(OccurrenceView {
+                    key: key.clone(),
+                    regions,
+                });
+            }
+            None => {
+                let cause = if source_map.occurrences(node_key).next().is_some() {
+                    InspectCause::UnknownOccurrence {
+                        selector: format!("{key:?}"),
+                    }
+                } else {
+                    InspectCause::SourceCorrespondence {
+                        selector: format!("{key:?}"),
+                    }
+                };
+                return Err(StageFailure::Refused(cause));
+            }
+        },
+        None => {
+            let mut budget = EntryBudget::new(limits);
+            let mut found = false;
+            for (key, regions) in source_map.occurrences(node_key) {
+                found = true;
+                budget.charge(cancel)?;
+                for _ in regions {
+                    budget.charge(cancel)?;
+                }
+                occurrences.push(OccurrenceView {
+                    key: key.clone(),
+                    regions,
+                });
+            }
+            if !found {
+                return Err(StageFailure::Refused(InspectCause::SourceCorrespondence {
+                    selector: node_key.to_string(),
+                }));
+            }
+        }
+    }
+    let selected = occurrences
+        .iter()
+        .map(|occurrence| occurrence.key.clone())
+        .collect::<alloc::collections::BTreeSet<_>>();
+    let mut requirements = Vec::new();
+    for (key, record) in graph.requirements() {
+        if selected.contains(key) {
+            requirements.push((key, record));
+        }
+    }
+    Ok(Staged::new(View::Node(NodeView {
+        node,
+        occurrences,
+        requirements,
+    })))
+}
+
+pub(crate) fn check_cancel<C>(cancel: &Cancel) -> Result<(), StageFailure<C>> {
+    if let Some(cause) = cancel.cause() {
+        Err(StageFailure::Cancelled(cause))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) struct EntryBudget {
+    bound: u64,
+    used: u64,
+}
+
+impl EntryBudget {
+    pub(crate) fn new(limits: InspectLimits) -> Self {
+        Self {
+            bound: limits.max_view_entries,
+            used: 0,
+        }
+    }
+
+    pub(crate) fn charge<C>(&mut self, cancel: &Cancel) -> Result<(), StageFailure<C>> {
+        if let Some(cause) = cancel.cause() {
+            return Err(StageFailure::Cancelled(cause));
+        }
+        let next = u128::from(self.used) + 1;
+        if next > u128::from(self.bound) {
+            return Err(StageFailure::Limit(LimitExceeded::new(
+                Setting::InspectMaxViewEntries,
+                self.bound,
+                next,
+            )));
+        }
+        self.used += 1;
+        Ok(())
+    }
+}
+
+/// Convert a source-map lookup failure without changing its identity.
+pub fn unresolved_cause(error: UnresolvedOccurrence, selector: &str) -> InspectCause {
+    match error {
+        UnresolvedOccurrence::UnknownNode(_) => InspectCause::UnknownNode {
+            selector: selector.into(),
+        },
+        UnresolvedOccurrence::UnknownOccurrence(_) => InspectCause::UnknownOccurrence {
+            selector: selector.into(),
+        },
+    }
+}
+
+/// Whether the omitted node's structural id `id` (it is in no graph, so it
+/// holds no index segment) names the same node as `key`.
+fn id_names_key(id: &CheckedNodeId, key: &NodeKey) -> bool {
+    fsl_semantics::check::wire_id::node_key(id).is_ok_and(|named| named == *key)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::{
+        inspect_node, inspect_outcome, inspect_package, EntryBudget, InspectCause, InspectLimits,
+        NodeSelector, View,
+    };
+    use filament_exact::{Cancel, CancelCause, Location, NodeKey, Origin, Role};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_foundation::{diagnostic::StageFailure, setting::Setting};
+    use fsl_semantics::check::PackageDeclarations;
+    use ix_trace_rs::trace;
+
+    fn fixture_node(name: &str) -> NodeKey {
+        NodeKey::new(
+            "fixture",
+            vec![filament_exact::PathSegment::Text(name.to_owned())],
+            0,
+        )
+        .expect("a fixture node key is well formed")
+    }
+
+    pub(crate) fn emitted_spine_package() -> (fsl_package::CheckedPackage, fsl_package::Emission) {
+        const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/spine-compile.native");
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:inspect"),
+            "program.native",
+            FIXTURE,
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 admits the checked-package fixture");
+        assert_eq!(parsed.diagnostics(), []);
+        let raw = parsed.source().reference().clone();
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the checked-package fixture");
+        let graph = PackageDeclarations::assemble(
+            raw,
+            "checked-package-fixture".into(),
+            unit,
+            fsl_semantics::model::intake::SelectedModels::default(),
+            Vec::new(),
+        )
+        .expect("the fixture assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("the fixture checks");
+        let package = fsl_package::CheckedPackage::link(graph);
+        let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::new(1 << 32))
+            .expect("the fixture emits");
+        assert!(emission.omitted().is_empty());
+        (package, emission)
+    }
+
+    #[trace("TC-782", "FR-297-AC-1")]
+    #[test]
+    fn package_view_preserves_package_metadata() {
+        let (package, emission) = emitted_spine_package();
+        let result = inspect_package(
+            &package,
+            &emission,
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("a checked package with its own emission is inspectable");
+        let View::Package(view) = result.value() else {
+            panic!("package request gives package view");
+        };
+        assert_eq!(view.dependencies.len(), package.dependencies().len());
+        assert_eq!(view.model_selections, package.graph().model_selections());
+        assert_eq!(
+            view.exports.len(),
+            package
+                .graph()
+                .semantic_graph()
+                .nodes()
+                .filter(|node| node.declaration().is_some())
+                .count()
+        );
+        assert_eq!(
+            view.requirements.len(),
+            package.graph().requirements().len()
+        );
+        assert_eq!(view.capability_report, emission.capability_report());
+        let selected_entries = (view.dependencies.len()
+            + view.model_selections.len()
+            + view.exports.len()
+            + view.requirements.len()
+            + view.capability_report.len()) as u64;
+        assert!(selected_entries > 0);
+        assert!(inspect_package(
+            &package,
+            &emission,
+            InspectLimits {
+                max_view_entries: selected_entries,
+            },
+            &Cancel::new(),
+        )
+        .is_ok());
+        assert!(matches!(
+            inspect_package(
+                &package,
+                &emission,
+                InspectLimits {
+                    max_view_entries: selected_entries - 1,
+                },
+                &Cancel::new(),
+            ),
+            Err(StageFailure::Limit(limit))
+                if limit.setting() == Setting::InspectMaxViewEntries
+                    && limit.configured_bound() == selected_entries - 1
+                    && limit.actual() == u128::from(selected_entries)
+        ));
+    }
+
+    #[trace("TC-782", "FR-297-AC-2")]
+    #[test]
+    fn node_view_uses_checked_identity_and_unknown_node_refusal_is_typed() {
+        let (package, emission) = emitted_spine_package();
+        let node = package
+            .graph()
+            .semantic_graph()
+            .nodes()
+            .find(|node| {
+                node.declaration()
+                    .is_some_and(|name| name.last().is_some_and(|part| part.as_str() == "seven"))
+            })
+            .expect("fixture declares seven");
+        let node_key = node.key();
+        let result = inspect_node(
+            &package,
+            &emission,
+            &NodeSelector::Node(node_key.clone()),
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("a checked node with emitted correspondence is inspectable");
+        let View::Node(view) = result.value() else {
+            panic!("node request gives node view");
+        };
+        assert_eq!(view.node.key(), node_key);
+        assert!(!view.occurrences.is_empty());
+        assert!(view
+            .occurrences
+            .iter()
+            .all(|occurrence| !occurrence.regions.is_empty()));
+        assert!(view
+            .occurrences
+            .iter()
+            .all(|occurrence| occurrence.key.node() == &node_key));
+        let selected_entries = view
+            .occurrences
+            .iter()
+            .map(|occurrence| 1 + occurrence.regions.len())
+            .sum::<usize>() as u64;
+        assert!(inspect_node(
+            &package,
+            &emission,
+            &NodeSelector::Node(node_key.clone()),
+            InspectLimits {
+                max_view_entries: selected_entries,
+            },
+            &Cancel::new(),
+        )
+        .is_ok());
+        assert!(matches!(
+            inspect_node(
+                &package,
+                &emission,
+                &NodeSelector::Node(node_key.clone()),
+                InspectLimits {
+                    max_view_entries: selected_entries - 1,
+                },
+                &Cancel::new(),
+            ),
+            Err(StageFailure::Limit(limit))
+                if limit.setting() == Setting::InspectMaxViewEntries
+                    && limit.actual() == u128::from(selected_entries)
+        ));
+
+        let absent = fixture_node("absent");
+        let refusal = inspect_node(
+            &package,
+            &emission,
+            &NodeSelector::Node(absent.clone()),
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .expect_err("unknown checked identity refuses");
+        assert!(
+            matches!(refusal, StageFailure::Refused(InspectCause::UnknownNode { selector })
+            if selector == absent.to_string())
+        );
+
+        let absent_occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+            node_key.clone(),
+            Origin::new(Role::new("missing-role"), 0),
+        );
+        let refusal = inspect_node(
+            &package,
+            &emission,
+            &NodeSelector::Occurrence(absent_occurrence),
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .expect_err("absent occurrence on a known node refuses separately");
+        assert!(matches!(
+            refusal,
+            StageFailure::Refused(InspectCause::UnknownOccurrence { .. })
+        ));
+    }
+
+    #[trace("TC-782", "FR-297-AC-6")]
+    #[test]
+    fn outcome_occurrence_locus_resolves_through_its_emission_map() {
+        let (package, emission) = emitted_spine_package();
+        let node = package
+            .graph()
+            .semantic_graph()
+            .nodes()
+            .find(|node| node.declaration().is_some())
+            .expect("fixture has a declared node");
+        let key = emission
+            .source_map()
+            .occurrences(&node.key())
+            .next()
+            .expect("the declaration has a mapped occurrence")
+            .0
+            .clone();
+        let location = Location::new(node.key(), key.origin().clone());
+        let locus = fsl_foundation::diagnostic::Locus::Occurrence(location);
+        let diagnostic = fsl_replay::OutcomeDiagnostic::new(
+            None,
+            "inspection_fixture",
+            Some(fsl_replay::OutcomeLocus::from(&locus)),
+            "fixture",
+        );
+        let document = fsl_replay::OutcomeDocument::new(
+            fsl_replay::Operation::Analyze,
+            None,
+            filament_semantic_value::catalog::Category::Success,
+        )
+        .with_diagnostics(vec![diagnostic]);
+        let result = inspect_outcome(
+            &document,
+            &[Some(key.clone())],
+            Some(&emission),
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the occurrence resolves through the associated emission");
+        let View::Outcome(view) = result.value() else {
+            panic!("outcome request gives outcome view");
+        };
+        assert_eq!(view.loci[0].0, document.diagnostics()[0].locus().cloned());
+        assert_eq!(view.loci[0].1, emission.source_map().regions(&key).unwrap());
+
+        assert!(matches!(
+            inspect_outcome(
+                &document,
+                &[Some(
+                    fsl_foundation::source::provenance::OccurrenceKey::new(
+                        fixture_node("absent"),
+                        key.origin().clone(),
+                    )
+                )],
+                Some(&emission),
+                InspectLimits::default(),
+                &Cancel::new(),
+            ),
+            Err(StageFailure::Refused(
+                InspectCause::IncompatibleSelection { .. }
+            ))
+        ));
+    }
+
+    #[trace("TC-1168", "FR-297-AC-10")]
+    #[test]
+    fn entry_limit_accepts_exact_and_refuses_one_over_with_inspection_setting() {
+        let cancel = Cancel::new();
+        let mut exact = EntryBudget::new(InspectLimits {
+            max_view_entries: 2,
+        });
+        exact.charge::<()>(&cancel).unwrap();
+        exact.charge::<()>(&cancel).unwrap();
+        assert!(
+            matches!(exact.charge::<()>(&cancel), Err(StageFailure::Limit(limit))
+            if limit.setting() == Setting::InspectMaxViewEntries
+                && limit.configured_bound() == 2
+                && limit.actual() == 3)
+        );
+    }
+
+    #[trace("TC-1168", "FR-297-AC-10")]
+    #[test]
+    fn zero_limit_accepts_empty_and_refuses_first_entry() {
+        let cancel = Cancel::new();
+        let configured = fsl_replay::CallerLimits::from_operands(["inspect.max_view_entries=0"])
+            .expect("the settings operation accepts the inspection setting");
+        assert_eq!(InspectLimits::from(&configured).max_view_entries, 0);
+        let mut zero = EntryBudget::new(InspectLimits {
+            max_view_entries: 0,
+        });
+        assert!(
+            matches!(zero.charge::<()>(&cancel), Err(StageFailure::Limit(limit))
+            if limit.configured_bound() == 0 && limit.actual() == 1)
+        );
+    }
+
+    #[trace("TC-1168", "FR-297-AC-10")]
+    #[test]
+    fn precancelled_handle_stops_entry_charging() {
+        let cancel = Cancel::new();
+        cancel.cancel(CancelCause::Requested);
+        let mut budget = EntryBudget::new(InspectLimits::default());
+        assert!(matches!(
+            budget.charge::<()>(&cancel),
+            Err(StageFailure::Cancelled(_))
+        ));
+    }
+}

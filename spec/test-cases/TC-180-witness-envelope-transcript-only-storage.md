@@ -3,7 +3,7 @@ id: TC-180
 title: "The witness envelope stores the transcript once and derives every other fact from it"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-180: The witness envelope stores the transcript once and derives every other fact from it

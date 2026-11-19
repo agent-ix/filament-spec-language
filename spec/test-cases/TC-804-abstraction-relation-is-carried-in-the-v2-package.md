@@ -3,7 +3,7 @@ id: TC-804
 title: "The abstraction relation is emitted as a v2 node and enters the package_id"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-306
+  - target: ix://agent-ix/filament-spec-language/FR-306
     type: verifies
 ---
 # TC-804: The abstraction relation is emitted as a v2 node and enters the package_id

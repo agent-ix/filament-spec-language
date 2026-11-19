@@ -3,30 +3,30 @@ id: FR-355
 title: "Check the quire fences of spec artifacts against the objects they declare"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-036
+  - target: ix://agent-ix/filament-spec-language/US-036
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-004
+  - target: ix://agent-ix/filament-spec-language/FR-004
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-030
+  - target: ix://agent-ix/filament-spec-language/FR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: depends_on
 ---
 # FR-355: Check the quire fences of spec artifacts against the objects they declare
 
 ## Description
 
-QSL SHALL provide the Check-stage library operation `check_fences` (ADR-029
+FSL SHALL provide the Check-stage library operation `check_fences` (ADR-029
 LC-1, OP-1), one of the lifecycle operations of FR-275 with its call shape,
 its limits (FR-277) and its cancellation (FR-276). The driver's `check`
 verb calls it when its arguments name a spec artifact inventory and its

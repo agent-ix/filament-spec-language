@@ -3,19 +3,19 @@ id: FR-200
 title: "Decide every-scheduler claims over fair schedulers"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: depends_on
 ---
 # FR-200: Decide every-scheduler claims over fair schedulers
@@ -129,7 +129,7 @@ FR-198 and FR-199 return them, with a policy of `SchedulerChoice`s.
 
 ## References
 
-- QSpec half, which owns fair schedulers, fair end components and the
-  randomized witness wire: QSpec FR-406, FR-411 and FR-413 (Linear
+- FSpec half, which owns fair schedulers, fair end components and the
+  randomized witness wire: FSpec FR-406, FR-411 and FR-413 (Linear
   STD-137).
 - Owning ticket: Linear QSL-371.

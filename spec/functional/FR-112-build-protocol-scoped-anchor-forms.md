@@ -3,13 +3,13 @@ id: FR-112
 title: "Build protocol scoped anchor forms at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-048
+  - target: ix://agent-ix/filament-spec-language/FR-048
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: traces_to
 ---
 # FR-112: Build protocol scoped anchor forms at S2
@@ -34,7 +34,7 @@ identity (ADR-012 §12.2).
 
 ## Inputs
 
-- The CST of one protocol declaration (the `qsl-cst` `ProtocolClause`
+- The CST of one protocol declaration (the `fsl-cst` `ProtocolClause`
   production with its `Compensation`, `Control` and `EventNode` children).
 
 ## Outputs
@@ -79,7 +79,7 @@ One `ScopedAnchorForm` per node reference, with:
 ## Dependencies
 
 - ADR-012 §4 (typed subnodes), §12.2 (Form row).
-- QSpec `choreography-surface.md` ("Control names and declaration paths
+- FSpec `choreography-surface.md` ("Control names and declaration paths
   identify static nodes"; "Relative references resolve in their lexical
   control scope").
 - FR-048 is the composed lane's choreography rule set, which the spine

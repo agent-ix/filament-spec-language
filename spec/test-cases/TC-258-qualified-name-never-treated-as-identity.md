@@ -3,7 +3,7 @@ id: TC-258
 title: "QualifiedName is used only as a declared preimage component, never as an identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-258: QualifiedName is used only as a declared preimage component, never as an identity

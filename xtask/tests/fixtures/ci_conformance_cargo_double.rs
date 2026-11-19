@@ -22,16 +22,12 @@ fn main() {
         .position(|(name, _)| *name == selection)
         .expect("required selection");
     let mut calls = fs::read_to_string(&log).unwrap_or_default();
-    calls.push_str(&format!(
-        "{}\t{}\n",
-        selection,
-        std::env::var("QSPEC_DIR").unwrap()
-    ));
+    calls.push_str(&format!("{selection}\n"));
     fs::write(log, calls).unwrap();
     println!("selected: {selection}");
-    let fail_at = std::env::var("CONFORMANCE_DOUBLE_FAIL_AT").unwrap();
+    let fail_at = std::env::var("CONFORMANCE_DOUBLE_FAIL_AT").unwrap_or_default();
     let mode = if fail_at == index.to_string() {
-        std::env::var("CONFORMANCE_DOUBLE_MODE").unwrap()
+        std::env::var("CONFORMANCE_DOUBLE_MODE").unwrap_or_else(|_| "nonzero".to_owned())
     } else {
         "positive".to_owned()
     };
@@ -54,7 +50,7 @@ fn main() {
         ),
     }
     if mode == "skip" {
-        println!("skipped: QSPEC_DIR not set");
+        println!("skipped: source unavailable");
     }
     std::process::exit(if mode == "nonzero" { 23 } else { 0 });
 }

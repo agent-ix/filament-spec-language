@@ -3,7 +3,7 @@ id: TC-1050
 title: "A type-level clause is classified as an invariant, a guard or an unevaluated clause, and an invariant is parsed and checked"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-366
+  - target: ix://agent-ix/filament-spec-language/FR-366
     type: verifies
 ---
 # TC-1050: A type-level clause is classified as an invariant, a guard or an unevaluated clause, and an invariant is parsed and checked
@@ -12,8 +12,8 @@ relationships:
 
 Verify FR-366's classification of a domain package's type-level clauses, the
 effective invariants of a type, and the parse and check of an invariant: the
-Boolean root, the `pre` refusal and the clause location. These are QSpec
-[TC-235](ix://agent-ix/quire-specification/TC-235) M06 run 4, M13 run 2 and
+Boolean root, the `pre` refusal and the clause location. These are FSpec
+[TC-235](ix://agent-ix/filament-specification/TC-235) M06 run 4, M13 run 2 and
 M14 run 2, with M03 run 4, M17 run 1 and M19 runs 1 and 7 for the effective
 invariants. Scope: FR-366-AC-1, FR-366-AC-2, FR-366-AC-3 and FR-366-AC-10.
 
@@ -50,7 +50,7 @@ effective invariants. Tag the tests `#[trace("TC-1050", "FR-366-AC-n")]`.
    field `buddy` and the invariant `Peer`
    (`present(self.buddy) implies value(self.buddy).total.amount_minor >= 0`).
 10. Step 9's `Pair`, compiled in a unit whose header profile selects
-    `quire.model.complete/v1` and that also declares the `pure`
+    `filament.model.complete/v1` and that also declares the `pure`
     functions `total_of`, `checked`, `linked`, `same` and `wrap` of
     FR-366-AC-10, with `Peer` reading through each of them in turn; then, in
     the same unit, through the named predicate `positive` (FR-366-AC-10).

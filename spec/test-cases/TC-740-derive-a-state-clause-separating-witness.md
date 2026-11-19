@@ -3,7 +3,7 @@ id: TC-740
 title: "S6a stop reports and the decision path derive a state clause's basis and witness"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-265
+  - target: ix://agent-ix/filament-spec-language/FR-265
     type: verifies
 ---
 # TC-740: S6a stop reports and the decision path derive a state clause's basis and witness

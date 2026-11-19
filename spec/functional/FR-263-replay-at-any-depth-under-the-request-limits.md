@@ -3,21 +3,21 @@ id: FR-263
 title: "Replay deep sources and values under every limit the request carries"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-258
+  - target: ix://agent-ix/filament-spec-language/FR-258
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: depends_on
 ---
 # FR-263: Replay deep sources and values under every limit the request carries
@@ -42,7 +42,7 @@ request (ADR-030 D-4.8, D-3).
    (FR-071). An entry naming an accounting counter sets that counter of the
    call's accounting limits (FR-255 Behavior 10).
 3. **Values.** Replay SHALL decode each canonical assignment value into a
-   `quire_exact::Value` from `quire-canonical`'s reader tree (FR-259), over
+   `filament_exact::Value` from `quire-canonical`'s reader tree (FR-259), over
    an explicit heap stack.
 4. **Value identities.** Replay SHALL encode every identity over
    a value through the event API (FR-259).
@@ -79,6 +79,6 @@ request (ADR-030 D-4.8, D-3).
 
 ## References
 
-- QSpec FR-460, the ecosystem depth rule, and FR-323 `stage_limits`, the
+- FSpec FR-460, the ecosystem depth rule, and FR-323 `stage_limits`, the
   replay request's limits (Linear STD-143, which supersedes STD-125).
 - Linear QSL-381.

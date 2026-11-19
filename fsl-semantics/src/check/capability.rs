@@ -1,0 +1,549 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The canonical capability-kind value type (ADR-013 O-19).
+//!
+//! [`Capability`] is the one FSL Rust type that carries an
+//! `ix://agent-ix/filament-specification/FR-290` capability-kind label.
+//! `ix://agent-ix/filament-specification#134` owns the twelve-label vocabulary
+//! `filament.capability-kind/v1` and its wire spelling; FSL's copy here defines
+//! no local alias, abbreviation or extra member ([FR-057], "Admitted
+//! vocabulary").
+//!
+//! Recording a `Capability` is language admission only (ADR-013 O-19;
+//! filament-specification AD-016 arrow 1): it names which claim a declaration
+//! requests, grants no checking, lowering, proof or execution, and
+//! negotiates nothing.
+//!
+//! This type lives in `check` core, not in a foundation module, because its
+//! three consumers form a downward chain rather than AbsenceMode's
+//! two-sided boundary. It is recorded during S3 admission at E3 (ADR-011
+//! §2.1, "capability_report ... holding the item's one capability kind";
+//! `check` is E3's producer, ADR-011 §2.1's own E3 row), carried into the
+//! v2 `capability_report` at S4 (layer 4 `package`), and read by the
+//! layer-R registry (`route`, [#185]). ADR-011 §6.1's layer table lists
+//! layer 4's and layer R's "Depends on" columns as each including "3"
+//! (`package | ... | 3, F, K`; `route | ... | 4, 3, F, K`), so both may
+//! import layer 3 `check` directly; nothing needs to import upward. §6.1's
+//! layer-3 row also names the right home directly: `check` core holds
+//! "`CheckContext`, family checker trait, shared checked types,
+//! `FamilyOutcome`, `FamilyResult` and `EvalOutcome`" -- `Capability` is exactly a shared
+//! checked type admission produces. (`AbsenceMode`, in
+//! `filament_semantic_value::absence`, sits in the shared semantic-value leaf for the opposite reason: its two
+//! consumers, layer-2 `forms` and layer-3 `model`, cannot depend on each
+//! other, so neither layer may own it.)
+//!
+//! `Capability` converts to and from its FR-290 wire spelling totally
+//! (ADR-013 C-24, [`Capability::to_wire`] and [`Capability::from_wire`]):
+//! every value has exactly one wire string, and every wire string either
+//! names exactly one value or is refused. There is no default for an
+//! unrecognized string. The enum, [`Capability::ALL`] and
+//! [`Capability::to_wire`] are generated together from one `capability_kinds!`
+//! macro table below, so there is exactly one
+//! hand-written list of the twelve labels; the variant set, `ALL` and the wire
+//! spelling all expand from it in one place and cannot drift apart the way
+//! three separately maintained lists could. [`Capability::from_wire`]
+//! derives from `ALL`/`to_wire` rather than a fourth copy of the label list.
+//!
+//! Registration, negotiation and routing over this type, and the composed
+//! linker's admission rules that produce a `Capability` from a requested
+//! clause/capability pair, are implemented separately ([FR-057], [FR-075]);
+//! this module specifies and implements only the value type and its wire
+//! conversion.
+//!
+//! [FR-057]: https://github.com/agent-ix/filament-spec-language/blob/main/spec/functional/FR-057-admit-shared-capability-kinds.md
+//! [FR-075]: https://github.com/agent-ix/filament-spec-language/blob/main/spec/functional/FR-075-compute-candidates-from-registered-backends.md
+//! [#185]: https://github.com/agent-ix/filament-spec-language/issues/185
+
+use std::fmt;
+
+use filament_semantic_value::catalog::CatalogCode;
+use fsl_foundation::BackendId;
+
+/// The declaration family that owns a claim in the checked package.
+///
+/// This is the FR-290 declaration-family axis. It is deliberately separate
+/// from [`crate::family::FamilyKind`] (the semantic checking families) and
+/// from [`Capability::fr290_family`] (a kind-group projection).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DeclarationFamily {
+    /// A value declaration or a pure Boolean claim.
+    Value,
+    /// A state declaration or an operation contract.
+    StateModel,
+    /// A temporal-trace claim.
+    TemporalTrace,
+    /// A relation clause or model refinement claim.
+    RelationClaim,
+    /// A protocol declaration claim.
+    Protocol,
+    /// A probabilistic claim.
+    Probabilistic,
+    /// A real-time task-set claim.
+    RealTime,
+}
+
+macro_rules! capability_kinds {
+    ($($(#[$doc:meta])* $variant:ident => $wire:literal, $family:literal),+ $(,)?) => {
+        /// The canonical FR-290 capability-kind value (ADR-013 O-19).
+        ///
+        /// Two values are equal exactly when their FR-290 labels are byte-equal
+        /// (FR-057-AC-4). Declaration order here, in the FR-290 vocabulary table,
+        /// and in any serialization confers no strength, precedence or dispatch
+        /// priority (FR-057, "Spelling, identity and order").
+        ///
+        /// `#[cfg(seam_probe)]` adds one probe-only variant (ADR-012 §5.1 S7,
+        /// FR-063): under `--cfg seam_probe`, every closed `match` over this
+        /// type below this module's own [`Capability::to_wire`] becomes
+        /// non-exhaustive (`E0004`) unless it has its own probe arm.
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+        pub enum Capability {
+            $($(#[$doc])* $variant),+,
+            /// FR-063/S7: exists only so `--cfg seam_probe` makes every
+            /// match over `Capability` outside this module non-exhaustive.
+            /// Never constructed outside the probe build.
+            #[cfg(seam_probe)]
+            __SeamProbe,
+        }
+
+        impl Capability {
+            /// Every admitted [`Capability`] value, in the FR-290 vocabulary
+            /// table's declaration order.
+            ///
+            /// The order carries no meaning (see the type's own doc); this
+            /// slice exists so [`Capability::from_wire`] and this module's
+            /// tests can walk the whole vocabulary without repeating its twelve
+            /// members a third time. Generated by this same
+            /// `capability_kinds!` expansion as the enum and
+            /// [`Capability::to_wire`], so it cannot drift out of sync with
+            /// either.
+            pub const ALL: &'static [Capability] = &[$(Capability::$variant),+];
+
+            /// The FR-290 wire spelling of this value.
+            ///
+            /// Total (ADR-013 C-24): every [`Capability`] has exactly one wire
+            /// string, and this function never fails.
+            ///
+            /// Not an S7 seam-probe location: this function owns the probe
+            /// variant's own arm (below), since it is generated in the same
+            /// macro expansion as the variant itself. The seam probe
+            /// exercises match sites *outside* this module instead.
+            pub const fn to_wire(self) -> &'static str {
+                match self {
+                    $(Capability::$variant => $wire),+,
+                    #[cfg(seam_probe)]
+                    Capability::__SeamProbe => "__seam_probe__",
+                }
+            }
+
+            /// The FR-290 family of this value (FR-057 "Admitted vocabulary"
+            /// table, FR-057-AC-13): the family column, spelled as FR-290
+            /// spells it. Total, and generated beside the wire spelling, so
+            /// FSL introduces no alias of its own.
+            pub const fn fr290_family(self) -> &'static str {
+                match self {
+                    $(Capability::$variant => $family),+,
+                    #[cfg(seam_probe)]
+                    Capability::__SeamProbe => "__seam_probe__",
+                }
+            }
+
+            /// Reads a [`Capability`] from its exact FR-290 wire spelling.
+            ///
+            /// Matches by exact equality of the decoded bytes against one admitted
+            /// label (FR-057, "Spelling, identity and order"); this function
+            /// applies no normalization, alias or default. Derives its answer from
+            /// [`Capability::ALL`] and [`Capability::to_wire`] rather than
+            /// restating the label list, so the two conversions cannot disagree. A
+            /// label that is not byte-equal to one of the twelve admitted labels --
+            /// including the empty string, a case variant, a separator variant, a
+            /// display form, a padded label, or a Rust variant name -- refuses with
+            /// [`UnknownCapabilityLabel`], carrying the exact received bytes
+            /// (ADR-013 C-24; FR-057-AC-2).
+            pub fn from_wire(label: &str) -> Result<Capability, UnknownCapabilityLabel> {
+                Capability::ALL
+                    .iter()
+                    .copied()
+                    .find(|value| value.to_wire() == label)
+                    .ok_or_else(|| UnknownCapabilityLabel(label.to_owned()))
+            }
+        }
+    };
+}
+
+capability_kinds! {
+    /// `value-validity` (FR-290 family `value`).
+    ValueValidity => "value-validity", "value",
+    /// `operation-contract` (FR-290 family `state-model`).
+    OperationContract => "operation-contract", "state-model",
+    /// `finite-replay` (FR-290 family `finite-replay`).
+    FiniteReplay => "finite-replay", "finite-replay",
+    /// `temporal-satisfaction` (FR-290 family `temporal-trace`).
+    TemporalSatisfaction => "temporal-satisfaction", "temporal-trace",
+    /// `global-conformance` (FR-290 family `protocol`).
+    GlobalConformance => "global-conformance", "protocol",
+    /// `monitorability` (FR-290 family `protocol`).
+    Monitorability => "monitorability", "protocol",
+    /// `local-projection` (FR-290 family `protocol`).
+    LocalProjection => "local-projection", "protocol",
+    /// `refinement` (FR-290 family `protocol`).
+    Refinement => "refinement", "protocol",
+    /// `realizability` (FR-290 family `protocol`).
+    Realizability => "realizability", "protocol",
+    /// `composition` (FR-290 family `protocol`).
+    Composition => "composition", "protocol",
+    /// `probabilistic-satisfaction` (FR-290 family `probabilistic`).
+    ProbabilisticSatisfaction => "probabilistic-satisfaction", "probabilistic",
+    /// `schedulability` (FR-290 family `real-time`).
+    Schedulability => "schedulability", "real-time",
+}
+
+impl Capability {
+    /// Whether this kind applies to a claim in `family` (FR-507).
+    ///
+    /// This table is independent of [`Self::fr290_family`]: for example, a
+    /// `temporal-satisfaction` claim can belong to either `temporal-trace` or
+    /// `relation-claim`. It is an S7 seam-probe location (ADR-012 §5.1): it
+    /// leaves the `#[cfg(seam_probe)]` variant unhandled, so a kind without an
+    /// applicability row cannot compile.
+    #[deny(clippy::wildcard_enum_match_arm)]
+    pub fn applies_to_declaration(self, family: DeclarationFamily) -> bool {
+        use DeclarationFamily::{
+            Probabilistic, Protocol, RealTime, RelationClaim, StateModel, TemporalTrace, Value,
+        };
+        let families: &[DeclarationFamily] = match self {
+            Capability::ValueValidity => &[Value],
+            Capability::OperationContract => &[StateModel, RelationClaim],
+            Capability::TemporalSatisfaction => &[TemporalTrace, RelationClaim],
+            Capability::FiniteReplay
+            | Capability::GlobalConformance
+            | Capability::Monitorability
+            | Capability::LocalProjection
+            | Capability::Refinement
+            | Capability::Realizability
+            | Capability::Composition => &[Protocol],
+            Capability::ProbabilisticSatisfaction => &[Probabilistic],
+            Capability::Schedulability => &[RealTime],
+            // Downstream crates (`fsl-route`, `fsl-eval`, `fsl-replay`, the
+            // root crate) have their own seams over `Capability`, probed in
+            // the `--cfg seam_probe_downstream` builds. This arm exists only
+            // so this match keeps compiling there and rustc reaches those
+            // crates' own `E0004`s -- the same "arm under downstream, none
+            // under seam_probe alone" shape `FamilyKind::catalog_code_prefix`
+            // uses. `__SeamProbe` is never constructed outside the probe
+            // build, so the arm is never reached.
+            #[cfg(seam_probe_downstream)]
+            Capability::__SeamProbe => &[],
+        };
+        families.contains(&family)
+    }
+}
+
+impl fmt::Display for Capability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_wire())
+    }
+}
+
+impl std::str::FromStr for Capability {
+    type Err = UnknownCapabilityLabel;
+
+    /// Delegates to [`Capability::from_wire`]: the same exact-match rule,
+    /// the same refusal type.
+    fn from_str(label: &str) -> Result<Self, Self::Err> {
+        Self::from_wire(label)
+    }
+}
+
+/// A wire string that is not byte-equal to any FR-290 capability-kind
+/// label.
+///
+/// Carries the exact received bytes (FR-057-AC-2). Refusal never supplies a
+/// default or a suggested replacement kind ([FR-057], "Refusal of labels
+/// outside the vocabulary").
+///
+/// [FR-057]: https://github.com/agent-ix/filament-spec-language/blob/main/spec/functional/FR-057-admit-shared-capability-kinds.md
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnknownCapabilityLabel(String);
+
+impl UnknownCapabilityLabel {
+    /// The exact bytes [`Capability::from_wire`] received and refused
+    /// (FR-057-AC-2).
+    pub fn received(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UnknownCapabilityLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} is not an FR-290 capability-kind label", self.0)
+    }
+}
+
+impl std::error::Error for UnknownCapabilityLabel {}
+
+/// One of the three negotiation outcomes that carry an FR-290 code
+/// (FR-057 "One negotiation cause type"), without its payload.
+///
+/// This is the only definition of the three spellings in FSL.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NegotiationOutcome {
+    /// The request named a backend the registry does not hold.
+    UnknownBackend,
+    /// Several candidates serve the request and none was named.
+    AmbiguousBackend,
+    /// No candidate serves the requested capability kind.
+    UnsupportedRequestedCapability,
+}
+
+impl NegotiationOutcome {
+    /// The outcome's catalog code.
+    pub const fn code(self) -> CatalogCode {
+        match self {
+            Self::UnknownBackend => CatalogCode::new("invalid_capability", "unknown-backend"),
+            Self::AmbiguousBackend => CatalogCode::new("invalid_capability", "ambiguous-backend"),
+            Self::UnsupportedRequestedCapability => {
+                CatalogCode::new("unsupported_projection", "unsupported-requested-capability")
+            }
+        }
+    }
+}
+
+/// A negotiation outcome with its payload (FR-057 "One negotiation cause
+/// type").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NegotiationCause {
+    /// The named backend the registry does not hold.
+    UnknownBackend(BackendId),
+    /// Every candidate, in candidate order.
+    AmbiguousBackend(Vec<BackendId>),
+    /// The item's capability kind and the backend the request named.
+    UnsupportedRequestedCapability(Capability, Option<BackendId>),
+}
+
+impl NegotiationCause {
+    /// The cause's payload-free outcome.
+    pub const fn outcome(&self) -> NegotiationOutcome {
+        match self {
+            Self::UnknownBackend(_) => NegotiationOutcome::UnknownBackend,
+            Self::AmbiguousBackend(_) => NegotiationOutcome::AmbiguousBackend,
+            Self::UnsupportedRequestedCapability(..) => {
+                NegotiationOutcome::UnsupportedRequestedCapability
+            }
+        }
+    }
+
+    /// The outcome's catalog code.
+    pub const fn code(&self) -> CatalogCode {
+        self.outcome().code()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    /// The FR-290 vocabulary `filament.capability-kind/v1`
+    /// (`ix://agent-ix/filament-specification#134`), exactly as FR-057's own
+    /// "Admitted vocabulary" table restates it, paired with the specific
+    /// [`Capability`] variant each label names. Listed here, independently
+    /// of [`Capability::ALL`]/[`Capability::to_wire`], so the test below
+    /// checks the implementation against the vocabulary rather than
+    /// against itself.
+    ///
+    /// The pairing matters, not just the label set: [`Capability::from_wire`]
+    /// derives from [`Capability::to_wire`] (both directions move together),
+    /// so a bug that swaps two labels between two variants in `to_wire`
+    /// still round-trips every label to itself -- each label just now names
+    /// the other variant. Asserting `variant.to_wire() == label` per pair,
+    /// against this independently-typed table, is what actually catches
+    /// that swap.
+    const FR_290_VOCABULARY: [(Capability, &str); 12] = [
+        (Capability::ValueValidity, "value-validity"),
+        (Capability::OperationContract, "operation-contract"),
+        (Capability::FiniteReplay, "finite-replay"),
+        (Capability::TemporalSatisfaction, "temporal-satisfaction"),
+        (Capability::GlobalConformance, "global-conformance"),
+        (Capability::Monitorability, "monitorability"),
+        (Capability::LocalProjection, "local-projection"),
+        (Capability::Refinement, "refinement"),
+        (Capability::Realizability, "realizability"),
+        (Capability::Composition, "composition"),
+        (
+            Capability::ProbabilisticSatisfaction,
+            "probabilistic-satisfaction",
+        ),
+        (Capability::Schedulability, "schedulability"),
+    ];
+
+    /// FR-057's family column, typed independently of the macro table.
+    const FR_290_FAMILIES: [(Capability, &str); 12] = [
+        (Capability::ValueValidity, "value"),
+        (Capability::OperationContract, "state-model"),
+        (Capability::FiniteReplay, "finite-replay"),
+        (Capability::TemporalSatisfaction, "temporal-trace"),
+        (Capability::GlobalConformance, "protocol"),
+        (Capability::Monitorability, "protocol"),
+        (Capability::LocalProjection, "protocol"),
+        (Capability::Refinement, "protocol"),
+        (Capability::Realizability, "protocol"),
+        (Capability::Composition, "protocol"),
+        (Capability::ProbabilisticSatisfaction, "probabilistic"),
+        (Capability::Schedulability, "real-time"),
+    ];
+
+    const DECLARATION_FAMILIES: [DeclarationFamily; 7] = [
+        DeclarationFamily::Value,
+        DeclarationFamily::StateModel,
+        DeclarationFamily::TemporalTrace,
+        DeclarationFamily::RelationClaim,
+        DeclarationFamily::Protocol,
+        DeclarationFamily::Probabilistic,
+        DeclarationFamily::RealTime,
+    ];
+
+    #[test]
+    #[trace("TC-1302", "TC-115", "FR-507-AC-1", "FR-057-AC-11")]
+    fn capability_applicability_is_total_over_the_twelve_by_seven_matrix() {
+        let applicable = [
+            (Capability::ValueValidity, DeclarationFamily::Value),
+            (Capability::OperationContract, DeclarationFamily::StateModel),
+            (
+                Capability::OperationContract,
+                DeclarationFamily::RelationClaim,
+            ),
+            (
+                Capability::TemporalSatisfaction,
+                DeclarationFamily::TemporalTrace,
+            ),
+            (
+                Capability::TemporalSatisfaction,
+                DeclarationFamily::RelationClaim,
+            ),
+            (Capability::FiniteReplay, DeclarationFamily::Protocol),
+            (Capability::GlobalConformance, DeclarationFamily::Protocol),
+            (Capability::Monitorability, DeclarationFamily::Protocol),
+            (Capability::LocalProjection, DeclarationFamily::Protocol),
+            (Capability::Refinement, DeclarationFamily::Protocol),
+            (Capability::Realizability, DeclarationFamily::Protocol),
+            (Capability::Composition, DeclarationFamily::Protocol),
+            (
+                Capability::ProbabilisticSatisfaction,
+                DeclarationFamily::Probabilistic,
+            ),
+            (Capability::Schedulability, DeclarationFamily::RealTime),
+        ];
+
+        let mut applicable_count = 0;
+        for capability in Capability::ALL.iter().copied() {
+            for family in DECLARATION_FAMILIES {
+                let expected = applicable.contains(&(capability, family));
+                assert_eq!(
+                    capability.applies_to_declaration(family),
+                    expected,
+                    "unexpected FR-507 applicability for {capability:?} on {family:?}"
+                );
+                applicable_count += usize::from(expected);
+            }
+        }
+        assert_eq!(applicable_count, 14);
+    }
+
+    #[test]
+    #[trace("TC-971", "FR-057-AC-13")]
+    fn the_family_projection_equals_the_fr_290_family_column() {
+        assert_eq!(FR_290_FAMILIES.len(), Capability::ALL.len());
+        for (variant, family) in FR_290_FAMILIES {
+            assert_eq!(variant.fr290_family(), family, "{variant:?}");
+        }
+    }
+
+    #[test]
+    #[trace("TC-153", "FR-057-AC-1")]
+    fn every_fr_290_label_names_its_specific_variant_and_round_trips() {
+        assert_eq!(FR_290_VOCABULARY.len(), Capability::ALL.len());
+        for (variant, label) in FR_290_VOCABULARY {
+            assert_eq!(
+                variant.to_wire(),
+                label,
+                "{variant:?} no longer converts to its FR-290 label {label:?}"
+            );
+            assert_eq!(
+                Capability::from_wire(label),
+                Ok(variant),
+                "{label:?} no longer reads back as {variant:?}"
+            );
+        }
+        // The admitted set equals the FR-290 table exactly: no extra and no
+        // missing member (FR-057-AC-1).
+        for value in Capability::ALL.iter().copied() {
+            assert!(
+                FR_290_VOCABULARY
+                    .iter()
+                    .any(|(variant, _)| *variant == value),
+                "{value:?} is not one of the twelve FR-290 vocabulary entries"
+            );
+        }
+    }
+
+    #[test]
+    #[trace("TC-153", "FR-057-AC-2")]
+    fn a_label_outside_the_vocabulary_refuses_and_names_the_received_bytes() {
+        let cases = [
+            "",
+            "not-a-capability",
+            "Global-Conformance", // case variant
+            "value_validity",     // separator variant
+            "Operation contract", // display form
+            " composition",       // padded label
+            "ValueValidity",      // Rust variant name
+            "FamilyCheck",        // the OBS-003 four-member request vocabulary
+            "StateOperation",
+            "FiniteReplay", // note: not "finite-replay"
+            "TemporalProjection",
+            "Probabilistic-Satisfaction", // case variant of a new member
+            "schedulability ",            // padded label
+        ];
+        for label in cases {
+            match Capability::from_wire(label) {
+                Ok(value) => panic!("{label:?} should have refused, admitted as {value:?}"),
+                Err(refusal) => {
+                    assert_eq!(
+                        refusal.received(),
+                        label,
+                        "refusal did not name the exact received bytes"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[trace("TC-153", "FR-057-AC-4")]
+    fn equality_is_label_equality_and_the_twelve_values_are_pairwise_distinct() {
+        for (i, a) in Capability::ALL.iter().enumerate() {
+            for (j, b) in Capability::ALL.iter().enumerate() {
+                assert_eq!(
+                    a == b,
+                    i == j,
+                    "{a:?} and {b:?} equality disagreed with their vocabulary positions"
+                );
+            }
+            // A value converted through its own wire spelling is equal to
+            // the original (same as the round-trip test, stated as an
+            // equality property here).
+            assert_eq!(*a, Capability::from_wire(a.to_wire()).unwrap());
+        }
+    }
+
+    #[test]
+    fn from_str_agrees_with_from_wire() {
+        for (variant, label) in FR_290_VOCABULARY {
+            assert_eq!(label.parse::<Capability>(), Ok(variant));
+        }
+        assert_eq!(
+            "not-a-capability".parse::<Capability>(),
+            Capability::from_wire("not-a-capability"),
+        );
+    }
+}

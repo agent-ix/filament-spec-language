@@ -3,9 +3,9 @@ id: TC-115
 title: "Preserve static meaning and every requested capability"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-115: Preserve static meaning and every requested capability
@@ -24,7 +24,7 @@ disposition. These are compiler controls, not temporal-engine qualification.
    changed retained configuration. Then explicitly change a required profile or
    model selection and require a different static selection. Withdrawn: the
    clause requiring stale dependencies to refuse rather than inherit the new
-   meaning; QSL has no staleness check (FR-005-AC-4).
+   meaning; FSL has no staleness check (FR-005-AC-4).
 3. Request two required pairs, `operation-contract` and
    `temporal-satisfaction`. Supply settled dispositions as fixture records:
    `operation-contract` settles `supported` and `temporal-satisfaction` settles

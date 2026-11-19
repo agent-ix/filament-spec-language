@@ -3,31 +3,35 @@ id: FR-185
 title: "Declare random parameters, workloads and rewards"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/FR-740
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-640
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-272
+  - target: ix://agent-ix/filament-specification/FR-272
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-185: Declare random parameters, workloads and rewards
 
 ## Description
 
-S3 SHALL admit the three declarations that make a QSL state model
+S3 SHALL admit the three declarations that make an FSL state model
 probabilistic (ADR-024 §1): a distribution on an operation parameter (a
 **random parameter**, PM-1), a **workload** that weights every operation of
 a model (PM-2), and named **rewards** on an operation (PM-5). It SHALL check
 each declaration's well-formedness and record it on the checked package, so
-FR-187 can give transitions step probabilities and reward values. QSpec owns
+FR-187 can give transitions step probabilities and reward values. FSpec owns
 the spelling and the semantics; this requirement specifies the compiler's
 checks.
 
@@ -40,7 +44,7 @@ that names the declaration and the rule it breaks.
 
 ## Inputs
 
-- A parsed QSL package with state models, operations, workloads and
+- A parsed FSL package with state models, operations, workloads and
   rewards.
 
 ## Outputs
@@ -56,7 +60,7 @@ pub struct RandomParameter {
 pub struct Workload {
     pub id: WireNodeId,
     pub model: WireNodeId,
-    pub weights: Vec<(WireNodeId, Rational)>, // one per operation of the model
+    pub weights: Vec<(WireNodeId, Rational)>, // one per operation of the model; each >= 0
 }
 pub struct Reward {
     pub name: Identifier,
@@ -72,11 +76,7 @@ integers in lowest terms.
 
 Every refusal below that carries a bracketed string is an
 `invalid_probabilistic_model` diagnostic whose cause is that string, and it retains the declaration locus and
-the parameter, reward, workload or operation it names. Every cause except
-`duplicate-reward` is in QSpec FR-272's closed set for that code (QSpec
-FR-405). `duplicate-reward` is a QSL-proposed cause that QSpec does not yet
-define; it is requested of QSpec in STD-188, and QSL emits it until QSpec
-adds it or names another.
+the parameter, reward, workload or operation it names. Every cause is in FSpec FR-272's closed set for that code (FSpec FR-405).
 
 A weight is an `exact-value`, and `exact-number` admits a signed integer, so
 `rational(-1, 1)` parses and S3 refuses it `invalid-weight`. A bare `-1` is
@@ -151,16 +151,31 @@ of probabilities start from.
 
 ### Workloads
 
+- An operation of an object type the unit declares in its own source
+  (FR-569 "The source model") is an operation of the unit's source model, and
+  S3 SHALL admit a random parameter, a workload weight and a reward on it
+  under the same rules as on an operation of a selected model. The `on` name
+  of a workload on the source model is one of its source object types,
+  resolved as FR-230 resolves the source model's time member: first as a
+  model alias of the unit and, failing that, as a source object type.
 - S3 SHALL admit a workload declaration on a model that gives each operation
-  of the model a positive exact rational weight.
+  of the model a non-negative exact rational weight. A weight of 0 states that
+  the workload does not choose the operation while an operation of positive
+  weight is enabled (FR-187, FSpec FR-406); a workload whose weights are all 0
+  is admitted and chooses uniformly among the enabled operations. S3 reports
+  nothing for a weight of 0: it is a statement of the model, not a mistake.
+  The reason is that a workload is a scheduler of the model, so it may set an
+  operation aside without inventing a deadlock the model does not have.
 - If a workload omits an operation of its model, S3 SHALL refuse it
   [`incomplete-workload`], naming the workload and the operation.
 - If a workload names an operation that is not in its model, S3 SHALL
   refuse it [`unknown-operation`], naming the workload and the operation.
 - If a workload gives one operation two weights, S3 SHALL refuse it
   [`duplicate-weight`], naming the workload and the operation.
-- If a workload gives an operation a weight that is not positive, S3 SHALL
-  refuse it [`invalid-weight`], naming the workload and the operation.
+- If a workload gives an operation a negative weight, S3 SHALL refuse it
+  [`invalid-weight`], naming the workload and the operation. An omitted
+  operation stays refused [`incomplete-workload`], so that a forgotten or
+  misspelt operation is never read as weight 0.
 - A workload SHALL be a named, checked node with an identity, so a claim can
   name it and the obligation identity can bind it (FR-186).
 - If a package has a second workload of a name already declared on any of its
@@ -171,53 +186,109 @@ of probabilities start from.
 
 Note. A workload name is a package-wide identifier (FR-186), so a same-named
 workload on another model is a repeat too. No `invalid_probabilistic_model`
-cause names a repeated workload, and the code and cause are those of QSpec
+cause names a repeated workload, and the code and cause are those of FSpec
 FR-272's `conflicting_declaration` row, as FR-246 uses them for a repeated
 name.
 
 ### Rewards
 
 - S3 SHALL admit a named reward on an operation whose value type is an
-  integer type or a quantity type (QSpec FR-142).
+  integer type or a quantity type (FSpec FR-142).
 - If a reward's expression reads a state field, an ambient value or
   anything other than the operation's parameters and constants, S3 SHALL
   refuse the reward [`state-read-in-reward`], naming the reward and the read.
 - If a reward's value type is neither an integer nor a quantity type, S3
   SHALL refuse the reward [`reward-type`].
 - If an operation declares two rewards of one name, S3 SHALL refuse the
-  second [`duplicate-reward`] (QSL-proposed, STD-188), naming the operation and the reward.
-- S3 SHALL leave the non-negativity check to model admission, which runs
-  it over the parameters' finite domains (FR-187).
+  second [`duplicate-reward`], naming the operation and the reward.
+- S3 SHALL evaluate every reward on every argument vector of the parameters
+  it reads, each ranging over its finite domain (a random parameter over its
+  support, a parameter of an integer range, enumeration or Boolean type over
+  its values), in canonical argument order, and refuse the reward at the first negative value
+  [`negative-reward`], naming the operation, the reward and the argument
+  vector. The check belongs to S3 because a reward reads only parameters and
+  constants, so its sign is fixed by the declaration; refusing it here means
+  no checked package, emitted package, engine or certificate checker ever
+  holds a reward that can be negative (FSpec FR-405).
+- A reward that reads a parameter whose type has no finite domain (an
+  unbounded integer, whose domain a subject's proof bounds supply, FR-101) is
+  checked when that domain becomes finite: model admission (FR-187) runs the
+  same evaluation and refusal over the bounded domain. No domain is finite
+  earlier, so this is the first stage at which the sign is decidable.
+- S3 SHALL charge one unit of the S3 work meter (`s3.work_units`, FR-255) for
+  each argument vector before it evaluates the reward on it. When a charge
+  would exceed the work budget, S3 SHALL stop with a
+  `CheckRefusal`/`stage_limit_exceeded`, kind work budget and cause
+  `work-budget-exceeded`, at the reward's span, naming the bound, the count
+  the denied charge would reach and the setting `s3.work_units`, and SHALL
+  NOT report `negative-reward` for that reward.
+
+#### The reward evaluator port
+
+S3 is in `fsl-semantics` (ADR-011 §6.1 layer 3) and FSL's one expression
+evaluator, S6a, is in `fsl-eval` (layer 5), which depends on layer 3. S3
+therefore evaluates a reward through a port, never through an evaluator of
+its own:
+
+- Layer 3's `check` core SHALL define the trait `RewardEvaluator`, whose one
+  operation evaluates a checked reward body at one argument vector of kernel
+  values against the checked graph's scope view, charging the kernel meter it
+  is given, and returns the value, the `Undefined` result or the kernel
+  refusal S6a gives that body at those arguments.
+- `fsl-eval` SHALL implement `RewardEvaluator` with its S6a
+  `value::expression` evaluator, the same evaluator model admission (FR-187)
+  and every engine re-check call, so a reward's value is computed by one
+  interpreter at S3, at admission and in an engine. `fsl-semantics` SHALL
+  hold no expression evaluator for rewards and SHALL NOT depend on
+  `fsl-eval` or on any layer above 3, in its normal or its development
+  dependencies.
+- Every S3 entry that checks a unit SHALL take a `RewardEvaluator` as a
+  required argument, with no default and no optional form, so no S3 call can
+  produce a checked unit holding a reward the sign check did not run on. The
+  spine (layer 6 `replay`) supplies `fsl-eval`'s implementation, and every
+  caller above layer 5 (`fsl-command`, `fsl-analyze`, the root crate)
+  reaches S3 with that implementation.
+- The check runs after the unit's checked graph is assembled and before S3
+  returns its result, so the port sees every constant the reward reads; its
+  refusal is an S3 `CheckRefusal` at the reward's span, and S4 does not run.
+- A reward value that the evaluator reports `Undefined`, or a kernel refusal
+  of its evaluation, refuses the reward with that record at the reward's
+  span; it is never treated as zero or as non-negative.
 
 ### Quantity-typed parameters
 
 A quantity-typed operation parameter, such as ADR-024 §7.2's duration `d`, has
 the type `Quantity<u>` of a declared unit `u`. The domain package names the
-unit with a unit `typeRef` (`ix://quire/unit/<name>`, QSpec FR-322 "Model-owned
+unit with a unit `typeRef` (`ix://filament/unit/<name>`, FSpec FR-322 "Model-owned
 members" step 4 and FR-322-AC-80), which resolves to the unit's own type node
-(QSpec FR-142). A distribution's support values are quantity literals of that
+(FSpec FR-142). A distribution's support values are quantity literals of that
 unit (`1 ms`, `3 ms`, `12 ms` for `Quantity<ms>`). S3 SHALL refuse a support
 value that is not a `Quantity<u>` value, another unit of the same dimension
-included, with `value-outside-type` (Random parameters), the cause QSpec
+included, with `value-outside-type` (Random parameters), the cause FSpec
 FR-405-AC-3 assigns to a support, not FR-142's `type-mismatch`.
 
 A parameter whose declared type is an integer range, such as
 `Millis = Int[1, 12]`, takes integer supports.
 
-Dependencies: the unit `typeRef` and the quantity literal form are QSpec's
+Dependencies: the unit `typeRef` and the quantity literal form are FSpec's
 (FR-142, FR-322); reading the unit `typeRef` is an intake rule (FR-056-AC-42), and
 resolving it is the assembler's (FR-091).
 
 ### Package emission
 
-If a checked package holds a random parameter, a workload or a reward, then
-S4 SHALL refuse the package `unsupported_construct`/`not-yet-implemented`,
-naming the first such declaration in source order, its feature name
-(`random-parameter`, `workload` or `reward`) and the selected profile
-identity (QSpec FR-272). A checked `probabilistic` claim (FR-186) is no such
-declaration: S4 emits it as its own node (FR-498). S3's checked record is unaffected, and FR-187 reads
-it from the checked package, not from the emitted wire. Replay of a sampled
-witness (FR-193) takes that checked subject and recompiles nothing.
+S4 SHALL emit each checked random parameter, workload and reward, and each
+checked delay declaration (FR-253), as its FSpec FR-640 `probabilistic` node
+(FR-740), beside the claim nodes of FR-498, so a unit that declares them
+compiles to a checked package like any other and its reader admits it.
+FR-187 reads the declarations from the checked package, which S4's reader
+reproduces from the emitted wire; replay of a sampled witness (FR-193) may
+take either.
+
+Every S4 refusal that concerns one of these declarations SHALL carry that
+declaration's source locus (its unit's source reference and its label span)
+in the diagnostic's locus member, and its message SHALL name the declaration
+in words (a random parameter, a workload, a reward or a delay); no span or
+source reference is written into the message text instead of the locus.
 
 ## Acceptance Criteria
 
@@ -225,13 +296,17 @@ witness (FR-193) takes that checked subject and recompiles nothing.
 |----|----------|--------------|
 | FR-185-AC-1 | ADR-024 §7.2's `Service` model checks. `Server::attempt` records `d` with support `1`, `3`, `12` (`d` typed `Millis = Int[1, 12]`) and probabilities `9/10`, `7/100`, `3/100`, and `outcome` with `Ok` at `49/50` and `Fail` at `1/50`; the reward `duration` has value type `Millis`; the workload `Steady` records weight 1 for each of the three operations. | Test (TC-620) |
 | FR-185-AC-2 | Each of these random-parameter variants of `Service` is refused at S3 with a diagnostic naming the parameter and carrying the cause: a weight `0` and a weight `rational(-1, 1)` (`invalid-weight`); the value `1` listed twice (`repeated-support-value`); the value `true` on the `Millis` parameter (`value-outside-type`); a precondition `pre self.phase = Busy and d < 5` reading `d` (`random-read-in-precondition`); a second `random Server::attempt(d) ~ …` (`duplicate-distribution`). A bare weight `-1` is not an `exact-value`, so S1 refuses it `invalid_syntax` and S3 never sees it. Exact-value bounds, each as the weight of `Server::request`: `decimal(1, 4294967295)` and `rational(n, n)` with `n` of 70,000 bits are each refused with the `rational-bits-exceeded` limit refusal (`LimitExceeded`, naming `s3.rational_bits` and its bound) (the second although it reduces to `1`); `rational(m, 1)` with `m` of exactly 65,536 bits and `decimal(1, 19728)` (65,535 bits) are admitted; `rational(m, 1)` with `m` of exactly 65,537 bits and `decimal(1, 19729)` (65,539 bits) are refused with the limit refusal; `decimal(25, 3)` is admitted as `1/40`; `decimal(5, 0)` is admitted with a denominator of 1 bit. | Test (TC-620) |
-| FR-185-AC-3 | Each of these workload variants is refused at S3 naming the workload and the operation and carrying the cause: `Steady` without `Server::reset` (`incomplete-workload`); a weight for an operation not in `Service` (`unknown-operation`); two weights for `Server::request` (`duplicate-weight`); a weight `0` for `Server::request` (`invalid-weight`). | Test (TC-620) |
+| FR-185-AC-3 | Each of these workload variants is refused at S3 naming the workload and the operation and carrying the cause: `Steady` without `Server::reset` (`incomplete-workload`); a weight for an operation not in `Service` (`unknown-operation`); two weights for `Server::request` (`duplicate-weight`); a weight `rational(-1, 1)` for `Server::request` (`invalid-weight`). | Test (TC-620, TC-2060) |
 | FR-185-AC-4 | Each of these reward variants is refused at S3 naming the reward and carrying the cause: `reward duration on Server::attempt = self.attempts` (`state-read-in-reward`); `reward ok on Server::attempt = (outcome = Ok)` (`reward-type`); a second `reward duration on Server::attempt = …` (`duplicate-reward`). `reward cost on Server::request = 2` checks. | Test (TC-620) |
 | FR-185-AC-5 | A second `workload Steady on Service` and a `workload Steady on Other` (a second model of the package) are each refused `conflicting_declaration`/`duplicate-declaration` with `subject` `Steady` and `related` both declarations in source order, and the first remains the package's `Steady`. | Test (TC-620) |
 | FR-185-AC-6 | The distribution `{1: rational(1, 3), 3: rational(1, 2^65534 + 1)}` (running-sum denominator of 65,536 bits) checks; `{1: rational(1, 3), 3: rational(1, 2^65535 + 5)}` (65,537 bits) is refused with the limit refusal naming the parameter; a check whose cancellation handle is tripped before it starts ends cancelled (FR-276), the handle reporting requested and the reported limit not being the 65,536-bit ceiling. | Test (TC-620) |
-| FR-185-AC-7 | `Service` (with `d` typed `Millis = Int[1, 12]`) checks at S3 and refuses at S4 with `unsupported_construct`/`not-yet-implemented` naming the first random parameter in source order, `random-parameter` and the selected profile, with the checked record intact. | Test (TC-620) |
+| FR-185-AC-7 | `Service` (with `d` typed `Millis = Int[1, 12]`) checks at S3 and S4 emits it with its random parameters, reward and workload as FR-740 nodes; the package reader admits it and gives back the checked record. | Test (TC-2062) |
 | FR-185-AC-8 | With the dimension `Time`, the unit `s` (root) and the unit `ms` (target `s`, scale `1/1000`), `Server::attempt` with `d: Quantity<ms>` records `d` with the supports `1 ms`, `3 ms` and `12 ms` and the probabilities of AC-1; the values `1 s` and `true` listed for `d` are each refused `value-outside-type` naming the parameter; a precondition reading `d` as `d < 5 ms` is refused `random-read-in-precondition`. | Test (TC-620) |
 | FR-185-AC-9 | A variant of `Service` whose random parameter is typed as a reference to `Server` and lists a reference literal naming the key of a `Server` object as a support value is refused at S3 `value-outside-type`, naming the parameter; the variant with the parameter typed `Int[1, 12]` and the integer support value `3` checks. | Test (TC-620) |
+| FR-185-AC-10 | `Steady` with `Server::reset: 0` and weight 1 on the other two operations checks and records weight 0 for `Server::reset`, with no diagnostic; `Steady` with weight 0 on all three operations checks; `Steady` with `Server::reset` omitted is still refused `incomplete-workload`. | Test (TC-2060) |
+| FR-185-AC-11 | `reward refund on Server::request = n - 3` on an operation with parameter `n: Int[0, 5]` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::request`, `refund` and `n = 0`, so S4 never runs; `reward refund on Server::request = n` checks; a reward over a random parameter is evaluated over its support only; with `s3.work_units` set below the number of argument vectors, S3 stops `stage_limit_exceeded`/`work-budget-exceeded` naming `s3.work_units` at the reward and reports no `negative-reward`. | Test (TC-2061) |
+| FR-185-AC-12 | An S4 refusal concerning a random parameter, a workload, a reward or a delay carries that declaration's source reference and label span in its locus member (never `null`), and its message names the declaration in words and holds no debug rendering of a span or source reference. | Test (TC-2062) |
+| FR-185-AC-13 | Through the spine, `reward refund on Server::attempt = d - 3` over a random `d` with support `{1, 3, 12}` is refused at S3 `invalid_probabilistic_model`/`negative-reward` naming `Server::attempt`, `refund` and `d = 1`, computed by `fsl-eval`'s `RewardEvaluator`; `d - 1` checks. A recording `RewardEvaluator` passed to S3 is called once per argument vector, in canonical order, until the first negative value; one that reports `Undefined` at a vector refuses the reward with that record, never `negative-reward` and never a checked unit. | Test (TC-3027) |
 
 ## Dependencies
 
@@ -241,6 +316,6 @@ witness (FR-193) takes that checked subject and recompiles nothing.
 
 ## References
 
-- QSpec half of the work, which owns the grammar and semantics of random
-  parameters, workloads and rewards: QSpec FR-405 (Linear STD-137).
+- FSpec half of the work, which owns the grammar and semantics of random
+  parameters, workloads and rewards: FSpec FR-405 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

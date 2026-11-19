@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! ADR-011 §7.2: the root crate re-exports no
 //! item of an extracted layer crate. Callers name each item at its layer
-//! crate's own path (`qsl_package::CheckedPackage`,
-//! `qsl_semantics::check::CheckedExpression`), so this crate's public
+//! crate's own path (`fsl_package::CheckedPackage`,
+//! `fsl_semantics::check::CheckedExpression`), so this crate's public
 //! surface never becomes a second path to a moved item.
 //!
 //! The layer crates are read from `cargo metadata`: every workspace crate
 //! the root crate names as a `path` dependency, plus the shared leaves
-//! `quire-exact` and `quire-semantic-value` (git dependencies of their own
+//! `filament-exact` and `filament-semantic-value` (git dependencies of their own
 //! repositories), by its Rust name, in any dependency table.
-//! `[dev-dependencies]` count too: `qsl-route` has no shipped caller in the
+//! `[dev-dependencies]` count too: `fsl-route` has no shipped caller in the
 //! root crate, so it is a dev dependency only, and a `#[cfg(test)]` item of
 //! `src/` can still name it. A crate extracted
 //! later is covered as soon as the root crate depends on it. The one
@@ -28,8 +28,8 @@
 //!
 //! A *layer name* is any name a `use` or `extern crate` item of the root
 //! crate binds from a layer crate, at any visibility and in any file:
-//! `use qsl_package as layer_four;` binds `layer_four`, and `use
-//! qsl_package::CheckedPackage;` binds `CheckedPackage`, so `pub use
+//! `use fsl_package as layer_four;` binds `layer_four`, and `use
+//! fsl_package::CheckedPackage;` binds `CheckedPackage`, so `pub use
 //! layer_four::CheckedPackage;` and `pub type Alias = CheckedPackage;` both
 //! fail. The set is crate-wide rather than per file, so a `pub type` naming a
 //! `pub(crate)` import from another module is caught too; the cost is that a
@@ -49,8 +49,8 @@ fn root() -> PathBuf {
 }
 
 /// Rust names of the workspace crates the root crate depends on, in its
-/// normal, dev and build tables alike, and of the shared leaves `quire-exact`
-/// and `quire-semantic-value`, which are git dependencies of their own
+/// normal, dev and build tables alike, and of the shared leaves `filament-exact`
+/// and `filament-semantic-value`, which are git dependencies of their own
 /// repositories.
 fn layer_crates() -> BTreeSet<String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
@@ -76,7 +76,7 @@ fn layer_crates() -> BTreeSet<String> {
         .as_array()
         .expect("cargo metadata lists packages")
         .iter()
-        .find(|package| package["name"] == "quire-spec-language")
+        .find(|package| package["name"] == "filament-spec-language")
         .expect("the root package is listed");
     package["dependencies"]
         .as_array()
@@ -86,7 +86,7 @@ fn layer_crates() -> BTreeSet<String> {
             dependency["path"].is_string()
                 || matches!(
                     dependency["name"].as_str(),
-                    Some("quire-exact" | "quire-semantic-value")
+                    Some("filament-exact" | "filament-semantic-value")
                 )
         })
         .map(|dependency| {
@@ -143,7 +143,7 @@ fn all_items(items: &[syn::Item], out: &mut Vec<syn::Item>) {
 }
 
 /// The names bound from a layer crate by any `use` or `extern crate` item.
-/// Iterates to a fixed point, so `use qsl_package as a; use a::X;` binds
+/// Iterates to a fixed point, so `use fsl_package as a; use a::X;` binds
 /// both `a` and `X`.
 fn layer_names(items: &[syn::Item], layers: &BTreeSet<String>) -> BTreeSet<String> {
     let mut names = layers.clone();
@@ -291,18 +291,18 @@ fn root_sources() -> Vec<(String, String)> {
 /// public item of the root crate exposes a layer crate's item, including
 /// `CheckedPackage` and the `check` items `value::expression` once
 /// re-exported. `value::expression` itself left the root crate for
-/// `qsl-eval` at X-8; the root crate does not depend on `qsl-eval`,
+/// `fsl-eval` at X-8; the root crate does not depend on `fsl-eval`,
 /// so it cannot re-export it at all.
 #[trace("FR-087-AC-9", "TC-256", "TC-172")]
 #[test]
 fn the_root_crate_reexports_no_layer_crate_item() {
     let layers = layer_crates();
     for expected in [
-        "quire_exact",
-        "qsl_foundation",
-        "qsl_semantics",
-        "qsl_package",
-        "qsl_route",
+        "filament_exact",
+        "fsl_foundation",
+        "fsl_semantics",
+        "fsl_package",
+        "fsl_route",
     ] {
         assert!(
             layers.contains(expected),
@@ -320,30 +320,30 @@ fn the_root_crate_reexports_no_layer_crate_item() {
 #[trace("FR-087-AC-9", "TC-256", "TC-172")]
 #[test]
 fn the_reexport_scan_catches_every_public_shape() {
-    let layers: BTreeSet<String> = ["qsl_package", "qsl_semantics"]
+    let layers: BTreeSet<String> = ["fsl_package", "fsl_semantics"]
         .into_iter()
         .map(str::to_owned)
         .collect();
     let sources = [
         (
             "a.rs",
-            "use qsl_package::CheckedPackage;\n\
-             pub use qsl_package::CheckedPackage as Direct;\n\
-             pub use ::qsl_semantics::{check::CheckedExpression, library};\n\
-             pub(crate) use qsl_package::EmittedPackage;\n\
-             mod inner { pub use qsl_package::*; }\n\
+            "use fsl_package::CheckedPackage;\n\
+             pub use fsl_package::CheckedPackage as Direct;\n\
+             pub use ::fsl_semantics::{check::CheckedExpression, library};\n\
+             pub(crate) use fsl_package::EmittedPackage;\n\
+             mod inner { pub use fsl_package::*; }\n\
              pub use serde_json::Value;\n\
              pub type Local = Vec<usize>;\n",
         ),
         (
             "b.rs",
-            "use qsl_package as layer_four;\n\
+            "use fsl_package as layer_four;\n\
              pub use layer_four::CheckedPackage as ViaAlias;\n\
-             pub type Emitted = qsl_package::EmittedPackage;\n\
+             pub type Emitted = fsl_package::EmittedPackage;\n\
              pub type Wrapped = Option<layer_four::CheckedPackage>;\n\
              pub type ViaImport = EmittedPackage;\n\
-             pub extern crate qsl_package;\n\
-             extern crate qsl_semantics as three;\n\
+             pub extern crate fsl_package;\n\
+             extern crate fsl_semantics as three;\n\
              pub use three::check;\n",
         ),
     ]
@@ -359,12 +359,12 @@ fn the_reexport_scan_catches_every_public_shape() {
             ("a.rs", "pub use", "Direct"),
             ("a.rs", "pub use", "CheckedExpression"),
             ("a.rs", "pub use", "library"),
-            ("a.rs", "pub use", "qsl_package::*"),
+            ("a.rs", "pub use", "fsl_package::*"),
             ("b.rs", "pub use", "ViaAlias"),
             ("b.rs", "pub type", "Emitted"),
             ("b.rs", "pub type", "Wrapped"),
             ("b.rs", "pub type", "ViaImport"),
-            ("b.rs", "pub extern crate", "qsl_package"),
+            ("b.rs", "pub extern crate", "fsl_package"),
             ("b.rs", "pub use", "check"),
         ]
     );

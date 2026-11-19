@@ -3,8 +3,8 @@ id: TC-121
 title: "Preserve source-owned protocol artifacts through strict Rust consumption"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: verifies }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: verifies }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
 ---
 # TC-121: Preserve source-owned protocol artifacts through strict Rust consumption
 
@@ -12,8 +12,8 @@ relationships:
 
 Planned public Rust controls for the full
 [FR-042](../functional/FR-042-publish-compiled-protocol-artifacts.md) artifact
-boundary, using the retired `quire.compiled-protocol/1` wire contract.
-The positive emitter fixture starts with native Quire source, an admitted domain
+boundary, using the retired `filament.compiled-protocol/1` wire contract.
+The positive emitter fixture starts with Filament source, an admitted domain
 package and actual definition contracts; a hand-built wire fixture exercises only
 reader behavior. The first fourteen groups below correspond to the first fourteen
 acceptance criteria; step 15 covers FR-042-AC-15's in-process public writer; step 16 requires the
@@ -239,7 +239,7 @@ behaviors without named successors are tracked by QSL-1380.
    proof-work limits return source-located incomplete, preserving prior results
    and distinguishing exhaustion from an unproved partition.
 10. Pass the actual production-emitted immutable artifact/reference to
-    [quire-protocol IT-001](ix://agent-ix/quire-protocol/IT-001) through the public
+    [filament-protocol IT-001](ix://agent-ix/filament-protocol/IT-001) through the public
     Rust interfaces, preserving exact selectors and finite graph/source links.
     In B's Rust integration harness, independently select the supplied original
     sources, admitted domain packages, registry/contract and producer
@@ -279,9 +279,9 @@ behaviors without named successors are tracked by QSL-1380.
     fresh with `write_v1` and `write_v2` into temporary directories, and
     confirm each written handoff admits through the strict reader under the new
     `Model` shape, at its existing
-    `quire.compiled-protocol/1` and `quire.compiled-protocol/2`
+    `filament.compiled-protocol/1` and `filament.compiled-protocol/2`
     ([FR-050](../functional/FR-050-publish-authenticated-temporal-artifacts.md))
-    wire identities unchanged; `quire.compiled-protocol/3`
+    wire identities unchanged; `filament.compiled-protocol/3`
     ([FR-054](../functional/FR-054-publish-control-temporal-activation-map.md))
     keeps its own wire identity and activation-mapping delta, and only its
     shared `Model` population changes shape.
@@ -333,13 +333,13 @@ behaviors without named successors are tracked by QSL-1380.
     byte-identical. Confirm that the written `expected.json` selection contains
     the selected artifact identity and that the strict public reader (used in
     step 7 and by
-    [quire-protocol IT-001](ix://agent-ix/quire-protocol/IT-001)) admits the
+    [filament-protocol IT-001](ix://agent-ix/filament-protocol/IT-001)) admits the
     written offer against that written selection with no other input. Call
     `write_v1` a third time into an already-existing directory and require
     refusal, and confirm that directory's contents, including a sentinel file
     already there, are unchanged.
     Separately, `make ci`'s `ci-clean-build` target runs
-    `cargo check -p quire-spec-language --lib --no-default-features --features
+    `cargo check -p filament-spec-language --lib --no-default-features --features
     handoff-writer`: the acceptance this step's test cannot demonstrate by
     itself, because a test in this crate's own `tests/` always builds inside
     its dev-dependency closure. That `cargo check` line is what actually

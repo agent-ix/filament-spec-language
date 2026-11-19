@@ -3,7 +3,7 @@ id: TC-798
 title: "An abstraction binding whose model key resolves to nothing refuses missing-name"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-798: An abstraction binding whose model key resolves to nothing refuses missing-name

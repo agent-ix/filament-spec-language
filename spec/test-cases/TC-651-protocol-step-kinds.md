@@ -3,7 +3,7 @@ id: TC-651
 title: "The protocol system takes each step kind with structural moves folded"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: verifies
 ---
 # TC-651: The protocol system takes each step kind with structural moves folded

@@ -3,11 +3,11 @@ id: FR-197
 title: "Decide finite-horizon forms by exact backward induction"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-023
+  - target: ix://agent-ix/filament-spec-language/US-023
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-028
+  - target: ix://agent-ix/filament-spec-language/ADR-028
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: depends_on
 ---
 # FR-197: Decide finite-horizon forms by exact backward induction
@@ -101,6 +101,6 @@ pub struct Dyadic { pub mantissa: BigInt, pub exponent: u32 }   // mantissa · 2
 
 ## References
 
-- QSpec half, which owns the quantile transform and the exact values of the
-  conformance vectors: QSpec FR-411 and TC-360 (Linear STD-137).
+- FSpec half, which owns the quantile transform and the exact values of the
+  conformance vectors: FSpec FR-411 and TC-360 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

@@ -3,23 +3,23 @@ id: FR-304
 title: "Check an authored model-to-implementation abstraction relation at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-031
+  - target: ix://agent-ix/filament-spec-language/US-031
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-303
+  - target: ix://agent-ix/filament-spec-language/FR-303
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-304: Check an authored model-to-implementation abstraction relation at S3
@@ -27,15 +27,15 @@ relationships:
 ## Description
 
 When a unit declares one or more abstraction relations, the compiler SHALL
-parse each at S2 as QSpec FR-450's `abstraction-decl` and check them at S3,
+parse each at S2 as FSpec FR-450's `abstraction-decl` and check them at S3,
 as `Relation` family declarations, into one `CheckedAbstractionRelation`
 holding at most one binding per model key across all of the unit's
-declarations. It SHALL refuse each binding QSpec FR-450 refuses, with the
-code, cause and order QSpec FR-450 gives.
+declarations. It SHALL refuse each binding FSpec FR-450 refuses, with the
+code, cause and order FSpec FR-450 gives.
 
 ## Inputs
 
-- The unit's `abstraction-decl` declarations, in QSpec FR-450's surface
+- The unit's `abstraction-decl` declarations, in FSpec FR-450's surface
   spelling.
 - The admitted domain packages of the unit's `model` declarations
   ([FR-056](FR-056-admit-domain-package-model-declarations.md)), with their
@@ -44,29 +44,29 @@ code, cause and order QSpec FR-450 gives.
 ## Outputs
 
 A `CheckedAbstractionRelation` in the `check` core, or the located refusals
-QSpec FR-450 names.
+FSpec FR-450 names.
 
 ## Behavior
 
 ### Placement
 
-The relation is authored in QSL source as a `Relation` family declaration
+The relation is authored in FSL source as a `Relation` family declaration
 (ADR-012 §3, ADR-017 AR-1), parsed at S2, checked at S3 and carried in the
 checked package. It is a declaration of its own, distinct from a model
 refinement declaration, with its own checked type.
 
 - S2 SHALL parse each `abstraction-decl` into its relation form, refusing
   `invalid_syntax` at the offending token for a declaration with no binding
-  or a binding whose Rust spelling is not quoted (QSpec FR-450-AC-3).
+  or a binding whose Rust spelling is not quoted (FSpec FR-450-AC-3).
   S3 refuses `unsupported_construct` at the declaration when the package does
-  not select `quire.model.complete/v1` (QSpec FR-450-AC-3), as FR-361 states.
+  not select `filament.model.complete/v1` (FSpec FR-450-AC-3), as FR-361 states.
 - S3 SHALL check every `abstraction-decl` of the unit into the one
-  `CheckedAbstractionRelation`. Key uniqueness spans all of them (QSpec
+  `CheckedAbstractionRelation`. Key uniqueness spans all of them (FSpec
   FR-450 rule 5).
 
 ### Keys and binding values
 
-Each binding SHALL be keyed and valued as QSpec FR-450 "Binding forms"
+Each binding SHALL be keyed and valued as FSpec FR-450 "Binding forms"
 states, in the `check` core types ADR-017 AR-2 names:
 
 | Model element | Key | Binding value |
@@ -75,17 +75,17 @@ states, in the `check` core types ADR-017 AR-2 names:
 | Population | the population declaration's `DeclarationKey`, the `population_key` [FR-089](FR-089-carry-population-identity-across-the-kernel-boundary.md) mints `PopulationId` from | `PopulationBinding { collection: RustPath }` |
 | Operation frame | `OperationKey { declaring: DeclarationKey, operation: Identifier }` | `FrameBinding { function: RustPath, receiver: RustReceiver, parameters: operation parameter Identifier → Rust parameter identifier }` |
 
-The `DeclarationKey` is QSpec FR-353's AD-006 effective-declaration key,
+The `DeclarationKey` is FSpec FR-353's AD-006 effective-declaration key,
 ADR-013 O-03. `RustPath`, `RustField`, `RustReceiver` and the Rust
-parameter identifier hold QSpec FR-450 "Rust spellings" as lexical keys
-that compare by bytes. The checker checks their syntax by QSpec FR-450 and
+parameter identifier hold FSpec FR-450 "Rust spellings" as lexical keys
+that compare by bytes. The checker checks their syntax by FSpec FR-450 and
 resolves none of them against Rust code.
 
 ### Refusals
 
-The checker SHALL apply QSpec FR-450 "Refusals" rules 1 to 5, in their
+The checker SHALL apply FSpec FR-450 "Refusals" rules 1 to 5, in their
 order and in source order of the bindings, with the codes, causes and named
-members QSpec FR-450 gives. It SHALL report every refused binding of every
+members FSpec FR-450 gives. It SHALL report every refused binding of every
 declaration and produce no checked package when any binding refuses.
 
 A key that names a systems interface, as an object type or as the declaring
@@ -109,14 +109,14 @@ unbound-element refusal is scoped to the item that references the element
 | FR-304-AC-3 | A binding whose key names an object type absent from the domain package, and a binding whose `OperationKey` names an operation its type does not declare, each refuse `missing_declaration`/`missing-name`, naming the key and its owning `DomainPackageRef` identity. | Test (TC-798) |
 | FR-304-AC-4 | Two equal bindings for one key, and two different bindings for one key, each refuse `invalid_model_binding`/`conflicting-binding`, naming both bindings and the key. | Test (TC-799) |
 | FR-304-AC-5 | A `FrameBinding` whose `parameters` map omits a declared parameter, one that names an undeclared parameter, one that maps two parameters to one Rust parameter, and an `ObjectBinding` naming an undeclared field each refuse `invalid_model_binding`/`malformed-declaration`, naming the entry; an `ObjectBinding` for a subtype naming a field its supertype declares checks. | Test (TC-800) |
-| FR-304-AC-6 | The `RustPath` segments `type` and `9lives` and the tuple-field index `01` each refuse `invalid_model_binding`/`malformed-declaration`, naming the segment and its span; the segments `r#type` and `config_store`, the index `0` and the receivers `self` and `store` are admitted; the receiver `0` refuses `invalid_model_binding`/`malformed-declaration`. QSpec TC-410's and TC-411's cases each give their verdict. | Test (TC-801) |
+| FR-304-AC-6 | The `RustPath` segments `type` and `9lives` and the tuple-field index `01` each refuse `invalid_model_binding`/`malformed-declaration`, naming the segment and its span; the segments `r#type` and `config_store`, the index `0` and the receivers `self` and `store` are admitted; the receiver `0` refuses `invalid_model_binding`/`malformed-declaration`. FSpec TC-410's and TC-411's cases each give their verdict. | Test (TC-801) |
 | FR-304-AC-7 | A unit with two `abstraction-decl`s, one binding the ConfigVersion object type and the other its population, checks into one `CheckedAbstractionRelation` with both bindings; when the second declaration also binds the ConfigVersion object type, with an equal or a different value, the unit refuses `invalid_model_binding`/`conflicting-binding`, naming both bindings and the key. | Test (TC-810) |
-| FR-304-AC-8 | Compiling source text holding FR-304-AC-1's relation as an `abstraction-decl` yields the same `CheckedAbstractionRelation` as AC-1; the same declaration in a package that does not select `quire.model.complete/v1` refuses `unsupported_construct` at the declaration's span; a declaration with no binding, and a binding with an unquoted Rust path, refuse `invalid_syntax` at the offending token. | Test (TC-811) |
+| FR-304-AC-8 | Compiling source text holding FR-304-AC-1's relation as an `abstraction-decl` yields the same `CheckedAbstractionRelation` as AC-1; the same declaration in a package that does not select `filament.model.complete/v1` refuses `unsupported_construct` at the declaration's span; a declaration with no binding, and a binding with an unquoted Rust path, refuse `invalid_syntax` at the offending token. | Test (TC-811) |
 | FR-304-AC-9 | A binding whose object type key names a systems interface, and a frame binding whose declaring type is a systems interface, each refuse `invalid_model_binding`/`malformed-declaration`, naming the key. | Test (TC-1087) |
 
 ## Dependencies
 
-- **Upstream:** QSpec FR-353 owns the relation's semantics; QSpec FR-450
+- **Upstream:** FSpec FR-353 owns the relation's semantics; FSpec FR-450
   owns the surface spelling, the Rust spellings and the refusals; ADR-017
   AR-1 to AR-3 fix its placement and its `check` core types; ADR-013 O-03
   owns the declaration key;
@@ -131,5 +131,5 @@ unbound-element refusal is scoped to the item that references the element
 ## References
 
 - ADR-017 §3 AR-1 to AR-3; ADR-020 §7 MC-2 and MC-3.
-- QSpec FR-450, FR-451 (specification ticket STD-116, Q-1, Q-2).
+- FSpec FR-450, FR-451 (specification ticket STD-116, Q-1, Q-2).
 - Linear QSL-388 (specification), QSL-36 (implementation).

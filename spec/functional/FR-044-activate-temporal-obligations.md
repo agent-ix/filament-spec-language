@@ -3,12 +3,12 @@ id: FR-044
 title: "Activate temporal obligations with immutable captures"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-003, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-043, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-093, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-094, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-048, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-003, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-043, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-093, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-094, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-048, type: references }
 ---
 # FR-044: Activate temporal obligations with immutable captures
 
@@ -22,20 +22,20 @@ anchor and immutable thereafter.
 ## Semantic authority and boundary
 
 Agent E owns the activation, trigger-scope and capture meaning in
-`ix://agent-ix/quire-specification/FR-093` and `FR-094`. Each Behavior
+`ix://agent-ix/filament-specification/FR-093` and `FR-094`. Each Behavior
 subsection restates the owned rule named beside it, and the owned rule governs on
 divergence.
 
 | Behavior subsection | Owned source |
 | --- | --- |
-| Instance identity — trigger-keyed instances, repeated delivery | FR-093 Behavior paragraph 1; FR-093-AC-1, FR-093-AC-2; merged `quire-specification` PR #23 |
+| Instance identity — trigger-keyed instances, repeated delivery | FR-093 Behavior paragraph 1; FR-093-AC-1, FR-093-AC-2; merged `filament-specification` PR #23 |
 | Instance identity — whole-execution origin | temporal-common.md "Each activation has its own exact semantic trigger/origin identity" |
 | Captures | FR-093 Behavior paragraph 2; FR-093-AC-3, FR-093-AC-4; FR-094-AC-6 |
-| Dispositions | FR-093 Behavior paragraph 3; FR-093-AC-5; FR-094-AC-3; merged `quire-specification` PR #23 |
+| Dispositions | FR-093 Behavior paragraph 3; FR-093-AC-5; FR-094-AC-3; merged `filament-specification` PR #23 |
 
 ### Ratified activation rulings
 
-The merged native-temporal semantic amendment in `quire-specification` PR #23
+The merged native-temporal semantic amendment in `filament-specification` PR #23
 ratifies that a false guard creates no obligation, while an unestablished guard
 is incomplete or refused rather than false. It also ratifies that an identical
 duplicate receipt preserves provenance without a second semantic event, while a

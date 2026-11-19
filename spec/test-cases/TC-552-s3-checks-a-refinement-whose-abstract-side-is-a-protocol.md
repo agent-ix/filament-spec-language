@@ -3,7 +3,7 @@ id: TC-552
 title: "S3 checks a refinement whose abstract side is a protocol and writes a refinement record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-147
+  - target: ix://agent-ix/filament-spec-language/FR-147
     type: verifies
 ---
 # TC-552: S3 checks a refinement whose abstract side is a protocol and writes a refinement record

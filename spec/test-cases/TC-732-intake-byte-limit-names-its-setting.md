@@ -3,7 +3,7 @@ id: TC-732
 title: "The intake byte limit names its setting and clears when raised"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: verifies
 ---
 # TC-732: The intake byte limit names its setting and clears when raised

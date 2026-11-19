@@ -3,7 +3,7 @@ id: TC-891
 title: "A clause-run request file runs through run_clause and writes a /2 document"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-312
+  - target: ix://agent-ix/filament-spec-language/FR-312
     type: verifies
 ---
 # TC-891: A clause-run request file runs through run_clause and writes a /2 document

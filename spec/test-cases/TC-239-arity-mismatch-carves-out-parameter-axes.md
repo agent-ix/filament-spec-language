@@ -3,7 +3,7 @@ id: TC-239
 title: "An arity mismatch refuses without checking per-parameter axes, while result and effect axes are still checked"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-239: An arity mismatch refuses without checking per-parameter axes, while result and effect axes are still checked

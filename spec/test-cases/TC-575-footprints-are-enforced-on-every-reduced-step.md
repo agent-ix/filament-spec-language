@@ -3,7 +3,7 @@ id: TC-575
 title: "Footprints are enforced: a read outside the footprint is an internal fault, a write outside the frame a violation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: verifies
 ---
 # TC-575: Footprints are enforced: a read outside the footprint is an internal fault, a write outside the frame a violation

@@ -3,7 +3,7 @@ id: TC-796
 title: "The model correspondence faults on a second, different entry in either direction"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-303
+  - target: ix://agent-ix/filament-spec-language/FR-303
     type: verifies
 ---
 # TC-796: The model correspondence faults on a second, different entry in either direction

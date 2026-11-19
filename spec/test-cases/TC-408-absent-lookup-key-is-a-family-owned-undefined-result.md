@@ -3,7 +3,7 @@ id: TC-408
 title: "An absent lookup key reaches the caller as a StateModel undefined result, and an absent-refused lookup as a refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-408: An absent lookup key reaches the caller as a StateModel undefined result, and an absent-refused lookup as a refusal
@@ -17,11 +17,11 @@ The caller then receives an `Evaluation` whose `outcome` is
 `cause.undefined_record()` has reason `absent-key` and the catalog payload,
 category `undefined`. The same query with `absent refused` receives
 `FamilyResult::Refused` with code `invalid_runtime_input`/`absent-key`,
-category `refusal` (QSpec TC-198 L03). The kernel `Undefined` has no
+category `refusal` (FSpec TC-198 L03). The kernel `Undefined` has no
 `AbsentKey` variant (ADR-013 O-13, O-16). Scope: FR-090-AC-12.
 
-The fixture is `qsl-eval/tests/it/model_reference_queries.rs`'s
-`l14_lookup_expression_undefined_mode` scenario (QSpec TC-198 L03): a
+The fixture is `fsl-eval/tests/it/model_reference_queries.rs`'s
+`l14_lookup_expression_undefined_mode` scenario (FSpec TC-198 L03): a
 population argument `p: Population<A>[3]` and a reference `c9` of type `A`
 that is not a member. That test asserts `Outcome::Undefined(
 Undefined::AbsentKey)`, which is the kernel carrier ADR-013 O-16 removes.

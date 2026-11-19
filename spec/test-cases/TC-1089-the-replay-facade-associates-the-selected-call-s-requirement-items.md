@@ -3,11 +3,11 @@ id: TC-1089
 title: "The replay facade associates the selected call's requirement items"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-395
+  - target: ix://agent-ix/filament-spec-language/FR-395
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-1089: The replay facade associates the selected call's requirement items
@@ -20,11 +20,11 @@ order, and refuses as `run` does. Scope: FR-395-AC-1 to FR-395-AC-12, FR-062-AC-
 
 ## Test Procedure
 
-Test layer: an integration test in `qsl-replay/tests`, like
+Test layer: an integration test in `fsl-replay/tests`, like
 `admitted_context_facade.rs`. The facade calls under test reach only the
-`qsl_replay` root. The independent oracle (the checked graph's records and
+`fsl_replay` root. The independent oracle (the checked graph's records and
 their owners, and the items `items_from_requirements` writes) is read through
-`qsl_replay::spine` and the checked package inside the test, as
+`fsl_replay::spine` and the checked package inside the test, as
 `admitted_context_facade.rs` reads the spine's graph; consumer code does not.
 
 1. Call `sq` with `x = 3` and `inc` with `x = 3` over fixture K; read the
@@ -37,11 +37,11 @@ their owners, and the items `items_from_requirements` writes) is read through
    steps 1 to 3 and compare.
 5. Call `nope`, the empty name, `inc.x` and `1inc`; call a source that does
    not parse; call with a cancelled handle.
-6. Read each record's owner (the temporal unit below runs in the root crate's integration tests, which hold the ConfigVersion domain package in their test support, `crate::support::config_version_spine::spine::DOMAIN_PACKAGE`, not in `qsl-replay/tests`) in the checked graph for FR-062's RR-1 to RR-17,
-   for the unit of the clause `post Q using v on Config::ConfigVersion::attemptUpdate { true }` over the ConfigVersion domain package and for the unit `language "ix:native" edition "1-draft"; profile v = "quire.model.complete/v1"; profile t = "quire.temporal.infinite-trace/v1"; model Config = "example/config-version"; temporal Reaches using t over (c: Config::ConfigVersion) clock "model-steps" on origin { eventually holds(c.versionNumber = 2) }` (the temporal clause `Reaches` of TC-842) (a `temporal-satisfaction` record in `graph().requirements()`, as `tests/it/temporal_negotiation.rs` reads it); the state-graph claim `possible P` is not used.
+6. Read each record's owner (the temporal unit below runs in the root crate's integration tests, which hold the ConfigVersion domain package in their test support, `crate::support::config_version_spine::spine::DOMAIN_PACKAGE`, not in `fsl-replay/tests`) in the checked graph for FR-062's RR-1 to RR-17,
+   for the unit of the clause `post Q using v on Config::ConfigVersion::attemptUpdate { true }` over the ConfigVersion domain package and for the unit `language "ix:native" edition "1-draft"; profile v = "filament.model.complete/v1"; profile t = "filament.temporal.infinite-trace/v1"; model Config = "example/config-version"; temporal Reaches using t over (c: Config::ConfigVersion) clock "model-steps" on origin { eventually holds(c.versionNumber = 2) }` (the temporal clause `Reaches` of TC-842) (a `temporal-satisfaction` record in `graph().requirements()`, as `tests/it/temporal_negotiation.rs` reads it); the state-graph claim `possible P` is not used.
 7. Call `add` of FR-062 RR-3 with the arguments `x`, `y` and then `y`, `x`.
-8. Call `inc` with `x = 3` over the FR-395-AC-12 unit (`qsl-replay/tests/dispatch_link_compile.rs`).
-9. Fault arm: in a `qsl-replay` unit test, build a checked package whose
+8. Call `inc` with `x = 3` over the FR-395-AC-12 unit (`fsl-replay/tests/dispatch_link_compile.rs`).
+9. Fault arm: in a `fsl-replay` unit test, build a checked package whose
    record map is altered through the crate-internal test support (the same
    access the checked-graph tests use) to hold a `value-validity` record
    with no owner, and then one with an owner `ghost` no function bears, and

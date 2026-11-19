@@ -3,7 +3,7 @@ id: TC-019
 title: "Bounded malformed source corpus"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: verifies
 ---
 

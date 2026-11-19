@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Retained criteria whose tests rode the deleted composed lane, re-owned on
-//! the spine (`qsl_replay::spine` parse, select, check): FR-035-AC-2 and
+//! the spine (`fsl_replay::spine` parse, select, check): FR-035-AC-2 and
 //! AC-3 (source refusals), FR-040-AC-4 (exact integer bounds) and
 //! FR-048-AC-2 and AC-3 (a checked protocol's channels and control nodes).
 
-use ix_trace_rs::trace;
-use qsl_cst::{CompleteCause, CompleteCode};
-use qsl_forms::ProtocolNodeKind;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{
+use filament_exact::Cancel;
+use fsl_cst::{CompleteCause, CompleteCode};
+use fsl_forms::ProtocolNodeKind;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{
     check, parse, refusal_or_fault, select, CheckedUnit, CompileRefusal, DependencyInput,
     ParseRequest, SpineLimits,
 };
-use qsl_semantics::check::{ChannelCapacity, ChannelDelivery, ChannelOverflow, CheckedOrdering};
-use quire_exact::Cancel;
+use fsl_semantics::check::{ChannelCapacity, ChannelDelivery, ChannelOverflow, CheckedOrdering};
+use ix_trace_rs::trace;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    profile v = \"quire.value.complete/v1\";\n";
+    profile v = \"filament.value.complete/v1\";\n";
 
 /// `body` after the `1-draft` header, taken through parse, select and check.
 fn spine_check(body: &str) -> Result<CheckedUnit, Box<CompileRefusal>> {
@@ -25,7 +25,7 @@ fn spine_check(body: &str) -> Result<CheckedUnit, Box<CompileRefusal>> {
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let packages =
-        qsl_semantics::model::intake::package_input([crate::support::spine_model::DOCUMENT])
+        fsl_semantics::model::intake::package_input([crate::support::spine_model::DOCUMENT])
             .expect("the model fixture enters intake");
     let fault = |failure| refusal_or_fault(failure).unwrap_or_else(|f| panic!("fault: {f:?}"));
     let parsed = parse(
@@ -156,7 +156,7 @@ fn widget_with_edge(
     presence: &str,
     bounds: (u64, u64),
     (ordered, unique): (bool, bool),
-) -> qsl_semantics::model::intake::PackageInput {
+) -> fsl_semantics::model::intake::PackageInput {
     let mut document: serde_json::Value =
         serde_json::from_slice(crate::support::spine_model::DOCUMENT).expect("fixture JSON");
     let identity = format!("ix://acme/orders/Widget/{name}");
@@ -185,13 +185,13 @@ fn widget_with_edge(
             }},
         }));
     let bytes = serde_json::to_vec(&document).expect("serializes");
-    qsl_semantics::model::intake::package_input([bytes.as_slice()]).expect("the package enters")
+    fsl_semantics::model::intake::package_input([bytes.as_slice()]).expect("the package enters")
 }
 
 /// `unit` over `packages` through parse, select and check.
 fn spine_check_over(
     unit: &str,
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<CheckedUnit, Box<CompileRefusal>> {
     let source = SourceIdentity::new("agent-ix", "test:spine-edges");
     let cancel = Cancel::new();
@@ -235,7 +235,7 @@ fn reaches_admits_only_reference_option_and_sequence_edges() {
     let unit = |edge: &str| {
         format!(
             "language \"ix:native\" edition \"1-draft\";\n\
-             profile v = \"quire.model.complete/v1\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
              model M = \"acme/orders\";\n\
              invariant I using v on M::Widget at current {{ reaches(self, self, {edge}) }}\n"
         )
@@ -284,7 +284,7 @@ fn reaches_admits_only_reference_option_and_sequence_edges() {
 
 /// The model fixture with an operation `touch` on `Widget`, so a protocol
 /// can author an `attempt` and its `effect`.
-fn widget_with_touch() -> qsl_semantics::model::intake::PackageInput {
+fn widget_with_touch() -> fsl_semantics::model::intake::PackageInput {
     let mut document: serde_json::Value =
         serde_json::from_slice(crate::support::spine_model::DOCUMENT).expect("fixture JSON");
     let identity = "ix://acme/orders/Widget/touch";
@@ -308,7 +308,7 @@ fn widget_with_touch() -> qsl_semantics::model::intake::PackageInput {
         "frame": {"modifies": [], "creates": [], "deletes": []},
     }]);
     let bytes = serde_json::to_vec(&document).expect("serializes");
-    qsl_semantics::model::intake::package_input([bytes.as_slice()]).expect("the package enters")
+    fsl_semantics::model::intake::package_input([bytes.as_slice()]).expect("the package enters")
 }
 
 /// FR-048-AC-2 and AC-3: a checked protocol retains each channel's roles,
@@ -321,8 +321,8 @@ fn widget_with_touch() -> qsl_semantics::model::intake::PackageInput {
 #[test]
 fn a_checked_protocol_retains_its_channels_and_control_topology() {
     let unit = format!(
-        "{HEADER}profile Complete = \"quire.protocol.finite-global/v1\";\n\
-         profile e = \"quire.temporal.timed/v1\";\n\
+        "{HEADER}profile Complete = \"filament.protocol.finite-global/v1\";\n\
+         profile e = \"filament.temporal.timed/v1\";\n\
          model M = \"acme/orders\";\n\
          protocol Flow using Complete over (input: M::Widget) on origin {{\n\
            role R on M::Widget;\n\
@@ -368,7 +368,7 @@ fn a_checked_protocol_retains_its_channels_and_control_topology() {
         ),
         ("C", "R", "R")
     );
-    assert_eq!(channel.carries, quire_exact::ValueType::Boolean);
+    assert_eq!(channel.carries, filament_exact::ValueType::Boolean);
     assert!(matches!(channel.ordering, CheckedOrdering::Unordered));
     assert_eq!(channel.delivery, ChannelDelivery::AtLeastOnce);
     assert_eq!(channel.capacity, ChannelCapacity::Literal(2));

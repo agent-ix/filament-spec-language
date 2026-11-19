@@ -3,23 +3,23 @@ id: FR-305
 title: "Relate a frame binding to its operation's frame and anchor"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-031
+  - target: ix://agent-ix/filament-spec-language/US-031
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-012
+  - target: ix://agent-ix/filament-specification/FR-012
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
 ---
 # FR-305: Relate a frame binding to its operation's frame and anchor
@@ -50,22 +50,22 @@ The checked `FrameBinding` of the `CheckedAbstractionRelation`, holding
 `state`/`operation_anchor` nodes when the unit has its
 `CheckedOperationFrame`, and `None` otherwise. The v2 relation node does not
 carry `frame_nodes`; a reader joins a frame entry to those nodes by its
-operation key (QSpec FR-451).
+operation key (FSpec FR-451).
 
 ## Behavior
 
 ### The operation key determines the frame identities
 
 An operation has one anchor and one frame
-([FR-105](FR-105-emit-state-nodes.md)). Its QSpec FR-013 frame identity and
-its QSpec FR-012 pre, post and result anchor identities are functions of its
+([FR-105](FR-105-emit-state-nodes.md)). Its FSpec FR-013 frame identity and
+its FSpec FR-012 pre, post and result anchor identities are functions of its
 `OperationKey` (ADR-017 AR-2), so the binding's key carries no anchor member.
 The bound function's entry is the pre anchor, its exit the post anchor, and
 its return value the result. The operation's parameters are read at entry
 through the binding's `parameters`, the framed state at entry and exit
 through its `receiver`, a framed field through its object type's
 `ObjectBinding.fields`, and a created or deleted object through its
-population's `PopulationBinding`. The key derivation is QSpec FR-353-AC-1's.
+population's `PopulationBinding`. The key derivation is FSpec FR-353-AC-1's.
 
 ### Inherited operations bind at their declaring type
 
@@ -85,8 +85,8 @@ a type that declares no such operation, and refuses as FR-304 states
 
 ## Dependencies
 
-- **Upstream:** QSpec FR-353, FR-012 and FR-013 own the frame and anchor
-  identities; QSpec FR-353-AC-1 fixes the derived key;
+- **Upstream:** FSpec FR-353, FR-012 and FR-013 own the frame and anchor
+  identities; FSpec FR-353-AC-1 fixes the derived key;
   ADR-017 AR-2 fixes the key; [FR-105](FR-105-emit-state-nodes.md) gives one
   anchor and one frame per operation.
 - **Downstream:** [FR-307](FR-307-export-the-bindings-each-item-references.md)
@@ -95,5 +95,5 @@ a type that declares no such operation, and refuses as FR-304 states
 ## References
 
 - ADR-017 §3 AR-2 ("Anchors", "Frame identity").
-- QSpec FR-353-AC-1 (specification ticket STD-121, Q-7).
+- FSpec FR-353-AC-1 (specification ticket STD-121, Q-7).
 - Linear QSL-388 (specification), QSL-36 (implementation).

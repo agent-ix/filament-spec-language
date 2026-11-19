@@ -3,7 +3,7 @@ id: TC-198
 title: "Backend absence never settles as a refusal or a hold at the registry"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: verifies
 ---
 # TC-198: Backend absence never settles as a refusal or a hold at the registry

@@ -3,19 +3,19 @@ id: FR-333
 title: "Read an optional collection bound and population maximum from source to the kernel type"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-144
+  - target: ix://agent-ix/filament-specification/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
 ---
 # FR-333: Read an optional collection bound and population maximum from source to the kernel type
@@ -27,7 +27,7 @@ without a cardinality bound, `K<T>` or `K<T>[a,b]` for `K` in `Sequence`,
 `Set`, `Bag` and `OrderedSet`, and a population type with or without a
 maximum, `Population<T>` or `Population<T>[N]`. An absent bound SHALL resolve
 to the unbounded kernel type: `CollectionType.bound == None` and
-`ValueType::Population(None)` (ADR-014 §2, N-3; QSpec FR-144, FR-153-AC-9).
+`ValueType::Population(None)` (ADR-014 §2, N-3; FSpec FR-144, FR-153-AC-9).
 
 ## Use case
 
@@ -77,9 +77,9 @@ never chose.
 - [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md)
   (value forms), [FR-097](FR-097-classify-claim-extent-and-write-bounded-requests.md)
   AC-7 and AC-8 (checking and lowering unbounded types).
-- QSpec FR-144-AC-9, AC-12, AC-13; FR-153-AC-9.
+- FSpec FR-144-AC-9, AC-12, AC-13; FR-153-AC-9.
 
 ## References
 
 - Linear QSL-385 (spec ticket); QSL-42 (implementation).
-- QSpec half: QSpec FR-144 (merged).
+- FSpec half: FSpec FR-144 (merged).

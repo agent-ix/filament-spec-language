@@ -3,7 +3,7 @@ id: TC-894
 title: "An imported call discharges its preconditions as a local call does"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: verifies
 ---
 # TC-894: An imported call discharges its preconditions as a local call does

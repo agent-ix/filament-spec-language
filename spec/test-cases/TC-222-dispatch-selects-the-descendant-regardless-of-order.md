@@ -3,7 +3,7 @@ id: TC-222
 title: "Dispatch selects the descendant candidate independent of declaration order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: verifies
 ---
 # TC-222: Dispatch selects the descendant candidate independent of declaration order

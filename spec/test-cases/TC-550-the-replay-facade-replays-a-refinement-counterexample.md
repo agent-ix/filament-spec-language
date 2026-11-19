@@ -3,7 +3,7 @@ id: TC-550
 title: "The replay facade replays a refinement counterexample and recomputes what the abstract model saw"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: verifies
 ---
 # TC-550: The replay facade replays a refinement counterexample and recomputes what the abstract model saw

@@ -3,7 +3,7 @@ id: TC-255
 title: "NodeKey is never minted from a WireNodeId; E4 and E9 resolve by lookup, never by construction"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-255: NodeKey is never minted from a WireNodeId; E4 and E9 resolve by lookup, never by construction

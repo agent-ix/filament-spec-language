@@ -3,23 +3,23 @@ id: FR-301
 title: "Render StateModel causes raised under an enclosing family's evaluation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
 ---
 # FR-301: Render StateModel causes raised under an enclosing family's evaluation
@@ -80,7 +80,7 @@ are independent assertions: neither a generic code nor a fabricated
 - **Upstream:** ADR-016 FP-3 and ADR-013 O-16 place the model causes in
   `StateModel` and their evaluation in the enclosing family;
   [FR-090](FR-090-return-a-family-outcome-or-a-typed-family-refusal.md) defines
-  `FamilyOutcome`; QSpec FR-151 and FR-153 fix the cause names.
+  `FamilyOutcome`; FSpec FR-151 and FR-153 fix the cause names.
 - **Downstream:** replay and run reports read the rendered code.
 
 ## References

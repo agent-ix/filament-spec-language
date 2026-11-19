@@ -3,11 +3,11 @@ id: TC-1406
 title: "Check bounded fair eventual certificates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
 ---
 # TC-1406: Check bounded fair eventual certificates

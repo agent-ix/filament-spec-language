@@ -3,7 +3,7 @@ id: TC-999
 title: "Equality of a child at a parent-typed slot is false, never a fault"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: verifies
 ---
 # TC-999: Equality of a child at a parent-typed slot is false, never a fault

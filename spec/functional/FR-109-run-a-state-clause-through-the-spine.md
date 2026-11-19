@@ -3,31 +3,31 @@ id: FR-109
 title: "Run a selected state clause through the spine and report a typed disposition"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: traces_to
 ---
 # FR-109: Run a selected state clause through the spine and report a typed disposition
 
 ## Description
 
-QSL SHALL provide `qsl_replay::spine::run_clause`, a layer-6 entry beside
-FR-100's `qsl_replay::spine::run`. It compiles a `1-draft` unit through the
+FSL SHALL provide `fsl_replay::spine::run_clause`, a layer-6 entry beside
+FR-100's `fsl_replay::spine::run`. It compiles a `1-draft` unit through the
 spine (S1 to S4, the same `spine::compile` CLI `compile` and FR-100 use),
 selects one state clause, or one Boolean function run as a claim, by name,
 admits the supplied observations (FR-106), evaluates through S6a (FR-107 or
@@ -47,7 +47,7 @@ selected as a claim to work around the Value-call boundary.
 A `ClauseRunRequest`:
 
 - the unit's source bytes and its two FR-001 labels, or an I3 extracted
-  source (ADR-011 I3, `qsl-source`, under `qsl-replay`'s feature
+  source (ADR-011 I3, `fsl-source`, under `fsl-replay`'s feature
   `quire-extraction`; the root crate has no such feature) with its
   original document identity;
 - FR-056's package input (domain packages by canonical package identity) and
@@ -64,6 +64,12 @@ A `ClauseRunRequest`:
 - `SpineLimits`, `ObservationLimits` and the evaluation meter budget
   (FR-100's `accounting`).
 
+The request has no check-mode input. `CheckMode::Kernel` stays internal to
+function bodies, and every declared clause is checked under `Linked` (FR-952
+"Declared clauses"), so `run_clause` always runs a clause checked under
+`Linked`. A caller cannot ask for a clause to be checked under `Kernel`,
+because a declared clause whose obligation `Linked` refuses is never admitted.
+
 ## Outputs
 
 `Result<ClauseRunReport, ClauseRunRefusal>`. `ClauseRunRefusal` is only for a
@@ -73,10 +79,10 @@ selection, admission or evaluation result is a report.
 `ClauseRunReport` holds:
 
 - `disposition`: `stage` (`compile`, `select`, `admit` or `evaluate`),
-  `category` (`success`, `violation`, `undefined`, `refusal`,
+  `category` (`success`, `violation`, `refusal`,
   `unsupported`, `incomplete` or `internal-failure`), `truth` (for
-  `success`, and for a `violation` whose clause evaluated `false`), the
-  `UndefinedEvaluation{cause}` of an `undefined` disposition, whose clause
+  `success`, and `false` for a `violation`), the
+  `UndefinedEvaluation{cause}` of a `violation` whose clause
   evaluated undefined, with `cause` in FR-100's
   undefined `reason` spelling, and, for every other category, the one
   record: for `compile`, `select` and `admit` a `RefusalRecord` (code,
@@ -94,7 +100,7 @@ selection, admission or evaluation result is a report.
   source events" below;
 - usage: the admission work and the evaluation meter charges, separately.
 
-The report's `package_id` identifies the compiled QSL package. The report
+The report's `package_id` identifies the compiled FSL package. The report
 does not authenticate generated Rust, its source map or coverage-producer
 execution. [FR-267](FR-267-write-run-results-as-native-run-result-2.md)'s CG
 source-identity boundary requires a separate CG-owned producer/artifact
@@ -121,6 +127,7 @@ binding receipt when CG consumes the serialized result.
   report stage `select`, `missing_declaration`/`missing-name`.
 - If a `Function` selection's function does not declare a `Boolean` result,
   then the entry SHALL report stage `select`, `ill_typed`/`type-mismatch`,
+  naming the function and its declared result type as FR-867 states,
   before any call. `run_clause` runs a function as a claim; FR-100's `run`
   runs any value.
 - If admission (FR-106) fails, then the entry SHALL report stage `admit` with
@@ -139,12 +146,28 @@ binding receipt when CG consumes the serialized result.
   claim selection's rule; the typed Value call retains FR-100's distinct
   call-admission and lookup outcomes.
 - The entry SHALL map `Completed(true)` to `success` (exit 0) and
-  `Completed(false)` to `violation` (exit 10), as QSpec FR-301 does for a
+  `Completed(false)` to `violation` (exit 10), as FSpec FR-301 does for a
   claim, with `truth` set.
 - When a clause evaluates undefined (the kernel `Outcome::Undefined(u)` or
   a family's `FamilyResult::Undefined(u)`), the entry SHALL report stage
-  `evaluate`, category `undefined` (FR-285) with
-  `UndefinedEvaluation{cause}`, and exit 10 (ADR-018 RU-5, QSpec FR-301).
+  `evaluate`, category `violation` (FR-285), `truth` false, the claim
+  refuted with `UndefinedEvaluation{cause}`, and exit 10: a clause is a
+  claim, and an undefined claim does not hold (ADR-018 RU-5: "Refuted,
+  cause `UndefinedEvaluation{where, cause}`... No new result kind"; FSpec
+  FR-301: "A claim whose evaluation is undefined settles violation
+  (refuted)"). Category `undefined` belongs to a value run only (FR-100),
+  and FR-267 writes this report as its `undefined` kind with category
+  `violation`.
+- A clause run never reaches `sum-out-of-domain`. Under `Linked`, a `sum<N>`
+  whose running total can leave `N` refuses at `check` with
+  `undefined_expression`/`unproved-range` at the `sum` (FR-100 "`run` never
+  yields `sum-out-of-domain`"), so the entry reports stage `compile`, exit 20.
+  The mapping still SHALL be total: a constructed
+  `Outcome::Undefined(Undefined::SumOutOfDomain)` maps by the rule above to
+  stage `evaluate`, category `violation`, `truth` false,
+  `UndefinedEvaluation{cause: sum-out-of-domain}`, exit 10. The cause of an
+  undefined evaluation is always present; the report never carries a null
+  cause for an outcome the evaluator typed.
 - The entry SHALL map every other S6a outcome other than FR-100's internal
   failures, kernel or family, by FR-100's outcome mapping, to FR-100's
   `outcome` member and FR-100's exit status, category `refusal`,
@@ -169,8 +192,8 @@ binding receipt when CG consumes the serialized result.
   request's limits. The entry SHALL read no path, environment variable,
   clock or search location: every byte arrives in the request.
 - `run_clause` SHALL NOT be reachable by CG: FR-060's T12-A rule already
-  refuses any CG reference into `qsl_replay::spine`. Like FR-100's `run`, no
-  public item of `run_clause`'s signature names a `qsl_eval` path
+  refuses any CG reference into `fsl_replay::spine`. Like FR-100's `run`, no
+  public item of `run_clause`'s signature names a `fsl_eval` path
   (FR-100-AC-8).
 - A consumer SHALL NOT substitute the report's `package_id` for the external
   generated-source, source-map and producer-execution authentication required
@@ -216,13 +239,14 @@ decisions inside binders and called functions are out of scope here.
 | FR-109-AC-4 | A `Function` selection of `sameIdentity` with arguments `{b: child, a: root}` (given in that order) over the distinct-identities snapshot reports `violation`, `truth: false`; with `a` = `b` = `child`, `success`; with `b` naming `ghost`, stage `admit`, `invalid_runtime_input`/`wrong-role-mapping`; with an argument naming `c`, stage `admit`, FR-100's refusal for an unknown parameter; a function returning `Integer` reports stage `select`, `ill_typed`/`type-mismatch`, before any call. | Test |
 | FR-109-AC-5 | Running one request twice gives equal reports, including usage. For each S6a outcome other than `Completed`, the report's `outcome` member and exit code equal what FR-100's mapping gives for the same outcome (checked over the outcomes FR-100-AC-9 constructs); for the kernel `CheckedInvariant` and a `CallFailure::Fault`, which FR-100 handles as an internal failure, the report is stage `evaluate`, category `internal-failure`, carrying the fault's stage and invariant, with no `outcome` member and FR-100's internal-failure exit status. | Test |
 | FR-109-AC-6 | The healthy-parent request whose unit is an I3 extracted source reports `success`, exit 0, with the `package_id` its extracted body compiles to; violating-parent over the same source reports `violation`, exit 10; missing-model over the same source reports stage `compile`, `refusal`, `missing_import`/`missing-selection`, exit 20; the same unit in an `ix:formal` fence reports stage `compile`, `refusal`, `unknown_language`, exit 20, with no `package_id`. | Test |
-| FR-109-AC-7 | Over the model `M` of FR-107-AC-19 (`ready` with effective precondition `false`) and the clause `pre F using v on M::A::ready { self.ready() }`, run over a snapshot holding `r1` selecting `F`, the entry reports stage `evaluate`, category `undefined`, `UndefinedEvaluation{cause: precondition-false}`, no `truth`, exit 10. | Test |
-| FR-109-AC-8 | Given a successful clause run, CG consumption of its serialized result still refuses campaign binding when its external receipt is missing or its generated-source or source-map association is mismatched, as FR-267-AC-4 and FR-267-AC-6 require; the QSL report retains its original success disposition and package identity. | Test |
+| FR-109-AC-7 | Over the model `M` of FR-107-AC-19 (`ready` with effective precondition `false`) and the clause `pre F using v on M::A::ready { self.ready() }`, run over a snapshot holding `r1` selecting `F`, the entry reports stage `evaluate`, category `violation`, `truth` false, `UndefinedEvaluation{cause: precondition-false}`, exit 10. | Test |
+| FR-109-AC-8 | Given a successful clause run, CG consumption of its serialized result still refuses campaign binding when its external receipt is missing or its generated-source or source-map association is mismatched, as FR-267-AC-4 and FR-267-AC-6 require; the FSL report retains its original success disposition and package identity. | Test |
 | FR-109-AC-9 | The step 1 unit with the clause `invariant Ratio using v on Config::ConfigVersion at current { 6 / (self.versionNumber - self.versionNumber) >= 0 }` added reports stage `compile`, `ill_typed`, exit 20, no `package_id` and no `truth`, and admits and evaluates nothing: the checker refuses integer `/` that has no `Rational` expected type, so no linked clause divides by zero at run time. | Test |
 | FR-109-AC-10 | FR-115's forbidden-parent-change `Frame` run reports stage `evaluate`, category `violation`, `truth: false`, and a `refusal` record with `frame_violation`/`unauthorized-change` and its complete `FrameWitness` as `frame_witness`; it carries no `outcome` or FR-351 separating `witness`. The same frame's changed-version run reports `success` with no `refusal` or `frame_witness`. | Test |
 | FR-109-AC-11 | For a `Clause` run completing a Boolean over nested implication, conjunction, disjunction and negation (`(false implies (true implies false))` under `and`, an implication under `or` and under `not`), `consequent_source_events` is `Produced` with one event per `implies` node in pre-order, `index` equal to position, the report's `package_id`, `implication` and `consequent` regions equal to the checked package source map's regions of those nodes, and the `Entered`, `Skipped` or `NotReached` state native evaluation gave each, for both a true and a false verdict; a clause with no implication reports `Produced` with no events. | Test |
 | FR-109-AC-12 | For a clause whose implication is under a `forall` or `exists` binder, or whose body calls a function, `consequent_source_events` is `Refused` with `consequent-events-under-binder` or `consequent-events-called-function`, never `NotReached`, and the report's disposition and `truth` equal those of the same run without the events. | Test |
 | FR-109-AC-13 | A run that completes no Boolean truth (such as an exhausted work budget) and a `Function` selection report `Unavailable`; a completed `Temporal` verdict reports `Refused` with `consequent-events-temporal-clause`; a pending temporal verdict reports `Unavailable`. | Test |
+| FR-109-AC-14 | Over the outcomes FR-100-AC-9 constructs, as AC-5 checks them, a constructed `Outcome::Undefined(Undefined::SumOutOfDomain)` passed through `run_clause`'s mapping reports stage `evaluate`, category `violation`, `truth` false and `UndefinedEvaluation{cause: sum-out-of-domain}`, exit 10, and its cause is present, never null. A state clause `invariant S using v on Config::ConfigVersion at current { sum<Int[1, 9]>(x in seq(i in 0 .. 1: i): x) >= 1 }` added to the step 1 unit reports stage `compile`, `undefined_expression`/`unproved-range` at the `sum`, exit 20, and admits and evaluates nothing; a `sum<Int[0, 9]>` over the same sequence runs and holds, exit 0. | Test (TC-2830) |
 
 ## Dependencies
 
@@ -236,7 +260,7 @@ decisions inside binders and called functions are out of scope here.
   handling and exit statuses), FR-106, FR-107 (admission and evaluation), FR-099 and FR-027
   (the spine compile), FR-098, FR-060 (the CG
   boundary).
-- QSpec FR-301 (exit codes); ADR-018 RU-5 (an undefined claim is
+- FSpec FR-301 (exit codes); ADR-018 RU-5 (an undefined claim is
   refuted).
 - [FR-390](FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md)
   evaluates a protocol node's expression from a checked package through the same

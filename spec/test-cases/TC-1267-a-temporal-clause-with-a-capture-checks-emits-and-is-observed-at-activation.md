@@ -3,7 +3,7 @@ id: TC-1267
 title: "A temporal clause with a capture checks, emits and is observed at activation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: verifies
 ---
 # TC-1267: A temporal clause with a capture checks, emits and is observed at activation
@@ -107,10 +107,10 @@ Tag the tests `#[trace("TC-1267", "FR-337-AC-n")]`, and the test of AC-8's later
   2 located at `z`, and each altered payload settles `inconclusive`,
   `ReplayParity` (FR-339's rejection waits on its checker); the footprint holds `Counter::value` with the `over` receiver only with the
   capture.
-- Step 8: each emitted formula atom uses `quire.op.temporal.aggregate` with
+- Step 8: each emitted formula atom uses `filament.op.temporal.aggregate` with
   one `aggregate` argument whose bindings and literals equal the accepted
-  argument of QSpec's `temporal-aggregate-vectors.json` vector over the same
-  inputs (AG-01 to AG-06, AG-08, AG-09; read from `$QSPEC_DIR`), the
+  argument of FSpec's `temporal-aggregate-vectors.json` vector over the same
+  inputs (AG-01 to AG-06, AG-08, AG-09; read from `$FSPEC_DIR`), the
   `fraction` threshold `1` written as the rational `1`; omitted and explicit
   `min_count 1` yield the same key, reformatting changes neither key nor
   package identity, and each semantic payload mutation changes both;

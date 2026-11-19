@@ -3,7 +3,7 @@ id: TC-538
 title: "An undefined-evaluation counterexample settles refuted with its cause"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
 ---
 # TC-538: An undefined-evaluation counterexample settles refuted with its cause

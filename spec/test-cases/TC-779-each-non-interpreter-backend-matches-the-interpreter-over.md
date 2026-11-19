@@ -3,7 +3,7 @@ id: TC-779
 title: "Each non-interpreter backend matches the interpreter over the conformance corpus and generated programs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-295
+  - target: ix://agent-ix/filament-spec-language/FR-295
     type: verifies
 ---
 # TC-779: Each non-interpreter backend matches the interpreter over the conformance corpus and generated programs

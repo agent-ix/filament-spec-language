@@ -3,7 +3,7 @@ id: FR-006
 title: "Check types and guarded definedness"
 type: FR
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/US-002"
+  - target: "ix://agent-ix/filament-spec-language/US-002"
     type: traces_to
 ---
 # FR-006: Check types and guarded definedness
@@ -24,7 +24,7 @@ Reference-evaluable clause or typed refusal.
 
 The checker consumes the reviewed finite-state semantics. Presence facts cannot cross observations. Numeric bounds and units are explicit. Literal/size inference refuses ambiguity. Unsupported forms are retained as obligations rather than erased.
 
-**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state-clause definedness, presence and range proofs, `ambiguous-literal`) and FR-172 (hyper and relation clauses), checked by the qsl-semantics suites tagged with those requirements.
+**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state-clause definedness, presence and range proofs, `ambiguous-literal`) and FR-172 (hyper and relation clauses), checked by the fsl-semantics suites tagged with those requirements.
 
 ## Acceptance Criteria
 

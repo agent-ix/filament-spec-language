@@ -3,11 +3,11 @@ id: TC-1037
 title: "A Frame run reports a changed relationship link as a link change of its frame witness"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-116
+  - target: ix://agent-ix/filament-spec-language/FR-116
     type: verifies
 ---
 # TC-1037: A Frame run reports a changed relationship link as a link change of its frame witness

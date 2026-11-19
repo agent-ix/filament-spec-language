@@ -3,7 +3,7 @@ id: TC-241
 title: "Kind mapping runs interfaces first, and a port whose interface type is not an Interface refuses wrong-export"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: verifies
 ---
 # TC-241: Kind mapping runs interfaces first, and a port whose interface type is not an Interface refuses wrong-export

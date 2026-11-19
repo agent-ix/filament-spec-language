@@ -3,7 +3,7 @@ id: TC-572
 title: "A receiver-scoped modifies entry limits candidates and the frame decision to the receiver"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: verifies
 ---
 # TC-572: A receiver-scoped modifies entry limits candidates and the frame decision to the receiver

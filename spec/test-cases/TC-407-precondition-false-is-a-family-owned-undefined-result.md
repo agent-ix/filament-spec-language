@@ -3,7 +3,7 @@ id: TC-407
 title: "A false dispatched precondition reaches the caller as a family-owned undefined result, not a kernel Undefined"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-407: A false dispatched precondition reaches the caller as a family-owned undefined result, not a kernel Undefined
@@ -20,10 +20,10 @@ The result is not a family refusal, not a kernel `Outcome::Undefined` inside
 `FamilyOutcome::Evaluated` and not a panic. The kernel `Undefined` has no `PreconditionFalse` variant (ADR-013
 O-13, O-16). Scope: FR-090-AC-11.
 
-The fixture is `qsl-eval/tests/it/dispatch_calls.rs`'s D06 scenario (QSpec TC-196
+The fixture is `fsl-eval/tests/it/dispatch_calls.rs`'s D06 scenario (FSpec TC-196
 D06): an `A`-typed receiver whose operation `size` has precondition `false`.
 That test asserts `Outcome::Undefined(Undefined::PreconditionFalse(_))` on
-QSL's kernel copy, which is the shape ADR-013 O-16 removes.
+FSL's kernel copy, which is the shape ADR-013 O-16 removes.
 
 This catches three faults: keeping `PreconditionFalse` as a kernel
 `Undefined` reason; carrying it in `FamilyResult::Refused`, which collapses
@@ -32,7 +32,7 @@ expression as the call locus instead of the dispatched call node.
 
 ## Test Procedure
 
-1. Reuse `qsl-eval/tests/it/dispatch_calls.rs`'s D06 package: an `A`-typed receiver
+1. Reuse `fsl-eval/tests/it/dispatch_calls.rs`'s D06 package: an `A`-typed receiver
    `a1` whose operation `size` has precondition `false` and no redefinition
    ancestor.
 2. Evaluate the checked clause expression holding the dispatched call
@@ -50,7 +50,7 @@ Tag the test `#[trace("FR-090-AC-11", "TC-407")]`.
 - Step 3's `record.reason` is `UndefinedReason` `precondition-false`.
 - Step 4's `record.fields` name operation `size`, selected method `model.A.size`
   and receiver `a1`.
-- Step 3's `e.location` is the `quire_semantic_value::location::ExpressionLocation` of the dispatched call
+- Step 3's `e.location` is the `filament_semantic_value::location::ExpressionLocation` of the dispatched call
   node `a1.size()`, which differs from the location of the evaluated clause
   expression's root.
 - Step 2 does not panic, and its result matches step 3's pattern;

@@ -3,14 +3,14 @@ id: TC-1192
 title: "The conformance runner gives equal report and output bytes across runs and test thread counts"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: verifies
 ---
 # TC-1192: The conformance runner gives equal report and output bytes across runs and test thread counts
 
 ## Description
 
-Run the FR-350 determinism sample of the published QSpec corpus in four
+Run the FR-350 determinism sample of the published FSpec corpus in four
 child test processes, two with one test thread and two with two test
 threads and a concurrent companion run, and show the report and each passed
 vector's output bytes do not change. Inspect the
@@ -20,10 +20,10 @@ Scope: FR-350-AC-6, FR-350-AC-7.
 
 ## Test Procedure
 
-1. Select the determinism sample from the corpus at `QSPEC_DIR`. Within
+1. Select the determinism sample from the corpus at `FSPEC_DIR`. Within
    each capability of the default scope, for each vector class, take the
    bytewise-smallest id among the vectors of that class whose own
-   applicability names a QSL consumer type.
+   applicability names an FSL consumer type.
 2. From one parent test, start four child `cargo test` processes with the
    same build and default limits, each writing to its own output
    directory:

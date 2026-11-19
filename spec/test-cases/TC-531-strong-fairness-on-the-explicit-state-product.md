@@ -3,7 +3,7 @@ id: TC-531
 title: "The explicit-state model checker decides strong fairness by SCC refinement"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-130
+  - target: ix://agent-ix/filament-spec-language/FR-130
     type: verifies
 ---
 # TC-531: The explicit-state model checker decides strong fairness by SCC refinement

@@ -3,7 +3,7 @@ id: TC-518
 title: "S3 checks fairness constraints and interval operators of infinite-trace clauses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: verifies
 ---
 # TC-518: S3 checks fairness constraints and interval operators of infinite-trace clauses

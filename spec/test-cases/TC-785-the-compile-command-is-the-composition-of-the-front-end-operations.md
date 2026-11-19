@@ -3,14 +3,14 @@ id: TC-785
 title: "The compile command is the composition of the front-end operations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
 ---
 # TC-785: The compile command is the composition of the front-end operations
 
 ## Description
 
-Verify that QSL `command`'s compile request handling writes what FR-278's operations produce, and exits by FR-285.
+Verify that FSL `command`'s compile request handling writes what FR-278's operations produce, and exits by FR-285.
 
 Scope: FR-027-AC-11.
 

@@ -3,27 +3,27 @@ id: FR-209
 title: "Start a protocol instance per trigger under the max_live_instances bound"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-171
+  - target: ix://agent-ix/filament-specification/FR-171
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-428
+  - target: ix://agent-ix/filament-specification/FR-428
     type: depends_on
 ---
 # FR-209: Start a protocol instance per trigger under the max_live_instances bound
@@ -32,7 +32,7 @@ relationships:
 
 For a protocol clause with `activation on each (x: T) when {g}`, the
 protocol system SHALL start one protocol instance per `activate(T)` step as
-QSpec FR-428 states, and under every activation kind SHALL remove an
+FSpec FR-428 states, and under every activation kind SHALL remove an
 instance in the step that finishes it (ADR-027 AE-1 to AE-3, ST-13).
 
 The model checker SHALL limit the live instances of a run to the
@@ -76,7 +76,7 @@ is never mistaken for a proof over every instance count.
 
 - The protocol system SHALL give one `activate(T)` step per record of `T`
   that satisfies `g`, as an environment step independent of the model's
-  operations, starting one instance with QSpec FR-428's instance ordinal,
+  operations, starting one instance with FSpec FR-428's instance ordinal,
   captures and settled root thread.
 - The records of `T` SHALL be `T`'s value domain as FR-215 enumerates a
   binder's record type: every record that gives each field a value of its
@@ -98,7 +98,7 @@ is never mistaken for a proof over every instance count.
 ### The bound
 
 - `max_live_instances` SHALL be a method bound with no ceiling, outside
-  the subject; its obligation identity excludes it, as QSpec FR-428-AC-3
+  the subject; its obligation identity excludes it, as FSpec FR-428-AC-3
   states. A request that leaves it unset
   SHALL run with 3.
 - At a state with `max_live_instances` live instances, the model checker
@@ -156,6 +156,7 @@ is never mistaken for a proof over every instance count.
 | FR-209-AC-6 | Over the same protocol, `always eventually holds(k.v = 0)` with `max_live_instances` 1 settles V-4 with a lasso whose loop holds `activate(Tick)`, `attempt(set)` and the instance's `finish` and passes through the instance-limited state after `activate`, where `activate` is enabled and not taken; the lasso replays and is not rejected as unfair. | Test (TC-654) |
 | FR-209-AC-7 | FR-209-AC-1's protocol with its body `repeat R by p visible() while { true } attempt Done on set` (no `max`, the shared grammar's `repetition` with `p` the protocol's role) and `always eventually holds(k.v = 0)`, with `max_live_instances` 1, settles V-4 with a lasso whose loop is the `attempt(set)` self-loop at the instance-limited state after `activate(Tick)`, where `activate` is enabled at every loop state and never taken; the lasso is fair and replays. A checker that counts `activate` in a fairness class rejects that loop and settles V-6 instead, so this AC fails for it. | Test (TC-654) |
 | FR-209-AC-8 | With `record Tick { n: Int[0, 2]; up: Boolean; }`, `on each (x: Tick) when {x.n > 0}` over FR-209-AC-1's `Cell` and body gives, at the initial state with `max_live_instances` 1, exactly four `activate(Tick)` steps, for `{n: 1, up: false}`, `{n: 1, up: true}`, `{n: 2, up: false}` and `{n: 2, up: true}`, and building the system refuses nothing; with `record Tick { n: Integer; }` the run returns `RequiresBound` naming `x`, `Tick` and `n` before any state is explored. With `Tick` holding a field `key: Reference<M::Cell>` and `cells` a population of `Cell`, the guard `{present(lookup<M::Cell>(M::cells, x.key) absent empty)}` refuses `ill_typed`/`operator-ineligible` at the `lookup`, naming the stage `protocol-activation`, and no `missing-name`. | Test (TC-654) |
+| FR-209-AC-9 | Over `Cell` (`v: Int[0, 3]`) and `Level` (`Int[0, 3]`), `on each (x: Level) when {true}` with the protocol captures `lower: Boolean = x < 2`, `big: Boolean = not lower` and `fresh: Boolean = k.v = 0`, written in that order, and the body `attempt T on inc` then `event E` with the constraint `big and not lower and fresh`, at `max_live_instances` 1: each `activate(Level)` step evaluates the captures in source order over the trigger and the model state at the step, and freezes them, so that after `attempt(T)` has made `k.v = 1`, `event(E)` is enabled for the triggers 2 and 3 and for no other trigger. | Test (TC-654) |
 
 ## Dependencies
 
@@ -166,12 +167,12 @@ is never mistaken for a proof over every instance count.
   [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md)
   (the V-6 row and the terminal record), FR-205, FR-206.
 - The bound is outside the obligation identity: two requests that differ only
-  in `max_live_instances` carry equal obligation identities, which QSpec
+  in `max_live_instances` carry equal obligation identities, which FSpec
   FR-428-AC-3 states and the request writer (ADR-013 O-09) computes.
-- QSpec owns activation on each, its instance identity and the bound with
+- FSpec owns activation on each, its instance identity and the bound with
   its default, V-6 cause and terminal-record statement (ADR-027 QS-11):
-  QSpec FR-171, FR-331.
+  FSpec FR-171, FR-331.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-428 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-428 (Linear STD-140).

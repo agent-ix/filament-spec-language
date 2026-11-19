@@ -3,11 +3,11 @@ id: TC-864
 title: "A seeded spec-versioning regression fails the gate naming exactly that case"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-340
+  - target: ix://agent-ix/filament-spec-language/FR-340
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: verifies
 ---
 # TC-864: A seeded spec-versioning regression fails the gate naming exactly that case

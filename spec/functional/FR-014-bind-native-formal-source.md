@@ -3,13 +3,13 @@ id: FR-014
 title: "Bind exact native source to formal coordinates"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: depends_on
 ---
 # FR-014: Bind exact native source to formal coordinates
@@ -30,7 +30,7 @@ in [the bridge contract](../../docs/formal-source-binding.md).
 
 A formal SourceSpan or a native Span respectively. A rejected request returns
 Box<FormalSourceError> (ADR-011 §6.1: `diagnostic` does not import
-`quire_contract_model`, so `FormalSourceError` pairs the shared `Box<Diagnostic>`
+`filament_contract_model`, so `FormalSourceError` pairs the shared `Box<Diagnostic>`
 with its own `upstream` sibling field) with invalid_source_map and
 source_map phase, located at byte zero of the bound native source. The
 binding exposes both identities and the original immutable Source, including

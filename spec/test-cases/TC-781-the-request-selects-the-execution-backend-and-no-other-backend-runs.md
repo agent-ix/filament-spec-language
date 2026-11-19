@@ -3,7 +3,7 @@ id: TC-781
 title: "The request selects the execution backend and no other backend runs in its place"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: verifies
 ---
 # TC-781: The request selects the execution backend and no other backend runs in its place

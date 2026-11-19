@@ -3,11 +3,11 @@ id: TC-985
 title: "Record-valued model fields and observations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-985: Record-valued model fields and observations
@@ -26,10 +26,10 @@ the same selected Semantic IR domain package and checked spine package.
   capable of naming `Account.address` and `Address.street` separately.
 - A second record `Node { next?: Node }` supplies a finite recursive type.
   Every record has the exact FR-208 meaning id; each declaration and member
-  retains its IR node identity. The QSpec FR-322 record-node schemas are
+  retains its IR node identity. The FSpec FR-322 record-node schemas are
   selected for checked-package emission.
-- Snapshot and invocation documents use FR-106's `quire.state.snapshot/v1`
-  and `quire.state.invocation/v1` forms, addressed by their document identity.
+- Snapshot and invocation documents use FR-106's `filament.state.snapshot/v1`
+  and `filament.state.invocation/v1` forms, addressed by their document identity.
 
 ## Test Procedure
 

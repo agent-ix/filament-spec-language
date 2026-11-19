@@ -3,25 +3,25 @@ id: FR-258
 title: "Check, lower and emit expressions and types at any depth"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/NFR-011
+  - target: ix://agent-ix/filament-spec-language/NFR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-356
+  - target: ix://agent-ix/filament-spec-language/FR-356
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-258: Check, lower and emit expressions and types at any depth
@@ -31,8 +31,8 @@ relationships:
 The S3 checker SHALL type, check obligations for, lower and key expressions
 and types of any depth, bounded only by the checking node limit, the
 per-declaration preimage byte limit and the checking work budget (ADR-030
-D-4.3, NFR-011). QSpec FR-146 defines no expression depth or nesting limit
-for checking; this requirement carries that rule through QSL's checker.
+D-4.3, NFR-011). FSpec FR-146 defines no expression depth or nesting limit
+for checking; this requirement carries that rule through FSL's checker.
 
 ## Behavior
 
@@ -61,8 +61,8 @@ for checking; this requirement carries that rule through QSL's checker.
    length on entry. It SHALL charge one node unit per leaf it appends and one
    work unit per composite it enters, as FR-093 defines, and nothing per
    level.
-5. **Stratified semantic terms.** QSL's semantic term SHALL be a set of
-   stratified types matching the v2 body grammar of QSpec FR-322: a leaf
+5. **Stratified semantic terms.** FSL's semantic term SHALL be a set of
+   stratified types matching the v2 body grammar of FSpec FR-322: a leaf
    term, a group term, a tuple term, a member term and a body term, none
    naming itself or a higher stratum. A binding never holds a binding. Lowering SHALL place every composite subterm in its own
    node, reached by reference. Node keying over a body term SHALL be a
@@ -81,7 +81,7 @@ for checking; this requirement carries that rule through QSL's checker.
 | FR-258-AC-2 | On a thread with a 512 KiB stack, structural equality over a parameter typed with 100,000 nested `Option`s around `Text[0, 8; nfc]`, and over a chain of 100,000 records each holding the next in an optional field `next` and the last holding a `Text[0, 8; nfc]` field `label`, each lowers with one text leaf, under S1 and S3 limits raised to fit it: the `Option` chain's path has one `inner` segment per level, and the record chain's has two per level (`field:next`, `inner`) and ends `field:label`. A parameter typed with 100,000 nested `Option`s around `Boolean` is keyed by FR-092's type-keying walk on the same thread. | Test (TC-726) |
 | FR-258-AC-3 | At the default limits, a function whose body is the longest `a and (…)` chain S1's defaults admit checks, lowers and emits with no outcome naming a depth. `CheckingLimits::default()` holds 100000 nodes, 16777216 preimage bytes and 16777216 work units, and constructing `CheckingLimits` with any node count succeeds. | Test (TC-727) |
 | FR-258-AC-4 | A function whose body is a 1,000-term sum (1,999 expression nodes), checked with `s3.nodes` at 1,500, stops with `stage_limit_exceeded`/`node-count-exceeded` naming bound 1,500, count 1,501 and setting `s3.nodes`, at the node whose entry failed. Checked again with `s3.nodes` at 5,000 through the library builder, the replay request's `stage_limits` entry and FR-255's settings operation given `s3.nodes=5000`, it checks each time. With `s3.work_units` one below the declaration's measured work `w`, it stops with `stage_limit_exceeded`/`work-budget-exceeded` naming bound `w - 1`, count `w` and setting `s3.work_units`, at the declaration's span: the work charge is made once per declaration, not per node. At `w` the declaration's own charge is admitted, and the stop is a later lowering charge. | Test (TC-727) |
-| FR-258-AC-5 | Every node body lowering writes is in QSpec FR-322's five-stratum v2 body grammar (Leaf, Group, Tuple, Member, Body): across the checked packages of TC-415 and of AC-1, no `application` argument, `aggregate` member or `binding` value holds a term of its own stratum or a higher one, no `binding` holds a `binding`, and every composite subterm is a `reference` to its own node. | Test (TC-725) |
+| FR-258-AC-5 | Every node body lowering writes is in FSpec FR-322's five-stratum v2 body grammar (Leaf, Group, Tuple, Member, Body): across the checked packages of TC-415 and of AC-1, no `application` argument, `aggregate` member or `binding` value holds a term of its own stratum or a higher one, no `binding` holds a `binding`, and every composite subterm is a `reference` to its own node. | Test (TC-725) |
 | FR-258-AC-6 | The text-leaf walk's heap stack never holds more entries than the visits it has entered, and enters two visits per charged record: over a chain of 1,000 records ending in one `Text` field it enters `2 × 1,001 + 1` visits and charges at least one work unit per record. | Test (TC-726) |
 
 ## Dependencies
@@ -103,8 +103,8 @@ for checking; this requirement carries that rule through QSL's checker.
 
 ## References
 
-- QSpec FR-146 (no checking depth limit; no host stack outcome) and FR-322
+- FSpec FR-146 (no checking depth limit; no host stack outcome) and FR-322
   (the v2 body grammar).
-- QSpec FR-460, the ecosystem depth rule, and FR-322 AC-39 to AC-42, the
+- FSpec FR-460, the ecosystem depth rule, and FR-322 AC-39 to AC-42, the
   stratified v2 body grammar (Linear STD-143, which supersedes STD-125).
 - Linear QSL-381.

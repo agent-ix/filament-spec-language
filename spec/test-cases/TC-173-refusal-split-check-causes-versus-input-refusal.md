@@ -3,7 +3,7 @@ id: TC-173
 title: "Refusal split: check causes in check, InputRefusal in value::expression"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: verifies
 ---
 # TC-173: Refusal split: check causes in check, InputRefusal in value::expression
@@ -16,7 +16,7 @@ for `value::expression::refusal`: `check` defines every check-cause type
 `CheckingStage`, `CheckingLimitKind`, `DispatchFunctionRole`,
 `InvalidDispatchDeclaration`, `Location`, `Origin`, `ProvedInterval`)
 and does not define `InputRefusal` or `WrongSnapshotCause` (both live in
-`quire-semantic-value`'s `call` module); `value::expression`
+`filament-semantic-value`'s `call` module); `value::expression`
 defines `InputRefusal`, relocated beside `CheckedPackage::call`'s and
 `CheckedPackage::evaluate`'s admission code, and does not define any of the
 twelve check-cause types. This test catches both an over-move (`InputRefusal`
@@ -30,7 +30,7 @@ This test formerly also verified the one mechanical consequence of
 relocating `WrongSnapshotCause` onto that file: its import updating to name
 `check`, with no other change to the file. `value/outcome.rs` does not exist
 now — the module is deleted and every `value` caller repointed onto
-`quire_exact::{Outcome, Refusal, Undefined}` directly (TC-390) — so there is
+`filament_exact::{Outcome, Refusal, Undefined}` directly (TC-390) — so there is
 no file left for steps 4-5 to read or diff, and FR-068-AC-8, the criterion
 they verified, is retired for the same reason. Nothing takes their place: the
 one import path they checked is gone along with the file that carried it,

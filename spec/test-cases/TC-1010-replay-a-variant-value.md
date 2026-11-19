@@ -3,7 +3,7 @@ id: TC-1010
 title: "Replay admits and encodes a variant value and refuses each malformed form at its nested path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: verifies
 ---
 # TC-1010: Replay admits and encodes a variant value and refuses each malformed form at its nested path

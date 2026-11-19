@@ -3,31 +3,31 @@ id: FR-158
 title: "Cut the model-check search with a state constraint"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-341
+  - target: ix://agent-ix/filament-specification/FR-341
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-382
+  - target: ix://agent-ix/filament-specification/FR-382
     type: depends_on
 ---
 # FR-158: Cut the model-check search with a state constraint
@@ -52,15 +52,15 @@ boundary states, never `proved` (US-019).
 
 ## Inputs
 
-- A `constraint` clause of the unit, in QSpec FR-382's syntax: ADR-021 §7.3
+- A `constraint` clause of the unit, in FSpec FR-382's syntax: ADR-021 §7.3
   writes `constraint Low using v on M::Counter at current { self.v <= 1 }`.
   S2 builds it as a `StateClauseForm` of kind `Constraint` (FR-102), S3
   checks it, and S4 emits it as a `state`/`state_clause` node whose clause
-  member is `constraint` (FR-105, QSpec FR-341).
+  member is `constraint` (FR-105, FSpec FR-341).
 - `ModelCheckRequest.reductions.constraint: Option<ClauseName>` (FR-159),
   whether the request's subject is a model subject or a protocol subject
   (FR-215): the constraint clause's declared name in the library request; on
-  the wire, the node key of its `state_clause` node (QSpec FR-382).
+  the wire, the node key of its `state_clause` node (FSpec FR-382).
 
 ## Outputs
 
@@ -85,7 +85,7 @@ and, per run, the count of boundary states reached.
 - **Syntax.** S1 SHALL parse `constraint`, an identifier, `using`, an
   identifier, `on`, a type name, `at current` and a block as an alternative
   of the state-clause production, exactly as it parses an invariant with the
-  leading `constraint` (QSpec FR-382 "Constraint clause syntax"). `constraint`
+  leading `constraint` (FSpec FR-382 "Constraint clause syntax"). `constraint`
   leads a declaration only in declaration-head position. A `constraint` head
   followed by an operation name, or with no `at current`, SHALL refuse
   `invalid_syntax`.
@@ -129,9 +129,9 @@ and, per run, the count of boundary states reached.
   naming it, before any expansion. The same resolution and refusal apply to
   a request whose subject is a protocol subject.
 - **Wire form.** The request writer SHALL write `reductions.constraint` as
-  the node key of the resolved clause's `state_clause` node (QSpec FR-382),
+  the node key of the resolved clause's `state_clause` node (FSpec FR-382),
   and the terminal record's method SHALL name the constraint by the same
-  node key on the wire (QSpec FR-331 terminal record `constraint`) and by
+  node key on the wire (FSpec FR-331 terminal record `constraint`) and by
   its declared name in process. A request reader SHALL resolve a node key to
   the constraint clause whose node it is, and SHALL refuse a node key that
   names no `state_clause` node of clause `constraint` in the package
@@ -179,7 +179,7 @@ universe `{a, b, c}`, all at 0; constraint `Low` (`self.v <= 1`); instance
 | FR-158-AC-3 | A constraint that evaluates `Undefined` at a reached state settles the item `Violated` with cause `UndefinedEvaluation` and a replaying counterexample ending at that state, and that state is not a boundary state. A request naming an absent constraint refuses `invalid_runtime_input`/`invalid-value` naming it, with no state expanded. A constraint false at the initial state makes it a boundary state, and the run stores one state. With no universe for `counters`, the constrained run still returns `RequiresBound`. | Test (TC-581) |
 | FR-158-AC-4 | The constrained and unconstrained requests for one claim have equal obligation identities and different request identities, no result of one settles the other, and the constrained run's terminal record names `Low` in its method. Repeating AC-1's run gives equal outcomes and equal boundary counts. | Test (TC-581) |
 | FR-158-AC-5 | Over ADR-025 §10's `SB` with `constraint Zero using v on M::Cell at current { self.v <= 0 }` named by the request: under `sc` the run stores 3 states, expands the initial state and settles `ConstraintReached{boundary_states: 2}`, the states after `Sx` and after `Sy` being boundary states; under `tso` the run settles `Violated` with the unconstrained run's depth-4 counterexample `Sx`, `Sy`, `Lx`, `Ly`, because `Zero` reads memory values and no state on that path has flushed a store; under `ra` (`max_messages` 4) the run stores 3 states and settles `ConstraintReached{boundary_states: 2}` with no counterexample, because after `Sx` the mo-last message of `x` holds 1 although `right`'s view still reads `x`'s initial message, and after `Sy` likewise for `y`, so every state after a store is a boundary state and the unconstrained run's violation, which needs both stores, is never reached. `ProtocolSystem`'s `offered_reductions` names the constraint. A request over `SB` naming an absent constraint refuses `invalid_runtime_input`/`invalid-value` naming it, with no state expanded. | Test (TC-581) |
-| FR-158-AC-6 | The unit declaring `constraint Low using v on M::Counter at current { self.v <= 1 }` and `invariant Wide using v on M::Counter at current { self.v <= 3 }` parses, builds `Low` as a `StateClauseForm` of kind `Constraint` (FR-102) and checks; S4 emits for `Low` one `state`/`state_clause` node whose kind member is `{kind: "state_clause", clause: "constraint"}`, anchored at the `Counter` object type node and binding `self` alone, and the package passes QSL's I2 read; the `requirements` hook returns a record for `Wide` and none for `Low`. A request naming `Low` runs AC-1's run, and its wire request carries `Low`'s node key as `reductions.constraint`; a request naming `Wide`, and a wire request whose `reductions.constraint` is `Wide`'s node key, each refuse `invalid_runtime_input`/`invalid-value` naming the constraint, with no state expanded. `constraint Bad using v on M::Counter::bump { true }` refuses `invalid_syntax`. A clause run selecting `Low` over a snapshot with every counter at 0 reports `truth: true`. | Test (TC-581) |
+| FR-158-AC-6 | The unit declaring `constraint Low using v on M::Counter at current { self.v <= 1 }` and `invariant Wide using v on M::Counter at current { self.v <= 3 }` parses, builds `Low` as a `StateClauseForm` of kind `Constraint` (FR-102) and checks; S4 emits for `Low` one `state`/`state_clause` node whose kind member is `{kind: "state_clause", clause: "constraint"}`, anchored at the `Counter` object type node and binding `self` alone, and the package passes FSL's I2 read; the `requirements` hook returns a record for `Wide` and none for `Low`. A request naming `Low` runs AC-1's run, and its wire request carries `Low`'s node key as `reductions.constraint`; a request naming `Wide`, and a wire request whose `reductions.constraint` is `Wide`'s node key, each refuse `invalid_runtime_input`/`invalid-value` naming the constraint, with no state expanded. `constraint Bad using v on M::Counter::bump { true }` refuses `invalid_syntax`. A clause run selecting `Low` over a snapshot with every counter at 0 reports `truth: true`. | Test (TC-581) |
 
 ## Dependencies
 
@@ -190,10 +190,10 @@ universe `{a, b, c}`, all at 0; constraint `Low` (`self.v <= 1`); instance
   (deadlocks), [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md)
   (terminal stutter), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (the engine and its pre-check).
-- QSpec owns the constraint clause's surface syntax, boundary states and the
+- FSpec owns the constraint clause's surface syntax, boundary states and the
   constraint's place in the method (ADR-021 QS-1, QS-2).
 
 ## References
 
-- QSpec half: QSpec FR-382, FR-383 and FR-385 (Linear STD-134; ADR-021 §9 QS-1, QS-2). Owning ticket: Linear
+- FSpec half: FSpec FR-382, FR-383 and FR-385 (Linear STD-134; ADR-021 §9 QS-1, QS-2). Owning ticket: Linear
   QSL-368.

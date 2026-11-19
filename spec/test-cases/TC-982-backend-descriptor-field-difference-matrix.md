@@ -3,9 +3,9 @@ id: TC-982
 title: "Backend descriptor field differences have isolated registration outcomes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-288
+  - target: ix://agent-ix/filament-spec-language/FR-288
     type: verifies
 ---
 # TC-982: Backend descriptor field differences have isolated registration outcomes

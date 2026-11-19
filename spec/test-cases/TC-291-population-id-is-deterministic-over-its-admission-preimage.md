@@ -3,7 +3,7 @@ id: TC-291
 title: "PopulationId is deterministic over its admission preimage and distinguishes distinct admissions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-089
+  - target: ix://agent-ix/filament-spec-language/FR-089
     type: verifies
 ---
 # TC-291: PopulationId is deterministic over its admission preimage and distinguishes distinct admissions
@@ -23,7 +23,7 @@ from the admission preimage (domain package selection, `population_key`,
 admission role), and `admit_binding`/`admit_invocation` attach it to every
 `PopulationBinding` they admit. Backed by
 `tc_291_population_id_is_deterministic_over_its_admission_preimage`
-(`qsl-semantics/tests/it/model_population.rs`).
+(`fsl-semantics/tests/it/model_population.rs`).
 
 Catches an implementation that mints `PopulationId` from the document's
 content alone (ignoring which population declaration or domain package it

@@ -3,9 +3,9 @@ id: TC-921
 title: "Accounting budgets are settable by setting name and a reached budget names its setting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 # TC-921: Accounting budgets are settable by setting name and a reached budget names its setting
@@ -13,7 +13,7 @@ relationships:
 ## Description
 
 Verify that the settings operation sets each of the ten
-`quire.value.accounting/v1` counters by their bare counter names
+`filament.value.accounting/v1` counters by their bare counter names
 under the same operand grammar as the stage settings, that a reached budget
 settles `Incomplete` naming its setting, that a replay request's
 `stage_limits` accepts accounting counter settings, and that a native-run/1
@@ -26,7 +26,7 @@ Scope: FR-255-AC-7, FR-255-AC-8, FR-255-AC-9, FR-255-AC-10, FR-255-AC-11, FR-100
 
 1. Call the settings operation with `accounting.work_units=0` and call
    `seven` from `tests/fixtures/spine-compile.native` under the accounting
-   limits it returns; serialize the outcome as `quire-outcome/1`. Repeat
+   limits it returns; serialize the outcome as `filament-outcome/1`. Repeat
    with `accounting.work_units=1000000`.
 2. For each row of FR-255's accounting table, call the settings operation
    with `accounting.<counter>=123456789`. Call it with no operand, and with
@@ -39,7 +39,7 @@ Scope: FR-255-AC-7, FR-255-AC-8, FR-255-AC-9, FR-255-AC-10, FR-255-AC-11, FR-100
 5. Run the `1-draft` fixture request for `seven` with `call.accounting`
    naming all ten counters at the values 1 to 10 in accounting-table order,
    with `{"work_units": 7}`, with `{}`, and with no `accounting`, and read
-   the accounting limits of the `Call` handed to `qsl_replay::spine::run`.
+   the accounting limits of the `Call` handed to `fsl_replay::spine::run`.
 
 Tag the tests `#[trace("TC-921", "FR-255-AC-7")]`, `#[trace("TC-921", "FR-255-AC-8")]`, `#[trace("TC-921", "FR-255-AC-9")]`, `#[trace("TC-921", "FR-255-AC-10")]`, `#[trace("TC-921", "FR-255-AC-11")]`, `#[trace("TC-921", "FR-100-AC-13")]`.
 

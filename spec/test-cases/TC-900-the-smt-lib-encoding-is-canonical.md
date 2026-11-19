@@ -3,7 +3,7 @@ id: TC-900
 title: "The SMT-LIB transition-relation encoding is canonical and refuses unencodable constructs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
 ---
 # TC-900: The SMT-LIB transition-relation encoding is canonical and refuses unencodable constructs
@@ -65,14 +65,14 @@ reads the printed script or the stated refusal.
     FR-315-AC-27's `Tally` with `peek`.
 20. Read the false-extension `Counter` models and the altered base model
     FR-315-AC-28 describes, and replay what they yield.
-21. Inside `qsl-eval`, encode FR-315-AC-29's TP-1 and TP-3 items with their
+21. Inside `fsl-eval`, encode FR-315-AC-29's TP-1 and TP-3 items with their
     profile set to event-position false-extension after S3.
 22. Settle FR-315-AC-30's `Inductive` result whose rebuild meets `Fault`,
     the vault's `EncodingRefused` outcome carrying `Fault` with an `Ok`
     product, the `Err`-product outcome built when `HyperProductIdentity::of`
     faults, and that outcome against an item whose `of` gives an identity.
 23. Encode FR-315-AC-1's query and read the negated property's disjuncts.
-24. Call the encoding inside `qsl-eval` with a TP-1 item whose checked
+24. Call the encoding inside `fsl-eval` with a TP-1 item whose checked
     clause has its atom removed, and repeat FR-315-AC-21's requests.
 25. Over `CasRefinesCounter2`, encode the `Initial` query and the `commitA`
     `Step` query, read the command heads in order, rename and reorder the
@@ -91,7 +91,7 @@ reads the printed script or the stated refusal.
     and `CasRefinesCounter2`, read each assertion's subterms for the shapes
     FR-315-AC-56 excludes, and normalise one term per rule of FR-315
     "Normal form".
-29. Inside `qsl-eval`, normalize the two Int terms from FR-314-AC-18's
+29. Inside `fsl-eval`, normalize the two Int terms from FR-314-AC-18's
     `t28`: `(* 1 (- (+ 1 x) y))` and
     `(* 1 (- x (+ (- 1) y)))`. Compare their printed normal forms, and encode
     a refinement mapping with a product of two nonconstant terms to confirm

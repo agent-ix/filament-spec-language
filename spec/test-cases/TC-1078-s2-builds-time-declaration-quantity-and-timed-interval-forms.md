@@ -3,7 +3,7 @@ id: TC-1078
 title: "S1 and S2 parse and build time declarations, quantity literals and timed intervals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-393
+  - target: ix://agent-ix/filament-spec-language/FR-393
     type: verifies
 ---
 # TC-1078: S1 and S2 parse and build time declarations, quantity literals and timed intervals
@@ -39,5 +39,5 @@ Tag the tests `#[trace("TC-1078", "FR-393-AC-n")]`.
 - Step 5: a parse diagnostic at `3 ms` and `3` respectively, no form; the open-ended interval builds as a timed interval with lower quantity `2 s` and open upper end.
 - Step 6: equal forms and no facet diagnostic.
 - Step 7: `TypeForm::Clock`; a named type form with no `TypeForm::Clock`; a parse diagnostic at the declared name.
-- Step 8: S1/S2 build `TypeForm::Clock` at the tuple and union positions with the span of the `Clock` word, under both facet selections, without an S1/S2 diagnostic (FR-393-AC-8). At checked-package intake, the tuple position refuses `invalid_model_binding`/`malformed-declaration` at its `typeRef` under QSpec FR-322; the union payload refuses `unsupported_construct`/`declaration-form` at node `ix://<package identity>/variant/Tier-Gold`, path `Variant.payloadType`, under QSpec FR-154-AC-25 and FR-208-AC-15. Neither package is admitted.
+- Step 8: S1/S2 build `TypeForm::Clock` at the tuple and union positions with the span of the `Clock` word, under both facet selections, without an S1/S2 diagnostic (FR-393-AC-8). At checked-package intake, the tuple position refuses `invalid_model_binding`/`malformed-declaration` at its `typeRef` under FSpec FR-322; the union payload refuses `unsupported_construct`/`declaration-form` at node `ix://<package identity>/variant/Tier-Gold`, path `Variant.payloadType`, under FSpec FR-154-AC-25 and FR-208-AC-15. Neither package is admitted.
 - Step 9: the ordinary bound precedes the quantified `ForAll` item as written; the quantified item carries its binder, collection, clock, non-strict comparison, quantity and whole source span. The parallel `Exists` input builds the same typed quantified form with its quantifier kind retained and no S1/S2 diagnostic; S3 owns its invariant-shape refusal (FR-393-AC-9).

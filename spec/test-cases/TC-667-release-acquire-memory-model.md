@@ -3,14 +3,14 @@ id: TC-667
 title: "The ra memory model explores messages, views, fences and garbage collection"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: verifies
 ---
 # TC-667: The ra memory model explores messages, views, fences and garbage collection
 
 ## Description
 
-Verify `Ra`'s loads, stores, RMWs, fences, fork, join and channel rules, garbage collection, and the litmus outcomes of its column against QSpec FR-437's expected outcomes.
+Verify `Ra`'s loads, stores, RMWs, fences, fork, join and channel rules, garbage collection, and the litmus outcomes of its column against FSpec FR-437's expected outcomes.
 
 Scope: FR-222-AC-1 to FR-222-AC-5.
 
@@ -19,7 +19,7 @@ Scope: FR-222-AC-1 to FR-222-AC-5.
 1. Check `SB` under `ra`; count states; read the counterexample's depths,
    messages and views.
 2. Run each litmus test of ADR-025 §3.3 under `ra` and compare its
-   outcome with QSpec FR-437's expected outcome.
+   outcome with FSpec FR-437's expected outcome.
 3. Run the two-thread `fetch_add`; read message counts after `SB`'s join and
    after each step. In `SB` with both threads loading `x` after `Sx`,
    list the messages at the state after both threads' current views have

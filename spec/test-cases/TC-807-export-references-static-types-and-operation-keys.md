@@ -3,7 +3,7 @@ id: TC-807
 title: "The export references the receiver's static type and the operation key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-307
+  - target: ix://agent-ix/filament-spec-language/FR-307
     type: verifies
 ---
 # TC-807: The export references the receiver's static type and the operation key

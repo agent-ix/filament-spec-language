@@ -3,27 +3,27 @@ id: FR-049
 title: "Route composed evaluation through checked-term runtime inputs"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-002, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/US-003, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-040, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-027, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-106, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-107, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-255, type: references }
-  - { target: ix://agent-ix/quire-spec-language/NFR-009, type: depends_on }
-  - { target: ix://agent-ix/quire-protocol/FR-003, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-390, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-405, type: references }
-  - { target: ix://agent-ix/quire-spec-language/ADR-011, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-002, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/US-003, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-040, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-027, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-106, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-107, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-255, type: references }
+  - { target: ix://agent-ix/filament-spec-language/NFR-009, type: depends_on }
+  - { target: ix://agent-ix/filament-protocol/FR-003, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-390, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-405, type: references }
+  - { target: ix://agent-ix/filament-spec-language/ADR-011, type: references }
 ---
 # FR-049: Route composed evaluation through checked-term runtime inputs
 
 ## Description
 
-When a caller evaluates a checked expression or protocol slot, QSL SHALL route
-it through the `qsl-eval` checked-term APIs, which dispatch checked-term evaluation to `quire-eval`, with the exact checked identity,
+When a caller evaluates a checked expression or protocol slot, FSL SHALL route
+it through the `fsl-eval` checked-term APIs, which dispatch checked-term evaluation to `filament-eval`, with the exact checked identity,
 typed runtime environment and caller-owned accounting context required by that
 entry point.
 
@@ -33,7 +33,7 @@ This requirement ties the entry points together for
 [FR-048](FR-048-preserve-native-choreography-semantics.md) and
 [FR-390](FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md).
 Under [ADR-011 §7.3, M-6c](../decisions/ADR-011-stage-dag-and-dependency-architecture.md#L1250)
-and [FR-405](FR-405-retire-the-std-reference-evaluator-for-quire-eval.md) the
+and [FR-405](FR-405-retire-the-std-reference-evaluator-for-filament-eval.md) the
 artifact-graph evaluators are deleted, and no parallel or compatibility
 evaluation API exists.
 
@@ -51,7 +51,7 @@ through the clause-run contract, never from a free-standing artifact graph. Mode
 [FR-056](FR-056-admit-domain-package-model-declarations.md), and snapshot and
 invocation authority remains owned by
 [FR-106](FR-106-admit-snapshots-and-invocations.md) and its selected
-observation contract; QSL does not mint or duplicate that authority.
+observation contract; FSL does not mint or duplicate that authority.
 
 Compile-time identities are established at their owning boundaries, never
 supplied again at evaluation: the source and compile-configuration provenance
@@ -74,7 +74,7 @@ The entry points and their owners are:
 | Compensation guards, captures, retry and recovery expressions | `CheckedPackageEvaluation::evaluate_protocol_slot` with `ProtocolSlot`, `ProtocolSupply` and shared `Meter` (FR-390, TC-1070–TC-1073; TC-142) |
 | Typed results | The owning entry point's `Evaluation`, `FamilyOutcome` and `CallFailure` categories; FR-107/FR-390 (TC-136, TC-1071–TC-1073) |
 | Unpublished or unadmitted packages | Checked evaluation selects only a `CheckedPackage` with the identity established by its compile/read path. FR-027/FR-264 own checked-package publication and reading; FR-107 owns the evaluation result. TC-142 verifies strict read-back and evaluation through that admitted package |
-| Bounding and accounting evaluation work | Caller-owned `quire-exact::Meter` and the shared `quire.value.accounting/v1` contract; FR-390 and NFR-009 (TC-137, TC-1073) |
+| Bounding and accounting evaluation work | Caller-owned `filament-exact::Meter` and the shared `filament.value.accounting/v1` contract; FR-390 and NFR-009 (TC-137, TC-1073) |
 
 TC-134 covers compiler emission and independent reader coverage; evaluator calls
 are covered by TC-1070 through TC-1073.
@@ -123,7 +123,7 @@ entry points.
 | FR-049-AC-4 | Unavailable values preserve their typed missing identity and affect evaluation only when reached; they never become null, false, zero, empty or a completed output member. | Test (TC-136) |
 | FR-049-AC-5 | Graph evaluation uses the complete observation/model/universe/object-type/object identity, rejects duplicate storage keys, permits distinct observation occurrences, and distinguishes a missing target in a complete domain from unavailable membership or closure. Static and assessment identity authority remains owned by FR-056 and the selected observation contract. | Test (TC-129, TC-136) |
 | FR-049-AC-6 | Every checked-term entry returns its owning typed result; completed values are distinct from unavailable input, admission refusal, incomplete results and internal faults, and an incomplete result caused by `resource_exhausted` retains that cause; no caller classifies results from diagnostic text. | Test (TC-136, TC-1071–TC-1073) |
-| FR-049-AC-7 | Each applicable `accounting.<counter>` setting in FR-255's shared `quire.value.accounting/v1` table has zero/no-work, exact-usage and one-short evidence; over-budget work produces no completed partial value and stops at the owning requirement's charge point. | Test (TC-137, TC-1073) |
+| FR-049-AC-7 | Each applicable `accounting.<counter>` setting in FR-255's shared `filament.value.accounting/v1` table has zero/no-work, exact-usage and one-short evidence; over-budget work produces no completed partial value and stops at the owning requirement's charge point. | Test (TC-137, TC-1073) |
 | FR-049-AC-8 | Repeating an evaluation over the same immutable checked package and runtime environment with a fresh sufficient meter returns the same result and leaves inputs unchanged; sequential protocol-slot calls on one meter accumulate in call order. | Test (TC-137, TC-1073) |
 | FR-049-AC-9 | A checked protocol package evaluates its exact compensation guard, capture, retry and recovery slots through FR-390's `evaluate_protocol_slot`; crossed slot/supply selections refuse before charge, unavailable inputs and resource stops remain distinct, and no artifact-graph evaluator or compatibility entry point exists. | Test (TC-142, TC-1070–TC-1073) |
 | FR-049-AC-10 | The compile path retains the selected source, model, profile and configuration identities under FR-036/FR-056/FR-110/FR-050; observation identities are admitted by FR-106. No runtime API accepts independent document, model, profile or configuration identity members. | Test (TC-115, TC-136, TC-138, TC-465, TC-490) |
@@ -139,8 +139,8 @@ protocol-slot evaluation and shared-meter behavior; FR-107 owns checked-term
 result categories and the clause environment; FR-056 owns static domain-package
 identity, while FR-106 owns snapshot and invocation authority.
 
-`quire-protocol` [FR-003](ix://agent-ix/quire-protocol/FR-003) consumes the
-checked protocol evaluation contract. QSL owns source checking and checked-term
-entry-point selection; `qsl-eval` exposes the family entry points and dispatches
-checked-term execution to `quire-eval`. The consumer neither reparses source nor
+`filament-protocol` [FR-003](ix://agent-ix/filament-protocol/FR-003) consumes the
+checked protocol evaluation contract. FSL owns source checking and checked-term
+entry-point selection; `fsl-eval` exposes the family entry points and dispatches
+checked-term execution to `filament-eval`. The consumer neither reparses source nor
 mirrors a retired artifact graph.

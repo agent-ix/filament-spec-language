@@ -3,7 +3,7 @@ id: TC-1004
 title: "The assembler declares each variant type in the type environment by effective identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-1004: The assembler declares each variant type in the type environment by effective identity

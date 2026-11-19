@@ -3,21 +3,22 @@ id: TC-155
 title: "Keep admission backend-independent and route only supported items"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-155: Keep admission backend-independent and route only supported items
 
 ## Description
 
-Verify that the QSL composed linker admits requested pairs without backend
+Verify that the FSL composed linker admits requested pairs without backend
 input, that registration admits advertised (kind, mode) pairs under the same
 rules, that candidate sets follow the FR-290 rule independently of registration
 order, and that routing consumes settled dispositions as data. Negotiation
-itself is quire-contract-codegen's and is not run here; its settlements are
+itself is filament-contract-codegen's and is not run here; its settlements are
 supplied as fixture records shaped like `negotiate_*` output. Registration
 also judges each backend's `domains`. The negotiation cause types give the
-three negotiation codes and the candidate-outcome conversion. Scope: FR-057-AC-5,
+three negotiation codes and the candidate-outcome conversion, including for
+the protocol analysis kinds the linked engines serve. Scope: FR-057-AC-5,
 FR-057-AC-6, FR-057-AC-8, FR-057-AC-12 and FR-057-AC-15.
 
 ## Test Procedure
@@ -50,11 +51,15 @@ FR-057-AC-6, FR-057-AC-8, FR-057-AC-12 and FR-057-AC-15.
    `domains` [`collection`, `population`, `integer`, `recursive`] and read its
    descriptor's `domains()`.
 8. Read `code()` of each `NegotiationOutcome` member. Call
-   `qsl_route::settle_candidates` with kind `operation-contract` on step 4's
+   `fsl_route::settle_candidates` with kind `operation-contract` on step 4's
    four candidate outcomes (two candidates unnamed, one named candidate, the
    empty set, the unregistered name), and on step 4's two-candidate set
    paired with a named backend, and read the `outcome()` and `code()` of each
    `NegotiationSettlement::Cause`.
+9. Register the linked engines' descriptors and compute the candidates of
+   `local-projection` and of `realizability` with no named backend, naming
+   `protocol-analysis`, and naming `en-1`; call
+   `fsl_route::settle_candidates` on the last two.
 
 ## Expected Results
 
@@ -100,4 +105,9 @@ FR-057-AC-6, FR-057-AC-8, FR-057-AC-12 and FR-057-AC-15.
   it; the two candidates with a named backend give
   `NegotiationSettlement::Inconsistent`.
   Each cause's `outcome()` is its member and its `code()` that member's code.
+- Step 9: each kind has exactly the candidate `protocol-analysis`; naming it
+  gives `NegotiationSettlement::Single` naming it; naming `en-1` gives
+  `NegotiationSettlement::Cause` of
+  `NegotiationCause::UnsupportedRequestedCapability` naming the kind and
+  `en-1`, the cause unchanged.
 - Assertions compare typed codes, causes and identities, never message text.

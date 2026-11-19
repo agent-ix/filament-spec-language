@@ -3,21 +3,21 @@ id: FR-147
 title: "Check a refinement whose abstract side is a protocol subject"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-136
+  - target: ix://agent-ix/filament-spec-language/FR-136
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: depends_on
 ---
 # FR-147: Check a refinement whose abstract side is a protocol subject
@@ -27,14 +27,14 @@ relationships:
 The refinement checker (FR-135) SHALL admit a refinement declaration whose
 abstract side names a checked protocol clause of the abstract model, which
 makes the abstract subject a protocol subject (ADR-027 PS-1, PR-2; ADR-020
-RM-9, MC-1). This is QSpec FR-177's protocol refinement. The mapping rows define
+RM-9, MC-1). This is FSpec FR-177's protocol refinement. The mapping rows define
 the abstract model's visible fields; the abstract protocol's rest points,
 binders, queues and instances are hidden. Each concrete step's explicit row
-states its observation, and the refinement's internal list (QSpec FR-432)
+states its observation, and the refinement's internal list (FSpec FR-432)
 names the abstract step classes that are internal; every other abstract step
 class is visible. The relation's meaning, including
 divergence-freedom, refusal sets, terminal success and assumption
-weakening, is QSpec's (ADR-020 QS-8); this requirement covers QSL's S3
+weakening, is FSpec's (ADR-020 QS-8); this requirement covers FSL's S3
 checks and requirement record. FR-148 decides the steps.
 
 ## Use case
@@ -43,18 +43,18 @@ A specification author has an abstract protocol that performs two
 increments and then finishes, and a concrete compare-and-set model. They
 map each commit to the abstract increment, each other concrete step to an
 internal step, and list the abstract `finish` node in the refinement's internal
-list. QSL checks the
+list. FSL checks the
 rows at compile time and requests one protocol refinement claim.
 
 ## Inputs
 
 - The parsed refinement form, whose abstract side is written
-  `abstract <A>::<protocol>` (QSpec FR-375's `abstract-subject`), with step
-  rows whose right sides may be `node <A>::<protocol>::<node>(...)` (QSpec
+  `abstract <A>::<protocol>` (FSpec FR-375's `abstract-subject`), with step
+  rows whose right sides may be `node <A>::<protocol>::<node>(...)` (FSpec
   FR-432). The declaration carries no `internal` or `visible` row; the
   internal list is not source (ADR-020 RM-9, MC-1).
 - The compilation's optional `refinement_internals` input: one value for the
-  unit and one for each supplied library (QSpec FR-375), carried by the
+  unit and one for each supplied library (FSpec FR-375), carried by the
   compile input as supplied and unchecked (FR-099). Its shape and
   spellings are described in "The refinement's internal list". An absent
   value is the empty list.
@@ -74,11 +74,11 @@ rows at compile time and requests one protocol refinement claim.
   resolved classes in ascending UTF-8 byte order of their alias-free
   spellings. The refinement's node carries them as those alias-free
   spellings, and carries no `abstract_internal` entry for an empty list
-  (QSpec FR-375).
+  (FSpec FR-375).
 - Step rows whose `StepTarget::Abstract` may name an abstract protocol node
   as well as an abstract operation.
 - FR-144's requirement record of kind `temporal-satisfaction` for the
-  declaration, a whole model refinement (QSpec FR-375-AC-8), whose
+  declaration, a whole model refinement (FSpec FR-375-AC-8), whose
   declaration family is `relation-claim` (FR-507). It is not a refinement
   between two protocols, so it is never of kind `refinement`.
 
@@ -90,7 +90,7 @@ rows at compile time and requests one protocol refinement claim.
   `<A>` as FR-135 resolves an abstract alias, to a model of the declaring
   unit or of a dependency package, and SHALL resolve `<protocol>` among the
   protocol clauses of the **abstract subject package**, the package that
-  holds that model (QSpec FR-375 "Protocol subject"): the declaring package
+  holds that model (FSpec FR-375 "Protocol subject"): the declaring package
   when `<A>` is local, and the dependency's package when `<A>` names a
   dependency's model. The name is looked up among protocol clauses only, so
   a type or population of the same spelling never matches. A name that is
@@ -105,12 +105,12 @@ rows at compile time and requests one protocol refinement claim.
   nodes, binder records, channels, templates, roles and memory model from
   that graph. `CheckedRefinement::abstract_side` then carries the
   dependency's `package_id` as `dependency`.
-- S4 SHALL write the refinement node's body member `protocol` (QSpec FR-375
+- S4 SHALL write the refinement node's body member `protocol` (FSpec FR-375
   "Checked-package node") as the selected clause's structural `NodeKey`: the
   declaring package's clause node for a local clause, and, for a
   dependency's clause, the clause's node key, whose `package` component names
   the dependency. A node of another package adds no entry to the refinement node's
-  `dependencies` (QSpec FR-322), so a dependency's clause is named by
+  `dependencies` (FSpec FR-322), so a dependency's clause is named by
   `protocol` alone. The dependency's `package_id` thus enters the
   refinement node's id, and the same refinement over a local and over a
   dependency's clause gives different node ids.
@@ -118,7 +118,7 @@ rows at compile time and requests one protocol refinement claim.
   a clause whose roles act only on another model, whether a dependency's
   clause in a package that imports several models or a clause of the
   declaring package when the unit imports both models itself, SHALL refuse
-  `invalid_model_binding`/`malformed-declaration` at `<protocol>` (QSpec
+  `invalid_model_binding`/`malformed-declaration` at `<protocol>` (FSpec
   FR-375).
 - S3 SHALL resolve `<A>::<protocol>` against the checked clause: it SHALL
   check an abstract protocol declared in the declaring package before it
@@ -139,14 +139,14 @@ rows at compile time and requests one protocol refinement claim.
 
 - Step rows SHALL cover every concrete step class by FR-136. A right side
   SHALL be an abstract operation application, an abstract protocol node
-  with an argument list per QSpec FR-432 (an open or absent field is
+  with an argument list per FSpec FR-432 (an open or absent field is
   unconstrained), `stutter` or `any`.
 - A right side naming an abstract node SHALL resolve to an `attempt`,
   `effect`, `event`, `commit`, `send`, `receive` or `finish` node of the
   abstract protocol, refusing `missing_declaration`/`missing-name`
   otherwise.
 - The expressions of a node right side SHALL be typed against the node's
-  binder record, whose fields per node kind are QSpec FR-432's; for a
+  binder record, whose fields per node kind are FSpec FR-432's; for a
   dependency's clause the binder record and its field types are the ones the
   dependency's `CheckedGraph` holds.
 - An argument list whose length differs from the field count SHALL refuse
@@ -160,14 +160,14 @@ rows at compile time and requests one protocol refinement claim.
 
 ### The refinement's internal list
 
-A profile selection carries an identity and nothing else (FR-110; QSpec's
-shared grammar), and QSpec's refinement grammar has no `internal` row, so the
-list is not source. QSpec owns it: the list is the compilation's optional
+A profile selection carries an identity and nothing else (FR-110; FSpec's
+shared grammar), and FSpec's refinement grammar has no `internal` row, so the
+list is not source. FSpec owns it: the list is the compilation's optional
 `refinement_internals` input, supplied beside the source as a supplied
 library is, and its shape, class spellings, resolution, refusals, effect on
-the refinement node, package member and replay are QSpec FR-375's and FR-432's. This
+the refinement node, package member and replay are FSpec FR-375's and FR-432's. This
 requirement states how S3 applies them. The names `AbstractStepClass` and
-`abstract_internal` are QSL's own Rust-side names for what QSpec describes.
+`abstract_internal` are FSL's own Rust-side names for what FSpec describes.
 
 **Shape.** A `refinement_internals` value is a JSON array of objects
 `{"refinement": "<name>", "internal": ["<class>", ...]}`, closed to those two
@@ -176,11 +176,11 @@ unit, or one supplied library; a library's list is its own and names only its
 own refinements). `internal` is an array of class spellings.
 
 **Class spellings.** A class spelling is the left side of the class's row
-(QSpec FR-432), without `step`, with the refinement's abstract alias `<A>` in
+(FSpec FR-432), without `step`, with the refinement's abstract alias `<A>` in
 place of `<C>`. It has one space after a leading keyword, no other
 whitespace and no other characters; it is its own canonical spelling.
 `<A>::<protocol>` must be the refinement's abstract alias and selected
-abstract protocol. QSpec's alias-free spelling, which the refinement node
+abstract protocol. FSpec's alias-free spelling, which the refinement node
 carries, is the same text with `<A>::` removed.
 
 | Abstract step class | Spelling | Alias-free (the spelling with `<A>::` removed) |
@@ -206,11 +206,11 @@ alias-free spellings, are `abstract_internal`. The order of objects in the
 array and of entries within one `internal` array is free and does not change
 the result. Because the alias is out of the spelling, renaming the abstract
 alias, with the value's spellings renamed to match, changes neither
-`abstract_internal` nor the refinement's node identity (QSpec FR-375-AC-13).
+`abstract_internal` nor the refinement's node identity (FSpec FR-375-AC-13).
 
 **Absent is empty.** A refinement with no object in the value, and an absent
 value, has an empty list: every abstract step class is visible. Absence is
-not a refusal (QSpec FR-432).
+not a refusal (FSpec FR-432).
 
 **Defects.** S3 SHALL refuse each defect below with no `CheckedRefinement`, located by a pair, the **input** (the
 unit's `refinement_internals` value, or the value of one named supplied
@@ -229,7 +229,7 @@ unit imports that library.
 | two objects naming one refinement; one canonical spelling twice in one `internal` array | `invalid_model_binding`/`conflicting-binding` |
 | a non-empty list for a refinement whose abstract subject is a model (once the feature is built; see below) | `invalid_model_binding`/`malformed-declaration` at the object's pointer |
 
-Every code and cause above is in QSpec FR-272's closed lists. A defect
+Every code and cause above is in FSpec FR-272's closed lists. A defect
 attributable to no refinement (a value that is not an array of objects, `{}`,
 a `refinement` that is not a string or names no refinement) is reported by
 this table alone. Each refusal yields no `CheckedRefinement`.
@@ -259,7 +259,7 @@ nothing to resolve them against. A well-formed non-empty list is then refused
 only as not yet built, at the name after `abstract`, in a build that omits
 `refinement-internal-list`; in a build that has it, the list is refused
 `invalid_model_binding`/`malformed-declaration` at the object's pointer
-(QSpec FR-432). 
+(FSpec FR-432). 
 **Both features.** A protocol abstract side the build has not
 built gives its own refusal beside it (FR-135-AC-5), so a non-empty list
 under `abstract Spec::Twice` in a build omitting both features gives two.
@@ -267,7 +267,7 @@ under `abstract Spec::Twice` in a build omitting both features gives two.
 ### Internal abstract steps
 
 - An abstract step class the list names SHALL be internal, and one it does not
-  name SHALL be visible with its observation label (QSpec FR-432). No class is
+  name SHALL be visible with its observation label (FSpec FR-432). No class is
   refused for being named by neither the list nor a step row (ADR-020 MC-1).
 - A class named both by the list and as the right side of a step row is
   refused as "One class, one decision" states.
@@ -281,7 +281,7 @@ under `abstract Spec::Twice` in a build omitting both features gives two.
 - The `requirements` hook SHALL write FR-144's one requirement record of
   kind `temporal-satisfaction` for the declaration, and no record of kind
   `refinement`, binding the refinement node, the concrete subject and the
-  abstract protocol subject in its obligation identity. QSpec FR-375-AC-8
+  abstract protocol subject in its obligation identity. FSpec FR-375-AC-8
   gives a whole model refinement `temporal-satisfaction` whatever its
   abstract subject, and FR-507 reads its family as `relation-claim`, to
   which `refinement` does not apply. For a dependency's clause the abstract protocol subject is the
@@ -351,5 +351,5 @@ declares an `await` node (the `timeout` class) and a compensation template
 
 ## References
 
-- The QSpec half: QSpec FR-177 (its relation over QSpec FR-377's step
+- The FSpec half: FSpec FR-177 (its relation over FSpec FR-377's step
   rules, QS-8) and FR-377 (Linear STD-133).

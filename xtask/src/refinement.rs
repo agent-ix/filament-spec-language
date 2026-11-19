@@ -89,9 +89,9 @@ fn run_layering(
 
 #[cfg(test)]
 mod tests {
+    use fsl_foundation::BackendId;
+    use fsl_route::{descriptor_from_manifest, Candidate, ProviderOrigin};
     use ix_trace_rs::trace;
-    use qsl_foundation::BackendId;
-    use qsl_route::{descriptor_from_manifest, Candidate, ProviderOrigin};
 
     use super::*;
 
@@ -104,7 +104,7 @@ mod tests {
             Candidate::new(BackendId::new("bad-provider")),
             ProviderOrigin::Linked,
             [(Some("unknown-kind"), Some("bounded"))],
-            qsl_route::ManifestMembers::default(),
+            fsl_route::ManifestMembers::default(),
         )
         .expect_err("unknown capability label is refused");
         let error = layering::RegistryBuildError::DescriptorSource(refusal);

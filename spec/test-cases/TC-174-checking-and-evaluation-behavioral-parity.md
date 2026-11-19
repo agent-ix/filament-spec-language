@@ -3,7 +3,7 @@ id: TC-174
 title: "Checking and evaluation produce identical results before and after the split"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: verifies
 ---
 # TC-174: Checking and evaluation produce identical results before and after the split
@@ -76,7 +76,7 @@ code. Scope: FR-068-AC-5.
   and the differing field.
 
 **Amendment (implementation, PR #282 review F1): steps 2-3, as landed.**
-`qsl-eval/src/value/expression/mod.rs`'s own `#[cfg(test)] mod tests` (not an
+`fsl-eval/src/value/expression/mod.rs`'s own `#[cfg(test)] mod tests` (not an
 external `tests/` file: `check`'s `slots` accessor is `pub(crate)`, and
 `check` itself must import nothing from `value::expression` even in test
 code per FR-068-AC-3/TC-172, so `value::expression` — the legitimate

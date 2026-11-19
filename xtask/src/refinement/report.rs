@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-344: the report of a refinement gate. It lists every result in its
 //! group order, gives the run one verdict and maps that verdict to the exit
-//! code (QSpec FR-301). [`Verdict::exit_code`] is the one place a refinement
+//! code (FSpec FR-301). [`Verdict::exit_code`] is the one place a refinement
 //! gate's exit code is chosen.
 
-use qsl_foundation::source::provenance::RawSourceRef;
-use qsl_foundation::{Setting, SettingLimits, SettingName};
-use qsl_replay::spine::{
+use fsl_foundation::source::provenance::RawSourceRef;
+use fsl_foundation::{Setting, SettingLimits, SettingName};
+use fsl_replay::spine::{
     Classification, ClauseRunStage, ReachedLimit, RefinementClass, RefusalCause,
 };
-use qsl_replay::ModelNormalizationLimits;
+use fsl_replay::ModelNormalizationLimits;
 use serde::Serialize;
 
 use super::compare::CaseResult;
 
-/// The verdict of one run: the highest-severity result present (QSpec FR-301's
+/// The verdict of one run: the highest-severity result present (FSpec FR-301's
 /// order, lowest first).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, serde::Deserialize)]
 pub enum Verdict {
@@ -27,7 +27,7 @@ pub enum Verdict {
     /// An unresolved result stopped at a limit or budget.
     #[serde(rename = "incomplete")]
     Incomplete,
-    /// An unresolved result stopped at a QSL implementation gap.
+    /// An unresolved result stopped at an FSL implementation gap.
     #[serde(rename = "unsupported")]
     Unsupported,
     /// A tool failure is present.
@@ -47,7 +47,7 @@ impl Verdict {
         }
     }
 
-    /// QSpec FR-301's exit code for this verdict: the only code a refinement
+    /// FSpec FR-301's exit code for this verdict: the only code a refinement
     /// gate exits with.
     pub const fn exit_code(self) -> u8 {
         match self {

@@ -3,16 +3,16 @@ id: TC-906
 title: "Composite and leaf-family arguments replay, and refuse by kind, by domain and at the request's limits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: verifies
 ---
 # TC-906: Composite and leaf-family arguments replay, and refuse by kind, by domain and at the request's limits
 
 ## Description
 
-Verify that `qsl_replay::replay` converts a composite `WitnessValue` to a
+Verify that `fsl_replay::replay` converts a composite `WitnessValue` to a
 kernel value of the parameter's declared type, admits it through S6a, and
 replays a nested-record counterexample from both arms. Each kind, identity
 and domain defect refuses `WrongValueKind` before the call, and the
@@ -156,7 +156,7 @@ missing-premise negative control; no runnable trace or execution is
 claimed for that source-proof analysis.
 
 The union cases depend on QSL-503; a quantity-typed parameter in source
-depends on QSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-091's unit-namespace type lookup.
+depends on FSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` production and FR-091's unit-namespace type lookup.
 
 ## Expected Results
 
@@ -183,7 +183,7 @@ depends on QSpec FR-142's `Quantity<u>`, S1's `Quantity<qualified-name>` product
   conversion admits and the evaluator stops `Incomplete` at its actual
   `work_units` charge point. Each pre-call denial settles incomplete/
   inconclusive/NoValue with zero evaluation consumption and the correct
-  QSL phase limit record, never a fabricated kernel FunctionCall. C remains
+  FSL phase limit record, never a fabricated kernel FunctionCall. C remains
   per-argument converted nodes. Evaluation controls reach the evaluator
   and have TC-831's actual charge sequence and denial. Wire assertions
   require the reviewed shared phase projection; an unavailable projection

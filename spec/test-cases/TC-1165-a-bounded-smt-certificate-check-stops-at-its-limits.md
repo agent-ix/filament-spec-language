@@ -3,9 +3,9 @@ id: TC-1165
 title: "A bounded SMT certificate check stops at its limits and on cancellation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
 ---
 # TC-1165: A bounded SMT certificate check stops at its limits and on cancellation

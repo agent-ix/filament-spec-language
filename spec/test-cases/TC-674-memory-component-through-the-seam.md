@@ -3,7 +3,7 @@ id: TC-674
 title: "The memory component, observations, atoms and footprints flow through the seam"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: verifies
 ---
 # TC-674: The memory component, observations, atoms and footprints flow through the seam

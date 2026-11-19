@@ -3,33 +3,33 @@ id: FR-042
 title: "Publish and read exact compiled protocol packages"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-004, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/US-008, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-038, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-040, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-041, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-004, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-015, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-017, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-031, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-039, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-047, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-050, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-051, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-052, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-053, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-054, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-055, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-056, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-057, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-058, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-059, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-130, type: depends_on }
-  - { target: ix://agent-ix/quire-protocol/FR-001, type: references }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-004, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/US-008, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-038, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-040, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-041, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-004, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-015, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-017, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-031, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-039, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-047, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-050, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-051, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-052, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-053, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-054, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-055, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-057, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-058, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-059, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-130, type: depends_on }
+  - { target: ix://agent-ix/filament-protocol/FR-001, type: references }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
 ---
 # FR-042: Publish and read exact compiled protocol packages
 
@@ -37,7 +37,7 @@ relationships:
 
 Before its M-6d retirement, the compiler emitted a complete native package
 through the versioned
-retired `quire.compiled-protocol/1` wire contract after
+retired `filament.compiled-protocol/1` wire contract after
 selected type, definedness and family admission.
 
 **M-6d disposition:** this native artifact-publishing and reader boundary is
@@ -65,7 +65,7 @@ identity reference, that accepted inventory, exact local dependency bytes, the a
 domain packages and caller-configured artifact limits. It consumes no concrete
 workflow instances, observations, clocks, assessment requests or backend results.
 
-For the cross-repository positive handoff, the quire-protocol integration caller
+For the cross-repository positive handoff, the filament-protocol integration caller
 SHALL construct the accepted inventory as Rust values from independently selected
 original sources, admitted domain packages, registered definitions, artifact
 contract bytes. The compiler supplies those original inputs with its emitted
@@ -90,7 +90,7 @@ rule for `/2`.
 
 ## Outputs
 
-An immutable `quire.compiled-protocol/1` package and its external exact-byte
+An immutable `filament.compiled-protocol/1` package and its external exact-byte
 reference, or a typed refused, unsupported or resource-incomplete result with
 original available loci and partial compilation evidence. The public Rust
 admission, emission and reader interfaces expose structured results through the
@@ -120,7 +120,7 @@ explicit source inventory and every dependency before publishing a full-package
 artifact. `ComposedUnit`, names-resolved bindings, `TypeReport`, symbolic proof
 graphs and manually authored wire records cannot be retagged as that evidence.
 
-The compiler SHALL retain native Quire as the sole editable formal-clause source.
+The compiler SHALL retain Filament as the sole editable formal-clause source.
 The value/control graph is a derived representation of the admitted source,
 with exact local handles, original loci, immutable binder origins, ordered calls,
 short-circuit/conditional behavior and all selected model/profile semantics.
@@ -268,17 +268,17 @@ record.
 of `Model` itself, decoded through a plain `record!` field (FR-042-CON-2),
 never through any internally tagged (`#[serde(tag = ...)]`) alternative.
 
-This is a versioned wire change (agent-ix/quire-spec-language#132) that lands
-in place. QSL is prerelease with no consumer of the deleted `Correspondence`
+This is a versioned wire change (agent-ix/filament-spec-language#132) that lands
+in place. FSL is prerelease with no consumer of the deleted `Correspondence`
 shape to protect, so this requirement changes `Model`'s constructors and
 reader in place rather than minting a new wire, media or schema identity to
 let the old shape keep existing: the wire, media and schema identities the
-encoding table names stay `quire.compiled-protocol/1`, and a payload that
+encoding table names stay `filament.compiled-protocol/1`, and a payload that
 still carries the deleted `correspondence`, `producer` or `interface` member
 refuses as unrecognized `Model` content, not through a separate
-version-number check. `quire.compiled-protocol/2`
+version-number check. `filament.compiled-protocol/2`
 ([FR-050](FR-050-publish-authenticated-temporal-artifacts.md)) and
-`quire.compiled-protocol/3` ([FR-054](FR-054-publish-control-temporal-activation-map.md))
+`filament.compiled-protocol/3` ([FR-054](FR-054-publish-control-temporal-activation-map.md))
 each embed this same shared `Model` population and change with it in place
 too, without their own `temporal_bindings`/activation-mapping deltas
 changing; see Dependencies for the consequence this has for FR-050 and
@@ -317,7 +317,7 @@ reader-refusal obligations under the wire contract's typed cause catalog.
 
 The compiler SHALL derive a domain object type's population input the same way, with
 the domain object type in place of the object role and the one
-[FR-153](ix://agent-ix/quire-specification/FR-153) population declaration
+[FR-153](ix://agent-ix/filament-specification/FR-153) population declaration
 covering that type in place of the universe: its `population` export is
 `[object artifact id, population artifact id]` of the domain-package `Model`.
 A declaration covers an object type that is one of its member types or
@@ -325,7 +325,7 @@ conforms to one through its declared supertypes; an Interface-typed input is
 therefore covered only when the Interface or one of its supertypes is a member
 type. With no covering declaration, or more than one, emission SHALL refuse as
 `Unsupported::Export`, and the reader SHALL refuse the same way. The emitter SHALL export a domain operation as a native model
-operation is, keyed by its [FR-154](ix://agent-ix/quire-specification/FR-154)
+operation is, keyed by its [FR-154](ix://agent-ix/filament-specification/FR-154)
 member key, with its owning object type as its context; a pre- or
 postcondition of a domain operation executes at the anchor named by the
 operation's member name. It SHALL bind each declared parameter as an
@@ -400,7 +400,7 @@ package-wide output work carries no unrelated last-visited source locus. Wire
 verification does not imply global replay, projection, realizability or recovery
 success. These remain separately requested consumer capabilities.
 
-The artifact stages SHALL enforce the versioned `quire.protocol.artifact-work/1`
+The artifact stages SHALL enforce the versioned `filament.protocol.artifact-work/1`
 limits and charge-before-work rules in the wire contract, with exact effective
 limits, successful usage and the source-owned next unaffordable operation.
 Zero disables no limit; a limit above its default is used as given; overflow is incomplete;
@@ -417,7 +417,7 @@ therefore exhaust one invocation's shared limits; this returns incomplete.
 
 | ID | Constraint | Type | Validation |
 | --- | --- | --- | --- |
-| FR-042-CON-1 | **RETIRED in M-6d; historical only.** Within the `quire.compiled-protocol/*` wire module (`src/protocol_artifact/`), source SHALL contain no `ProducerObject` type, no `Correspondence` type and no wire tag or field named `correspondence`, `producer-object` or `producer_object`. This does not reach an unrelated `correspondence` member of another wire record, such as the native-temporal request's own `correspondence` evidence reference. | Maintainability | Inspection |
+| FR-042-CON-1 | **RETIRED in M-6d; historical only.** Within the `filament.compiled-protocol/*` wire module (`src/protocol_artifact/`), source SHALL contain no `ProducerObject` type, no `Correspondence` type and no wire tag or field named `correspondence`, `producer-object` or `producer_object`. This does not reach an unrelated `correspondence` member of another wire record, such as the native-temporal request's own `correspondence` evidence reference. | Maintainability | Inspection |
 | FR-042-CON-2 | **RETIRED in M-6d; historical only.** `Model`'s domain-package member SHALL decode through a plain `record!` field, never through a unit variant or any other internally tagged (`#[serde(tag = ...)]`) representation, whether or not that representation is built with the `tagged!` macro. | Security | Inspection, Test |
 
 ## Acceptance Criteria
@@ -435,7 +435,7 @@ therefore exhaust one invocation's shared limits; this returns incomplete.
 | FR-042-AC-7 | **RETIRED in M-6d; historical only.** The public reader verifies canonical bytes and external selection without a native parser. Unknown/duplicate/missing fields, wrong tags, noncanonical encodings, out-of-range/foreign handles and semantically changed content refuse with typed causes. Canonical encoding alone is never evidence of native-source equivalence. | Test |
 | FR-042-AC-8 | **RETIRED in M-6d; historical only.** Partial, unsupported and resource-incomplete compilation retains independent results but emits no fully linked package. An independently unsupported projection does not erase an admitted global-protocol subject or become complete package/assessment success; historical package/profile identities and entry-point refusals remain unchanged. Every protocol-role admission refusal locus pairs a source index and span from the same owning declaration; a multi-unit invalid protocol role identifies and slices that exact role rather than a preceding source. | Test |
 | FR-042-AC-9 | **RETIRED in M-6d; historical only.** Independently counted source/dependency/table/reference/control and canonical-output vectors distinguish zero, exact and one-short limits in each artifact work dimension, including deep/shared graphs, repeated traversal and bounded iteration. Overflow, a limit raised above its default, and fresh retry retain exact stage/locus/usage without a partially admitted artifact. | Test |
-| FR-042-AC-10 | **RETIRED in M-6d; historical only.** Actual accepted native source passes the real compiler stages and emits the handoff written by `write_v1`/`write_v2` and consumed unchanged by quire-protocol's public Rust admission/linking interface. Every compiler/source/domain-package/profile/dependency selector survives; no shell, stdout parser, alternate formal frontend or manually authored fixture supplies this positive handoff. | Test (TC-121, quire-protocol IT-001) |
+| FR-042-AC-10 | **RETIRED in M-6d; historical only.** Actual accepted native source passes the real compiler stages and emits the handoff written by `write_v1`/`write_v2` and consumed unchanged by filament-protocol's public Rust admission/linking interface. Every compiler/source/domain-package/profile/dependency selector survives; no shell, stdout parser, alternate formal frontend or manually authored fixture supplies this positive handoff. | Test (TC-121, filament-protocol IT-001) |
 | FR-042-AC-11 | **RETIRED in M-6d; historical only.** For a model whose native package imports a domain package, reading `Model`'s domain package identity and version from decoded bytes reproduces exactly the `DomainPackageRef` FR-056 admitted for that model at linking, with no producer or relation object between them. A payload whose `Model` object carries a `correspondence`, `producer` or `interface` member, of any value including `null`, or that carries a `ProducerObject`-shaped or `Correspondence`-shaped value under any key, refuses as an unrecognized field rather than being read into a domain package identity or silently ignored. | Test |
 | FR-042-AC-12 | **RETIRED in M-6d; historical only.** For a directly admitted native model with no domain-package import, `Model`'s domain-package member decodes as explicit `null`; a payload that omits the member entirely refuses exactly as an omitted `Nullable<T>` member already refuses elsewhere in this contract, and is never read as an implicit `null`. | Test |
 | FR-042-AC-13 | **RETIRED in M-6d; historical only.** Over an admitted domain package, a declaration over a domain object type's population input and a domain operation (an operation clause, an attempt with a domain event record, and a FIFO channel keyed by a domain object) check, emit exactly one population/closure pair per covering declaration and anchor and the operation's own export, and read back unchanged. A changed package version, an export the package does not declare, a population pair keyed to another object type and an operation context other than its owner each refuse; an object type with no covering population declaration refuses emission as `Unsupported::Export`. | Test |
@@ -453,7 +453,7 @@ prerequisites; [FR-038](FR-038-encode-exact-protocol-numbers.md) is the delivere
 numeric component. The accepted standard package/protocol contracts and FR-050–059
 own static versus runtime identity and protocol meaning; this requirement fixes
 their compiler wire representation. [TC-121](../test-cases/TC-121-publish-compiled-protocol-artifacts.md)
-and [B's IT-001](ix://agent-ix/quire-protocol/IT-001) retain full producer/consumer
+and [B's IT-001](ix://agent-ix/filament-protocol/IT-001) retain full producer/consumer
 acceptance under compiler #40. The wire reader and numeric/type components
 implement part of this contract. The native path emits supported complete
 families from real source/type/proof owners, including static compensation and
@@ -479,17 +479,17 @@ fixture, so its emitted `Model` names a domain package FR-056 actually
 admitted, not one supplied only for the recipe.
 [US-008](../usecase/US-008-trust-domain-package-provenance.md) is the
 consumer story for FR-042-AC-11 and FR-042-AC-12. The resources this recipe
-and TC-121 depend on are resolved from `agent-ix/quire-specification` by
+and TC-121 depend on are resolved from `agent-ix/filament-specification` by
 identity and revision.
 
 **Recorded consequence for FR-050, FR-054 and the wire contract docs (owner
 ruling, this ticket):** this requirement changes `Model` in place at the
-existing `quire.compiled-protocol/1` identity rather than minting a new one —
+existing `filament.compiled-protocol/1` identity rather than minting a new one —
 a fresh identity that let the deleted `Correspondence` shape keep existing
 would be a compatibility layer with no consumer to protect, which this
-prerelease repository does not build. `quire.compiled-protocol/2`
+prerelease repository does not build. `filament.compiled-protocol/2`
 ([FR-050](FR-050-publish-authenticated-temporal-artifacts.md)) and
-`quire.compiled-protocol/3` ([FR-054](FR-054-publish-control-temporal-activation-map.md))
+`filament.compiled-protocol/3` ([FR-054](FR-054-publish-control-temporal-activation-map.md))
 each embed the same shared `Model` population and change in place with it,
 falsifying stronger statements than a shared sentence in the wire docs:
 **`FR-050-AC-4`** states "`/1`

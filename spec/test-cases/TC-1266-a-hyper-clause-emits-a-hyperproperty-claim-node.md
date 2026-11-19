@@ -3,14 +3,14 @@ id: TC-1266
 title: "A hyper clause emits a hyperproperty claim node, its slots, conjuncts and body"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-488
+  - target: ix://agent-ix/filament-spec-language/FR-488
     type: verifies
 ---
 # TC-1266: A hyper clause emits a hyperproperty claim node, its slots, conjuncts and body
 
 ## Description
 
-Verify that S4 emits a checked hyper clause over `behaviours` as QSpec
+Verify that S4 emits a checked hyper clause over `behaviours` as FSpec
 FR-402's `claim`/`hyperproperty` node with its body wrapper, slot
 parameter nodes, `match` conjunct terms, operation anchors and fairness
 aggregates, that the clause exposes its `claim` occurrence, and that clauses
@@ -52,7 +52,7 @@ device models, and FR-487's `Linked`.
 13. Compile clauses whose parameter and trace variable names hold `_`,
     `s`, `x`, digits and non-ASCII characters; check every slot node name
     against the identifier grammar and for injectivity.
-14. Admit each emitted package through QSL's I2 admission, which runs strict
+14. Admit each emitted package through FSL's I2 admission, which runs strict
     wire validation of the flat body grammar first.
 
 Tag the tests `#[trace("TC-1266", "FR-488-AC-n")]`.

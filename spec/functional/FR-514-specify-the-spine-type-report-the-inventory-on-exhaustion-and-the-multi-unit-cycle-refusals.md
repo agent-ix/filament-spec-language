@@ -3,19 +3,19 @@ id: FR-514
 title: "Specify the spine type report, the inventory on exhaustion and the multi-unit cycle refusals"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-480
+  - target: ix://agent-ix/filament-spec-language/FR-480
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-contract-ir/FR-052
+  - target: ix://agent-ix/filament-contract-ir/FR-052
     type: depends_on
 ---
 # FR-514: Specify the spine type report, the inventory on exhaustion and the multi-unit cycle refusals
@@ -39,7 +39,7 @@ observable obligation of each FR-362 and FR-480 criterion.
 
 ## Outputs
 
-- `CheckedUnit::type_report()`; `qsl_replay::qsl_inventory(parsed, outcome,
+- `CheckedUnit::type_report()`; `fsl_replay::fsl_inventory(parsed, outcome,
   formal_identity)`; the cycle refusals.
 
 ## Behavior
@@ -66,7 +66,7 @@ observable obligation of each FR-362 and FR-480 criterion.
 
 ### The inventory on exhaustion
 
-- `qsl_inventory` SHALL take the `parsed` unit, the `check` outcome and the
+- `fsl_inventory` SHALL take the `parsed` unit, the `check` outcome and the
   selected formal identity, and SHALL return:
   - for `Ok(unit)`, a `Complete` inventory: one row per requirement record
     and one per pending obligation of the report;
@@ -80,7 +80,7 @@ observable obligation of each FR-362 and FR-480 criterion.
     the IR reports this cause as `TypeWorkExhausted` (IR FR-052-AC-10) and the
     mapping of "The IR identities" below applies;
   - for any other refusal, an error and no inventory rows.
-- The spine produces no stop for "admission unfinished"; no QSL code produces
+- The spine produces no stop for "admission unfinished"; no FSL code produces
   the IR's `TypeAdmissionUnfinished` cause (IR-1304 removes the cause).
 
 ### Requirement forms
@@ -148,7 +148,7 @@ limit is `Incomplete`.
   and byte bounds) when it has one. No placeholder value is carried.
 - A limit whose kind is a runtime limit (`TickCount`, FR-523) is not a
   type-admission stage limit: it has no `dimension`, so it gives no inventory
-  and `qsl_inventory` returns `InventoryRefusal::NoInventory`.
+  and `fsl_inventory` returns `InventoryRefusal::NoInventory`.
 
 ### The `parsed` argument
 
@@ -160,7 +160,7 @@ forms S2 had built.
 
 ### The formal identity
 
-- The selected formal identity SHALL be a parameter of `qsl_inventory`. It is
+- The selected formal identity SHALL be a parameter of `fsl_inventory`. It is
   not a parameter of any `check*` entry point and `CheckedUnit` does not carry
   it. The inventory's identity binds the checked unit's source reference and
   the formal identity; a `Complete` and an `Incomplete` inventory of the same
@@ -170,7 +170,7 @@ forms S2 had built.
 
 - A refusal for an FR-142 unit-graph defect found in the assembler SHALL carry
   the code and cause FR-091's unit-graph topology row gives it, with the row
-  numbers of QSpec FR-142's unit-graph table (checked against it): a unit
+  numbers of FSpec FR-142's unit-graph table (checked against it): a unit
   target cycle (FR-142 row 6) and a dimension cycle `invalid_package`/`definition-cycle`
   with the dependency edges as payload; a zero scale (FR-142 row 1) and a second
   root (FR-142 row 5) `invalid_package`/`invalid-value`; an unresolved name
@@ -196,16 +196,16 @@ FR-480's criteria belong to four pieces of work (QSL-1508):
 | --- | --- | --- |
 | FR-514-AC-1 | For a unit with a function, a state clause with a `post` claim and a protocol with one `check` and one `requirement`, `type_report()` lists the declarations in ascending `NodeRef` order with their value types, one `RequirementRecord` per requirement and one `PendingObligation` per claim and per protocol requirement obligation, each `Pending` with the capability kind of its claim form; it holds no source reference field. | Test (TC-1309) |
 | FR-514-AC-2 | The two units of FR-480-AC-2's package give two `CheckedUnit`s whose type reports list only their own declarations; no API accepts a report or source for rebinding. | Test (TC-1309) |
-| FR-514-AC-3 | With `s3.work_units` set one below the unit's measured need, `check` returns the stage limit outcome and `qsl_inventory` returns `Incomplete` with one requirement row per requirement form, no obligation row and cause (S3, work budget, `s3.work_units`); with `s1.nodes` set to stop S1, `Incomplete` with zero rows and cause (S1, node count, `s1.nodes`); with the unit refused `ill_typed`, an error and no rows; with sufficient limits, `Complete`. | Test (TC-1309) |
-| FR-514-AC-4 | `qsl_inventory` over one source with formal identities `F1` and `F2` gives two inventories with different identities, and over `Incomplete` and `Complete` outcomes of one source and `F1` the same identity; no `check*` signature has a formal-identity parameter and `CheckedUnit` has no such member. | Test (TC-1309) |
+| FR-514-AC-3 | With `s3.work_units` set one below the unit's measured need, `check` returns the stage limit outcome and `fsl_inventory` returns `Incomplete` with one requirement row per requirement form, no obligation row and cause (S3, work budget, `s3.work_units`); with `s1.nodes` set to stop S1, `Incomplete` with zero rows and cause (S1, node count, `s1.nodes`); with the unit refused `ill_typed`, an error and no rows; with sufficient limits, `Complete`. | Test (TC-1309) |
+| FR-514-AC-4 | `fsl_inventory` over one source with formal identities `F1` and `F2` gives two inventories with different identities, and over `Incomplete` and `Complete` outcomes of one source and `F1` the same identity; no `check*` signature has a formal-identity parameter and `CheckedUnit` has no such member. | Test (TC-1309) |
 | FR-514-AC-5 | The FR-480-AC-6 documents give, for `[1, 2]`, `invalid_package`/`invalid-value` at `z` in document 1; for `[2, 1]`, `invalid_package`/`definition-cycle` at `u_self` in document 2 with edge `u_self` to `u_self`; a two-unit cycle `z`, `z2` across documents gives `invalid_package`/`definition-cycle` with both edges; a dimension cycle across documents gives the same code; each names the document's source reference. | Test (TC-1309) |
 | FR-514-AC-6 | A consistency test over this requirement and FR-480 finds every `FR-480-AC-n` id of FR-480 in the pieces table; only FR-480-AC-2 appears in two rows, and the two rows quote disjoint sentences of it. | Test (TC-1309) |
 | FR-514-AC-7 | For `T0` with `s3.work_units` one below need, the `Incomplete` inventory lists one requirement-form row per requirement form of `T0`'s S2 list (the function `f`, the state clause and the protocol), each identified by its form ordinal 0, 1, 2 and its declared name when it has one, a `function` declaring no requirement included; none of those identities equals a `Complete` requirement record, and an `enum` declared beside them gives no row. | Test (TC-1309) |
-| FR-514-AC-8 | For `T0` with sufficient limits, `qsl_inventory` returns `Complete` with one requirement row per requirement record and one obligation row per pending obligation (FR-362-AC-4), and each obligation row's IR identity holds its exact capability kind name, owning requirement form ordinal (the form's ordinal in source order: `f` 0, the state clause 1, the protocol 2 for `T0`; a protocol's `check` and its temporal requirement belong to the protocol), unit 0 and the span's bytes; two obligations of one form differ by span and kind. | Test (TC-1309) |
+| FR-514-AC-8 | For `T0` with sufficient limits, `fsl_inventory` returns `Complete` with one requirement row per requirement record and one obligation row per pending obligation (FR-362-AC-4), and each obligation row's IR identity holds its exact capability kind name, owning requirement form ordinal (the form's ordinal in source order: `f` 0, the state clause 1, the protocol 2 for `T0`; a protocol's `check` and its temporal requirement belong to the protocol), unit 0 and the span's bytes; two obligations of one form differ by span and kind. | Test (TC-1309) |
 | FR-514-AC-9 | For the limit outcomes of AC-3, the IR cause carries the stage (S3, S1), the setting (`s3.work_units`, `s1.nodes`), the dimension (`constraints` for the work budget, `expressions` for `s1.nodes`), `limit` the configured bound, `observed` the actual value (an amount above `u64::MAX` unchanged), no `prior`, no `requested`, no native site, and the limit's source region when it has one. | Test (TC-1309) |
-| FR-514-AC-10 | `qsl_inventory` with `parsed` `None` over a limit at S1 or S2 returns `Incomplete` with zero rows and the cause; with `parsed` `None` over a limit at S3, or over `Ok(unit)`, it returns `InventoryRefusal::MissingParsedUnit` and no inventory. | Test (TC-1309) |
-| FR-514-AC-11 | An obligation whose span no requirement form holds (a synthetic obligation over an empty or non-containing form list) has no owner: the owner lookup gives none and `qsl_inventory` over such a unit would return `InventoryRefusal::UnownedObligation`, never an obligation row with an invented ordinal. | Test (TC-1309) |
-| FR-514-AC-12 | `qsl_inventory` over a `StageFailure::Limit` whose kind is `TickCount` returns `InventoryRefusal::NoInventory` and no rows, because a runtime limit kind has no type-work dimension. | Test (TC-1309) |
+| FR-514-AC-10 | `fsl_inventory` with `parsed` `None` over a limit at S1 or S2 returns `Incomplete` with zero rows and the cause; with `parsed` `None` over a limit at S3, or over `Ok(unit)`, it returns `InventoryRefusal::MissingParsedUnit` and no inventory. | Test (TC-1309) |
+| FR-514-AC-11 | An obligation whose span no requirement form holds (a synthetic obligation over an empty or non-containing form list) has no owner: the owner lookup gives none and `fsl_inventory` over such a unit would return `InventoryRefusal::UnownedObligation`, never an obligation row with an invented ordinal. | Test (TC-1309) |
+| FR-514-AC-12 | `fsl_inventory` over a `StageFailure::Limit` whose kind is `TickCount` returns `InventoryRefusal::NoInventory` and no rows, because a runtime limit kind has no type-work dimension. | Test (TC-1309) |
 
 ## Dependencies
 
@@ -216,5 +216,5 @@ FR-480's criteria belong to four pieces of work (QSL-1508):
   and optional prior, requested and site fields are in the IR carrier.
 - **Contract IR FR-052 (decided):** IR FR-052 as amended by IR#854 keeps the
   `TypeAdmissionUnfinished` cause for the legacy composed-lane inventory,
-  which is deleted; IR-1304 retires the cause. No QSL code produces it. The obligation FR-052-AC-10 (partial rows and a typed
+  which is deleted; IR-1304 retires the cause. No FSL code produces it. The obligation FR-052-AC-10 (partial rows and a typed
   cause on exhaustion) is kept here.

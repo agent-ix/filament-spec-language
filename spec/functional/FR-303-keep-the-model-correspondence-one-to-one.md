@@ -3,19 +3,19 @@ id: FR-303
 title: "Keep the model correspondence one-to-one"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-150
+  - target: ix://agent-ix/filament-specification/FR-150
     type: depends_on
 ---
 # FR-303: Keep the model correspondence one-to-one
@@ -68,7 +68,7 @@ The S3 checker is the only writer of the correspondence (ADR-013 O-04).
 - **Upstream:** ADR-013 O-04 makes `check` the only writer; ADR-016 §2
   ("Original and effective provenance") requires the correspondence to be
   one-to-one; [FR-094](FR-094-key-model-owned-reference-population-and-quantity-nodes.md)
-  keys the model-owned nodes; QSpec FR-150 fixes the declaration key.
+  keys the model-owned nodes; FSpec FR-150 fixes the declaration key.
 - **Downstream:** [FR-088](FR-088-clause-name-and-type-identity.md)'s
   `resolve_declaration`, replay's `WireNodeId` → `NodeKey` lookup (ADR-016
   ID-3), and the abstraction relation's key resolution

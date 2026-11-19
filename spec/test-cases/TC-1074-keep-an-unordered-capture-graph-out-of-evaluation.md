@@ -3,7 +3,7 @@ id: TC-1074
 title: "Keep an unordered capture graph out of protocol slot evaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1074: Keep an unordered capture graph out of protocol slot evaluation
@@ -25,12 +25,12 @@ the `activated` capture to a Boolean `expression` node already in the package.
 That node is referenced by its parent expression, not by the compensation, so
 the edit also adds the node to the compensation's `dependencies`, sorted once
 in ascending structural-key order. The compensation, clause and ancestors
-retain their structural node keys. QSpec FR-322 defines a declared node's path
+retain their structural node keys. FSpec FR-322 defines a declared node's path
 as its declaration path and states that body content is not part of that path;
 its package contract defines structural equality without a package identifier,
 hash, digest or seal. No `package_id` is added or re-minted. With dependencies
 updated, the only defect left is the binder-scope read, so the reader reaches
-its slot checks (QSpec FR-464 reader order, step 6) and refuses there.
+its slot checks (FSpec FR-464 reader order, step 6) and refuses there.
 
 ## Test Procedure
 

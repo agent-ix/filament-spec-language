@@ -3,7 +3,7 @@ id: TC-580
 title: "A state constraint stores boundary states, reports real violations and never proves"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: verifies
 ---
 # TC-580: A state constraint stores boundary states, reports real violations and never proves

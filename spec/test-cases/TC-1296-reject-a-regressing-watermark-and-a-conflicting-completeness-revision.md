@@ -3,7 +3,7 @@ id: TC-1296
 title: "Reject a regressing watermark and a conflicting completeness revision on the spine"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: verifies
 ---
 # TC-1296: Reject a regressing watermark and a conflicting completeness revision on the spine

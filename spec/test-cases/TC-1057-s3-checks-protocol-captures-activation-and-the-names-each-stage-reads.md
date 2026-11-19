@@ -3,7 +3,7 @@ id: TC-1057
 title: "S3 checks a protocol's activation and captures and the names each stage may read"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: verifies
 ---
 # TC-1057: S3 checks a protocol's activation and captures and the names each stage may read

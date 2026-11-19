@@ -3,7 +3,7 @@ id: TC-422
 title: "Each Locus variant resolves to regions by its own rule, and the artifact pointer is RFC 6901"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: verifies
 ---
 # TC-422: Each Locus variant resolves to regions by its own rule, and the artifact pointer is RFC 6901

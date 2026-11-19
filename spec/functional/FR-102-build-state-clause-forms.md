@@ -3,19 +3,19 @@ id: FR-102
 title: "Build state clause forms and the self, result and reaches expressions at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-067
+  - target: ix://agent-ix/filament-spec-language/FR-067
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-019
+  - target: ix://agent-ix/filament-specification/FR-019
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
 ---
 # FR-102: Build state clause forms and the self, result and reaches expressions at S2
@@ -23,7 +23,7 @@ relationships:
 ## Description
 
 When a `1-draft` unit declares an `invariant`, `constraint`, `pre` or `post` state clause,
-S2 (`qsl-forms`) SHALL build one `ProtocolClause` state clause form for it
+S2 (`fsl-forms`) SHALL build one `ProtocolClause` state clause form for it
 through the closed leading-token-kind entry table (ADR-012 §3, §4.3, §15.3).
 When a `1-draft` unit declares an `operation-body`, S2 SHALL build one
 source-preserving `OperationBodyForm` through that table.
@@ -32,11 +32,11 @@ When a clause body or any other expression uses `self`, `result` or
 of refusing it as an unrepresented construct.
 
 Today S2 refuses all of these. `LeadingTokenKind` has `Function`, `Type`,
-`Record` and `Tuple` only (`qsl-forms/src/dispatch.rs:156-170`), a unit
+`Record` and `Tuple` only (`fsl-forms/src/dispatch.rs:156-170`), a unit
 beginning `invariant` refuses `NoDispatchEntry` (`dispatch.rs:671-682`), and
 the expression builder refuses `self`, `result` and `reaches` as
-`UnrepresentedConstruct` (`qsl-forms/src/value.rs:1039-1041`). S1 already
-parses all of them (`qsl-cst/src/grammar.rs:566-591`, `:864-865`,
+`UnrepresentedConstruct` (`fsl-forms/src/value.rs:1039-1041`). S1 already
+parses all of them (`fsl-cst/src/grammar.rs:566-591`, `:864-865`,
 `:905-914`).
 
 ## Inputs
@@ -82,7 +82,7 @@ parses all of them (`qsl-cst/src/grammar.rs:566-591`, `:864-865`,
   It SHALL NOT resolve the profile, model alias, target type, operation or
   parameters; S3 resolution follows FR-104's selected-model and
   effective-operation rules.
-- An `operation-body` supplies an operation candidate's body under QSpec
+- An `operation-body` supplies an operation candidate's body under FSpec
   FR-151. It is distinct from `StateClauseForm`: it supplies one operation
   body, while a unit `pre` or `post` `StateClauseForm` supplies a contract
   clause. An invariant is not associated with an operation body. Both are
@@ -100,7 +100,7 @@ parses all of them (`qsl-cst/src/grammar.rs:566-591`, `:864-865`,
   name. Nothing here checks where `self`, `result` or `reaches` may appear or
   what `edge` names; S3 does (FR-104).
 - S1 parses `reaches`'s edge as a `QualifiedName`
-  (`qsl-cst/src/grammar.rs:905-914`). If the edge has more than one segment,
+  (`fsl-cst/src/grammar.rs:905-914`). If the edge has more than one segment,
   such as `M::T::parent`, then the builder SHALL refuse it with
   `FormsCause::UnrepresentedConstruct` (`unsupported_construct`) at the edge:
   the edge is a member of the operands' own type, which S3 resolves, so a
@@ -130,4 +130,4 @@ parses all of them (`qsl-cst/src/grammar.rs:566-591`, `:864-865`,
 
 - ADR-012 §15 (the mapping), §4.3 (thin seams), §5.1 S2.
 - FR-067 and FR-091: the S2 builder and the `Value` forms this extends.
-- The code change waits for the other lane's current work in `qsl-forms`.
+- The code change waits for the other lane's current work in `fsl-forms`.

@@ -3,19 +3,19 @@ id: FR-454
 title: "Emit a checked schedulability claim as a v2 claim node"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-246
+  - target: ix://agent-ix/filament-spec-language/FR-246
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-248
+  - target: ix://agent-ix/filament-spec-language/FR-248
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
 ---
 # FR-454: Emit a checked schedulability claim as a v2 claim node
@@ -24,11 +24,11 @@ relationships:
 
 The S4 package emitter (ADR-011 layer 4 `package`, edge E4) SHALL emit each
 checked `schedulable` or `response` claim (FR-246) as one
-`quire.checked-semantic-graph/v2` node with `node_tag: "claim"` and
-`semantic_form: "schedulability"`, whose body is the aggregate QSpec FR-482
-states with the claim's whole task set inside it, and QSL's I2 reader SHALL
-read that node back. QSpec FR-482 owns the body, the obligation identity and
-the reader's refusals; this requirement states what QSL's emitter writes
+`filament.checked-semantic-graph/v2` node with `node_tag: "claim"` and
+`semantic_form: "schedulability"`, whose body is the aggregate FSpec FR-482
+states with the claim's whole task set inside it, and FSL's I2 reader SHALL
+read that node back. FSpec FR-482 owns the body, the obligation identity and
+the reader's refusals; this requirement states what FSL's emitter writes
 from its checked `TaskSet` and `ScheduleClaim` and what its I2 reader
 returns, so that the obligation identity FR-246 relies on is
 keyed from a node.
@@ -50,7 +50,7 @@ obligation.
 
 ## Outputs
 
-- One v2 node per distinct checked claim, body as QSpec FR-482 states, with
+- One v2 node per distinct checked claim, body as FSpec FR-482 states, with
   `semantic_type` the package's `scalar_type`/`boolean` node, no
   `declaration`, no `owner`, `dependencies` `[]` and one occurrence of role
   `claim` per declaration. Two declarations with equal checked content share
@@ -109,7 +109,7 @@ obligation.
 | FR-454-AC-1 | Compiling ADR-026 §12's `Ctl` (in `ms`, tasks `a`, `b`, `c` with priorities 1, 2, 3) with `CtlFp`, `CtlEdf` and `response R on Ctl.c <= 12 ms under fixed_priority;` emits three `claim`/`schedulability` nodes: `CtlFp` with `kind` `schedulable`, `policy` `fixed-priority`, `task` and `bound` the empty aggregate and `tasks` the three task aggregates in name order, every time value a `quantity` literal typed by the `ms` unit node and `bcet`, `jitter` and `blocking` `0`; `CtlEdf` the same with `policy` `edf`; `R` with `kind` `response`, `task` `c` and `bound` `12`. Each has `dependencies` `[]` and occurrences of role `claim`; the I2 reader admits each and returns its kind, policy, task, bound and task set. No checked claim is refused as not emitted. | Test (TC-1202) |
 | FR-454-AC-2 | `CtlFp` and `CtlEdf` emit different node ids and different obligation identities; `Ctl` with the third WCET 6, or with `bcet 1 ms` on one task, emits a different `CtlFp` node id and `package_id`; `Ctl` with its tasks listed in another order, with `jitter 0 ms` or `bcet 0 ms` written on one task, emits `CtlFp`'s node id; one unit that declares `CtlFp`'s claim twice under two names emits one node with two `claim` occurrences, ordinals 0 and 1. | Test (TC-1202) |
 | FR-454-AC-3 | The I2 reader returns for `CtlFp` the triple `[node, "claim", ordinal]`, and resolving it in the recompiled package returns the claim and its task set; a triple with an unknown NodeId, with a `claim`/`state_graph` node's NodeId, or with another ordinal returns `clause-root-unresolved` from the schedulability lookup, and `CtlFp`'s triple given to FR-337's temporal lookup or FR-410's state-graph lookup returns `clause-root-unresolved`; a request whose triple is unresolved checks no evidence and settles the item `Failed`. | Test (TC-1202) |
-| FR-454-AC-4 | Fed to QSL's I2 reader, AC-1's `CtlFp` node with `policy` `rate-monotonic` refuses `invalid_package`/`invalid-value`, with its tasks in the order `b`, `a`, `c` refuses `invalid_semantic_graph` at `tasks`, and with the first task's `period` `0` refuses `invalid_timed_model`/`invalid-task-set` at that task's aggregate, each at FR-482's locus, with the node key and `package_id` recomputed after each edit. | Test (TC-1202) |
+| FR-454-AC-4 | Fed to FSL's I2 reader, AC-1's `CtlFp` node with `policy` `rate-monotonic` refuses `invalid_package`/`invalid-value`, with its tasks in the order `b`, `a`, `c` refuses `invalid_semantic_graph` at `tasks`, and with the first task's `period` `0` refuses `invalid_timed_model`/`invalid-task-set` at that task's aggregate, each at FR-482's locus, with the node key and `package_id` recomputed after each edit. | Test (TC-1202) |
 
 ## Dependencies
 
@@ -125,6 +125,6 @@ obligation.
 
 ## References
 
-- QSpec FR-482 (checked-package schedulability claim body and obligation
+- FSpec FR-482 (checked-package schedulability claim body and obligation
   identity), FR-322 (the artifact and its reader order), FR-419.
 - Owning ticket: Linear STD-375; code: QSL-861.

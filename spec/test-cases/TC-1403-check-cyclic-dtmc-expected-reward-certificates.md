@@ -3,11 +3,11 @@ id: TC-1403
 title: "Check finite cyclic DTMC first-hit expected-reward certificates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
 ---
 # TC-1403: Check finite cyclic DTMC first-hit expected-reward certificates
@@ -46,7 +46,7 @@ rank progress; producer values and qualitative classifications are untrusted.
    value/rank/target independently. This profile must not accidentally
    retain the old original-DAG or all-original-terminal-B gate.
 4. Encode valid documents and check them in a fresh process without
-   qsl-analyze/provider linkage. Apply each AC-37 identity, unit, member,
+   fsl-analyze/provider linkage. Apply each AC-37 identity, unit, member,
    ordering, value and rank mutation separately; assert the precise
    existing rule/locus, not only nonacceptance. Include missing top-level
    values/ranking, an extra after-B key, a binding-free model key,

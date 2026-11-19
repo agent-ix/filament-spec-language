@@ -3,14 +3,14 @@ id: FR-050
 title: "Publish authenticated temporal selections in compiled protocol v2"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-002, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/US-004, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-043, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-045, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-090, type: depends_on }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-002, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/US-004, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-043, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-045, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-090, type: depends_on }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
 ---
 # FR-050: Publish authenticated temporal selections in compiled protocol v2
 
@@ -18,13 +18,13 @@ relationships:
 
 When a compiled native package contains a selected temporal declaration, the
 compiler SHALL emit and admit that declaration's exact definition artifact and
-clock configuration through `quire.compiled-protocol/2`.
+clock configuration through `filament.compiled-protocol/2`.
 
 This is the narrow temporal producer extension accepted on compiler
-[#40](https://github.com/agent-ix/quire-spec-language/issues/40) after the L5
+[#40](https://github.com/agent-ix/filament-spec-language/issues/40) after the L5
 merge. It extends the reviewed
 [FR-042](FR-042-publish-compiled-protocol-artifacts.md) contract without changing
-the bytes, meaning or strict reader for `quire.compiled-protocol/1`.
+the bytes, meaning or strict reader for `filament.compiled-protocol/1`.
 
 ## Inputs
 
@@ -40,7 +40,7 @@ display name or inferred unit is not a compiler clock configuration.
 
 ## Outputs
 
-Canonical `quire.compiled-protocol/2` bytes, or FR-042's typed invalid,
+Canonical `filament.compiled-protocol/2` bytes, or FR-042's typed invalid,
 unsupported or resource-incomplete disposition with no partial package. The
 caller supplies an independently selected external artifact identity reference;
 the compiler does not mint its authority, identity or revision. A successful
@@ -102,9 +102,9 @@ The clock alternatives SHALL be exactly:
 
 | Profile identity | Canonical configuration |
 | --- | --- |
-| `quire.temporal.event-position.false-extension/v1` | `{kind:"event_position",sequence_authority:Name}` |
-| `quire.temporal.fixed-sample.false-extension/v1` | `{kind:"fixed_sample",epoch:Number,period:Number,unit:Name}` |
-| `quire.temporal.timestamped-event.finite-window/v1` | `{kind:"timestamped_event",timestamp_unit:Name}` |
+| `filament.temporal.event-position.false-extension/v1` | `{kind:"event_position",sequence_authority:Name}` |
+| `filament.temporal.fixed-sample.false-extension/v1` | `{kind:"fixed_sample",epoch:Number,period:Number,unit:Name}` |
+| `filament.temporal.timestamped-event.finite-window/v1` | `{kind:"timestamped_event",timestamp_unit:Name}` |
 
 The binding's definition index SHALL equal the selected declaration's existing
 `profile` index.
@@ -195,7 +195,7 @@ extension.
 
 ### Checked-package clock bindings
 
-On the checked-package route the same selection is carried by QSpec FR-322's
+On the checked-package route the same selection is carried by FSpec FR-322's
 top-level `temporal_bindings` member (a different member from the `/2` wire's
 `temporal_bindings` table above, with the row shape stated here) ("Temporal clock bindings",
 FR-322-AC-294). A **selected temporal declaration** is each `temporal` clause
@@ -206,15 +206,15 @@ FR-381) is a selected temporal declaration like a `temporal` clause, not a part
 of its protocol's declaration. It carries its own clock name, so binding only
 the package's `lock.profile_selections` `temporal_profile` row is not enough.
 
-**Pending QSpec.** QSpec FR-322 today admits a row only for a
+**Pending FSpec.** FSpec FR-322 today admits a row only for a
 `temporal`/`temporal_clause` declaration, defines `clock_name` as that clause's
-`quire.op.temporal.clause` clock argument and joins the profile through the
+`filament.op.temporal.clause` clock argument and joins the profile through the
 clause's own `temporal_profile` law. A row for a compensation window, its
 `clock_name` as the template's `clock` text and its profile join through the
-lock's `temporal_profile` selection are the QSL rules below and are not
-admissible through the QSpec strict reader until STD-644 lands; the reader
+lock's `temporal_profile` selection are the FSL rules below and are not
+admissible through the FSpec strict reader until STD-644 lands; the reader
 refusal text below holds today for clause rows only. An `await` also reads a
-clock role (QSpec FR-464, FR-466) but is outside this ruling, which covers
+clock role (FSpec FR-464, FR-466) but is outside this ruling, which covers
 compensation windows only; it keeps the lock-level `temporal_profile`
 selection (FR-383) until a decision names it.
 
@@ -246,20 +246,20 @@ selection (FR-383) until a decision names it.
   configuration for a node that is no selected temporal declaration, a
   `clock_name` that differs from the declaration's clock text and a
   configuration kind that is inconsistent with the selected profile each refuse
-  `invalid_package`/`timed-node-reference` at the offending selection, as QSpec
+  `invalid_package`/`timed-node-reference` at the offending selection, as FSpec
   FR-322 refuses the same rows at the reader. No clock, parameter or profile is
   substituted and no partial package is produced.
-- Rows are in ascending structural `NodeRef` order. QSL emission does not claim
-  reader admission; QSpec FR-322 and the IR strict reader decide it.
+- Rows are in ascending structural `NodeRef` order. FSL emission does not claim
+  reader admission; FSpec FR-322 and the IR strict reader decide it.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-050-AC-1 | A package with one declaration under each registered profile and an independently selected complete temporal table emits exactly three canonical declaration-indexed bindings containing the exact definition identity and the matching event-position, fixed-sample or timestamped configuration. On the checked-package route the definition identity is the clause's `temporal_profile` law joined to the lock's `profile_selections` row (FR-513-AC-9), selected by `TemporalClockSelection::definition`; the row carries no revision or artifact reference (QSpec FR-322 "Temporal clock bindings"). | Test (TC-138, TC-150) |
+| FR-050-AC-1 | A package with one declaration under each registered profile and an independently selected complete temporal table emits exactly three canonical declaration-indexed bindings containing the exact definition identity and the matching event-position, fixed-sample or timestamped configuration. On the checked-package route the definition identity is the clause's `temporal_profile` law joined to the lock's `profile_selections` row (FR-513-AC-9), selected by `TemporalClockSelection::definition`; the row carries no revision or artifact reference (FSpec FR-322 "Temporal clock bindings"). | Test (TC-138, TC-150) |
 | FR-050-AC-2 | Missing, surplus, duplicate, reordered, foreign-owner and out-of-range bindings refuse independently; a definition/profile mismatch and every wrong clock alternative refuse without defaulting or shape-based selection. | Test (TC-138, TC-150) |
 | FR-050-AC-3 | Empty/oversized names, zero/negative/unreduced/overflowing periods, substituted epoch/unit/authority, and a substituted definition identity produce their exact typed causes without a partial package; the definition revision and artifact reference of the retired `/2` carrier have no checked-package successor (FR-513-AC-9). | Test (TC-138, TC-150) |
-| FR-050-AC-4 | **RETIRED in QSL-1808; historical only.** `/1` bytes are readable only by the strict `/1` reader; `/1` rejects `/2`, `/2` rejects `/1`, and neither reader upgrades, strips or invents a temporal selection. Disposition (ADR-011, ADR-033, FR-499): the criterion describes the deleted `/1` and `/2` readers' own format. Version separation is owned by the checked-package v2 reader, which refuses a contract version other than `quire.checked-package/v2` as `unknown_wire`/`unsupported-wire` at `/contract_version` (FR-096-AC-9, FR-054-AC-3). | Test (TC-138, TC-150) |
+| FR-050-AC-4 | **RETIRED in QSL-1808; historical only.** `/1` bytes are readable only by the strict `/1` reader; `/1` rejects `/2`, `/2` rejects `/1`, and neither reader upgrades, strips or invents a temporal selection. Disposition (ADR-011, ADR-033, FR-499): the criterion describes the deleted `/1` and `/2` readers' own format. Version separation is owned by the checked-package v2 reader, which refuses a contract version other than `filament.checked-package/v2` as `unknown_wire`/`unsupported-wire` at `/contract_version` (FR-096-AC-9, FR-054-AC-3). | Test (TC-138, TC-150) |
 | FR-050-AC-5 | Exact and one-short FR-042 limits cover added binding entries, strings, numbers and canonical bytes with the existing accounting identity; a sufficient retry starts fresh and reproduces the same bytes. | Test (TC-138, TC-150) |
 | FR-050-AC-6 | The v2-specific L5 evaluation entry points compare all authenticated clock fields before positions and retain them in results; checked `/2` counterparts additionally join the exact S3 source locus, declaration, profile and clock before evaluation and retain the same admitted definition/clock evidence. The existing `/1` entry points keep their signatures and historical unauthenticated scope and cannot establish native-to-temporal correspondence. | Test (TC-138, TC-150) |
 | FR-050-AC-7 | **RETIRED in QSL-840; historical only.** The three member filenames and the mutation format constant, joined to a directory written by `write_v2`, resolve that handoff's offer, selection and mutation manifest, and the decoded manifest repeats the same base-member and format identities, without an environment variable or consumer-owned duplicate vocabulary. | Test (TC-138, TC-150), retired |

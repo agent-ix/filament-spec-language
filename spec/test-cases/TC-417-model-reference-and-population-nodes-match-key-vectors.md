@@ -3,7 +3,7 @@ id: TC-417
 title: "Model declaration, Reference and Population nodes key to the vectors under ModelOwner"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: verifies
 ---
 # TC-417: Model declaration, Reference and Population nodes key to the vectors under ModelOwner

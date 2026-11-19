@@ -3,13 +3,13 @@ id: FR-041
 title: "Admit exact rational roles through an explicit native model profile"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-025
+  - target: ix://agent-ix/filament-spec-language/FR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-040
+  - target: ix://agent-ix/filament-spec-language/FR-040
     type: traces_to
 ---
 # FR-041: Admit exact rational roles through an explicit native model profile
@@ -158,8 +158,8 @@ in scope for [QSL-1380](https://linear.app/agent-ix/issue/QSL-1380/track-retaine
 admission and [FR-025](FR-025-compile-rule-model-source.md) owns the existing
 located JSON producer. This explicit extension supplies
 [FR-040](FR-040-check-composed-values.md) under compiler
-[#35](https://github.com/agent-ix/quire-spec-language/issues/35) and
-[#36](https://github.com/agent-ix/quire-spec-language/issues/36).
+[#35](https://github.com/agent-ix/filament-spec-language/issues/35) and
+[#36](https://github.com/agent-ix/filament-spec-language/issues/36).
 [TC-120](../test-cases/TC-120-admit-rational-native-model-profile.md) has implemented
 public controls with passing local runs; PR review corrections are underway.
 The IR already owns rational declarations, constructors, canonicalization

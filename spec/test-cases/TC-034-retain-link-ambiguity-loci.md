@@ -3,7 +3,7 @@ id: TC-034
 title: "Retain ambiguity provenance without partial linkage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: verifies
 ---
 

@@ -3,9 +3,9 @@ id: TC-1268
 title: "Repeat decisions read attempt binders from the latest completed body iteration"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: verifies
 ---
 # TC-1268: Repeat decisions read attempt binders from the latest completed body iteration

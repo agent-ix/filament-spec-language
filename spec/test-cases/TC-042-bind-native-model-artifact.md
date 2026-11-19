@@ -3,7 +3,7 @@ id: TC-042
 title: "Bind all native model semantics and provenance"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: verifies
 ---
 # TC-042: Bind all native model semantics and provenance

@@ -3,52 +3,56 @@ id: FR-267
 title: "Write and read run results as native-run-result/2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-014
+  - target: ix://agent-ix/filament-specification/FR-014
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-352
+  - target: ix://agent-ix/filament-specification/FR-352
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-contract-codegen/FR-004
+  - target: ix://agent-ix/filament-contract-codegen/FR-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-364
+  - target: ix://agent-ix/filament-specification/FR-364
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-031
+  - target: ix://agent-ix/filament-spec-language/FR-031
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-641
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-645
+    type: references
 ---
 # FR-267: Write and read run results as native-run-result/2
 
 ## Description
 
 The clause-run result document of the spine check route and the `run`
-command's command-error envelope SHALL be `native-run-result/2` (QSpec
+command's command-error envelope SHALL be `native-run-result/2` (FSpec
 FR-352), as ADR-031 SW-10 and SW-11 and ADR-013 OQ-1 decide. The library
-serializes `qsl_replay::spine::run_clause`'s `ClauseRunReport` (FR-109) as
+serializes `fsl_replay::spine::run_clause`'s `ClauseRunReport` (FR-109) as
 the `/2` clause-run document; this requirement owns that producer. A
-clause-run document carries the members QSpec FR-352 defines, including the
+clause-run document carries the members FSpec FR-352 defines, including the
 settlement basis label and the separating witness record of FR-266.
 
-For CG consumption, this document reports the QSL clause run or command error. It does not
+For CG consumption, this document reports the FSL clause run or command error. It does not
 authenticate the generated source, source map or coverage producer used by a
 CG campaign. CG owns that authentication through a separate producer/artifact
 binding receipt, as specified under **CG source-identity boundary** below.
@@ -70,7 +74,7 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
 - One `native-run-result/2` document, encoded through ADR-013 §2's RFC 8785
   encoder.
 - For reading: a typed clause-run result or a typed command-error result, or
-  a located wire refusal. Both result variants belong to the same QSL strict
+  a located wire refusal. Both result variants belong to the same FSL strict
   reader; CG consumes its typed output rather than parsing JSON itself.
 
 ## Behavior
@@ -81,18 +85,29 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   report or command-error wire; it SHALL NOT encode a Reference completion
   as a Boolean claim's truth, add a Population binding to `/2`, or derive
   admission from successful result decoding. Function outcomes use
-  FR-100's Reference form and the existing FR-286 outcome route.
+  FR-650's run value form and the existing FR-286 outcome route.
+- In an FR-651 `items` run, each item refused before evaluation SHALL carry
+  this command-error envelope as its `result`, and each clause-run item its
+  `/2` clause-run document; the `native-run-items/1` document that lists
+  them is FR-651's, and a refusal of the whole request remains one
+  command-error envelope.
 - The library serializer of an FR-109 `ClauseRunReport` SHALL write every
   clause-run result document with `format` `native-run-result/2`.
 - From the change that lands FR-100's clause runner (FR-312's reader plus `run_clause`), the `run` command SHALL return every command-error envelope
   with that format; before it, FR-100's refusals use FR-026's
   `native-run-result/1` envelope. A
   function run's result document is FR-100's `spine-run-result/1`; the
-  outcome document is FR-286's `quire-outcome/1`.
+  outcome document is FR-286's `filament-outcome/1`.
 - A clause-run document SHALL carry the report's disposition and usage in
-  the members QSpec FR-352 defines for them, `basis` on every
+  the members FSpec FR-352 defines for them, `basis` on every
   document, and `witness` exactly when `basis` is
   `decisive-counterexample` or `decisive-witness`.
+- A clause-run document over a `model` trace SHALL carry `limits`, FSpec
+  FR-352's closed object of the effective evaluation limits keyed by setting
+  name, `{"expansion.max_candidates": "N"}` with the default 1,000,000
+  written when the request set none (FR-641); a document over any other
+  trace SHALL carry no `limits`. The reader SHALL refuse the document
+  otherwise, as FSpec FR-352 states.
 - For FR-115's evaluated `Frame` violation, the writer SHALL encode
   `disposition.refusal.frame_witness` as the complete FR-115 `FrameWitness`
   under the closed form below. The enclosing `refusal` retains
@@ -105,7 +120,7 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   enclosing `refusal`.
 - A clause-run document of an extracted Markdown clause body (FR-031) SHALL
   carry the report's extraction record as the top-level `extraction` member,
-  with exactly the members and JSON types QSpec FR-352 lists: `original`
+  with exactly the members and JSON types FSpec FR-352 lists: `original`
   (`authority`, `identity`, `path` and the source-bytes member FR-352 lists), `body` (`authority`,
   `identity`, `document` and the source-bytes member FR-352 lists), `binding` (`clause`, `package`),
   `outcome` (Quire's `availability`, `clauses` when Quire reports a clause
@@ -133,15 +148,17 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
     refusal table states per row;
   - `basis`: `unavailable`.
   It SHALL carry no `witness`.
-- When reading `native-run-result/2`, the QSL strict reader SHALL return
+- When reading `native-run-result/2`, the FSL strict reader SHALL return
   the typed clause-run or command-error variant according to the document's
   closed member shape. The command-error variant uses exactly the envelope
   defined above, including FR-100's code-specific `cause` and `details`
   rules, `basis: unavailable` and no `witness`. A mixed, unknown or invalid
   shape refuses with a located wire diagnostic. Shape selection applies
   only after the exact `format` check; it does not infer the wire version.
-- The writer SHALL write each component of the record in QSpec's spelling
-  for it: the deciding quantifier, the deciding element in the kernel value
+- The writer SHALL write each component of the record in FSpec's spelling
+  for it: the deciding quantifier, the deciding comparison, the two
+  operands and the decision path of a comparison record (FR-265), each
+  operand in the kernel value wire form, the deciding element in the kernel value
   wire form, the index, the value path, and the trace position where
   present.
 - The writer SHALL write an absent component as an absent member, never as
@@ -149,16 +166,19 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
 - The reader SHALL refuse a document, naming the failing member:
   - whose `witness` is missing a required component, carries a member the
     record does not define, or gives an absent component a default value
-    (QSpec FR-351-AC-5);
-  - whose `basis` is absent or not a QSpec FR-243 label;
+    (FSpec FR-351-AC-5);
+  - whose `witness` carries only some of `deciding_comparison`, `operands`
+    and `decision_path`, carries both `quantifier` and `deciding_comparison`,
+    or holds `operands` other than two values (FSpec FR-351-AC-10);
+  - whose `basis` is absent or not an FSpec FR-243 label;
   - that carries `witness` with a basis that is not decisive, or a decisive
-    basis with no `witness` (QSpec FR-352-AC-3);
+    basis with no `witness` (FSpec FR-352-AC-3);
   - whose `format` is `native-run-result/1` or any other identifier this
-    reader does not support, under QSpec FR-014's unsupported-version rule
-    (QSpec FR-352-AC-2). The version comes from `format` alone, never from
+    reader does not support, under FSpec FR-014's unsupported-version rule
+    (FSpec FR-352-AC-2). The version comes from `format` alone, never from
     the document's other content.
 - Writing a report and reading the document back SHALL give a `basis` and
-  `witness` equal to the report's, under QSpec FR-351 componentwise
+  `witness` equal to the report's, under FSpec FR-351 componentwise
   identity.
 
 - The writer SHALL write every report of FR-330's `Temporal` selection,
@@ -206,16 +226,15 @@ refused condition holding `Refusal::CheckedInvariant`) is written with
 written as for every other selection, with no `temporal`.
 
 Every row's `outcome`, when present, is FR-100's `outcome` vocabulary, as
-QSpec FR-352 requires of an evaluate result; no row writes a `refusal`
+FSpec FR-352 requires of an evaluate result; no row writes a `refusal`
 member at stage `evaluate`. The `basis` of each row is FR-266's Temporal
 row.
 
-QSpec FR-352 currently admits ten of these kinds and gives the `pending`
-row the category `inconclusive`. The `pending-window`, `pending-next-event`,
-`indeterminate`, `activation-incomplete`, `progress-limit-reached` and
-`progress-contradicted` rows, and the categories `pending` and
-`indeterminate`, are QSL's; QSL-1610 reconciles QSpec FR-352 with them.
-Until it lands, a QSpec FR-352 reader refuses those documents.
+FSpec FR-352 registers the same sixteen kinds with the same members,
+categories, bases and outcomes, the categories `pending` and `indeterminate`
+included, so a document this writer produces reads under an FSpec FR-352
+strict reader, and a kind outside the sixteen is unregistered on both sides
+and refused.
 
 | `kind` | Evaluator result (FR-330) | Members beside `kind` | `category`, `truth`, `basis` | `outcome` |
 | --- | --- | --- | --- | --- |
@@ -234,7 +253,7 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
 | `progress-limit-reached` | FR-502's covered-position limit | `limit`, `value`, `setting` | `incomplete`, absent, `unavailable` | absent |
 | `progress-contradicted` | FR-502's progress contradiction | `dimension`, `clock`, `retained`, `asserted` | `refusal`, absent, `unavailable` | FR-100's `refused` form with the record's `code` (`invalid_runtime_input`), `cause` (`invalid-value`) and `fields` |
 | `condition-refused` | a `holds` condition refused (FR-327 "Refused condition"), other than `CheckedInvariant` (not written yet; see below) | `position` | the record code's category, absent, `unavailable` | FR-100's `refused` form with the record's `code`, `cause`, `fields` and `locus` |
-| `trace-refused` | a `TemporalRefusal` other than `Fault` | `variant`, and the variant's members below | the refusal code's category, absent, `unavailable` | `{"kind": "refused", "code": ..., "cause": ...}`, the refusal's catalog code |
+| `trace-refused` | a `TemporalRefusal` other than `Fault` and other than an FR-645 trace refusal (an empty finite trace or an empty lasso loop is written as FR-645's refusal record, with no `temporal` row) | `variant`, and the variant's members below | the refusal code's category, absent, `unavailable` | `{"kind": "refused", "code": ..., "cause": ...}`, the refusal's catalog code |
 
 - The writer does not write the `condition-refused` row yet: the report
   holds a refused `holds` condition as FR-109's stage `evaluate` refusal,
@@ -247,7 +266,10 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
   row's own `limit` (`node count`) and `setting`
   (`progress.covered_positions`), which the reader requires exactly.
 - `position` is the zero-based trace position as an unsigned integer;
-  `count`, `min_count`, `value` and `deadline` are unsigned integers;
+  `count`, `min_count` and `deadline` are unsigned integers; the `value` of
+  a limit row (`window-limit-reached`, `progress-limit-reached`) is the
+  configured bound as a decimal string with no leading zero, as every limit
+  row's `value` is, because it is a 64-bit count;
   `limit` and `setting` are the limit's and its setting's names.
 - `category` of the `pending`, `pending-window` and `pending-next-event`
   rows is `pending`, and of the `indeterminate` row `indeterminate`: the
@@ -271,19 +293,19 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
   `surrounding-execution` (each with `closure`, `closed` or `open`), and
   `position` (with `identity` and `stamp`). The outcome `fields` SHALL equal
   the record FR-502 derives from those members.
-- `constraint` is QSpec FR-364's fairness member form `{kind, operation,
+- `constraint` is FSpec FR-364's fairness member form `{kind, operation,
   granularity}`.
 - `counterexample` is the report's `TemporalCounterexample` (FR-330
-  Outputs), written as QSpec FR-364's observed arm (`trace: "observed"`,
+  Outputs), written as FSpec FR-364's observed arm (`trace: "observed"`,
   `initial_state: null`, `over_binding: null`), as FR-331 reads it. The
   writer writes it as the report holds it and derives none of its members.
-  Its `trace_position` is QSpec's backend-provider `Count` form, an unsigned
+  Its `trace_position` is FSpec's backend-provider `Count` form, an unsigned
   JSON integer from 0 to 9007199254740991 (2^53 - 1, the largest integer
   RFC 8785 serializes exactly), equal to `position`; it is never a decimal
   string. Each step of `prefix` and `loop` is `{"document": D}`, `D` the
   snapshot's FR-106 `DocumentRef` in the closed `{authority, identity}`
   form of the frame witness. `kind` is `"formula"` for `violated`, and for
-  `undefined` QSpec FR-364's undefined-evaluation envelope
+  `undefined` FSpec FR-364's undefined-evaluation envelope
   `{"type": "undefined-evaluation", "where": {"position", "document",
   "locus"}, "cause"}`, whose `cause` is the undefined value's FR-100 reason
   and whose `locus` is a closed object with exactly one member naming the
@@ -302,15 +324,17 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
   ticks, not trace positions, so it is skipped, and a clause with no step
   interval writes `null`. `interval` is `null` for `undefined`.
 - `variant` names the `TemporalRefusal` variant, and the members beside it
-  carry its payload, so the document reads back to an equal refusal:
+  carry its payload, so the document reads back to an equal refusal. The
+  empty finite trace and the empty lasso loop have no variant here: FR-645
+  reports them as its trace refusal record (`reason` `empty-finite-trace` or
+  `empty-lasso-loop`) with no `temporal` row, and a `trace-refused` row
+  naming either is refused by the reader, naming `variant`:
 
   | `variant` | Members | `TemporalRefusal` |
   | --- | --- | --- |
-  | `empty-trace` | none | `EmptyTrace` |
   | `tuple-arity` | `expected`, `found` (unsigned) | `TupleArity` |
   | `align-skip-not-lockstep` | none | `AlignSkipNotLockstep` |
   | `not-projection-aligned` | none | `NotProjectionAligned` |
-  | `empty-loop` | none | `EmptyLoop` |
   | `trace-too-long` | none | `TraceTooLong` |
   | `lasso-under-bounded-profile` | `profile` (profile identity) | `LassoUnderBoundedProfile` |
   | `profile-not-evaluated` | `profile` (profile identity) | `ProfileNotEvaluated` |
@@ -326,7 +350,7 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
   `frame_witness`, an `internal_fault` or a `refusal`; an unknown `kind` or `variant`; a
   member the row does not list, or one it lists absent or `null`; a
   `category`, `truth`, `basis` or `outcome` other than the row's; and a
-  `counterexample` that QSpec FR-364's replayer refuses before replay, whose
+  `counterexample` that FSpec FR-364's replayer refuses before replay, whose
   `trace_position` is not a `Count` (a JSON integer from 0 to
   9007199254740991: a string, a negative integer, a number with a fraction
   and an integer above that bound are refused), or whose
@@ -348,6 +372,20 @@ Until it lands, a QSpec FR-352 reader refuses those documents.
   refuse an `undefined` row whose reason is no kernel or family undefined
   reason, naming `disposition.outcome.reason`.
 
+### Progress ledger and trace refusal fields
+
+A clause-run result over a `progressed` or `timestamped` trace SHALL carry a
+top-level `ledger` member holding the ledger the report returns, in FR-641's
+`filament.progress-ledger/1` form (FSpec FR-352 "Progress ledger"): the updated
+ledger on acceptance, the supplied ledger unchanged on a refusal or a limit stop,
+and no member when the request supplied none and the run was refused. Every other
+result omits it. The strict reader SHALL restore it without loss and SHALL refuse
+a `ledger` on any other result, naming `ledger`.
+
+A trace refusal (FR-645) SHALL write its `fields` (`reason`, `profile`,
+`expected`, `supplied`, `position`, `request_pointer`, each where assigned) and
+its `message` in the refusal record, and the reader SHALL restore them.
+
 ### Wire member cross-check
 
 This table checks the full clause-run and command-error member inventory
@@ -356,12 +394,12 @@ condition is false; the reader refuses `null` or a default in its place.
 
 | Class | Member | Owner FR | Encoding | Decoding |
 | --- | --- | --- | --- | --- |
-| Clause run | `format` | QSpec FR-352 | Exact `native-run-result/2` | Check before variant selection |
+| Clause run | `format` | FSpec FR-352 | Exact `native-run-result/2` | Check before variant selection |
 | Clause run | `package_id` | FR-109 | Compiled package's hex identity when compile completed | Restore identity or absence |
 | Clause run | `disposition` | FR-109 | Closed report disposition below | Restore typed disposition |
-| Clause run | `usage` | FR-109, QSpec FR-352 | Closed accounting object below | Restore all counters |
-| Clause run | `basis` | QSpec FR-352, FR-266 | FR-243 label on every report | Validate label and verdict relation |
-| Clause run | `witness` | QSpec FR-352, FR-266 | FR-351 record only for decisive basis | Restore record or absence |
+| Clause run | `usage` | FR-109, FSpec FR-352 | Closed accounting object below | Restore all counters |
+| Clause run | `basis` | FSpec FR-352, FR-266 | FR-243 label on every report | Validate label and verdict relation |
+| Clause run | `witness` | FSpec FR-352, FR-266 | FR-351 record only for decisive basis | Restore record or absence |
 | Disposition | `stage` | FR-109 | Compile, select, admit or evaluate label | Restore stage |
 | Disposition | `category` | FR-109 | Report category label | Restore category |
 | Disposition | `truth` | FR-109 | Boolean when the report assigns it | Restore Boolean or absence |
@@ -391,14 +429,14 @@ condition is false; the reader refuses `null` or a default in its place.
 | Outcome location | `path` | FR-100 | Child-index array | Restore path |
 | Internal fault | `stage` | FR-100 | Stable fault stage | Restore stage |
 | Internal fault | `invariant` | FR-100 | Stable invariant identifier | Restore invariant |
-| Usage | `admission` | FR-109, QSpec FR-352 | Closed admission counters | Restore counters |
-| Usage | `evaluation_admissions` | FR-109, QSpec FR-352 | Unsigned count | Restore count |
-| Usage | `evaluation_consumed` | FR-109, QSpec FR-352 | Ordered counter array | Restore array |
-| Admission | `document_bytes` | QSpec FR-352 | Unsigned count | Restore count |
-| Admission | `objects` | QSpec FR-352 | Unsigned count | Restore count |
-| Admission | `values` | QSpec FR-352 | Unsigned count | Restore count |
-| Evaluation counter | `kind` | QSpec FR-352 | Counter name | Restore name |
-| Evaluation counter | `consumed` | QSpec FR-352 | Unsigned count | Restore count |
+| Usage | `admission` | FR-109, FSpec FR-352 | Closed admission counters | Restore counters |
+| Usage | `evaluation_admissions` | FR-109, FSpec FR-352 | Unsigned count | Restore count |
+| Usage | `evaluation_consumed` | FR-109, FSpec FR-352 | Ordered counter array | Restore array |
+| Admission | `document_bytes` | FSpec FR-352 | Unsigned count | Restore count |
+| Admission | `objects` | FSpec FR-352 | Unsigned count | Restore count |
+| Admission | `values` | FSpec FR-352 | Unsigned count | Restore count |
+| Evaluation counter | `kind` | FSpec FR-352 | Counter name | Restore name |
+| Evaluation counter | `consumed` | FSpec FR-352 | Unsigned count | Restore count |
 | Frame witness | `code` | FR-115 | `frame_violation` | Match enclosing refusal |
 | Frame witness | `cause` | FR-115 | `unauthorized-change` | Match enclosing refusal |
 | Frame witness | `invocation` | FR-115 | FR-106 document reference | Restore invocation selection |
@@ -425,7 +463,7 @@ condition is false; the reader refuses `null` or a default in its place.
 | Change | `deletes` | FR-115 | Ordered declaration-key array on deletion | Restore checked grant |
 | Declaration key | `package` | FR-056, FR-115 | Package identity | Restore key package |
 | Declaration key | `node` | FR-056, FR-115 | IR node identity | Restore key node |
-| Clause run | `extraction` | FR-031, FR-267, QSpec FR-352 | Extraction record of an extracted clause body, absent otherwise | Restore record or absence |
+| Clause run | `extraction` | FR-031, FR-267, FSpec FR-352 | Extraction record of an extracted clause body, absent otherwise | Restore record or absence |
 | Disposition | `temporal` | FR-330, FR-267 | Closed temporal disposition, evaluate stage of a Temporal selection only | Restore typed temporal verdict or trace refusal |
 | Temporal | `kind` | FR-267 | One of the sixteen tags of the temporal table | Select verdict variant |
 | Temporal | `deadline` | FR-501 | Unsigned watermark tick | Restore deadline |
@@ -433,16 +471,19 @@ condition is false; the reader refuses `null` or a default in its place.
 | Temporal | `guard` | FR-501 | FR-100 outcome `location` form | Restore guard location |
 | Temporal | `dimension`, `clock`, `retained`, `asserted` | FR-502 | Contradicted dimension, clock name, two closed progress values | Restore typed contradiction and check `outcome.fields` |
 | Temporal | `position` | FR-327 | Unsigned trace position | Restore position |
-| Temporal | `counterexample` | QSpec FR-364, FR-330, FR-331 | Observed-arm `TemporalCounterexample` the report holds | Restore and check against FR-364 |
+| Temporal | `counterexample` | FSpec FR-364, FR-330, FR-331 | Observed-arm `TemporalCounterexample` the report holds | Restore and check against FR-364 |
 | Temporal | `count`, `min_count` | FR-327 | Unsigned counts | Restore counts |
-| Temporal | `constraint` | QSpec FR-364 | Fairness member `{kind, operation, granularity}` | Restore constraint |
-| Temporal | `limit`, `value`, `setting` | FR-194 | Limit name, unsigned value, setting name | Restore limit |
+| Temporal | `constraint` | FSpec FR-364 | Fairness member `{kind, operation, granularity}` | Restore constraint |
+| Temporal | `limit`, `value`, `setting` | FR-194 | Limit name, value as a decimal string, setting name | Restore limit |
 | Temporal | `variant`, `expected`, `found`, `profile` | FR-330, FR-267 | `TemporalRefusal` variant tag and its payload | Restore exact refusal variant |
-| Separating witness | `quantifier` | QSpec FR-352 | FR-351 occurrence key when assigned | Restore component |
-| Separating witness | `deciding_element` | QSpec FR-352 | Canonical typed value | Restore component |
-| Separating witness | `index` | QSpec FR-352 | Unsigned position when assigned | Restore component |
-| Separating witness | `value_path` | QSpec FR-352 | FR-207 runtime value path | Restore component |
-| Separating witness | `trace_position` | QSpec FR-352 | Unsigned position when assigned | Restore component |
+| Separating witness | `quantifier` | FSpec FR-352 | FR-351 occurrence key when assigned | Restore component |
+| Separating witness | `deciding_element` | FSpec FR-352 | Canonical typed value | Restore component |
+| Separating witness | `index` | FSpec FR-352 | Unsigned position when assigned | Restore component |
+| Separating witness | `value_path` | FSpec FR-352 | FR-207 runtime value path | Restore component |
+| Separating witness | `trace_position` | FSpec FR-352 | Unsigned position when assigned | Restore component |
+| Separating witness | `deciding_comparison` | FSpec FR-352 | FR-351 occurrence key on a comparison record | Restore component |
+| Separating witness | `operands` | FSpec FR-352 | Two canonical typed values on a comparison record | Restore component |
+| Separating witness | `decision_path` | FSpec FR-352 | Non-empty occurrence-key list on a comparison record | Restore component |
 | Command error | `format` | FR-267 | Exact `native-run-result/2` | Check before variant selection |
 | Command error | `stage` | FR-100, FR-267 | Command stage | Restore stage |
 | Command error | `code` | FR-100, FR-267 | Catalog code | Restore code |
@@ -453,8 +494,8 @@ condition is false; the reader refuses `null` or a default in its place.
 
 ### CG source-identity boundary
 
-- The QSL producer SHALL emit only the members defined by
-  [QSpec FR-352](ix://agent-ix/quire-specification/FR-352) and this requirement;
+- The FSL producer SHALL emit only the members defined by
+  [FSpec FR-352](ix://agent-ix/filament-specification/FR-352) and this requirement;
   generated-source identity, source-map identity and coverage producer or tool
   version are not additional `/2` members.
 - A consumer SHALL NOT treat successful `/2` decoding, its disposition, basis,
@@ -466,8 +507,8 @@ condition is false; the reader refuses `null` or a default in its place.
   association between that exact result, the producer execution, and the
   exact generated source and source map used by the campaign. CG owns the
   receipt's representation, trusted producer authority and verification under
-  [CG FR-004](ix://agent-ix/quire-contract-codegen/FR-004) and
-  [CG interface-001](ix://agent-ix/quire-contract-codegen/interface-001).
+  [CG FR-004](ix://agent-ix/filament-contract-codegen/FR-004) and
+  [CG interface-001](ix://agent-ix/filament-contract-codegen/interface-001).
   Caller declarations, matching paths and self-declared producer metadata
   alone do not authenticate this association.
 - If the receipt is absent or unauthenticated, any required association is
@@ -479,7 +520,7 @@ condition is false; the reader refuses `null` or a default in its place.
   coverage classification from those inputs or discharge its coverage
   obligation.
 - When the receipt's associations authenticate and match, CG SHALL retain the
-  decoded QSL disposition, basis and witness without upgrading the outcome;
+  decoded FSL disposition, basis and witness without upgrading the outcome;
   the receipt establishes the association only. Coverage and campaign
   success remain subject to CG's own obligations.
 - When the strict reader returns a command-error variant, CG SHALL retain
@@ -489,10 +530,18 @@ condition is false; the reader refuses `null` or a default in its place.
   coverage classification or discharge its coverage obligation.
 - When CG refuses the binding of a valid `/2` document, CG SHALL preserve
   that document's decoded outcome separately from the binding diagnostic.
-  Missing external identity is not a malformed `/2` document or a QSL
+  Missing external identity is not a malformed `/2` document or an FSL
   execution refusal. The strict wire reader continues to reject an invalid
   document or unsupported format before consumer binding; it adds no
   compatibility reader or inferred wire members.
+
+## Outcome axes
+
+Every clause-run result document SHALL carry FR-622's `axes` object, whose
+`activation`, `execution`, `truth` and `settlement` members are the FR-516
+result's four fields of the assessed instance in FSpec FR-521's spelling. The
+document's category is unchanged by them. The category labels and temporal
+disposition kinds the document carries are the ones FSpec FR-352 registers.
 
 ## Acceptance Criteria
 
@@ -503,20 +552,25 @@ condition is false; the reader refuses `null` or a default in its place.
 | FR-267-AC-3 | From the change that lands FR-100's clause runner (FR-312's reader plus `run_clause`), `run` over a native-run/1 request whose source declares `edition "9-draft"` returns an outcome carrying no result document and a command-error envelope whose `format` is `native-run-result/2`, with exactly the members `format`, `stage` (`profile`), `code` (`unknown_edition`), `message`, `details` and `basis` (`unavailable`), no `witness` member, exiting 20. | Test |
 | FR-267-AC-4 | A valid `/2` document with no CG receipt is accepted by the wire reader but CG refuses its campaign binding, retaining the decoded outcome and an absent-receipt diagnostic; no campaign qualification, measured coverage classification or coverage discharge results. | Test |
 | FR-267-AC-5 | With an authenticated CG receipt associating the supplied result, producer execution, generated source and source map, CG accepts the binding and retains the result's original disposition, basis and witness. A bound violation, refusal, unsupported or incomplete result remains that outcome and cannot become success through receipt validation. | Test |
-| FR-267-AC-6 | Starting with AC-5's matching inputs, independently replacing the result, producer execution, generated source or source map causes CG to refuse the binding and identify the mismatched association, even when the replacement has the same path or QSL `package_id`. The original decoded outcome and available input identities remain available, with no campaign qualification, measured coverage classification or coverage discharge. | Test |
+| FR-267-AC-6 | Starting with AC-5's matching inputs, independently replacing the result, producer execution, generated source or source map causes CG to refuse the binding and identify the mismatched association, even when the replacement has the same path or FSL `package_id`. The original decoded outcome and available input identities remain available, with no campaign qualification, measured coverage classification or coverage discharge. | Test |
 | FR-267-AC-7 | Independently omitting each required receipt association, or supplying only caller-declared identities and producer metadata without authentication, causes the same non-success binding outcome as AC-4 with the missing or unauthenticated association identified. | Test |
-| FR-267-AC-8 | The QSL producer emits no added generated-source, source-map or coverage-producer members; the strict reader rejects an injected member outside the declared `/2` shape, and an otherwise matching external receipt cannot make `/1`, an unsupported identifier or an invalid `/2` document readable. | Test |
-| FR-267-AC-9 | The same QSL strict reader returns the clause-run variant for AC-1's document and the command-error variant for AC-3's envelope. CG consumes both typed variants without its own JSON parser and retains AC-3's envelope as non-success with no campaign qualification, measured coverage classification or coverage discharge, including when the binding receipt authenticates and matches. | Test |
+| FR-267-AC-8 | The FSL producer emits no added generated-source, source-map or coverage-producer members; the strict reader rejects an injected member outside the declared `/2` shape, and an otherwise matching external receipt cannot make `/1`, an unsupported identifier or an invalid `/2` document readable. | Test |
+| FR-267-AC-9 | The same FSL strict reader returns the clause-run variant for AC-1's document and the command-error variant for AC-3's envelope. CG consumes both typed variants without its own JSON parser and retains AC-3's envelope as non-success with no campaign qualification, measured coverage classification or coverage discharge, including when the binding receipt authenticates and matches. | Test |
 | FR-267-AC-10 | Independently removing a required command-error member, adding a clause-run-only member, replacing the unavailable basis with a decisive basis, adding a witness, or violating FR-100's code-specific cause/details rules makes the strict reader refuse with a located diagnostic. Changing an otherwise valid command-error envelope to `/1` or another unsupported format refuses before variant selection. | Test |
 | FR-267-AC-11 | FR-115's forbidden-parent-change Frame report writes `disposition.refusal.frame_witness` with its invocation, pre, post, population and `field_write` change naming `child`, `parent` and the checked `modifies` grant; reading the `/2` document restores an equal FR-115 `FrameWitness`. A creation, deletion and retype each round-trip their tagged change. The document has `violation`, `truth: false`, `basis: closed-scope`, no `disposition.outcome` and no top-level `witness`. Independently dropping a frame-witness member or change member, adding an unknown member, mismatching its code or cause with the enclosing refusal, or adding `frame_witness` to a non-Frame disposition refuses with a located wire diagnostic. | Test |
 | FR-267-AC-12 | FR-115's link Frame report (TC-1037's invocation I under a frame that modifies no relationship) writes `frame_witness` with a `link` change naming `relationship`, `difference`, `source`, `target` and the checked `modifies`; reading the `/2` document restores an equal FR-115 `FrameWitness`, for `added` and for `removed`. Independently dropping each `link` member or a `source` or `target` member, adding an unknown member, setting `difference` to another value or `null`, and giving an end a bare key refuse with a located wire diagnostic. | Test (TC-1037) |
 | FR-267-AC-13 | FR-330-AC-2's `Reaches` over the `Lasso` with an empty prefix and loop 0, 1 writes stage `evaluate`, `violation`, `truth: false`, `basis: closed-scope`, no top-level `witness`, and `temporal` `{"kind": "violated", "position": 0, "counterexample": C}`, where `C` has `trace: "observed"`, `kind: "formula"`, `initial_state: null`, `prefix: []`, `loop` the two snapshots' `{document}` identities, `over_binding: null`, `fairness: []`, `interval: null` and `trace_position: 0`, the JSON integer; the bytes equal their RFC 8785 re-encoding. FR-331 replaying `C` under an FR-070 envelope naming `Reaches` settles `reproduced-with-evaluated-witness` (FR-331-AC-1). FR-330-AC-1's `Bounded` violation writes `interval` `{"lower": "0", "upper": "1"}`. | Test (TC-1160) |
-| FR-267-AC-14 | Each of these FR-330 reports writes its temporal table row and reads back to an equal disposition: FR-330-AC-2's `pending` (`pending`, `basis` `unsettled`, no `truth`, no `outcome`) and `holds`; FR-330-AC-4's `incomplete` (`outcome` limit `work_units`); FR-330-AC-5's `undefined` (`position` 2, `outcome` `{"kind": "undefined", "reason": "division-by-zero"}`, `basis` `closed-scope`, the envelope `cause` `division-by-zero`, `prefix` the three snapshots); FR-330-AC-6's `missing-fairness-premise` (`outcome` refused `unsupported_projection`/`missing-fairness-premise`, `constraint` `{"kind": "weak", "operation": ..., "granularity": "whole"}`); FR-330-AC-3's empty-loop report (`trace-refused`, `variant` `empty-loop`, `outcome` refused `invalid_runtime_input`/`invalid-value`) and the empty `Finite` report (`variant` `empty-trace`, same `outcome`), which read back to `EmptyLoop` and `EmptyTrace` respectively; and the `GuardUndefined` clause (`on each (q: Counters::Counter) when (3 mod (2 - q.value) >= 0)`) over `Finite` 2, 0, 1, whose `undefined` at `position` 0 has the envelope `locus` `{"guard": "on-each"}`, `cause` `division-by-zero` and a one-snapshot `prefix`. None writes a `refusal` member. Independently adding `temporal {"kind": "holds"}` to FR-109-AC-3's dangling-parent stage `admit` document, setting `kind` to `held`, setting `variant` to `empty-hoop`, dropping `counterexample` from AC-13's document, setting its `trace_position` to `1`, setting it to the string `"0"`, to `-1`, to `0.5` or to `9007199254740992`, adding a top-level `witness` to AC-13's document, adding a `refusal` member to the empty-loop document, and setting the `pending` document's `basis` to `unavailable` each refuse with a located wire diagnostic naming the member. | Test (TC-1160) |
-| FR-267-AC-15 | As wire vectors, reports built to hold each verdict: `TemporalVerdict::Undefined{at: 0, cause: InsufficientData{count: 1, min_count: 5}}` (no run: FR-330 refuses a window aggregate over a model subject at compile, `AggregateModelSubject`) writes `insufficient-data` at `position` 0 with `count` 1, `min_count` 5, category `undefined`, `basis` `unavailable`, no `truth` and `outcome` `{"kind": "undefined", "reason": "insufficient-data"}`; `TemporalVerdict::WindowLimitReached{limit: max_window_values, value: 2, setting: monitor.max_window_values}` (no run: a clause run has no window-limit input, and the default `max_window_values` is 2^20) writes `window-limit-reached`, category `incomplete`, with `limit` `max_window_values`, `value` 2 and `setting` `monitor.max_window_values` and `outcome` `{"kind": "incomplete", "limit": "max_window_values"}`; FR-330-AC-5's report rebuilt to hold the family cause `absent-key` (no run: the `Counter` unit's one population holds every `over` object, so no `lookup` of it is absent) writes `undefined` at `position` 2 with `outcome` reason `absent-key` and envelope `cause` `absent-key`. Through FR-330, FR-328-AC-1's `always holds(c.value <= 1)` over the infinite-trace `Finite` prefix 0, 1, 2 writes `violated` at `position` 0 with a counterexample whose `prefix` holds the three snapshots, `loop` is empty and `interval` is `null`. Each reads back to an equal verdict; independently dropping `count`, `min_count`, `limit`, `value` or `setting` refuses naming it, and setting the `absent-key` document's reason and envelope cause to `absent-value` refuses naming `disposition.outcome.reason`. | Test (TC-1160) |
-| FR-267-AC-16 | Independently: adding `temporal` `{"kind": "holds"}` to FR-109-AC-3's exhausted-work report (stage `evaluate`); adding a `refusal` member to AC-13's `violated` document; setting the `outcome` reason of AC-14's `undefined` document to `insufficient-data`; setting the `outcome` limit of AC-14's `incomplete` document to `max_window_values`; setting the `outcome` of FR-109-AC-3's exhausted-work report to `{"kind": "undefined", "reason": "insufficient-data"}` with category `undefined` (the form FR-109-AC-7's `precondition-false` report takes, with that reason); and setting the `outcome` limit of FR-109-AC-3's exhausted-work report to `max_window_values`, each refuse with a located wire diagnostic naming the member (QSpec FR-352-AC-11, FR-352-AC-12). | Test (TC-1160) |
-| FR-267-AC-17 | A clause-run report over an extracted Markdown clause body is written with a top-level `extraction` member holding exactly QSpec FR-352's `original`, `body`, `binding`, `outcome` and `map` members, plus `original_regions` for a refusal whose locus names a body span, and reads back to an equal record; a report over a unit given as bytes writes no `extraction`; an `extraction` with an unknown top-level member `source`, with `map` missing, with `binding` `null`, with a numeric `body.identity`, and with `map.segments` `[]` each refuse naming `extraction` and the member (QSpec FR-352-AC-13). | Test (TC-109) |
+| FR-267-AC-14 | Each of these FR-330 reports writes its temporal table row and reads back to an equal disposition: FR-330-AC-2's `pending` (`pending`, `basis` `unsettled`, no `truth`, no `outcome`) and `holds`; FR-330-AC-4's `incomplete` (`outcome` limit `work_units`); FR-330-AC-5's `undefined` (`position` 2, `outcome` `{"kind": "undefined", "reason": "division-by-zero"}`, `basis` `closed-scope`, the envelope `cause` `division-by-zero`, `prefix` the three snapshots); FR-330-AC-6's `missing-fairness-premise` (`outcome` refused `unsupported_projection`/`missing-fairness-premise`, `constraint` `{"kind": "weak", "operation": ..., "granularity": "whole"}`); and the `GuardUndefined` clause (`on each (q: Counters::Counter) when (3 mod (2 - q.value) >= 0)`) over `Finite` 2, 0, 1, whose `undefined` at `position` 0 has the envelope `locus` `{"guard": "on-each"}`, `cause` `division-by-zero` and a one-snapshot `prefix`. None writes a `refusal` member. FR-330-AC-3's empty-loop report and the empty `Finite` report write no temporal row: each is FR-645's trace refusal, written as the stage `evaluate` refusal record FR-645-AC-1 and FR-645-AC-2 state (`reason` `empty-lasso-loop` or `empty-finite-trace`, `outcome` refused `invalid_runtime_input`/`invalid-value`) with no `temporal` member, and reads back to an equal refusal; FR-645 is the one authority for how an empty trace is reported. Independently adding `temporal {"kind": "holds"}` to FR-109-AC-3's dangling-parent stage `admit` document, setting `kind` to `held`, adding `temporal` `{"kind": "trace-refused", "variant": "empty-loop"}` to the empty-loop refusal document, dropping `counterexample` from AC-13's document, setting its `trace_position` to `1`, setting it to the string `"0"`, to `-1`, to `0.5` or to `9007199254740992`, adding a top-level `witness` to AC-13's document, and setting the `pending` document's `basis` to `unavailable` each refuse with a located wire diagnostic naming the member. | Test (TC-1160) |
+| FR-267-AC-15 | As wire vectors, reports built to hold each verdict: `TemporalVerdict::Undefined{at: 0, cause: InsufficientData{count: 1, min_count: 5}}` (no run: FR-330 refuses a window aggregate over a model subject at compile, `AggregateModelSubject`) writes `insufficient-data` at `position` 0 with `count` 1, `min_count` 5, category `undefined`, `basis` `unavailable`, no `truth` and `outcome` `{"kind": "undefined", "reason": "insufficient-data"}`; `TemporalVerdict::WindowLimitReached{limit: max_window_values, value: 2, setting: monitor.max_window_values}` (no run: a clause run has no window-limit input, and the default `max_window_values` is 2^20) writes `window-limit-reached`, category `incomplete`, with `limit` `max_window_values`, `value` `"2"` and `setting` `monitor.max_window_values` and `outcome` `{"kind": "incomplete", "limit": "max_window_values"}`; FR-330-AC-5's report rebuilt to hold the family cause `absent-key` (no run: the `Counter` unit's one population holds every `over` object, so no `lookup` of it is absent) writes `undefined` at `position` 2 with `outcome` reason `absent-key` and envelope `cause` `absent-key`. Through FR-330, FR-328-AC-1's `always holds(c.value <= 1)` over the infinite-trace `Finite` prefix 0, 1, 2 writes `violated` at `position` 0 with a counterexample whose `prefix` holds the three snapshots, `loop` is empty and `interval` is `null`. Each reads back to an equal verdict; independently dropping `count`, `min_count`, `limit`, `value` or `setting` refuses naming it, and setting the `absent-key` document's reason and envelope cause to `absent-value` refuses naming `disposition.outcome.reason`. | Test (TC-1160) |
+| FR-267-AC-16 | Independently: adding `temporal` `{"kind": "holds"}` to FR-109-AC-3's exhausted-work report (stage `evaluate`); adding a `refusal` member to AC-13's `violated` document; setting the `outcome` reason of AC-14's `undefined` document to `insufficient-data`; setting the `outcome` limit of AC-14's `incomplete` document to `max_window_values`; setting the `outcome` of FR-109-AC-3's exhausted-work report to `{"kind": "undefined", "reason": "insufficient-data"}` with category `violation` (the category FR-109-AC-7's `precondition-false` report takes, with that reason); and setting the `outcome` limit of FR-109-AC-3's exhausted-work report to `max_window_values`, each refuse with a located wire diagnostic naming the member (FSpec FR-352-AC-11, FR-352-AC-12). | Test (TC-1160) |
+| FR-267-AC-17 | A clause-run report over an extracted Markdown clause body is written with a top-level `extraction` member holding exactly FSpec FR-352's `original`, `body`, `binding`, `outcome` and `map` members, plus `original_regions` for a refusal whose locus names a body span, and reads back to an equal record; a report over a unit given as bytes writes no `extraction`; an `extraction` with an unknown top-level member `source`, with `map` missing, with `binding` `null`, with a numeric `body.identity`, and with `map.segments` `[]` each refuse naming `extraction` and the member (FSpec FR-352-AC-13). | Test (TC-109) |
 | FR-267-AC-18 | Each finite-window report writes its row and reads back to an equal verdict: FR-501-AC-4's `Window` run (`eventually[0,5] holds(c.value > 0)` over stamps 0, 2, 5 with `c.value` 0, 2, 0, watermark 5, complete through 5, position 1's valuation absent) settles `TemporalVerdict::Indeterminate` at position 0 with reason `MissingValuation` (position 1, atom `holds(c.value > 0)`) and writes category `indeterminate`, `basis` `unavailable`, no `truth`, no `outcome` and `temporal` `{"kind": "indeterminate", "position": 0, "reason": {"kind": "missing-valuation", "position": 1, "atom": "holds(c.value > 0)"}}`, while the report's exit stays 11 (FR-285-AC-7); the same run at watermark 3 settles `PendingWindow` (position 0, deadline 5) and writes `pending-window` with category `pending` and `basis` `unsettled`; `ActivationIncomplete` writes `activation-incomplete` with its guard location; `ProgressLimitReached` writes `progress-limit-reached` with `limit` `node count` and `setting` `progress.covered_positions`; FR-502-AC-1's watermark contradiction writes `progress-contradicted` with `dimension` `watermark`, `retained` `{"kind": "watermark", "watermark": 100}` and `asserted` `{"kind": "watermark", "watermark": 60}`. Independently setting the `indeterminate` document's category to `undefined`, dropping its `reason`, adding an unknown `reason` member, setting the `pending-window` document's `basis` to `unavailable`, setting the `progress-limit-reached` document's `setting` to another name, and changing a `progress-contradicted` outcome field each refuse with a located wire diagnostic naming the member. | Test (TC-1160) |
 | FR-267-AC-19 | Writing FR-330-AC-12's `forall` violation report and reading it back restores an equal `temporal` verdict and `counterexample` and restores `decisive` as absent; the written `temporal` member holds no `decisive` and the reader refuses a `decisive` member inside it, naming the member. | Test (TC-742) |
+| FR-267-AC-20 | Each of the six rows `pending-window`, `pending-next-event`, `indeterminate`, `activation-incomplete`, `progress-limit-reached` and `progress-contradicted`, and the `pending` row, is written with exactly the members, `category`, `basis` and `outcome` of its FSpec FR-352 row (FSpec FR-352-AC-16): `pending-window` at position 0 with deadline 5, `pending-next-event` at position 3 and `pending` with category `pending` and basis `unsettled`, `indeterminate` with category `indeterminate`, `activation-incomplete` and `progress-limit-reached` with category `incomplete` and no `outcome`, and the watermark `progress-contradicted` with category `refusal`. The reader refuses a `temporal` whose `kind` is outside the sixteen (`pending-forever`), naming `disposition.temporal.kind` (FSpec FR-352-AC-17). | Test (TC-1980) |
+| FR-267-AC-21 | A `timestamped` run's result carries `ledger` in `filament.progress-ledger/1` form and reads back equal; a `finite` run's result with a `ledger` member added is refused naming `ledger`; FR-645-AC-1's refusal writes `reason`, `request_pointer` and `message` and reads them back. | Test (TC-1663) |
+| FR-267-AC-22 | A clause-run result document carries `axes` equal to the FR-516 result's four fields, and two runs differing only in scope closure differ only in `axes.settlement`. | Test (TC-1582) |
+| FR-267-AC-23 | The `native-run-result/2` document of FR-265-AC-11's `MatchesParent` run writes `witness` with `deciding_comparison`, `operands` `[600, 0]` in the kernel value wire form, `decision_path`, `deciding_element` `false` and `value_path`, and no `quantifier`, `index` or `trace_position`; the reader restores the equal record; the same document with `operands` removed, with one operand, or with a `quantifier` added each refuses naming that member. | Test (TC-2981) |
+| FR-267-AC-24 | A `window-limit-reached` row is written with `value` the decimal string `"2"` for a `max_window_values` of 2, and a `progress-limit-reached` row with `value` `"4"` for a covered-position limit of 4; each reads back equal, and the reader refuses either row with `value` a JSON number or with a leading zero (`"02"`), naming `disposition.temporal.value`. | Test (TC-1160) |
 
 ## Dependencies
 
@@ -527,9 +581,9 @@ condition is false; the reader refuses `null` or a default in its place.
   (the report members), [FR-100](FR-100-run-a-named-function-through-the-spine.md)
   (the command-error paths), [FR-109](FR-109-run-a-state-clause-through-the-spine.md)
   (the spine check route and its `ClauseRunReport`).
-- QSpec FR-014 (closed wire and unsupported-version rule), QSpec FR-351 (the
-  record and strict reader), QSpec FR-352 (`native-run-result/2`). The spelling of
-  the basis member and of the record's components is QSpec's (see
+- FSpec FR-014 (closed wire and unsupported-version rule), FSpec FR-351 (the
+  record and strict reader), FSpec FR-352 (`native-run-result/2`). The spelling of
+  the basis member and of the record's components is FSpec's (see
   References).
 
 ## References
@@ -544,6 +598,6 @@ condition is false; the reader refuses `null` or a default in its place.
   producer/artifact binding receipt; CG consumer specification: Linear IR-514.
   The receipt and CG consumer criteria above are specified obligations, not
   claims that CG receipt verification is implemented.
-- QSpec half (Linear STD-144): QSpec FR-352 AC-6 and AC-7 (basis label and
+- FSpec half (Linear STD-144): FSpec FR-352 AC-6 and AC-7 (basis label and
   witness members), FR-207 AC-9 to AC-11 (value-path spelling) and
-  QSpec FR-351-AC-7 (deciding quantifier); QSpec FR-352-AC-2 refuses `/1`.
+  FSpec FR-351-AC-7 (deciding quantifier); FSpec FR-352-AC-2 refuses `/1`.

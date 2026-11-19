@@ -3,7 +3,7 @@ id: TC-248
 title: "Frame identity's subject sets resolve to DeclarationKey through the model correspondence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-248: Frame identity's subject sets resolve to DeclarationKey through the model correspondence

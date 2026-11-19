@@ -3,26 +3,26 @@ id: US-034
 title: "Catch a refinement regression between two revisions of a specification or two layered profiles"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-340
+  - target: ix://agent-ix/filament-spec-language/FR-340
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-341
+  - target: ix://agent-ix/filament-spec-language/FR-341
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-342
+  - target: ix://agent-ix/filament-spec-language/FR-342
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-344
+  - target: ix://agent-ix/filament-spec-language/FR-344
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-345
+  - target: ix://agent-ix/filament-spec-language/FR-345
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-034: Catch a refinement regression between two revisions of a specification or two layered profiles
 
 ## Story
 
-**As a** maintainer of a native Quire specification, or of the profiles a
+**As a** maintainer of a Filament specification, or of the profiles a
 specification is compiled under
 **I want** a gate that runs the same cases against the prior and the
 superseding revision of my specification, or against a parent profile and
@@ -34,10 +34,10 @@ as unresolved and never counted as holding.
 
 ## Context
 
-QSpec capability rows V1-TOOL-011 ("a superseding specification edition
+FSpec capability rows V1-TOOL-011 ("a superseding specification edition
 admits every result its prior edition admitted") and V1-TOOL-012 ("every
 parent profile's refusal [is] its child profile's refusal under profile
-layering") are corpus-differential test gates in QSL. ADR-017 §2 decides
+layering") are corpus-differential test gates in FSL. ADR-017 §2 decides
 them: two `xtask refinement` subcommands that run a corpus through the
 spine and compare structured outcomes. They are behavioural checks over
 what each side admits and refuses. They record no requirement record,
@@ -65,7 +65,7 @@ corpus only.
 
 ### US-034-EX-3: A case the build cannot decide is unresolved
 
-- **Given** a pair whose superseding revision uses a construct QSL has not
+- **Given** a pair whose superseding revision uses a construct FSL has not
   yet implemented.
 - **When** the gate runs.
 - **Then** the case is unresolved (unsupported), the gate exits 21, and any
@@ -81,7 +81,7 @@ corpus only.
 
 ### US-034-EX-5: A restricted layer stays a smaller language
 
-- **Given** a user who selects `quire.state.core/v1` in a unit's header to
+- **Given** a user who selects `filament.state.core/v1` in a unit's header to
   keep it inside an embedded or runtime-monitor target's subset.
 - **When** the profile-layering gate runs.
 - **Then** the gate confirms that state core admits a bounded-scalar

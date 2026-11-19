@@ -3,9 +3,9 @@ id: TC-537
 title: "An undefined claim evaluation refutes in the explicit-state model checker"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: verifies
 ---
 # TC-537: An undefined claim evaluation refutes in the explicit-state model checker

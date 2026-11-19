@@ -3,7 +3,7 @@ id: TC-1076
 title: "A state clause or a holds atom names a population as an operand or a domain"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: verifies
 ---
 # TC-1076: A state clause or a holds atom names a population as an operand or a domain

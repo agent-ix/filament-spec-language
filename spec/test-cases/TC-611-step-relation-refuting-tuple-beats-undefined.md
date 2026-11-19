@@ -3,9 +3,9 @@ id: TC-611
 title: "An HP-1 relation whose first refuting tuple is false settles refuted ahead of later undefined tuples"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
 ---
 # TC-611: An HP-1 relation whose first refuting tuple is false settles refuted ahead of later undefined tuples

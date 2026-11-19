@@ -1,0 +1,571 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-174 (FR-068-AC-5): `CheckedPackage::call` and `CheckedPackage::evaluate`,
+//! this crate's public runtime entry points, exercised together with the
+//! checking pipeline that produces their `CheckedPackage`/`CheckedExpression`
+//! inputs (`PackageDeclarations::check`, `CheckedGraph::check_expression`,
+//! `CheckedPackage::link`) -- an integration test, allowed to reach both the
+//! `forms`-owned fixture types (`FunctionDeclaration`, `Expression`,
+//! `BinaryOperator`) and this crate's checking/evaluation pipeline in the
+//! same file.
+//!
+//! `evaluated_call_slots_are_stable_across_declaration_order` checks that a
+//! standalone expression calling into a declared function resolves to the
+//! correct result regardless of the package's declaration order:
+//! `evaluate`'s `Machine` resizes each callee's frame from that function's
+//! own evaluation-slot count (`evaluate.rs`'s `frame.resize(callable.
+//! slots.max(frame.len()), None)`), so a count that leaked from a different
+//! function surfaces here as a wrong or undefined result. `two`'s body needs
+//! a `let`-bound local beyond its two parameters, discriminating it from
+//! `one`'s smaller slot count.
+
+use filament_eval::FamilyOutcome;
+use filament_eval::{CallFailure, Evaluation};
+use filament_exact::{Integer, Meter, Outcome, ScalarLimits};
+use filament_exact::{Value, ValueType};
+use filament_semantic_value::call::InputRefusal;
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::location::{
+    ExpressionLocation as Location, ExpressionOwner as Origin,
+};
+use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration};
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::trace;
+
+/// FR-090: `CheckedPackage::call`/`evaluate` return `Evaluation { outcome:
+/// FamilyOutcome, .. }` (FR-090-OQ-3, ruled option A); every fixture in this
+/// file completes, so extracting `Evaluated`'s kernel outcome is all these
+/// tests need.
+fn evaluated(evaluation: Evaluation) -> filament_exact::Outcome<Value> {
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(outcome) => outcome,
+        other => panic!("expected FamilyOutcome::Evaluated(_), got {other:?}"),
+    }
+}
+
+const UNLIMITED: ScalarLimits = ScalarLimits {
+    integer_bits: u64::MAX,
+    decimal_digits: u64::MAX,
+    scale_expansion: u64::MAX,
+    text_input_bytes: u64::MAX,
+    text_scalars: u64::MAX,
+    normalized_scalars: u64::MAX,
+    unit_edges: u64::MAX,
+    value_occurrences: u64::MAX,
+    work_units: u64::MAX,
+    result_units: u64::MAX,
+};
+
+/// One parameter, no `let`: the minimal shape.
+fn function_one() -> FunctionDeclaration {
+    FunctionDeclaration::new(
+        "one",
+        vec![(
+            "a".to_owned(),
+            crate::support::type_form::type_form(&ValueType::Integer),
+        )],
+        crate::support::type_form::type_form(&ValueType::Integer),
+        None,
+        Expression::name("a".to_owned()),
+    )
+}
+
+/// Two parameters and one `let`-bound local: deliberately a different
+/// parameter count and slot shape from [`function_one`], matching the
+/// fixture `value::expression::mod`'s own retained test still uses.
+fn function_two() -> FunctionDeclaration {
+    FunctionDeclaration::new(
+        "two",
+        vec![
+            (
+                "a".to_owned(),
+                crate::support::type_form::type_form(&ValueType::Integer),
+            ),
+            (
+                "b".to_owned(),
+                crate::support::type_form::type_form(&ValueType::Integer),
+            ),
+        ],
+        crate::support::type_form::type_form(&ValueType::Integer),
+        None,
+        Expression::let_in(
+            "x".to_owned(),
+            Expression::binary(
+                BinaryOperator::Add,
+                Expression::name("a".to_owned()),
+                Expression::name("b".to_owned()),
+            ),
+            Expression::name("x".to_owned()),
+        ),
+    )
+}
+
+fn declarations(functions: Vec<FunctionDeclaration>) -> PackageDeclarations {
+    {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.functions = functions;
+        declarations
+    }
+}
+
+fn declarations_with_source(
+    functions: Vec<FunctionDeclaration>,
+    source: fsl_foundation::source::provenance::RawSourceRef,
+) -> PackageDeclarations {
+    {
+        let mut declarations = PackageDeclarations::new(
+            source,
+            "same-package".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.functions = functions;
+        declarations
+    }
+}
+
+/// FR-049-AC-1 / TC-136 H5: expression ownership is tied to the exact checked
+/// graph, even when two graphs use the same package name.
+#[trace("FR-049-AC-1", "TC-136")]
+#[test]
+fn evaluate_refuses_expression_from_another_checked_graph() {
+    let source_a = fsl_foundation::source::provenance::RawSourceRef::new("test", "graph-a")
+        .expect("source A is valid");
+    let source_b = fsl_foundation::source::provenance::RawSourceRef::new("test", "graph-b")
+        .expect("source B is valid");
+    let graph_a = declarations_with_source(vec![function_one()], source_a)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("package A checks");
+    let graph_b = declarations_with_source(vec![function_one()], source_b)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect("package B checks");
+    let expression_a = graph_a
+        .check_expression(
+            Vec::new(),
+            &Expression::integer(7_i64),
+            Some(&ValueType::Integer),
+            CheckMode::Linked,
+            CheckingLimits::default(),
+        )
+        .expect("expression A checks against package A");
+    let expression_b = graph_b
+        .check_expression(
+            Vec::new(),
+            &Expression::integer(11_i64),
+            Some(&ValueType::Integer),
+            CheckMode::Linked,
+            CheckingLimits::default(),
+        )
+        .expect("expression B checks against package B");
+    let package_a = link(graph_a);
+    let package_b = link(graph_b);
+    let objects = ObjectEnvironment::default();
+
+    let mut meter_a = Meter::new(UNLIMITED);
+    let Outcome::Completed(Value::Integer(value)) = evaluated(
+        package_a
+            .evaluate(&expression_a, Vec::new(), &objects, &mut meter_a)
+            .expect("an expression evaluates through its own package"),
+    ) else {
+        panic!("an expression evaluates through its own package");
+    };
+    assert_eq!(value, Integer::from(7_i64));
+
+    let mut meter = Meter::new(UNLIMITED);
+    let meter_before = meter.clone();
+    let failure = package_b
+        .evaluate(&expression_a, Vec::new(), &objects, &mut meter)
+        .expect_err("a foreign checked expression must be refused before evaluation");
+    let CallFailure::Admission(failure) = failure else {
+        panic!("foreign expression must be a typed admission refusal: {failure:?}");
+    };
+    let filament_eval::CallAdmissionFailure::Refused(record) = *failure else {
+        panic!("foreign expression admission must be a refusal: {failure:?}");
+    };
+    assert_eq!(record.record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.record.catalog.cause(), "foreign-checked-expression");
+    assert_eq!(meter, meter_before, "the refusal must not charge the meter");
+
+    let mut meter_b = Meter::new(UNLIMITED);
+    let Outcome::Completed(Value::Integer(value)) = evaluated(
+        package_b
+            .evaluate(&expression_b, Vec::new(), &objects, &mut meter_b)
+            .expect("package B's own expression evaluates"),
+    ) else {
+        panic!("package B's own expression evaluates");
+    };
+    assert_eq!(value, Integer::from(11_i64));
+}
+
+/// ADR-013 T-1 (FR-087): the S4 link step, over an empty
+/// dependency closure -- every fixture here declares no import, so E4
+/// never has a real dependency to populate (see [`CheckedPackage`]'s own
+/// `dependencies` field doc).
+fn link(graph: CheckedGraph) -> CheckedPackage {
+    CheckedPackage::link(graph)
+}
+
+/// TC-174 steps 1-4: `CheckedPackage::call` resolves each function by
+/// name, not position -- the same fixture, called through the public
+/// runtime entry point in both declaration orders, must produce the
+/// same result each time.
+#[trace("TC-174", "FR-068-AC-5")]
+#[test]
+fn call_resolves_by_name_regardless_of_declaration_order() {
+    let objects = ObjectEnvironment::default();
+    for functions in [
+        vec![function_one(), function_two()],
+        vec![function_two(), function_one()],
+    ] {
+        let package = link(
+            declarations(functions)
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .unwrap(),
+        );
+        let mut meter = Meter::new(UNLIMITED);
+        let one = package
+            .call(
+                &QualifiedName::unqualified("one").unwrap(),
+                vec![Value::Integer(Integer::from(5_i64))],
+                &objects,
+                &mut meter,
+            )
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", evaluated(one)),
+            format!(
+                "{:?}",
+                Outcome::Completed(Value::Integer(Integer::from(5_i64)))
+            )
+        );
+        let mut meter = Meter::new(UNLIMITED);
+        let two = package
+            .call(
+                &QualifiedName::unqualified("two").unwrap(),
+                vec![
+                    Value::Integer(Integer::from(3_i64)),
+                    Value::Integer(Integer::from(4_i64)),
+                ],
+                &objects,
+                &mut meter,
+            )
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", evaluated(two)),
+            format!(
+                "{:?}",
+                Outcome::Completed(Value::Integer(Integer::from(7_i64)))
+            )
+        );
+    }
+}
+
+/// TC-174 steps 1-4: a standalone expression that calls into a declared
+/// function, checked and evaluated through the public
+/// `CheckedGraph::check_expression`/`CheckedPackage::evaluate` pair,
+/// resolves to the correct result regardless of the package's declaration
+/// order. `two`'s body needs a `let`-bound local beyond its two parameters,
+/// so a declaration-order bug that hands it `one`'s (smaller) slot count
+/// produces a wrong or undefined result here, not a passing one.
+#[trace("TC-174", "FR-068-AC-5")]
+#[test]
+fn evaluated_call_slots_are_stable_across_declaration_order() {
+    let objects = ObjectEnvironment::default();
+    for functions in [
+        vec![function_one(), function_two()],
+        vec![function_two(), function_one()],
+    ] {
+        let graph = declarations(functions)
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap();
+        let call_one = graph
+            .check_expression(
+                Vec::new(),
+                &Expression::call("one".to_owned(), vec![Expression::integer(5_i64)]),
+                Some(&ValueType::Integer),
+                CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .unwrap();
+        let call_two = graph
+            .check_expression(
+                Vec::new(),
+                &Expression::call(
+                    "two".to_owned(),
+                    vec![Expression::integer(3_i64), Expression::integer(4_i64)],
+                ),
+                Some(&ValueType::Integer),
+                CheckMode::Linked,
+                CheckingLimits::default(),
+            )
+            .unwrap();
+        let package = link(graph);
+
+        let mut meter = Meter::new(UNLIMITED);
+        let one = package
+            .evaluate(&call_one, Vec::new(), &objects, &mut meter)
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", evaluated(one)),
+            format!(
+                "{:?}",
+                Outcome::Completed(Value::Integer(Integer::from(5_i64)))
+            )
+        );
+
+        let mut meter = Meter::new(UNLIMITED);
+        let two = package
+            .evaluate(&call_two, Vec::new(), &objects, &mut meter)
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", evaluated(two)),
+            format!(
+                "{:?}",
+                Outcome::Completed(Value::Integer(Integer::from(7_i64)))
+            )
+        );
+    }
+}
+
+/// TC-174 step 1's refusal fixture: a duplicate function name is
+/// refused `CheckCause::AmbiguousName`, unaffected by the split.
+#[trace("TC-174", "FR-068-AC-5")]
+#[test]
+fn duplicate_function_name_is_refused_ambiguous_name() {
+    let result = declarations(vec![function_one(), function_one()])
+        .check(CheckMode::Linked, CheckingLimits::default());
+    let refusals = result.expect_err("a duplicate name must be refused, not admitted");
+    assert!(refusals.iter().any(|refusal: &CheckRefusal| matches!(
+        &refusal.cause,
+        CheckCause::AmbiguousName { name, .. } if name == "one"
+    )));
+}
+
+/// TC-174 step 1's `InputRefusal` fixture: calling an undeclared name
+/// refuses `UnknownFunction`, unaffected by the split.
+#[trace("TC-174", "FR-068-AC-5")]
+#[test]
+fn call_to_an_unknown_function_is_refused() {
+    let package = link(
+        declarations(vec![function_one()])
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap(),
+    );
+    let objects = ObjectEnvironment::default();
+    let mut meter = Meter::new(UNLIMITED);
+    let result = package.call(
+        &QualifiedName::unqualified("missing").unwrap(),
+        vec![Value::Integer(Integer::from(1_i64))],
+        &objects,
+        &mut meter,
+    );
+    assert!(matches!(
+        result,
+        Err(CallFailure::Input(InputRefusal::UnknownFunction(name))) if name == "missing"
+    ));
+}
+
+/// `CheckedPackage::call` charges the top-level call's own
+/// `function.call` to the caller's meter. `one(a) = a` makes no other
+/// charge, so each call adds exactly one `function.call` to `meter`, and two
+/// calls on one meter accumulate. A charge to a meter `call` created and
+/// dropped would leave `meter` empty.
+#[trace("FSpec-TC-191", "FSpec-FR-146-AC-5")]
+#[test]
+fn call_charges_the_top_level_function_call_to_the_callers_meter() {
+    let objects = ObjectEnvironment::default();
+    let package = link(
+        declarations(vec![function_one()])
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap(),
+    );
+    let mut meter = Meter::new(UNLIMITED);
+    for calls in 1..=2_u64 {
+        let one = package
+            .call(
+                &QualifiedName::unqualified("one").unwrap(),
+                vec![Value::Integer(Integer::from(5_i64))],
+                &objects,
+                &mut meter,
+            )
+            .unwrap();
+        assert_eq!(
+            format!("{:?}", evaluated(one)),
+            format!(
+                "{:?}",
+                Outcome::Completed(Value::Integer(Integer::from(5_i64)))
+            )
+        );
+        assert_eq!(meter.admission_count(), calls);
+        assert_eq!(meter.consumed(filament_exact::LimitKind::WorkUnits), calls);
+    }
+    assert_eq!(
+        crate::support::admitted_charge_points(&meter),
+        [filament_exact::ChargePoint::FunctionCall; 2]
+    );
+}
+
+/// The top-level charge carries over between calls on one meter.
+/// With one work unit, the first call of `one(5)` spends it and completes;
+/// the second call's own `function.call` is denied before any node runs, so
+/// its `Incomplete` names `FunctionCall` at the function's root call site.
+#[trace("FSpec-TC-191", "FSpec-FR-146-AC-5")]
+#[test]
+fn a_second_call_on_a_spent_meter_is_denied_at_its_function_call() {
+    let objects = ObjectEnvironment::default();
+    let package = link(
+        declarations(vec![function_one()])
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap(),
+    );
+    let mut meter = Meter::new(ScalarLimits {
+        work_units: 1,
+        ..UNLIMITED
+    });
+    let mut call = || {
+        package
+            .call(
+                &QualifiedName::unqualified("one").unwrap(),
+                vec![Value::Integer(Integer::from(5_i64))],
+                &objects,
+                &mut meter,
+            )
+            .unwrap()
+    };
+    let first = call();
+    assert_eq!(first.location, None);
+    assert_eq!(
+        format!("{:?}", evaluated(first)),
+        format!(
+            "{:?}",
+            Outcome::Completed(Value::Integer(Integer::from(5_i64)))
+        )
+    );
+    let second = call();
+    assert_eq!(
+        second.location,
+        Some(Location::root(Origin::Body {
+            function: "one".to_owned(),
+            index: 0,
+        }))
+    );
+    match evaluated(second) {
+        Outcome::Incomplete(record) => {
+            assert_eq!(
+                record.charge_point,
+                filament_exact::ChargePoint::FunctionCall
+            );
+            assert_eq!(record.limit_kind, filament_exact::LimitKind::WorkUnits);
+            assert_eq!(record.limit, 1);
+            assert_eq!(record.consumed, 1, "the first call spent the one unit");
+        }
+        other => panic!("expected Outcome::Incomplete(_), got {other:?}"),
+    }
+}
+
+/// The refusal `call` returns for `function` on `package`, asserting that it
+/// charged nothing and left the meter exactly as a fresh one.
+fn refused_call(package: &CheckedPackage, function: &QualifiedName) -> CallFailure {
+    let mut meter = Meter::new(UNLIMITED);
+    let refusal = package
+        .call(
+            function,
+            vec![Value::Integer(Integer::from(1_i64))],
+            &ObjectEnvironment::default(),
+            &mut meter,
+        )
+        .expect_err("a handle naming nothing callable is refused");
+    assert_eq!(
+        meter,
+        Meter::new(UNLIMITED),
+        "a refused handle charges nothing"
+    );
+    refusal
+}
+
+/// TC-136 H1: a `QualifiedName` the package does not declare is refused
+/// `UnknownFunction` naming it as spelled, with no charge. A qualified name
+/// whose last segment is a declared function is no fallback: the lookup does
+/// not compare display names or drop the qualifier.
+#[trace("TC-136")]
+#[test]
+fn h1_an_undeclared_name_is_refused_by_the_spelling_given() {
+    let package = link(
+        declarations(vec![function_one()])
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap(),
+    );
+    for segments in [vec!["missing"], vec!["pkg", "one"], vec!["one", "missing"]] {
+        let function = QualifiedName::new(
+            segments
+                .iter()
+                .map(|segment| (*segment).to_owned())
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(
+            refused_call(&package, &function),
+            CallFailure::Input(InputRefusal::UnknownFunction(function.to_string())),
+            "{segments:?}"
+        );
+    }
+}
+
+/// TC-136 H2: the name of a declaration the package holds that is not
+/// callable by name gets the same `UnknownFunction` refusal as an undeclared
+/// name, naming it, with no charge. The control `one` is callable.
+#[trace("TC-136")]
+#[test]
+fn h2_a_declaration_not_callable_by_name_is_refused_like_an_undeclared_one() {
+    let package = link(
+        {
+            let mut declarations = PackageDeclarations::new(
+                fsl_semantics::check::fixture_source(),
+                "fixture".to_owned(),
+                fsl_foundation::IdentityLimits::default(),
+            );
+            declarations.functions = vec![
+                function_one(),
+                FunctionDeclaration::clause(
+                    "internal_guard",
+                    vec![],
+                    crate::support::type_form::type_form(&ValueType::Boolean),
+                    None,
+                    Expression::boolean(true),
+                    fsl_forms::DeclaredClauseKind::Body,
+                ),
+            ];
+            declarations
+        }
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap(),
+    );
+    assert!(
+        package.graph().declares_function("internal_guard"),
+        "the package holds the declaration, so H2 is not H1"
+    );
+    let held = QualifiedName::unqualified("internal_guard").unwrap();
+    let undeclared = QualifiedName::unqualified("undeclared").unwrap();
+    assert_eq!(
+        refused_call(&package, &held),
+        CallFailure::Input(InputRefusal::UnknownFunction("internal_guard".to_owned()))
+    );
+    assert_eq!(
+        refused_call(&package, &undeclared),
+        CallFailure::Input(InputRefusal::UnknownFunction("undeclared".to_owned()))
+    );
+    let mut meter = Meter::new(UNLIMITED);
+    assert!(package
+        .call(
+            &QualifiedName::unqualified("one").unwrap(),
+            vec![Value::Integer(Integer::from(1_i64))],
+            &ObjectEnvironment::default(),
+            &mut meter,
+        )
+        .is_ok());
+}

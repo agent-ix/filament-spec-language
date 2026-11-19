@@ -3,28 +3,28 @@ id: FR-070
 title: "Implement the typed counterexample/witness envelope"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: references
 ---
 # FR-070: Implement the typed counterexample/witness envelope
 
 ## Description
 
-QSL SHALL implement a typed counterexample/witness envelope, defined in the
+FSL SHALL implement a typed counterexample/witness envelope, defined in the
 layer-6 `replay` module and part of its public API (ADR-011 FB-05; ADR-013
-O-25), whose `Witness` source stores QSL's admitted transcript as its one
+O-25), whose `Witness` source stores FSL's admitted transcript as its one
 stored fact and derives every other witness fact (`harness_symbol`,
 `check`/`check_text`, `concrete_values`, `decode`) from that transcript on
 every call, never as a second, independently-stored copy (ADR-013 QC-13; the
@@ -33,35 +33,35 @@ stored field plus four derived ones).
 
 The envelope carries, for deterministic replay, every ADR-013 O-25 member:
 the obligation identity and clause occurrence key; the replay target, exactly
-one QSpec FR-323 replay target member for `Witness` and `Input` sources,
+one FSpec FR-323 replay target member for `Witness` and `Input` sources,
 typed as FR-323 types that member (a
 function packet's `function`, the selected function's `QualifiedName`; a
 frame packet's `frame_operation`, `{object, operation}`; a state-clause
 packet's `state_clause`, the clause's own declared `QualifiedName`). The
-`ProtocolAssumption` source uses a QSL `ReplayTarget::ProtocolRefinement`
-carrying `{package_id, node: NodeKey}`: the QSL checked-package identity and
+`ProtocolAssumption` source uses an FSL `ReplayTarget::ProtocolRefinement`
+carrying `{package_id, node: NodeKey}`: the FSL checked-package identity and
 the structural node identity of its refinement declaration, instead of an
 FR-323 target. The
 envelope also carries the `package_id` and `RawSourceRef` of the package the
 claim was generated from; semantic profile selections; `run_limits` and
-declared domains; the `backend` member (O-19; `qsl-analyze` for the
+declared domains; the `backend` member (O-19; `fsl-analyze` for the
 protocol-assumption source); the trace position where the family has one
 (`null` for protocol-assumption witnesses); and the `ReplaySource`
-(`Witness`, `Input`, or QSL's `ProtocolAssumption`). The first two arms keep
-the exact QSpec FR-323 replay target. The `ProtocolAssumption` arm instead
+(`Witness`, `Input`, or FSL's `ProtocolAssumption`). The first two arms keep
+the exact FSpec FR-323 replay target. The `ProtocolAssumption` arm instead
 uses the checked refinement identity and the typed
 `ProtocolAssumptionWitness` payload defined by FR-148; its producer is
-QSL's `qsl-analyze`, not a proof backend, and it cannot create backend
-evidence. `qsl-replay` SHALL refuse a packet missing any arm-required member at
+FSL's `fsl-analyze`, not a proof backend, and it cannot create backend
+evidence. `fsl-replay` SHALL refuse a packet missing any arm-required member at
 reconstruction; none is optional or defaulted.
 
-`qsl-replay` owns `Witness`, `ReplaySource` and `WitnessEnvelope` (ADR-013
+`fsl-replay` owns `Witness`, `ReplaySource` and `WitnessEnvelope` (ADR-013
 OQ-H) and implements `Witness::parse`'s admission rule. `Witness` and
 `Input` constructors retain their existing transcript/assignment payloads;
 the `ProtocolAssumption` constructor accepts only FR-148's typed
 `ProtocolAssumptionWitness` and checked refinement identity. CG builds
 `Witness` envelopes from backend runs and its backend adapter parses backend
-output into the transcript `parse` admits. `qsl-analyze` builds the
+output into the transcript `parse` admits. `fsl-analyze` builds the
 `ProtocolAssumption` envelope from its product outcome. It carries no
 transcript and cannot be converted to a `Witness`-arm backend-evidence result.
 
@@ -73,8 +73,8 @@ admits union arguments (QSL-503).
 - A `WitnessPacket` carrying `source: ReplaySource` and its O-25 members
   (obligation identity, occurrence key, package reference, profile
   selections, bounds, backend, trace position), built by CG for `Witness`
-  and `Input`, or by QSL `qsl-analyze` for `ProtocolAssumption`.
-- An already-admitted QSL `Witness` (admitted through `Witness::parse`) for
+  and `Input`, or by FSL `fsl-analyze` for `ProtocolAssumption`.
+- An already-admitted FSL `Witness` (admitted through `Witness::parse`) for
   the `ReplaySource::Witness` arm, or canonical assignments for the
   `ReplaySource::Input` arm.
 - FR-148's `ProtocolAssumptionWitness` and checked refinement identity for
@@ -132,17 +132,17 @@ admits union arguments (QSL-503).
   exceeds the configured reader bound, and SHALL NOT return a truncated or
   partially-populated envelope in that case.
 - When a caller requests a name for one transcript entry from a structural
-  node identity, the `qsl_replay` root SHALL expose
+  node identity, the `fsl_replay` root SHALL expose
   `witness_entry_name(&NodeKey)`.
-- The `qsl_replay` root SHALL derive a successful entry name from the
+- The `fsl_replay` root SHALL derive a successful entry name from the
   structural node identity's compact JSON spelling produced by the shared
   node-wire codec.
-- The `qsl_replay` root SHALL percent-escape `%`, `=`, `;`, `|`, `<`, `>`,
+- The `fsl_replay` root SHALL percent-escape `%`, `=`, `;`, `|`, `<`, `>`,
   and each control byte in that spelling as `%HH` with uppercase hexadecimal
   digits.
-- The `qsl_replay` root SHALL preserve every other byte of the compact
+- The `fsl_replay` root SHALL preserve every other byte of the compact
   spelling.
-- The `qsl_replay` root SHALL return an entry name containing no transcript
+- The `fsl_replay` root SHALL return an entry name containing no transcript
   separator or block-end delimiter.
 - When a returned entry name is percent-decoded and read as a node-wire
   identity, it SHALL yield the same `NodeKey` that was named.
@@ -166,7 +166,7 @@ a model input, FR-106), so it has no witness form.
 
 CG writes this form from its composite leaf binding (CG FR-025, planned
 under IR-635). It builds the value from the shadow leaves its harness drew,
-then writes the value text below. QSL owns this form and its decode
+then writes the value text below. FSL owns this form and its decode
 (QSL-640).
 
 **Transcript entry.** The entry is `<parameter node id>=<escaped value
@@ -174,7 +174,7 @@ text>`, joined by node id like every other entry. A parameter node id is the
 percent-escaped compact JSON spelling produced from its structural `NodeKey`
 by the shared node-wire codec, as specified above; it is not a fixed-width
 hex digest. The value text is the RFC
-8785 (JCS) encoding of the value in QSpec FR-181's typed canonical form,
+8785 (JCS) encoding of the value in FSpec FR-181's typed canonical form,
 limited to the shapes below. The table lists each object's members in
 reading order. The value text writes them in JCS order, the ascending UTF-16
 code units of the member names, so a reference is written
@@ -197,17 +197,17 @@ last field.
 | Boolean | `{"type":"boolean","value":true}` or `false` |
 | integer | `{"type":"integer","value":"<decimal>"}`: the exact value as FR-181's decimal string (`0`, or an optional `-` then `[1-9][0-9]*`), unbounded. It decodes to `WitnessValue::ExactInteger`, which holds a kernel `Integer`, whether or not the value fits `i64` |
 | enum | `{"type":"enum","name":"<declaration>","member":"<member>"}` |
-| text | `{"type":"text","value":"<string>"}`: QSpec FR-181's form of a value of a `Text[min, max; profile]` type, holding the value's retained Unicode scalars as a JSON string, the empty string included. It is not a `String` value and fits only a `Text` parameter. Decode reads the form only; FR-098 converts the scalars to the declared text type, which applies its profile and length bound |
-| String | FR-056's closed wire object `{"kind":"string","text":"<string>"}`, the one spelling of a native String input. It is not a QSpec FR-181 form. The `text` is the String's Unicode scalars as a JSON string, the empty string included. Every Unicode scalar sequence is a String, so decode and FR-098 refuse no `text` for its content, and a String object fits only a `String` parameter ([FR-056](FR-056-admit-domain-package-model-declarations.md)) |
-| UUID | FR-056's closed wire object `{"kind":"uuid","text":"<text>"}`, the one spelling of a native UUID input. It is not a QSpec FR-181 form. Decode reads the form only; FR-098 admits the text through the kernel's canonical constructor and refuses a noncanonical spelling `invalid_runtime_input`/`invalid-value` ([FR-056](FR-056-admit-domain-package-model-declarations.md)) |
+| text | `{"type":"text","value":"<string>"}`: FSpec FR-181's form of a value of a `Text[min, max; profile]` type, holding the value's retained Unicode scalars as a JSON string, the empty string included. It is not a `String` value and fits only a `Text` parameter. Decode reads the form only; FR-098 converts the scalars to the declared text type, which applies its profile and length bound |
+| String | FR-056's closed wire object `{"kind":"string","text":"<string>"}`, the one spelling of a native String input. It is not an FSpec FR-181 form. The `text` is the String's Unicode scalars as a JSON string, the empty string included. Every Unicode scalar sequence is a String, so decode and FR-098 refuse no `text` for its content, and a String object fits only a `String` parameter ([FR-056](FR-056-admit-domain-package-model-declarations.md)) |
+| UUID | FR-056's closed wire object `{"kind":"uuid","text":"<text>"}`, the one spelling of a native UUID input. It is not an FSpec FR-181 form. Decode reads the form only; FR-098 admits the text through the kernel's canonical constructor and refuses a noncanonical spelling `invalid_runtime_input`/`invalid-value` ([FR-056](FR-056-admit-domain-package-model-declarations.md)) |
 | Timestamp | FR-056's closed wire object `{"kind":"timestamp","nanoseconds":"<decimal>"}`, read and admitted the same way |
 | Bytes | FR-056's closed wire object `{"kind":"bytes","text":"<lowercase hex>"}`, read and admitted the same way; it fits only a `Bytes` parameter |
 | JsonObject | FR-056's closed wire object `{"kind":"json_object","text":"<JCS text>"}`, read and admitted the same way; it fits only a `JsonObject` parameter. A `Duration` parameter takes the quantity form |
 | rational | `{"type":"rational","numerator":"<decimal>","denominator":"<decimal>"}`: reduced (the greatest common divisor is 1), with a positive denominator; zero is `0`/`1` |
-| decimal | `{"type":"decimal","coefficient":"<decimal>","scale":"<decimal>"}`: the retained coefficient and scale, before normalization (QSpec FR-140) |
+| decimal | `{"type":"decimal","coefficient":"<decimal>","scale":"<decimal>"}`: the retained coefficient and scale, before normalization (FSpec FR-140) |
 | float | `{"type":"float32","bits":"<8 hex>"}` or `{"type":"float64","bits":"<16 hex>"}`: the exact IEEE bits, big-endian lowercase hex, so NaN payloads and signed zeros stay distinct |
 | quantity | its magnitude's rational or decimal form with an added `"unit":"<unit>"` member |
-| reference | `{"type":"reference","universe":"<64 hex>","object_type":"<64 hex>","identity":"<hex>"}`: the reference key of one object (QSL FR-084): the identity of its universe, the identity of its effective (most-specific) object type, both as 64 lowercase hex digits, and its identity bytes in lowercase hex. A snapshot object's identity bytes are the UTF-8 bytes of its `key` (FR-106). It is the one spelling of a Reference value; no record or object payload stands in for it |
+| reference | `{"type":"reference","universe":"<64 hex>","object_type":"<64 hex>","identity":"<hex>"}`: the reference key of one object (FSL FR-084): the identity of its universe, the identity of its effective (most-specific) object type, both as 64 lowercase hex digits, and its identity bytes in lowercase hex. A snapshot object's identity bytes are the UTF-8 bytes of its `key` (FR-106). It is the one spelling of a Reference value; no record or object payload stands in for it |
 | `Option<T>` | `{"type":"option","value":<value>}` when present, `{"type":"option","value":null}` for `none` |
 | record | `{"type":"record","name":"<declaration>","fields":[{"name":"<field>","value":<slot>}, ...]}`, one entry per declared field in declaration order. `<slot>` is a value when present, `null` when an optional (`?`) field is absent, and `{"type":"null"}` for a `null` slot |
 | tuple | `{"type":"tuple","name":"<declaration>","components":[<value>, ...]}`, in declaration order |
@@ -218,7 +218,7 @@ last field.
 
 `<declaration>` is the enum, record, tuple or union declaration's checked
 node id, in the `WireNodeId` spelling the entry's own
-parameter name uses (the QSpec FR-322 node `id` member). FR-181 leaves `<qualified-name>`'s text form to the
+parameter name uses (the FSpec FR-322 node `id` member). FR-181 leaves `<qualified-name>`'s text form to the
 implementation, and a node id is the identity FR-098 already resolves in
 the recompiled package. `<field>` and `<member>` are the declared member
 identifiers. `<unit>` is the declared quantity type's unit identity text; for a declared unit that is the unit's `QualifiedName`.
@@ -299,7 +299,7 @@ length of its escaped value text.
 | FR-070-AC-6 | **RETIRED (no digest domains).** This envelope defines no `contract_version` member of its own; version ownership is delegated to the FR-331 envelope. | Test (TC-181), retired |
 | FR-070-AC-7 | An envelope whose encoded size exceeds the configured reader bound refuses at construction, with no truncated or partially-populated envelope returned. | Test (TC-181) |
 | FR-070-AC-8 | A transcript with one `Canonical` entry and one `I128` entry decodes to two `WitnessValue`s in binding order. The `Canonical` entry is a record whose fields hold a nested record with a present field, an absent optional field and a `null` slot; a present option and a `none` option; a three-element sequence; a set and a bag in ascending JCS order (the bag with a duplicate); an ordered set; a union with a one-component member; and a union with a nullary member. Each slot state, option state, element order, member identifier and declaration node id decodes exactly as written. The `I128` entry decodes as it did before this change. | Test (TC-905) |
-| FR-070-AC-20 | A `ProtocolAssumption` envelope round-trips the checked refinement identity, typed `ProtocolAssumptionWitness`, exact assumption identities, typed reason and paired lasso or finite paired prefixes without requiring a transcript or claiming an FR-323 target. Its backend member identifies `qsl-analyze`, its trace position is null, and no result from it is convertible to a backend-evidence `Witness` result. | Test (TC-553) |
+| FR-070-AC-20 | A `ProtocolAssumption` envelope round-trips the checked refinement identity, typed `ProtocolAssumptionWitness`, exact assumption identities, typed reason and paired lasso or finite paired prefixes without requiring a transcript or claiming an FR-323 target. Its backend member identifies `fsl-analyze`, its trace position is null, and no result from it is convertible to a backend-evidence `Witness` result. | Test (TC-553) |
 | FR-070-AC-9 | Each of these entries refuses `DecodeRefusal::Malformed` naming the parameter, with no partial result: trailing bytes; added whitespace; record members out of JCS order; an unknown `type` tag; a record field entry with no `value` member; an integer `"007"`, and an integer as a JSON number; a rational `2`/`4`, and one with denominator `-1`; a `float64` with 15 hex digits, and one with uppercase hex; a reference `identity` of odd length; `{"type":"null"}` as a sequence element; a set with two equal elements; set elements out of order; an ordered set with two equal elements; a raw `%` not starting an escape; a lowercase escape `%3b`; and a record field name written `\u0061` where JCS writes `a`. | Test (TC-905) |
 | FR-070-AC-10 | On a thread with a 512 KiB stack, a transcript entry holding a 100,000-long recursive list (`record List { head: Int[0, 9]; tail?: List; }`) decodes, with the envelope's reader bound raised to fit it through `replay.input_bytes`. The decoded value clones, compares equal to itself, renders its redacted `Debug` and drops with no stack overflow. With the bound one byte below the envelope's size, construction refuses `BoundExceeded` naming `replay.input_bytes`. | Test (TC-736) |
 | FR-070-AC-11 | One `Canonical` entry per leaf family decodes exactly as written: an integer `-170141183460469231731687303715884105728` (outside `i64`); an enum member; the text `a;b=c<<<d>>>e%f` (its entry holds `a%3Bb=c%3C%3C%3Cd%3E%3E%3Ee%25f`, and its escaped bytes count toward `replay.input_bytes`), which parses as one block whose entry splits only at its own delimiters; the rational `-3`/`4`; the decimal with coefficient `1050` and scale `2`; a `float32` NaN with payload `7fc00001` and a `float64` negative zero `8000000000000000`; a quantity `{"type":"decimal","coefficient":"15","scale":"1","unit":"<unit>"}`; and a reference. A sequence of text values holding `;` and `>` decodes in order. | Test (TC-905) |
@@ -310,26 +310,26 @@ length of its escaped value text.
 | FR-070-AC-16 | A `Canonical` entry holding the reference `{"identity":"61","object_type":"<64 hex>","type":"reference","universe":"<64 hex>"}` decodes to one `WitnessValue::Reference` carrying the universe, the object type and the identity bytes `61`; the same entry with the empty `identity` `""` decodes too (FR-098 refuses it at conversion, not decode). | Test (TC-1042) |
 | FR-070-AC-17 | Each of these reference entries refuses `DecodeRefusal::Malformed` naming the parameter, with no partial result: a `universe` of 63 hex digits; an `object_type` written with an uppercase hex digit; an `identity` of odd length; an entry written `{"type":"reference","universe":...,"object_type":...,"identity":...}` (members in the table's reading order, not JCS order); a missing `identity`; an extra member; and a `universe` that is a JSON number. | Test (TC-1042) |
 | FR-070-AC-18 | A function packet carrying `function`, a frame packet carrying `frame_operation` (`Config::ConfigVersion`, `attemptUpdate`) and a state-clause packet carrying `state_clause` (`VersionUnchanged`) each reconstruct, and the envelope returns that one target unchanged through a construct → serialize → read round trip. The same packets with the target removed refuse `WitnessRefusal::MissingMember("replay_target")`; a packet carrying `function` and `frame_operation` refuses `WitnessRefusal::ConflictingTarget` naming those two, and one carrying `function` and `state_clause` naming those two; the two refusals are distinct variants and neither builds an envelope, though every other member is present. The envelope type has no `selected_function` member. | Test (TC-183) |
-| FR-070-AC-19 | For a structural node identity whose compact JSON spelling contains `%`, `=`, `;`, `\|`, `<`, `>` and a DEL byte, `qsl_replay::witness_entry_name` returns that compact spelling with each listed byte percent-escaped using uppercase two-digit hex (`%25`, `%3D`, `%3B`, `%7C`, `%3C`, `%3E`, `%7F`), while retaining all other bytes, including non-ASCII UTF-8. The name contains no transcript separator or block-end delimiter and round-trips through the witness entry parser to the original `NodeKey`; two distinct identities, including one whose source text resembles another identity's escape, produce distinct names. Transcript entries remain ordered by structural `NodeKey` comparison even where their escaped display names would sort differently as text. | Test (TC-1281) |
+| FR-070-AC-19 | For a structural node identity whose compact JSON spelling contains `%`, `=`, `;`, `\|`, `<`, `>` and a DEL byte, `fsl_replay::witness_entry_name` returns that compact spelling with each listed byte percent-escaped using uppercase two-digit hex (`%25`, `%3D`, `%3B`, `%7C`, `%3C`, `%3E`, `%7F`), while retaining all other bytes, including non-ASCII UTF-8. The name contains no transcript separator or block-end delimiter and round-trips through the witness entry parser to the original `NodeKey`; two distinct identities, including one whose source text resembles another identity's escape, produce distinct names. Transcript entries remain ordered by structural `NodeKey` comparison even where their escaped display names would sort differently as text. | Test (TC-1281) |
 
 ## Dependencies
 
 - **Upstream**: [US-010](../usecase/US-010-carry-a-proof-witness-or-replay-outcome-without-a-shadow-type.md);
   ADR-013 O-25 (witness/counterexample carrier), QC-13 (transcript-only
-  storage), QC-6/QC-8 (FR-331 `counterexamples` shape), OQ-H (`qsl-replay`
-  owns `Witness`, its admission rule and its `decode` types); QSpec
-  [FR-331](https://github.com/agent-ix/quire-specification/blob/main/spec/objects/interfaces/FR-331-backend-provider-envelope.md)
+  storage), QC-6/QC-8 (FR-331 `counterexamples` shape), OQ-H (`fsl-replay`
+  owns `Witness`, its admission rule and its `decode` types); FSpec
+  [FR-331](https://github.com/agent-ix/filament-specification/blob/main/spec/objects/interfaces/FR-331-backend-provider-envelope.md)
   AC-9 (`counterexamples` entry shape) and
-  [QSpec FR-351](https://github.com/agent-ix/quire-specification/blob/main/spec/objects/protocol/FR-351-separating-witness-record.md)
-  (separating-witness record; QSpec status **Draft** as of this writing —
+  [FSpec FR-351](https://github.com/agent-ix/filament-specification/blob/main/spec/objects/protocol/FR-351-separating-witness-record.md)
+  (separating-witness record; FSpec status **Draft** as of this writing —
   fully specified with acceptance criteria, cited here as the normative
   shape this envelope's `Input`-arm and #217/#186 consumers read).
-- **Shared types**: [#213](https://github.com/agent-ix/quire-spec-language/issues/213)
+- **Shared types**: [#213](https://github.com/agent-ix/filament-spec-language/issues/213)
   (ARCH-20) owns the O-04 `NodeKey`/occurrence-key shapes the obligation
   identity and occurrence key members reuse, the `RawSourceRef` and `package_id` members reuse, and the O-11 `QualifiedName`
   the selected function's identity reuses; this requirement defines no
   parallel identity type.
-- **Witness value text**: QSpec FR-181 (typed canonical form);
+- **Witness value text**: FSpec FR-181 (typed canonical form);
   [FR-261](FR-261-read-other-untrusted-json-at-any-depth.md) (the shared
   reader at any depth); [FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md)
   (`replay.input_bytes`); ADR-030 D-1; CG FR-025's composite leaf binding
@@ -339,4 +339,4 @@ length of its escaped value text.
 - **Downstream**: [FR-071](FR-071-implement-typed-replay-request.md) carries
   this envelope's members into the replay request;
   [FR-072](FR-072-implement-typed-replay-result.md)'s per-item result embeds
-  the QSpec FR-351 record this envelope's `Witness` arm decodes.
+  the FSpec FR-351 record this envelope's `Witness` arm decodes.

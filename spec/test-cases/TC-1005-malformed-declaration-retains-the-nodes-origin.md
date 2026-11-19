@@ -3,7 +3,7 @@ id: TC-1005
 title: "A normalization malformed declaration retains the artifact and position of the refused node's source origin"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-1005: A normalization malformed declaration retains the artifact and position of the refused node's source origin

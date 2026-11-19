@@ -3,7 +3,7 @@ id: TC-723
 title: "S1 parses to its default limits and names the setting it reached"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-256
+  - target: ix://agent-ix/filament-spec-language/FR-256
     type: verifies
 ---
 # TC-723: S1 parses to its default limits and names the setting it reached
@@ -28,7 +28,7 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
    Then, with `s1.nodes` at 200000 and every other S1 limit at its default,
    parse brackets nested to the depth the default token limit admits, and
    then one pair deeper.
-3. Set each `qsl_cst::Limits` field through its builder method.
+3. Set each `fsl_cst::Limits` field through its builder method.
 
 Tag the tests `#[trace("TC-723", "FR-256-AC-2")]`, `#[trace("TC-723", "FR-256-AC-3")]`.
 

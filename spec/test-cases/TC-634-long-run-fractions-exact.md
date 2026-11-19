@@ -3,7 +3,7 @@ id: TC-634
 title: "Long-run fractions are decided exactly by bottom components and maximal end components"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: verifies
 ---
 # TC-634: Long-run fractions are decided exactly by bottom components and maximal end components

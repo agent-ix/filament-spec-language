@@ -3,27 +3,27 @@ id: FR-336
 title: "Make a model subject finite by its universes, apart from proof bounds"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: depends_on
 ---
 # FR-336: Make a model subject finite by its universes, apart from proof bounds
@@ -105,10 +105,10 @@ impl SubjectIdentity {
   limits and the snapshot provision decide whether a run finishes, not what a
   finished run holds, so they are no part of it.
 - The identity projection's type SHALL be `SubjectIdentity`, defined in the
-  `qsl-replay` facade crate at `qsl_replay::SubjectIdentity`, so that the
-  EN-1 request path in `qsl-analyze` and a caller that depends only on
-  `qsl-replay`, CG included (FR-059), name the one type.
-- The `qsl-analyze` crate SHALL use `SubjectIdentity` from `qsl-replay`,
+  `fsl-replay` facade crate at `fsl_replay::SubjectIdentity`, so that the
+  EN-1 request path in `fsl-analyze` and a caller that depends only on
+  `fsl-replay`, CG included (FR-059), name the one type.
+- The `fsl-analyze` crate SHALL use `SubjectIdentity` from `fsl-replay`,
   with no definition or re-export of its own at another path.
 - The `SubjectIdentity` type SHALL compare member by member, with a hash
   that agrees with that equality and does not depend on the order of the initial
@@ -130,7 +130,7 @@ impl SubjectIdentity {
 | FR-336-AC-3 | A `Counter` variant whose operation `step(n: Integer)` takes an unranged parameter returns `RequiresBound` naming that parameter root, both with no `ProofBound` and with a `ProofBound{IntegerRange{0, 3}}` on the clause's domain; with `n: Int[0, 3]` declared in the model it explores. | Test (TC-846) |
 | FR-336-AC-4 | `ReachesTwo` under `fair weak each` over universe `{a, b}` and over `{a, b, c}` gives two obligation identities that differ only in the subject's universe, and each `proved` result joins only its own request index. | Test (TC-846) |
 | FR-336-AC-5 | A subject that differs from another only in a proof bound or only in an initial state has a different identity, and the two get two request indices; a provision carrying a package the model does not select leaves the identity unchanged; a clause the subject's package has no requirement record for is refused and no item is written. | Test (TC-846) |
-| FR-336-AC-6 | `qsl_replay::SubjectIdentity::of` over FR-336-AC-4's subject gives the identity `qsl-analyze`'s request path writes into the item, and the same subject with its initial states, its universe's keys and its proof bounds each listed in reverse order gives an equal identity with an equal hash. | Test (TC-1190) |
+| FR-336-AC-6 | `fsl_replay::SubjectIdentity::of` over FR-336-AC-4's subject gives the identity `fsl-analyze`'s request path writes into the item, and the same subject with its initial states, its universe's keys and its proof bounds each listed in reverse order gives an equal identity with an equal hash. | Test (TC-1190) |
 | FR-336-AC-7 | For a temporal clause over `ConfigVersion`, an unbounded `config_history` whose member type is `ConfigVersion` and an unbounded `recent_history` whose member type is a proper subtype of `ConfigVersion` each appear exactly once in the record's `Unbounded` population domains, in declaration-key order, regardless of the subject universes; an unbounded population whose member type is unrelated by subtyping appears nowhere in that record. | Test (TC-846) |
 
 ## Dependencies
@@ -146,10 +146,10 @@ impl SubjectIdentity {
   [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (pre-check), [FR-097](FR-097-classify-claim-extent-and-write-bounded-requests.md),
   [FR-333](FR-333-read-an-optional-collection-bound-and-population-maximum.md).
-- QSpec FR-153-AC-9 (a population with no declared maximum is unbounded).
+- FSpec FR-153-AC-9 (a population with no declared maximum is unbounded).
 
 ## References
 
 - Linear QSL-385 (spec ticket); QSL-42 (implementation).
-- QSpec FR-361 (the model subject) and FR-368 (its place in negotiation and
+- FSpec FR-361 (the model subject) and FR-368 (its place in negotiation and
   the obligation identity): Linear STD-131 (QS-1, QS-9).

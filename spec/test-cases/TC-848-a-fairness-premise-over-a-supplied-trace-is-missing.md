@@ -3,11 +3,11 @@ id: TC-848
 title: "A fairness premise over a supplied trace is missing, and the clause settles unsupported"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
 ---
 # TC-848: A fairness premise over a supplied trace is missing, and the clause settles unsupported

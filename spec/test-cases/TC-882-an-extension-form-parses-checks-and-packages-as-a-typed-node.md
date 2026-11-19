@@ -3,14 +3,14 @@ id: TC-882
 title: "An extension's declaration form parses, checks against its typed-node schema and packages as a typed node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-354
+  - target: ix://agent-ix/filament-spec-language/FR-354
     type: verifies
 ---
 # TC-882: An extension's declaration form parses, checks against its typed-node schema and packages as a typed node
 
 ## Description
 
-Verify admission of a declaration form from an extension's grammar and typed-node schemas, the source-level and clause type refusals, and the emitted `extension`/`extension_form` node (QSpec FR-467, FR-469).
+Verify admission of a declaration form from an extension's grammar and typed-node schemas, the source-level and clause type refusals, and the emitted `extension`/`extension_form` node (FSpec FR-467, FR-469).
 
 Scope: FR-354-AC-1, FR-354-AC-2, FR-354-AC-6, FR-354-AC-7, FR-354-AC-8.
 

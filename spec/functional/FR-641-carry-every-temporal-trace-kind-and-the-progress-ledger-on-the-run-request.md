@@ -1,0 +1,218 @@
+---
+id: FR-641
+title: "Carry every temporal trace kind and the progress ledger on the clause-run request"
+type: FR
+relationships:
+  - target: ix://agent-ix/filament-spec-language/US-033
+    type: implements
+  - target: ix://agent-ix/filament-spec-language/FR-312
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-330
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-501
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-502
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-504
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-522
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-642
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-645
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-094
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-352
+    type: references
+---
+# FR-641: Carry every temporal trace kind and the progress ledger on the clause-run request
+
+## Description
+
+The `temporal` selection of FR-312's clause-run request SHALL carry every trace
+input FR-330 evaluates, not only `finite` and `lasso`: a model trace, a
+progressed event-position or fixed-sample trace, a timestamped finite-window
+trace, a timed trace (FR-642) and, for each, positions that are either snapshots
+of a model population or samples of a declared record trace subject. It SHALL
+also carry a progress ledger (FR-502) in and return the updated ledger in the
+result. A request file can then reach every evaluator the library reaches, and a
+caller that monitors in batches carries progress from one run to the next.
+
+## Use case
+
+A plant writes one log file per minute. Each minute the operator runs the
+`Deadline` clause over the new file as a `timestamped` trace with the
+minute's watermark, passing the ledger the previous run returned. A regressing
+watermark is refused instead of silently re-deciding an earlier minute, and a
+deadline that falls across two files settles once the second file's watermark
+covers it.
+
+## Inputs
+
+The `temporal` selection is the closed object `{name, trace, over, ledger,
+relation, evidence_ledger, admit_late}`: `name` and `trace` required, `over`
+required exactly when the trace's positions are snapshot keys, `ledger`
+optional, and the three correction members `relation`, `evidence_ledger` and
+`admit_late` optional and admitted only on a `timestamped` trace, with the
+shapes and refusals [FR-985](FR-985-read-the-correction-members-of-the-temporal-run-selection.md)
+states (FR-526 "On FR-641's run request", FR-975).
+
+### Positions
+
+A **position** `P` is one of:
+
+- `K`, a JSON string: an `observations` key naming a current
+  `filament.state.snapshot/v1` document (FR-106), for a clause over a model
+  subject; `over` binds the clause's `over` parameter in position 0;
+- `{"sample": R}`: a record sample for a clause over a declared record trace
+  subject, `R` a closed JSON object with one member per record field, each value
+  in the snapshot document's field-value encoding (`{"integer": "3"}`, FR-106).
+  The trace binds the subject parameter to each sample, as FR-330's trace-subject
+  route does; `over` is absent.
+
+Every position of one trace has the same form.
+
+### Trace kinds
+
+`trace` holds exactly one member:
+
+| Member | Shape | FR-330 input |
+|--------|-------|--------------|
+| `finite` | `[P, ...]` | `Finite` (a closed trace under a false-extension profile, a prefix under infinite-trace) |
+| `lasso` | `{"prefix": [P, ...], "loop": [P, ...]}` | `Lasso` |
+| `model` | `{"initial": K, "universes": U, "prefix": [S, ...], "loop": [S, ...], "max_candidates": N}`, `U` and each step `S` in FSpec FR-364's model-arm encoding, `max_candidates` optional | `Model` |
+| `progressed` | `{"positions": [P, ...], "progress": G, "lower_boundary": B, "binding": T}` | `Progressed` (FR-504) |
+| `timestamped` | `{"observations": [O, ...], "progress": G, "lower_boundary": B, "binding": T, "cover": C, "missing": [M, ...]}`, `cover` and `missing` optional | `Timestamped` (FR-501) |
+| `timed` | FR-642's `{"prefix": [Q, ...], "loop": [Q, ...], "period": X, "through": X}` | `Timed` (FR-642) |
+
+where
+
+- `G`, the progress assertion: `{"watermark": W, "completeness": D, "scope":
+  "closed"|"open", "execution": "closed"|"open"}`; `W` a non-negative integer
+  (inclusive) or `{"half_open": E}` (an exclusive end, read as FR-501 reads a
+  half-open watermark: the inclusive watermark `E - 1`), `E` a positive
+  integer; `D` is `{"complete": {"through": N}}` or `"incomplete"`;
+- `B`: `"authoritative-origin"` or `"history-cutoff"`;
+- `T`, the trace binding (FR-522): `{"profile": I, "clock": NAME, "parameters":
+  CLOCK}`, `CLOCK` in FR-640's clock configuration form;
+- `O`: `{"position": P, "stamp": N, "order_key": {"authority": A, "key": Z}}`,
+  `order_key` optional, `N` a non-negative integer tick, `Z` a signed integer;
+- `C`: `"exact"` (the default) or `{"counter": {"uncertainty": N}}`;
+- `M`: `{"position": N, "atom": N}`, an atom valuation absent from an admitted
+  observation (FSpec FR-160): the observation's index in `observations` and the
+  zero-based `holds` formula node of the checked clause.
+
+`ledger` is the relative path of a `filament.progress-ledger/1` file, read once
+under FR-100's `dependent_bytes` limit and relative to the request file. The file
+is a closed JSON object `{"format": "filament.progress-ledger/1", "entries":
+[E, ...]}`, entries in ascending binding order, each `E` a closed object
+`{"binding": {"package", "clause", "occurrence", "clock", "profile"},
+"watermark", "completeness", "scope", "execution", "covered": [{"identity",
+"stamp", "fingerprint"?}, ...]}` holding FR-502's `LedgerBinding` (the clause as
+the declaration node key's canonical text) and `ProgressLedgerEntry`, `covered`
+in identity-then-stamp order. A covered entry's `fingerprint` is FR-993's
+content fingerprint, the lowercase hexadecimal SHA-256 digest prefixed
+`sha256:`. It is required on the entry of a record-sample position and absent
+on every other entry. It is integrity data (ADR-013 §2): it takes no part in
+the entry order, a citation or a key, and the entry's identity stays the
+sample's index.
+
+## Outputs
+
+FR-109's `ClauseRunReport`, written by FR-267. A run over a `progressed` or
+`timestamped` trace writes the returned ledger as the result's `ledger` member
+(FR-267, FSpec FR-352) in the `filament.progress-ledger/1` form above: the
+updated ledger on acceptance, the supplied ledger unchanged on a refusal or a
+limit stop, and no member when the request supplied no ledger and the run was
+refused. The member's bytes are what a later request's `ledger` file holds.
+
+## Behavior
+
+- The reader SHALL decode every member under FR-100's closed-envelope rules:
+  unknown, duplicate or `null` members, a trace with zero or several members, and
+  a member value of the wrong JSON type refuse `invalid-request` at stage
+  `request`, naming the member's path from `clause` (for example
+  `selection.temporal.trace.timestamped.progress.watermark`).
+- The reader SHALL construct FR-330's `TraceInput` variant named in the table
+  and SHALL build each snapshot position's `DocumentRef` by FR-312's rules; a
+  key naming an invocation or a non-current snapshot refuses `invalid-request`
+  naming the position's path.
+- A trace that mixes snapshot keys and samples, a sample trace with `over`, and
+  a snapshot trace without `over` SHALL refuse `invalid-request` at stage
+  `request`, naming `trace` or `over`.
+- When a request carries the progress watermark `{"half_open": 0}`, the run
+  reader SHALL refuse the request `invalid-request` at stage `request`, exit
+  20, naming the member `trace.progress.watermark.half_open`, before any
+  position is admitted. An exclusive end of 0 covers no tick, so it has no
+  inclusive reading (FR-501 reads `E` as `E - 1`), and the inclusive form
+  cannot state "nothing covered" either: progress always covers at least
+  tick 0. Reading it as watermark 0 would claim coverage of tick 0 that the
+  supplier did not assert, and wrapping it would claim every tick. A
+  half-open end of 1 or more is read as its inclusive `E - 1`.
+- A `model` trace's `max_candidates` is the per-expansion candidate bound
+  (FR-255 `expansion.max_candidates`, FR-120 `ExpansionLimits`) under which
+  the run reconstructs each step's successor candidates (FR-329, FR-330): a
+  positive integer from 1 to 2^53 - 1, and 1,000,000 when absent. The
+  request is the caller FR-255 names for this setting, so a request file can
+  raise or lower the bound exactly as an in-process caller does. The run
+  writes the effective bound, the default included, in the result's
+  `limits` member as `{"expansion.max_candidates": "N"}` (FR-267, FSpec
+  FR-352), so the bound is part of the result document and of its identity:
+  two runs that differ only in it write unequal documents. A
+  `max_candidates` of 0, of a wrong JSON type, or on a trace member other
+  than `model` SHALL refuse `invalid-request` at stage `request`, exit 20,
+  naming the member.
+- When a step's candidate count would exceed that bound (FR-120's rule;
+  a step with exactly `max_candidates` candidates is expanded in full), the run SHALL report
+  `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value:
+  N, setting: expansion.max_candidates}` (FR-127's spelling of the stop, the
+  run report's outcome `{"kind": "incomplete", "limit": "max_candidates"}`),
+  no truth value and no counterexample, and SHALL NOT read the step as
+  absent or the trace as refused: the bound stopped the work, and raising
+  it decides the trace.
+- The reader SHALL check no length, stamp order or profile fit. Those are
+  admission and evaluation rules, reported as FR-330 and FR-645 state, so a
+  request file and an in-process caller get the same report for the same trace.
+- The run SHALL apply FR-502 to a supplied ledger exactly as for an in-process
+  `ProgressLedger`, and two runs whose second request carries the ledger file
+  the first wrote SHALL give the same outcomes as the two in-process calls
+  sharing one ledger (FSpec FR-094).
+- A ledger file that is not a closed `filament.progress-ledger/1` document,
+  whose entries are out of order or repeat a binding, or whose covered entry
+  lacks a `fingerprint` for a record sample or carries one for any other
+  position, SHALL refuse
+  `invalid-request` at stage `request`, naming `ledger`.
+- The writer SHALL write the ledger canonically (members in the order above,
+  entries in binding order), so writing a read ledger reproduces its bytes.
+
+## Acceptance Criteria
+
+| ID | Criteria | Verification |
+|----|----------|--------------|
+| FR-641-AC-1 | Through `command::run`, a `timestamped` trace over three samples stamped 0, 2 and 5 with watermark 5, `complete` through 5, scope `closed`, `authoritative-origin` and a binding equal to the clause's timestamped-event row reports the outcome FR-501-AC-4 states for the same input built as a typed `ClauseRunRequest`, byte-identical. | Test (TC-1662) |
+| FR-641-AC-2 | Through `command::run`, a `progressed` trace of an event-position clause and of a fixed-sample clause reports the outcomes FR-504-AC-1 and AC-2 state for the same inputs built as typed values, and the result carries a `ledger` member. | Test (TC-1662) |
+| FR-641-AC-3 | A run whose result `ledger` member is written to a file and passed as the next request's `ledger`, with the next trace asserting watermark 60 after a retained 100 under the same binding, reports stage `evaluate`, `refusal`, `contradicted_dimension` `Watermark`, and returns the supplied ledger unchanged; the same second request with watermark 120 is accepted and returns a ledger whose entry holds 120. | Test (TC-1663) |
+| FR-641-AC-4 | A `model` trace and a `lasso` of samples each reach FR-330 and report its outcome; a trace mixing a key and a sample, a sample trace with `over`, a `timestamped` observation missing `stamp`, and a ledger file with two entries for one binding each refuse `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-1663) |
+| FR-641-AC-5 | Reading a ledger file and writing it back from a run that changes nothing reproduces its bytes. | Test (TC-1663) |
+| FR-641-AC-6 | Through `command::run`, a `timestamped` trace of `T` whose progress watermark is `{"half_open": 0}` refuses `invalid-request` at stage `request`, exit 20, naming `trace.progress.watermark.half_open`, with no result document; the same request with `{"half_open": 6}` reports the outcome of the request with watermark 5. | Test (TC-2241) |
+| FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands two candidates it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; with `max_candidates` equal to the largest candidate count of any step it reports FR-330-AC-16's outcome, never `incomplete`; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
+| FR-641-AC-8 | Through `command::run`, FR-641-AC-7's `model` trace with no `max_candidates` writes a result whose `limits` member is `{"expansion.max_candidates": "1000000"}`, and with `max_candidates` 5 one whose `limits` is `{"expansion.max_candidates": "5"}` and that is otherwise equal; a run over a `finite` sample trace writes no `limits` member. | Test (TC-2299) |
+| FR-641-AC-9 | Through `command::run`, a `progressed` trace of a fixed-sample clause `eventually[0,3] holds(r.level = 2)` over one sample at level 0 reports `pending-window` with `deadline` 3, exit 0, at scope `open`, `W` 0 and `{"complete": {"through": 0}}` (an open prefix), and reports `indeterminate` with reason `IncompleteInput`, exit 11, never `violated`, at scope `closed`, `W` 5 and completeness `"incomplete"` (an incomplete input, to which no false extension applies, FR-504-AC-4). The two results are distinct `disposition.temporal` kinds. | Test (TC-2384) |
+| FR-641-AC-10 | Through `command::run`, a `progressed` record-sample run over levels 1, 2 with `Complete { through: 1 }` writes a ledger whose covered entries each carry `identity` (the index), `stamp` and a `fingerprint` of the form `sha256:` and 64 lowercase hexadecimal digits, and no sample text or value; a second run carrying that ledger file over levels 1, 5, 3 refuses `Completeness` and over levels 1, 2, 3 is accepted, as the in-process calls do; reading and writing the ledger file reproduces its bytes; a ledger whose record-sample entry lacks `fingerprint`, and a snapshot-position entry that carries one, each refuse `invalid-request` at stage `request` naming `ledger`. | Test (TC-2811) |
+
+## Dependencies
+
+- [FR-312](FR-312-read-a-clause-run-request-and-run-it.md): the request reader
+  this extends; [FR-330](FR-330-run-a-temporal-clause-through-the-spine.md): the
+  trace inputs.
+- [FR-501](FR-501-evaluate-a-temporal-clause-under-the-timestamped-event-finite-window-profile.md),
+  [FR-502](FR-502-reject-a-regressing-watermark-and-a-conflicting-completeness-revision-on-the-spine.md),
+  [FR-504](FR-504-carry-progress-on-event-position-and-fixed-sample-traces.md),
+  [FR-522](FR-522-bind-a-temporal-trace-to-the-checked-clause-s-profile-and-clock-and-report-the-authenticated-clock.md).
+- FSpec FR-094 (progress carried across requests), FR-352 (the result's
+  `ledger` member), FR-364 (model-arm encoding).

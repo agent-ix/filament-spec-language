@@ -3,7 +3,7 @@ id: TC-047
 title: "Prove signed arithmetic through the actual IR API"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-047: Prove signed arithmetic through the actual IR API

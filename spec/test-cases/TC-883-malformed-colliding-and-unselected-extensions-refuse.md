@@ -3,7 +3,7 @@ id: TC-883
 title: "Malformed, colliding, cyclic and unselected extensions refuse with the definitions involved"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-354
+  - target: ix://agent-ix/filament-spec-language/FR-354
     type: verifies
 ---
 # TC-883: Malformed, colliding, cyclic and unselected extensions refuse with the definitions involved
@@ -34,4 +34,4 @@ Tag the tests `#[trace("TC-883", "FR-354-AC-n")]`.
 - Step 4: `invalid_package`/`definition-cycle` naming both in path order.
 - Step 5: `unsupported_construct`/`declaration-form` naming `retention`, its span and the unit's selections, identical over both catalogs.
 - Step 6: the unit compiles, and `retention` is an ordinary parameter name and an ordinary member name.
-- Step 7: `ambiguous_declaration`/`ambiguous-name` naming the form `Audit` and the record `Audit` (QSpec FR-469).
+- Step 7: `ambiguous_declaration`/`ambiguous-name` naming the form `Audit` and the record `Audit` (FSpec FR-469).

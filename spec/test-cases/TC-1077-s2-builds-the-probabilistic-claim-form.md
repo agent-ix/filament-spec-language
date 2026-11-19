@@ -3,7 +3,7 @@ id: TC-1077
 title: "S2 builds the probabilistic claim form"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-392
+  - target: ix://agent-ix/filament-spec-language/FR-392
     type: verifies
 ---
 # TC-1077: S2 builds the probabilistic claim form

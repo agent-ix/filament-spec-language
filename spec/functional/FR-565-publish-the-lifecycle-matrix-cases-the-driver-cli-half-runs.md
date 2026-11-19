@@ -3,23 +3,23 @@ id: FR-565
 title: "Publish the lifecycle matrix cases and their library documents for the driver CLI half"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
 ---
 # FR-565: Publish the lifecycle matrix cases and their library documents for the driver CLI half
@@ -27,10 +27,10 @@ relationships:
 ## Description
 
 The same request through the library and through the CLI gives the same
-document (ADR-029 CB-4, QSpec FR-300-AC-3). The CLI is the driver's
+document (ADR-029 CB-4, FSpec FR-300-AC-3). The CLI is the driver's
 (FR-287), so the CLI half of the FR-564 matrix runs in the driver
-repository. For both halves to run the same cases without a copy, QSL SHALL
-publish the cases as a library in `qsl-conformance`, and the driver SHALL
+repository. For both halves to run the same cases without a copy, FSL SHALL
+publish the cases as a library in `fsl-conformance`, and the driver SHALL
 depend on that crate.
 
 ```rust
@@ -55,8 +55,8 @@ pub enum CaseStage { Read, Check, Package, Execute, Analyze, Monitor, Prove, Doc
 pub struct CaseError { pub stage: CaseStage, /* detail */ }
 ```
 
-`run_case` is `run_case_with` over an empty registry and `Engines::qsl()`.
-QSL cannot link CG, so it holds no Kani descriptor and no copy of the Kani
+`run_case` is `run_case_with` over an empty registry and `Engines::fsl()`.
+FSL cannot link CG, so it holds no Kani descriptor and no copy of the Kani
 manifest: the driver, which links the Kani backend through CG, passes its own
 registry through `run_case_with`. A case whose operation takes neither
 argument ignores them.
@@ -69,12 +69,12 @@ operation settles refusal, unsupported, incomplete or any other FR-564 kind
 returns `Ok`.
 
 `CaseOutcome` holds the typed library outcome, its typed FR-286
-`OutcomeDocument` (or, for a `prove` (QSL half) case, the typed FR-286
+`OutcomeDocument` (or, for a `prove` (FSL half) case, the typed FR-286
 item), and its FR-285 exit code. It holds no encoded bytes. The comparison surface between the library
 and the CLI is the typed document, not its bytes: the driver encodes the
 `OutcomeDocument` `run_case` returns and the document its CLI wrote with the
 same canonical JSON encoder, `ix_cli_kit`'s, each followed by one newline,
-and compares those encodings. QSL's own `OutcomeDocument::to_bytes`
+and compares those encodings. FSL's own `OutcomeDocument::to_bytes`
 (`serde_json::to_vec`) is not the comparison surface.
 
 - `Verb` is `Check`, `Package`, `Execute`, `Analyze`, `Monitor` or `Prove`,
@@ -98,7 +98,7 @@ and compares those encodings. QSL's own `OutcomeDocument::to_bytes`
   stated file name. `run_case` reads the authored source under
   `SourceIdentity::new(source_authority, source_identity)`, so the library and
   driver use equal source labels independently of their physical file paths.
-- `run_case` runs the case through QSL's library operation and returns
+- `run_case` runs the case through FSL's library operation and returns
   `Ok(CaseOutcome)`, or `Err(CaseError)` naming the failed stage when the
   case itself could not be run.
 
@@ -146,12 +146,12 @@ typed document or item, and the exit code, or `Err(CaseError)` with its stage.
 - [FR-564](FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md): the matrix.
 - [FR-294](FR-294-run-every-execution-backend-behind-one-seam.md), [FR-296](FR-296-select-the-execution-backend-in-the-request.md): the backend seam and choice the `execute` cases use.
 - [FR-286](FR-286-serialize-every-outcome-as-one-json-outcome-document.md): the document.
-- [FR-287](FR-287-reach-qsl-through-the-driver-cli.md): the driver CLI.
-- QSpec FR-300-AC-3, FR-301-AC-1: the library and the CLI agree.
+- [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the driver CLI.
+- FSpec FR-300-AC-3, FR-301-AC-1: the library and the CLI agree.
 
 ## Overlap
 
-The driver repository depends on `qsl-conformance` and, for each `Case` of
+The driver repository depends on `fsl-conformance` and, for each `Case` of
 the `check`, `package`, `execute`, `analyze` and `monitor` rows, writes the
 case's inputs at their file names in the case's new working directory, runs
 the `quire` verb there, and asserts that the `ix_cli_kit` canonical JSON
@@ -168,7 +168,7 @@ the shipped `quire` binary does not enable (the precedent is its
   that cancels the operation's `Cancel` handle with `Requested` or
   `Deadline` before the first stage runs, as the case states.
 - **The `execute` tool-failure cell.** Under the same feature, the adapter
-  links `qsl-conformance`'s fault-injecting test backend into `quire` as a
+  links `fsl-conformance`'s fault-injecting test backend into `quire` as a
   supplied backend, so the cell's `CallFailure::Fault` reaches the CLI.
 
 For the `prove` row it runs `quire prove` with the Kani provider and a

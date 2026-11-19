@@ -3,7 +3,7 @@ id: TC-533
 title: "A fairness constraint over a supplied trace settles as a missing premise"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-132
+  - target: ix://agent-ix/filament-spec-language/FR-132
     type: verifies
 ---
 # TC-533: A fairness constraint over a supplied trace settles as a missing premise

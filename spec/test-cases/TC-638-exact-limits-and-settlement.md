@@ -3,7 +3,7 @@ id: TC-638
 title: "Exact runs stop on caller-set budgets and settle with ExactValue or ValueBounds"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: verifies
 ---
 # TC-638: Exact runs stop on caller-set budgets and settle with ExactValue or ValueBounds

@@ -3,7 +3,7 @@ id: TC-162
 title: "The string-edge scan reports every unmarked string dispatch"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-064
+  - target: ix://agent-ix/filament-spec-language/FR-064
     type: verifies
 ---
 # TC-162: The string-edge scan reports every unmarked string dispatch
@@ -11,20 +11,20 @@ relationships:
 ## Description
 
 Verify [FR-064](../functional/FR-064-restrict-string-dispatch-to-marked-edges.md)
-through both QSL's adapter and the reusable scanner's library and command.
+through both FSL's adapter and the reusable scanner's library and command.
 The scan reports unmarked string dispatch, respects valid consumer rules,
 excludes test code, rejects branch-gating allow-list entries and preserves
 source locations. Scope: FR-064-AC-1 through FR-064-AC-15.
 
 The consumer procedures below are acceptance obligations for the extraction;
-existing QSL-only tests do not establish consumer installation or adoption.
+existing FSL-only tests do not establish consumer installation or adoption.
 The structural detector covers literals and same-crate named string constants.
 Variable-to-variable comparisons, external constants and indirect branch
 dataflow retain the limitations stated by FR-064.
 
 ## Test Procedure
 
-1. Build a fixture QSL-shaped source tree with one string comparison inside
+1. Build a fixture FSL-shaped source tree with one string comparison inside
    a `#[string_edge]`-marked function and one string `match` inside an
    unmarked function; run `xtask string-edge` against it.
 2. Add a non-empty allow-list with the unmarked occurrence's file and item
@@ -42,8 +42,8 @@ dataflow retain the limitations stated by FR-064.
    condition selecting between two code paths, and one entry whose result
    feeds only a logged message; submit each separately to the scanner.
 6. For each of the five sites ADR-010 §4.3 names (`"allocation"`,
-   `"quire.protocol.finite-global/v1"`, `"filament-canonical-json-1"`,
-   `"quire.state.authority-adapter"`, and `"clock:"`), construct a branch-gating
+   `"filament.protocol.finite-global/v1"`, `"filament-canonical-json-1"`,
+   `"filament.state.authority-adapter"`, and `"clock:"`), construct a branch-gating
    fixture and an allow-list entry naming it; submit each in turn. Run the
    real scan with marks ignored over the workspace and submit an entry for
    each named dispatch site still present in production. Preserve the
@@ -54,7 +54,7 @@ dataflow retain the limitations stated by FR-064.
    confirm a failed prerequisite fails the aggregate and a succeeding one
    does not.
 8. Create an external workspace with `reader/src`, `emitter/src` and
-   `unselected/src`, without QSL-named directories. Put one unmarked literal
+   `unselected/src`, without FSL-named directories. Put one unmarked literal
    dispatch in each. Select only reader and emitter through the library
    request and binary flags. Repeat from a different working directory with
    absolute paths. Add a named string constant in reader and a same-named
@@ -62,7 +62,7 @@ dataflow retain the limitations stated by FR-064.
 9. Exercise the fixtures from steps 1–5 through the public library and binary
    with consumer rules.
    Submit a branch-gating allow-list entry both before and after marking its
-   function. Compare occurrence fields and errors with the QSL adapter.
+   function. Compare occurrence fields and errors with the FSL adapter.
 10. Submit each invalid case independently: no roots; missing, non-directory,
     duplicate, overlapping and out-of-base roots; roots with no production
     Rust files; unreadable source; malformed Rust; malformed JSON; unknown,
@@ -77,7 +77,7 @@ dataflow retain the limitations stated by FR-064.
     the client dependencies and files to establish that the scanner was
     referenced rather than copied.
 12. Inspect the adapter call and the scanner crate dependencies to confirm
-    there is one detector implementation and QSL-specific roots/rules stay
+    there is one detector implementation and FSL-specific roots/rules stay
     in the adapter. Feed clean, violating and invalid-input fixtures through
     the adapter and direct library call. Confirm the existing lint
     prerequisite remains and extraction adds only the scanner crate's tests.
@@ -89,17 +89,17 @@ dataflow retain the limitations stated by FR-064.
 14. Compile a consumer crate with a marked function and run it; compile a
     second with `#[string_edge(anything)]` and read the compiler's errors
     (FR-064-AC-13).
-15. Search the QSL workspace's manifests and production source for any attribute
+15. Search the FSL workspace's manifests and production source for any attribute
     macro named `string_edge`, any re-export or alias of one and any crate whose
     only purpose is the marker, and run `cargo check` over every package so each
     marker's resolution is the compiler's (FR-064-AC-14).
 16. Scan a fixture with a function marked `#[my_macros::string_edge]` and
     functions whose only mark is `// string_edge` or `/// string_edge`; read
-    `cargo metadata` for the QSL workspace (FR-064-AC-15).
+    `cargo metadata` for the FSL workspace (FR-064-AC-15).
 
 ### Worked external consumer acceptance
 
-The implementation's acceptance test creates a non-QSL crate outside the QSL
+The implementation's acceptance test creates a non-FSL crate outside the FSL
 checkout, for example at `/tmp/string-edge-consumer`, with this manifest:
 
 ```toml
@@ -120,9 +120,9 @@ The acceptance run installs and invokes the actual binary using existing
 access to the private authoritative repository:
 
 ```sh
-cargo install --git https://github.com/agent-ix/quire-spec-language --branch main qsl-string-edge
+cargo install --git https://github.com/agent-ix/filament-spec-language --branch main fsl-string-edge
 cd /tmp/string-edge-consumer
-qsl-string-edge --base-dir . --crate-root src --rules edge-rules.json
+fsl-string-edge --base-dir . --crate-root src --rules edge-rules.json
 ```
 
 It then replaces `src/lib.rs` with this one-line production violation and
@@ -137,7 +137,7 @@ package using:
 
 ```toml
 [dependencies]
-qsl-string-edge = { git = "https://github.com/agent-ix/quire-spec-language", branch = "main" }
+fsl-string-edge = { git = "https://github.com/agent-ix/filament-spec-language", branch = "main" }
 ```
 
 A consumer compiling marked intake functions uses the marker crate by
@@ -178,10 +178,10 @@ package has already been implemented or the installation run has passed.
   clean run exits `0`; the changed source exits `1`, reports `src/lib.rs:1`
   in item `accepted`, and classifies its string match as branch-gating.
   The separate library client returns the equivalent clean and violating
-  reports without copied scanner sources or a QSL workspace layout.
-- Step 12 (FR-064-AC-11): the adapter calls the public scanner with QSL's
+  reports without copied scanner sources or an FSL workspace layout.
+- Step 12 (FR-064-AC-11): the adapter calls the public scanner with FSL's
   roots and rules and propagates its reports and failures. No duplicate
-  detector or additional QSL gate is introduced.
+  detector or additional FSL gate is introduced.
 - Step 13 (FR-064-AC-12): the three marked comparisons (`ix_trace_rs::`,
   `::ix_trace_rs::` and imported forms) are absent from every report and the
   unmarked one is present.

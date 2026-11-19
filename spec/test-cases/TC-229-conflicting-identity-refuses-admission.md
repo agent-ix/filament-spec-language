@@ -3,7 +3,7 @@ id: TC-229
 title: "Two members sharing universe and object identity but differing type refuse admission outright"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-229: Two members sharing universe and object identity but differing type refuse admission outright

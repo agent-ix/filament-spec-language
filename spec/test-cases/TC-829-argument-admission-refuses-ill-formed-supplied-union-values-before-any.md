@@ -3,7 +3,7 @@ id: TC-829
 title: "Argument admission refuses ill-formed supplied union values before any charge"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-321
+  - target: ix://agent-ix/filament-spec-language/FR-321
     type: verifies
 ---
 # TC-829: Argument admission refuses ill-formed supplied union values before any charge

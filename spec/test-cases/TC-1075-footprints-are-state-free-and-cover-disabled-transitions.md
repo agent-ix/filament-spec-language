@@ -3,16 +3,16 @@ id: TC-1075
 title: "Footprints are state-free and exist for disabled transitions and objects not yet created"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-155
+  - target: ix://agent-ix/filament-spec-language/FR-155
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-162
+  - target: ix://agent-ix/filament-spec-language/FR-162
     type: verifies
 ---
 # TC-1075: Footprints are state-free and exist for disabled transitions and objects not yet created
 
 ## Description
 
-Verify that `ModelSystem::footprint` takes no state, returns exact footprints for a transition whose object no state holds and for a disabled transition, and derives type-dependent locations from the `object_type` of the identity's triples exactly as QSpec FR-383 states.
+Verify that `ModelSystem::footprint` takes no state, returns exact footprints for a transition whose object no state holds and for a disabled transition, and derives type-dependent locations from the `object_type` of the identity's triples exactly as FSpec FR-383 states.
 
 Scope: FR-155-AC-7, FR-162-AC-5.
 

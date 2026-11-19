@@ -1,46 +1,46 @@
 ---
 id: FR-127
-title: "Settle a model-check verdict as a QSpec FR-331 terminal record"
+title: "Settle a model-check verdict as an FSpec FR-331 terminal record"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: depends_on
 ---
-# FR-127: Settle a model-check verdict as a QSpec FR-331 terminal record
+# FR-127: Settle a model-check verdict as an FSpec FR-331 terminal record
 
 ## Description
 
-QSL SHALL settle every temporal item over a model subject that EN-1 decides
-as exactly one QSpec FR-331 terminal record whose value states the verdict's
-strength (ADR-018 V-1, V-4 to V-7). `qsl-replay` owns the terminal record,
+FSL SHALL settle every temporal item over a model subject that EN-1 decides
+as exactly one FSpec FR-331 terminal record whose value states the verdict's
+strength (ADR-018 V-1, V-4 to V-7). `fsl-replay` owns the terminal record,
 its category map and the `ProofBasis` and `InconclusiveCause` additions
 (ADR-013 O-24, as amended by ADR-018), whose category map covers every
-value ADR-018 V-1 to V-8 names. `qsl-replay`, in the qualified core,
+value ADR-018 V-1 to V-8 names. `fsl-replay`, in the qualified core,
 also owns the one settlement map from `ModelCheckOutcome` (FR-126) and the
 replay result of its counterexample (FR-128) to `TerminalValue`, and the
 certificate checkers that a proof passes before it settles `proved`
 (ADR-018 PC-1 to PC-5, LA-3). The driver calls the map with the outcome
-`qsl-analyze` returns.
+`fsl-analyze` returns.
 
 ## Use case
 
@@ -53,13 +53,13 @@ it replays.
 
 ## Semantic authority and boundary
 
-QSpec owns the verdict table onto QSpec FR-360 and FR-243,
-the method and depth members of the QSpec FR-331 terminal record, and the new
+FSpec owns the verdict table onto FSpec FR-360 and FR-243,
+the method and depth members of the FSpec FR-331 terminal record, and the new
 inconclusive causes on the wire (ADR-018 QS-6; References). This
-requirement specifies QSL's types and its map from EN-1's outcomes. The SMT
+requirement specifies FSL's types and its map from EN-1's outcomes. The SMT
 backend's outcomes (V-2, V-3, `InductionNotClosed`) reach `TerminalValue`
 through CG's map (ADR-018 DS-2), and a V-8 settlement through negotiation;
-QSL supplies their types and categories.
+FSL supplies their types and categories.
 
 ## Inputs
 
@@ -77,7 +77,7 @@ QSL supplies their types and categories.
 
 ## Outputs
 
-`TerminalValue` (`qsl_replay::proof_result`) with these additions:
+`TerminalValue` (`fsl_replay::proof_result`) with these additions:
 
 ```rust
 pub enum ProofBasis {
@@ -94,30 +94,30 @@ pub enum Certification { Certified, Uncertified, Trusted }   // ADR-018 PC-1
 //   BoundReached { depth: u64 }, InductionNotClosed { depth: u64 },
 //   UndecidedSuccessor, NoInitialState, NoInstance,
 //   CertificateRejected { rule: CertificateRule, at: CertificateLocus },
-//   written certificate-rejected{rule, at} (QSpec FR-331)
+//   written certificate-rejected{rule, at} (FSpec FR-331)
 //   InvalidRequest { requested, certified },
 //   written invalid-request{requested, certified}: the request-consistency
 //   refusal, naming the two refinement names
-//   RefutedIgnoringConstraints, written as the QSpec FR-331 inconclusive
+//   RefutedIgnoringConstraints, written as the FSpec FR-331 inconclusive
 //   cause refuted-ignoring-constraints; its lasso violates an explicitly
 //   ignored memory constraint and is not an ordinary counterexample.
 //   ProtocolAssumptionNotEstablished { reason, identities, witness },
-//   written protocol-assumption-not-established (QSL FR-148): protocol
+//   written protocol-assumption-not-established (FSL FR-148): protocol
 //   assumption strengthening or an undecided relation; never a
 //   RefinementFailure and never a refutation.
 
 // ProductStateRef, ClosureCertificate, CertificateRule: FR-338.
 // ComponentCertificate, ProofCertificate: FR-339.
 // IncompleteCause gains LimitReached { limit: ModelCheckLimit, value: u64, setting: RequestSetting },
-//   QSpec FR-331's limit-reached; setting is the FR-255 setting name that raises it.
+//   FSpec FR-331's limit-reached; setting is the FR-255 setting name that raises it.
 //   A monitor run (FR-251) writes the same record with limit `event_buffer` and
 //   setting `monitor.max_event_rate`.
-//   Cancelled { source: CancelCause }, written cancelled{source} (QSpec FR-331),
+//   Cancelled { source: CancelCause }, written cancelled{source} (FSpec FR-331),
 //   source the CancelCause wire name: requested or deadline (FR-276).
 ```
 
 An SMT proof of a temporal item reaches the settlement map through this
-handoff, a type and an entry of the `qsl-replay` facade:
+handoff, a type and an entry of the `fsl-replay` facade:
 
 ```rust
 /// The proof bases an SMT backend reports (ADR-018 V-2, V-3).
@@ -126,7 +126,7 @@ pub enum SmtProofBasis {
     Inductive { depth: u64 },
 }
 
-/// What CG's SMT map hands QSL for an SMT proof of a temporal item: the
+/// What CG's SMT map hands FSL for an SMT proof of a temporal item: the
 /// proof's basis and the solver's certificate when one came with it.
 pub struct SmtProofOutcome {
     pub basis: SmtProofBasis,
@@ -144,7 +144,7 @@ pub fn settle_smt_proof(
 CG calls `settle_smt_proof` from its `replay` adapter module, as it calls
 FR-182's `settle_hyper_smt` for an HP-2 item. An SMT proof of a temporal
 item settles through `settle_smt_proof` and through no other entry, so no
-SMT proof value is built outside QSL's certificate check. CG's SMT map
+SMT proof value is built outside FSL's certificate check. CG's SMT map
 constructs every other SMT outcome of a temporal item (V-5,
 `InductionNotClosed`, V-7 and replayed counterexamples, ADR-018 DS-2).
 `SmtProofBasis` names only the two SMT bases, so a `Checks` or `Exhaustive`
@@ -162,7 +162,7 @@ simulation certificate: `requested` is the name of the refinement the request
 names and `certified` is the name of the refinement the certificate names.
 It carries the two names and nothing else.
 
-and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label, its QSpec FR-243 basis and its O-16 category.
+and the FSpec FR-331 terminal record carrying the value, its FSpec FR-360 label, its FSpec FR-243 basis and its O-16 category.
 
 ## Behavior
 
@@ -170,7 +170,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
 
 - The settlement map SHALL map each input to exactly one row of this table:
 
-| Verdict | Input | QSpec FR-360 label | QSpec FR-243 basis | `TerminalValue` | O-16 category |
+| Verdict | Input | FSpec FR-360 label | FSpec FR-243 basis | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- | --- |
 | V-1 | `Holds{Exhaustive}` whose certificate the core checker accepts | `proved` | `closed-scope` | `Proved{basis: Exhaustive, certification: Certified}` | success |
 | V-6 | `Holds{Exhaustive}` whose certificate the core checker rejects | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})` | inconclusive |
@@ -191,7 +191,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
 - When an outcome is `Violated`, the settlement map SHALL settle it `refuted`
   only through its replay.
 - When the protocol liveness engine returns `RefutedIgnoringConstraints`,
-  the settlement map SHALL write the typed QSpec FR-331 cause
+  the settlement map SHALL write the typed FSpec FR-331 cause
   `refuted-ignoring-constraints` as `inconclusive`. It SHALL retain neither a
   `refuted` label nor a proof basis, and it SHALL NOT send the lasso to the
   ordinary counterexample replay path or write it as a standard
@@ -210,7 +210,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
   | `{MaxStates, v}` | `max_states` | `v` | `model_check.max_states` |
   | `{MaxTransitions, v}` | `max_transitions` | `v` | `model_check.max_transitions` |
   | `{MaxAutomatonStates, v}` | `max_automaton_states` | `v` | `model_check.max_automaton_states` |
-  | `{EvaluationMeter { counter }, v}` | the counter's `quire.value.accounting/v1` member name | `v`, that counter's configured bound in the subject's meter budget | `accounting.<counter>` |
+  | `{EvaluationMeter { counter }, v}` | the counter's `filament.value.accounting/v1` member name | `v`, that counter's configured bound in the subject's meter budget | `accounting.<counter>` |
   | `{MaxCandidates, v}` | `max_candidates` | `v` | `expansion.max_candidates` |
 
 - When a V-7 stop is an evaluation-meter stop, the settlement map SHALL
@@ -238,7 +238,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
 
 - FR-072's replay causes `Verdicts` and `NoValue` SHALL settle the item
   `inconclusive`, cause `ReplayParity`, spelled `replay-parity` on the wire
-  (QSpec FR-364); `Verdicts` names FR-072's replay result and
+  (FSpec FR-364); `Verdicts` names FR-072's replay result and
   `replay-parity` the item's cause, and no other name is used for either.
 
 ### Proof certificates
@@ -280,7 +280,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
   prove path, SHALL carry `Certified`. Every `Proved` carries exactly one
   certification; each settles `proved` and maps to success (ADR-018 PC-1). CG's C-09 map (ADR-013 C-09, ADR-011 T-13) and its SMT
   map (ADR-018 DS-2) construct the values of their backends; this
-  settlement map covers QSL's native engine, EN-1, and the SMT certificate
+  settlement map covers FSL's native engine, EN-1, and the SMT certificate
   check.
 - **Bounded-complete basis rule.** Before it settles an SMT
   `BoundedComplete{depth}` result, with a certificate or without one, and
@@ -293,12 +293,12 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
   `Certified` or `Uncertified`. Below `h` the claim can fail at a position
   the query does not reach (FR-315 "Monitors"). This rule is the
   settlement's first step whichever entry settles the result; under the
-  `qsl-replay` handoff entry for an SMT proof of a temporal item it is that
+  `fsl-replay` handoff entry for an SMT proof of a temporal item it is that
   entry's first step, ahead of its rule that a result with no certificate
   runs no check and settles `Uncertified`, which applies only to a basis
   this rule admits. FR-314's checker applies the same rule to a certificate
   it is given.
-- Downstream need (IR/CG overlap): QSL needs CG's SMT backend to build its
+- Downstream need (IR/CG overlap): FSL needs CG's SMT backend to build its
   queries with FR-315's encoding and to hand each SMT `BoundedComplete` or
   `Inductive` result over with the solver's proof certificate, each refuted
   query and its proof in a format FR-314 names, so that the SMT label can
@@ -327,10 +327,10 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
 | FR-127-AC-7 | FR-338-AC-1's TP-1 proof with its accepted certificate settles `proved`, `closed-scope`, `Proved{Exhaustive, Certified}`; with FR-338-AC-2's `(1, 0)`-removed certificate it settles `inconclusive`, `unsettled`, `Inconclusive(CertificateRejected{SuccessorMissing, (1, 0)})`. Exhausting the auxiliary checker graph budget returns `Stopped(LimitReached{max_states, value, model_check.max_states})` and settles `Incomplete` with those exact members; a certificate check whose atom reading is denied a `work_units` charge under a meter budget whose `work_units` is 0 returns `Stopped(LimitReached{work_units, 0, accounting.work_units})` and settles `Incomplete` with those members, and caller/deadline cancellation retains `requested`/`deadline`. Neither settles `CertificateRejected` or `WitnessFails`. | Test (TC-522) |
 | FR-127-AC-8 | FR-339-AC-1's weak `each` proof with its accepted certificate settles `Proved{Exhaustive, Certified}`; with FR-339-AC-2's `upd(a)` witness it settles `Inconclusive(CertificateRejected{WitnessFails, ...})` naming that component's first state. | Test (TC-522) |
 | FR-127-AC-9 | The `TerminalValue`s `Proved{Checks{3}, Certified}`, `Proved{BoundedComplete{depth: 5}, Certified}`, `Proved{BoundedComplete{depth: 5}, Uncertified}`, `Proved{Inductive{depth: 2}, Uncertified}` and a plugin's `Proved{Exhaustive, Trusted}`, as CG's maps and the settlement map construct them, each read `proved` with category success, never `inconclusive`, and each keeps its one certification. `Inconclusive(CertificateRejected)` maps to category inconclusive. | Test (TC-522) |
-| FR-127-AC-10 | A replay result with cause `Verdicts` settles the item `inconclusive`, cause `ReplayParity`, written `replay-parity` in the QSpec FR-331 record. | Test (TC-522) |
+| FR-127-AC-10 | A replay result with cause `Verdicts` settles the item `inconclusive`, cause `ReplayParity`, written `replay-parity` in the FSpec FR-331 record. | Test (TC-522) |
 | FR-127-AC-12 | **RETIRED (staleness check withdrawn).** The criterion asserted that a replay request with another package's `package_id` refuses `PackageIdMismatch`; no replacement. | Test (TC-1141), retired |
 | FR-127-AC-13 | **RETIRED (staleness check withdrawn).** The criterion asserted the stale closure and component certificate settlements; no replacement. | Test (TC-1141), retired |
-| FR-127-AC-14 | `settle_smt_proof`, a `qsl-replay` entry, settles each `SmtProofOutcome` for FR-314-AC-1's `Counter` items: `BoundedComplete{depth: 3}` with FR-314-AC-1's accepted certificate as `Proved{BoundedComplete{depth: 3}, Certified}`, `proved`, success; `Inductive{depth: 1}` with its accepted certificate as `Proved{Inductive{depth: 1}, Certified}`; `BoundedComplete{depth: 3}` with `certificate: None` as `Proved{BoundedComplete{depth: 3}, Uncertified}`, with no check run and the request's meters unchanged; FR-314-AC-2's `QueryMismatch` certificate as `Inconclusive(CertificateRejected{QueryMismatch, Query { part: Unrolling }})`; FR-314-AC-2's `hole` certificate as `Proved{BoundedComplete{depth: 3}, Uncertified}`; FR-314-AC-5's limit-stopped certificate as `Incomplete(LimitReached{MaxCertificateBytes, 1, certificate_check.max_certificate_bytes})`; FR-315-AC-30's faulting rebuild as `Failed`. A crate whose only QSL dependency is `qsl-replay` names `SmtProofOutcome`, `SmtProofBasis`, `SmtProofCertificate` and `settle_smt_proof` and compiles. | Test (TC-1199) |
+| FR-127-AC-14 | `settle_smt_proof`, a `fsl-replay` entry, settles each `SmtProofOutcome` for FR-314-AC-1's `Counter` items: `BoundedComplete{depth: 3}` with FR-314-AC-1's accepted certificate as `Proved{BoundedComplete{depth: 3}, Certified}`, `proved`, success; `Inductive{depth: 1}` with its accepted certificate as `Proved{Inductive{depth: 1}, Certified}`; `BoundedComplete{depth: 3}` with `certificate: None` as `Proved{BoundedComplete{depth: 3}, Uncertified}`, with no check run and the request's meters unchanged; FR-314-AC-2's `QueryMismatch` certificate as `Inconclusive(CertificateRejected{QueryMismatch, Query { part: Unrolling }})`; FR-314-AC-2's `hole` certificate as `Proved{BoundedComplete{depth: 3}, Uncertified}`; FR-314-AC-5's limit-stopped certificate as `Incomplete(LimitReached{MaxCertificateBytes, 1, certificate_check.max_certificate_bytes})`; FR-315-AC-30's faulting rebuild as `Failed`. A crate whose only FSL dependency is `fsl-replay` names `SmtProofOutcome`, `SmtProofBasis`, `SmtProofCertificate` and `settle_smt_proof` and compiles. | Test (TC-1199) |
 | FR-127-AC-15 | Over FR-314-AC-1's `Counter` under event-position false-extension, an SMT `BoundedComplete{depth: 0}` result for `always[0,3] eventually[0,1] holds(c.value = 3)` (horizon 4) with no certificate settles `inconclusive`, `Inconclusive(CertificateRejected{ShapeMismatch, Query { part: Unrolling }})`, with no check run and the request's certificate meters unchanged, never `Proved{.., Uncertified}`; the same result with a certificate settles the same before any query is encoded; `BoundedComplete{depth: 3}` with no certificate for the TP-1 item `always holds(c.value <= 3)` settles the same; `BoundedComplete{depth: 3}` with no certificate for `always[0,3] holds(c.value <= 3)` (horizon 3) still settles `Proved{BoundedComplete{depth: 3}, Uncertified}`. | Test (TC-1201) |
 | FR-127-AC-16 | The settlement map settles `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` (FR-126-AC-19's run) as FR-360 `failed`, execution `resource-incomplete`, `unavailable`, `Incomplete(LimitReached{limit: work_units, value: 0, setting: accounting.work_units})`, category incomplete; `{EvaluationMeter{value_occurrences}, 7}` as `Incomplete(LimitReached{limit: value_occurrences, value: 7, setting: accounting.value_occurrences})`; `{EvaluationMeter{integer_bits}, 18446744073709551615}` as `Incomplete(LimitReached{limit: integer_bits, value: 18446744073709551615, setting: accounting.integer_bits})`; and `{MaxCandidates, 1}` as `Incomplete(LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates})`. Each record equals the one FR-203 writes for the same stop, each `setting` is a name the FR-255 settings operation accepts (`accounting.work_units=1` returns accounting limits with `work_units` 1), and no record writes the setting `meter`, a bare counter name or a bare `max_candidates`. | Test (TC-522) |
 | FR-127-AC-17 | FR-228-AC-10's `RefutedIgnoringConstraints` engine result settles as `inconclusive`, `unsettled`, `Inconclusive(RefutedIgnoringConstraints)`, with no basis and no standard counterexample record; it is never readable as `refuted`, `Refuted` or any proof. | Test (TC-673) |
@@ -352,7 +352,7 @@ and the QSpec FR-331 terminal record carrying the value, its QSpec FR-360 label,
 
 ## References
 
-- QSpec FR-364 (the `replay-parity` cause).
-- QSpec FR-363 (every-behaviour temporal verdicts) and FR-360 (the
-  infinite-trace result disposition): the QSpec half of ADR-018 QS-6 (Linear
+- FSpec FR-364 (the `replay-parity` cause).
+- FSpec FR-363 (every-behaviour temporal verdicts) and FR-360 (the
+  infinite-trace result disposition): the FSpec half of ADR-018 QS-6 (Linear
   STD-131).

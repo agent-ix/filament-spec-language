@@ -3,7 +3,7 @@ id: TC-577
 title: "The breadth-first proviso prevents ignoring, the closure reaches through disabled members, and choice is deterministic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-156
+  - target: ix://agent-ix/filament-spec-language/FR-156
     type: verifies
 ---
 # TC-577: The breadth-first proviso prevents ignoring, the closure reaches through disabled members, and choice is deterministic

@@ -3,7 +3,7 @@ id: TC-224
 title: "An ambiguous family produces no dispatch table, not even for subtypes that resolved cleanly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: verifies
 ---
 # TC-224: An ambiguous family produces no dispatch table, not even for subtypes that resolved cleanly

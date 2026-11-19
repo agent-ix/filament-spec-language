@@ -3,26 +3,26 @@ id: FR-181
 title: "Check a single-existential hyper claim through the possible family"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
 ---
 # FR-181: Check a single-existential hyper claim through the possible family
 
 ## Description
 
-QSL's layer-A `qsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL check an HP-5 claim, a `hyper` clause over
+FSL's layer-A `fsl-analyze` engine EN-1 (ADR-029 CB-3) SHALL check an HP-5 claim, a `hyper` clause over
 `behaviours` whose prefix is exactly one `exists trace b of M`, as a
 possibility claim with a temporal body (ADR-023 SE-1 to SE-5): from every
 initial state of the subject, some behaviour fair under the clause's
@@ -181,11 +181,11 @@ that no trace exists.
 - The possible family's requirements: FR-166 (phase 0), FR-167 (open
   nodes), FR-168 (outcome shapes), FR-169 (verdict map and settlement
   method) and FR-170 (`GraphEvidence` replay).
-- QSpec owns HP-5's routing to the possible family with its witness, trap
+- FSpec owns HP-5's routing to the possible family with its witness, trap
   and verdict rules (ADR-023 QS-3).
 
 ## References
 
-- ADR-023, ADR-022. QSpec halves: QSpec FR-396's single-existential rows
-  (Linear STD-136; ADR-023 QS-3) and QSpec FR-390 to FR-394, the possible
+- ADR-023, ADR-022. FSpec halves: FSpec FR-396's single-existential rows
+  (Linear STD-136; ADR-023 QS-3) and FSpec FR-390 to FR-394, the possible
   family (Linear STD-135).

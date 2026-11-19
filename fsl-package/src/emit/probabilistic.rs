@@ -1,0 +1,503 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FSpec FR-640, FSL FR-740: the checked random parameters, workloads and delays
+//! written as `probabilistic` nodes of the checked-package/v2 graph.
+//!
+//! A node's identity is `["probabilistic", form, operand...]` in the unit's
+//! package: the model type's node, the operation and parameter (or the
+//! workload's name), and the canonical spelling of the node's values and
+//! weights, so a changed weight or support value changes the identity
+//! (FSpec FR-640-AC-3). Each node holds the one `declaration` occurrence of its
+//! declaration's label span, and the nodes are appended in node-id order, so
+//! neither the order the unit declares them in nor the order a workload
+//! writes its weights in reaches the bytes.
+
+use filament_checked::key::DeclarationKey;
+use filament_contract_model::{
+    CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
+};
+use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
+use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::{
+    CheckedGraph, Delay, DelayDistribution, ProbabilisticFeature, RandomParameter, Workload,
+};
+
+use super::{
+    body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
+    node_id, push_scalar_type, source_artifact, CheckedNodeTag, EmitRefusal, Location, GRAPH_V2,
+};
+
+/// A written node with its declaration occurrence's `region`.
+struct Pending {
+    node: CheckedSemanticNodeV2,
+    region: CheckedSourceRegion,
+}
+
+/// Write a `probabilistic` node for each checked random parameter, workload
+/// and delay of `graph`, with its source-map entry.
+///
+/// # Errors
+///
+/// A declaration that cannot be written refuses with its feature, its name
+/// and the declaration's region.
+pub(super) fn append_probabilistic_nodes(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) -> Result<(), EmitRefusal> {
+    let model = graph.probabilistic_model();
+    let mut pending = Vec::new();
+    for random in model.random_parameters() {
+        pending.push(random_parameter_node(
+            ids, graph, nodes, source_map, random,
+        )?);
+    }
+    for workload in model.workloads() {
+        pending.push(workload_node(ids, graph, nodes, source_map, workload)?);
+    }
+    for delay in model.delays() {
+        pending.push(delay_node(ids, graph, nodes, source_map, delay)?);
+    }
+    pending.sort_by(|left, right| left.node.node_id.cmp(&right.node.node_id));
+    for Pending { node, region } in pending {
+        source_map.push(CheckedSourceMapEntry {
+            node_id: node.node_id.clone(),
+            role: CheckedOccurrenceRole::Declaration,
+            ordinal: 0,
+            regions: vec![region],
+        });
+        nodes.push(node);
+    }
+    Ok(())
+}
+
+/// The refusal of a declaration of `feature` named `declaration`, located at
+/// `region`.
+fn refusal(
+    graph: &CheckedGraph,
+    feature: ProbabilisticFeature,
+    declaration: String,
+    location: &Location,
+) -> EmitRefusal {
+    match graph.region(location) {
+        Some(region) => EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature,
+            profile: graph.header_layers().last().map(|layer| layer.identity()),
+            region,
+        },
+        None => EmitRefusal::SourceMapInvariant,
+    }
+}
+
+fn text_literal(type_id: &CheckedNodeId, value: &str) -> Result<CheckedTerm, EmitRefusal> {
+    literal(type_id, LiteralKind::Text, &value)
+}
+
+fn literal(
+    type_id: &CheckedNodeId,
+    kind: LiteralKind,
+    value: &impl serde::Serialize,
+) -> Result<CheckedTerm, EmitRefusal> {
+    Ok(CheckedTerm::Literal {
+        type_id: type_id.clone(),
+        value_kind: kind,
+        value: checked_literal_json(value)?,
+    })
+}
+
+/// An exact weight: the FR-205 canonical spelling `n` or `n/d` of a reduced
+/// rational.
+fn weight_literal(
+    rational_type: &CheckedNodeId,
+    weight: &Rational,
+) -> Result<CheckedTerm, EmitRefusal> {
+    literal(rational_type, LiteralKind::Rational, &spelling(weight))
+}
+
+fn spelling(value: &Rational) -> String {
+    if value.is_integer() {
+        value.numerator().to_string()
+    } else {
+        format!("{}/{}", value.numerator(), value.denominator())
+    }
+}
+
+/// The canonical spelling of a support value, as its node's identity
+/// carries it: integers and rationals in FR-205 form, a quantity as its
+/// magnitude, and a text as its JSON string encoding (the encoding of the
+/// literal's own `value` member: double-quoted, `"` and `\` escaped, control
+/// characters as `\b \f \n \r \t` or lowercase `\u00xx`, every other
+/// character verbatim). `None` for a value the reader cannot admit yet
+/// (Boolean and enum supports; IR-1569), which the caller refuses with the
+/// declaration's locus.
+fn support_spelling(value: &Value) -> Option<String> {
+    match value {
+        Value::Integer(value) => Some(value.to_string()),
+        Value::Rational(value) => Some(spelling(value)),
+        Value::Text(value) => serde_json::to_string(value.retained()).ok(),
+        Value::Quantity(value) => Some(spelling(value.magnitude())),
+        _ => None,
+    }
+}
+
+fn reference(target: CheckedNodeId) -> CheckedTerm {
+    CheckedTerm::Reference { target }
+}
+
+/// The key and node of the model object type `declaration` names, when the
+/// graph holds its node.
+fn model_node(
+    ids: &StructuralIds,
+    nodes: &[CheckedSemanticNodeV2],
+    declaration: &DeclarationKey,
+) -> Option<(NodeKey, CheckedNodeId)> {
+    let key = fsl_semantics::model::key::object_type_node_key(declaration).ok()?;
+    let id = node_id(ids, &key);
+    nodes
+        .iter()
+        .any(|node| node.node_id == id)
+        .then_some((key, id))
+}
+
+/// The built-in scalar type node of `form`, written beside the declaration
+/// when the graph holds none.
+fn scalar_type(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    form: &str,
+    region: &CheckedSourceRegion,
+) -> Result<CheckedNodeId, EmitRefusal> {
+    let key = NodeKey::new(
+        graph.package_name(),
+        vec![
+            PathSegment::Text("scalar_type".into()),
+            PathSegment::Text(form.into()),
+        ],
+        0,
+    )
+    .map_err(encoding)?;
+    let id = node_id(ids, key);
+    push_scalar_type(nodes, source_map, &id, form, region);
+    Ok(id)
+}
+
+fn node(
+    graph: &CheckedGraph,
+    ids: &StructuralIds,
+    form: &str,
+    operand: Vec<PathSegment>,
+    body: CheckedTerm,
+) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
+    let mut path = vec![
+        PathSegment::Text("probabilistic".into()),
+        PathSegment::Text(form.into()),
+    ];
+    path.extend(operand);
+    let id = node_id(
+        ids,
+        NodeKey::new(graph.package_name(), path, 0).map_err(encoding)?,
+    );
+    Ok(CheckedSemanticNodeV2 {
+        owner_model: None,
+        check_mode: None,
+        node_id: id.clone(),
+        schema_version: GRAPH_V2.into(),
+        node_tag: CheckedNodeTag::Probabilistic.as_wire().into(),
+        semantic_form: form.into(),
+        semantic_type: id,
+        dependencies: body_reference_targets(&body),
+        occurrences: vec![CheckedOccurrence {
+            role: CheckedOccurrenceRole::Declaration,
+            ordinal: 0,
+        }],
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        body,
+    })
+}
+
+fn region_of(
+    graph: &CheckedGraph,
+    location: &Location,
+) -> Result<CheckedSourceRegion, EmitRefusal> {
+    let region = graph
+        .region(location)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok(CheckedSourceRegion {
+        source: source_artifact(graph.source()),
+        start: region.start(),
+        end: region.end(),
+    })
+}
+
+fn random_parameter_node(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    random: &RandomParameter,
+) -> Result<Pending, EmitRefusal> {
+    let operation = random.operation();
+    let name = format!("{}({})", operation.name(), random.parameter());
+    let location = random.declaration_location();
+    let unwritable = || {
+        refusal(
+            graph,
+            ProbabilisticFeature::RandomParameter,
+            name.clone(),
+            &location,
+        )
+    };
+    let region = region_of(graph, &location)?;
+    let (declaring_key, declaring) = model_node(
+        ids,
+        nodes,
+        operation.declaring_key().ok_or_else(unwritable)?,
+    )
+    .ok_or_else(unwritable)?;
+    let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+    let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    let mut rows = Vec::with_capacity(random.support().len());
+    let mut content = Vec::with_capacity(random.support().len());
+    for support in random.support() {
+        let value = match support.value.0.clone() {
+            // IR's reader admits no Boolean or enum support value yet
+            // (probabilistic_join.rs): `not_member` refuses every literal
+            // whose payload is not a string, and `member_literal_kind` maps
+            // no model variant type to a literal kind. A value written here
+            // would refuse the whole package, so emission refuses the
+            // declaration with its locus instead.
+            Value::Boolean(_) => return Err(unwritable()),
+            Value::Integer(value) => {
+                let type_id = scalar_type(ids, graph, nodes, source_map, "integer", &region)?;
+                literal(&type_id, LiteralKind::Integer, &value.to_string())?
+            }
+            Value::Rational(value) => literal(&rational, LiteralKind::Rational, &spelling(&value))?,
+            Value::Text(value) => text_literal(&text, value.retained())?,
+            Value::Quantity(value) => {
+                let unit = match value.unit() {
+                    UnitId::Declared(key) => node_id(ids, key),
+                    UnitId::Compound(_) => return Err(unwritable()),
+                };
+                if !nodes.iter().any(|node| node.node_id == unit) {
+                    return Err(unwritable());
+                }
+                literal(&unit, LiteralKind::Quantity, &spelling(value.magnitude()))?
+            }
+            Value::Enum(_) => return Err(unwritable()),
+            _ => return Err(unwritable()),
+        };
+        content.push(format!(
+            "{}*{}",
+            support_spelling(&support.value.0).ok_or_else(unwritable)?,
+            spelling(&support.weight)
+        ));
+        rows.push(claim_aggregate(vec![
+            claim_binding("value", value),
+            claim_binding("weight", weight_literal(&rational, &support.weight)?),
+        ]));
+    }
+    let body = claim_aggregate(vec![
+        claim_binding("declaring", reference(declaring)),
+        claim_binding("operation", text_literal(&text, operation.name())?),
+        claim_binding("parameter", text_literal(&text, random.parameter())?),
+        claim_binding("support", claim_aggregate(rows)),
+    ]);
+    let operand = vec![
+        PathSegment::Node(declaring_key),
+        PathSegment::Text(operation.name().into()),
+        PathSegment::Text(random.parameter().into()),
+        PathSegment::Text(content.join(",")),
+    ];
+    Ok(Pending {
+        node: node(graph, ids, "random_parameter", operand, body)?,
+        region,
+    })
+}
+
+fn workload_node(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    workload: &Workload,
+) -> Result<Pending, EmitRefusal> {
+    let location = workload.declaration_location();
+    let unwritable = || {
+        refusal(
+            graph,
+            ProbabilisticFeature::Workload,
+            workload.name().to_owned(),
+            &location,
+        )
+    };
+    let region = region_of(graph, &location)?;
+    let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+    let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    // A workload whose operations no single model type's lineage declares
+    // has no model node to hang from; QSL-2444 tracks emitting it.
+    let (model_key, model) = workload
+        .model_key()
+        .and_then(|declaration| model_node(ids, nodes, declaration))
+        .ok_or_else(unwritable)?;
+    let mut weights = Vec::with_capacity(workload.weights().len());
+    for (operation, weight) in workload.weights() {
+        let (_, declaring) = model_node(
+            ids,
+            nodes,
+            operation.declaring_key().ok_or_else(unwritable)?,
+        )
+        .ok_or_else(unwritable)?;
+        weights.push((declaring, operation.name().to_owned(), weight.clone()));
+    }
+    weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
+    let content: Vec<String> = weights
+        .iter()
+        .map(|(_, operation, weight)| format!("{operation}*{}", spelling(weight)))
+        .collect();
+    let rows = weights
+        .iter()
+        .map(|(declaring, operation, weight)| {
+            Ok(claim_aggregate(vec![
+                claim_binding("declaring", reference(declaring.clone())),
+                claim_binding("operation", text_literal(&text, operation)?),
+                claim_binding("weight", weight_literal(&rational, weight)?),
+            ]))
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    let body = claim_aggregate(vec![
+        claim_binding("model", reference(model)),
+        claim_binding("name", text_literal(&text, workload.name())?),
+        claim_binding("weights", claim_aggregate(rows)),
+    ]);
+    let operand = vec![
+        PathSegment::Node(model_key),
+        PathSegment::Text(workload.name().into()),
+        PathSegment::Text(content.join(",")),
+    ];
+    Ok(Pending {
+        node: node(graph, ids, "workload", operand, body)?,
+        region,
+    })
+}
+
+/// The member `position` of an aggregate `term`, bound or not.
+fn member(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
+    match term {
+        CheckedTerm::Aggregate { members } => match members.get(position)? {
+            CheckedTerm::Binding { value, .. } => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The unit node of the `dense` time source of the timed model rooted on
+/// `declaring`, read from the timed nodes already written. IR's reader
+/// types each delay time by this node (FR-640 Reader rule 5).
+pub(super) fn dense_unit(
+    nodes: &[CheckedSemanticNodeV2],
+    declaring: &CheckedNodeId,
+) -> Option<CheckedNodeId> {
+    let reference_of = |term: Option<&CheckedTerm>| match term {
+        Some(CheckedTerm::Reference { target }) => Some(target.clone()),
+        _ => None,
+    };
+    let root = nodes.iter().find(|node| {
+        CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
+            && &*node.semantic_form == "timed_model"
+            && reference_of(member(&node.body, 0)).as_ref() == Some(declaring)
+    })?;
+    let source = reference_of(member(&root.body, 2))?;
+    let source = nodes.iter().find(|node| node.node_id == source)?;
+    let dense = member(&source.body, 0)?
+        .literal_read()
+        .is_some_and(|read| matches!(read.value, CheckedLiteralValue::Text("dense")));
+    dense
+        .then(|| reference_of(member(&source.body, 1)))
+        .flatten()
+}
+
+fn delay_node(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    delay: &Delay,
+) -> Result<Pending, EmitRefusal> {
+    let operation = delay.operation();
+    let location = delay.declaration_location();
+    let unwritable = || {
+        refusal(
+            graph,
+            ProbabilisticFeature::Delay,
+            operation.name().to_owned(),
+            &location,
+        )
+    };
+    let region = region_of(graph, &location)?;
+    let (declaring_key, declaring) = model_node(
+        ids,
+        nodes,
+        operation.declaring_key().ok_or_else(unwritable)?,
+    )
+    .ok_or_else(unwritable)?;
+    // IR's reader admits a delay only on a model with a timed root whose
+    // source is `dense`, and types every time by that source's unit.
+    let unit = dense_unit(nodes, &declaring).ok_or_else(unwritable)?;
+    let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+    let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    let time = |value: &Rational| literal(&unit, LiteralKind::Quantity, &spelling(value));
+    let (family, parameters, content) = match delay.distribution() {
+        DelayDistribution::Uniform => ("uniform", claim_aggregate(Vec::new()), String::new()),
+        DelayDistribution::UniformRange { a, b } => (
+            "uniform_interval",
+            claim_aggregate(vec![
+                claim_binding("lower", time(a)?),
+                claim_binding("upper", time(b)?),
+            ]),
+            format!("{},{}", spelling(a), spelling(b)),
+        ),
+        DelayDistribution::Exponential { rate } => (
+            "exponential",
+            claim_aggregate(vec![claim_binding(
+                "rate",
+                weight_literal(&rational, rate)?,
+            )]),
+            spelling(rate),
+        ),
+        DelayDistribution::Discrete(rows) => {
+            let mut content = Vec::with_capacity(rows.len());
+            let mut written = Vec::with_capacity(rows.len());
+            for (delay, weight) in rows {
+                content.push(format!("{}*{}", spelling(delay), spelling(weight)));
+                written.push(claim_aggregate(vec![
+                    claim_binding("delay", time(delay)?),
+                    claim_binding("weight", weight_literal(&rational, weight)?),
+                ]));
+            }
+            ("discrete", claim_aggregate(written), content.join(","))
+        }
+    };
+    let body = claim_aggregate(vec![
+        claim_binding("declaring", reference(declaring)),
+        claim_binding("operation", text_literal(&text, operation.name())?),
+        claim_binding("family", text_literal(&text, family)?),
+        claim_binding("parameters", parameters),
+    ]);
+    let operand = vec![
+        PathSegment::Node(declaring_key),
+        PathSegment::Text(operation.name().into()),
+        PathSegment::Text(family.into()),
+        PathSegment::Text(content),
+    ];
+    Ok(Pending {
+        node: node(graph, ids, "delay_distribution", operand, body)?,
+        region,
+    })
+}

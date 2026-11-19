@@ -1,17 +1,17 @@
 ---
 id: TC-917
 org: agent-ix
-title: "Evaluator invariant producers have explicit QSL classifications"
+title: "Evaluator invariant producers have explicit FSL classifications"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-397
+  - target: ix://agent-ix/filament-spec-language/FR-397
     type: verifies
 ---
-# TC-917: Evaluator invariant producers have explicit QSL classifications
+# TC-917: Evaluator invariant producers have explicit FSL classifications
 
 ## Description
 
@@ -40,7 +40,7 @@ producer proof.
    mutate only the prerequisite needed to reach the stated condition and
    assert the table's exact identifier at the actual producer, except for
    `record-present-value-missing`. For the Record row, inspect the Record path
-   and `pop_many` in `qsl-eval/src/value/expression/evaluate.rs`: `present`
+   and `pop_many` in `fsl-eval/src/value/expression/evaluate.rs`: `present`
    counts all Present slots; `pop_many(present)` either stops with stack
    underflow or returns exactly `present` values; the zip with declared
    fields visits a prefix of slots and consumes one value only for each
@@ -59,7 +59,7 @@ producer proof.
    the executed prefix; include producers reached before any charge and after
    positive spend. Deny or cancel each preceding charge, without forcing the
    later producer, and observe the earlier stop.
-4. Drive an actual QSL producer fault through each public call/evaluate fault
+4. Drive an actual FSL producer fault through each public call/evaluate fault
    propagation seam and replay fault mapping. Retain its original identifier.
 5. Exercise negative controls: absent Option payload remains NoneValue;
    absent/null optional edge gives no targets; false dispatch precondition
@@ -71,7 +71,7 @@ producer proof.
    Execute actual IEEE-to-rational finite in-domain, negative-zero loss,
    NaN/infinity undefined, out-of-domain refusal and denied-charge controls;
    retain their ordinary Outcome discriminants and precise charge prefixes.
-   Exercise request cancellation through QSL's own polling/stop boundary,
+   Exercise request cancellation through FSL's own polling/stop boundary,
    not an invented kernel Outcome cancellation variant.
 6. Inspect that the production caller uses the Rational-only
    `ieee_to_exact(&RationalDomain, Meter) -> Outcome<IeeeExact>` API directly,
@@ -101,7 +101,7 @@ stage and invariant as `CallFailure::Fault` or a replay Failed terminal with
 internal-failure diagnostic and unavailable basis, not Input or Inconclusive.
 Step 5 keeps each existing outcome or independently named fault and does not
 route it through a default table classification. Ordinary IEEE outcomes and
-QSL-owned cancellation retain their actual channels, meter prefixes and loss
+FSL-owned cancellation retain their actual channels, meter prefixes and loss
 provenance; this inspection exception does not weaken their execution tests.
 For the removed-object attribute case, the exact fault is
 `attribute-slot-unresolved` at S6a and crosses the public seam as

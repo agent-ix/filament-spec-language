@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension T;
+unit s : T = rational(1, 1);
+unit ms : T = rational(1, 1000) * s;
+function f using v(d: Quantity<ms>, x: Float64): Quantity<ms> pure { d * x }

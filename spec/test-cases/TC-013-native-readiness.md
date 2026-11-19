@@ -3,7 +3,7 @@ id: TC-013
 title: "Token-preserving formatting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: verifies
 ---
 

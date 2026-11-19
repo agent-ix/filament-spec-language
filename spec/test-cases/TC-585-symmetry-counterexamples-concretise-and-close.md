@@ -3,7 +3,7 @@ id: TC-585
 title: "Symmetry counterexamples concretise to subject traces, closing a loop in one or more passes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-161
+  - target: ix://agent-ix/filament-spec-language/FR-161
     type: verifies
 ---
 # TC-585: Symmetry counterexamples concretise to subject traces, closing a loop in one or more passes

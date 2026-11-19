@@ -3,7 +3,7 @@ id: TC-895
 title: "The native checker reads a field's optionality from its presence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-895: The native checker reads a field's optionality from its presence

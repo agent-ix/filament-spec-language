@@ -3,7 +3,7 @@ id: TC-778
 title: "The interpreter implements the execution seam, and the seam admits checked input only"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: verifies
 ---
 # TC-778: The interpreter implements the execution seam, and the seam admits checked input only

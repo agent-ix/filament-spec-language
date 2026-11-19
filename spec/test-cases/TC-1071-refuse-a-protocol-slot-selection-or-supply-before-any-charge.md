@@ -3,7 +3,7 @@ id: TC-1071
 title: "Refuse a protocol slot selection or supply before any charge"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1071: Refuse a protocol slot selection or supply before any charge

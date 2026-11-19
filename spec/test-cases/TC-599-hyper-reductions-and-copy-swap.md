@@ -3,7 +3,7 @@ id: TC-599
 title: "Hyper products admit reductions by their rows and halve by compiler-checked copy-swap"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-174
+  - target: ix://agent-ix/filament-spec-language/FR-174
     type: verifies
 ---
 # TC-599: Hyper products admit reductions by their rows and halve by compiler-checked copy-swap

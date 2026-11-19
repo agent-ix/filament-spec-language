@@ -3,7 +3,7 @@ id: TC-1059
 title: "S2 builds the terminal declaration form with its aliases, kind and spans"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-382
+  - target: ix://agent-ix/filament-spec-language/FR-382
     type: verifies
 ---
 # TC-1059: S2 builds the terminal declaration form with its aliases, kind and spans

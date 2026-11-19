@@ -3,11 +3,11 @@ id: TC-1198
 title: "An HP-5 item settles through settle_existential with its product-closure check"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-163
+  - target: ix://agent-ix/filament-spec-language/FR-163
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
 ---
 # TC-1198: An HP-5 item settles through settle_existential with its product-closure check

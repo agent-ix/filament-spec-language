@@ -3,7 +3,7 @@ id: TC-193
 title: "Candidate set matches registered backends advertising the requested kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-193: Candidate set matches registered backends advertising the requested kind
@@ -26,7 +26,7 @@ or in addition to, kind (a bounded-only registrant is silently excluded
 from an unbounded item's candidate set because the matcher compares extent
 before it should, when ADR-012 §7.2 reserves that comparison for
 `negotiate_*`); and an implementation that reintroduces a local
-capability-kind enum (for example a QSL-only `Capability`-shaped type used
+capability-kind enum (for example an FSL-only `Capability`-shaped type used
 only inside the registry module) instead of importing the canonical type,
 which would compile and pass every other case in this test case while
 still violating FR-075-AC-5.
@@ -53,13 +53,13 @@ still violating FR-075-AC-5.
    any enum or struct definition whose variants or fields name an FR-290
    capability-kind label, distinct from an import of the canonical
    `Capability` type.
-8. Build a registry with the fixture `qsl-model-check`, a discrete-only temporal-satisfaction registration like the production engines en-1 and en-6 (no `dynamics`) and
+8. Build a registry with the fixture `fsl-model-check`, a discrete-only temporal-satisfaction registration like the production engines en-1 and en-6 (no `dynamics`) and
    `hybrid-fixture` (`dynamics` `{hybrid}`, both solver budgets in `bounds`),
    in both orders; compute candidates for `SlowEnough`'s item, carrying
    `hybrid-dynamics`, for a temporal item without it, for the hybrid item
-   naming `qsl-model-check`, and for a `value-validity` item; repeat with
+   naming `fsl-model-check`, and for a `value-validity` item; repeat with
    `hybrid-fixture`'s `dynamics` `{discrete, hybrid}` and with
-   `qsl-model-check` alone.
+   `fsl-model-check` alone.
 9. Admit each `dynamics` vector of FR-075-AC-20 through
    `descriptor_from_manifest`.
 10. Register an EN-1 descriptor advertising `temporal-satisfaction` and all

@@ -3,7 +3,7 @@ id: TC-1301
 title: "Bound model admission by named spine limits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-506
+  - target: ix://agent-ix/filament-spec-language/FR-506
     type: verifies
 ---
 # TC-1301: Bound model admission by named spine limits

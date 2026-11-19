@@ -3,13 +3,13 @@ id: FR-015
 title: "Bind explicit native semantics over formal declarations"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: depends_on
 ---
 # FR-015: Bind explicit native semantics over formal declarations
@@ -84,7 +84,7 @@ the selected artifact. The artifact is distinct from the IR semantic form and th
 native-formal-environment/1 artifact. Existing link
 keeps its original refusal behavior; new semantics require link_native.
 
-**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-056 and FR-154 (domain-package model intake and declaration identity) in qsl-semantics `model::intake`.
+**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-056 and FR-154 (domain-package model intake and declaration identity) in fsl-semantics `model::intake`.
 
 ## Acceptance Criteria
 

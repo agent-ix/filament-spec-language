@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! The in-memory file tree and its move into place: the tree is written into
+//! a sibling temporary directory and renamed, so a failure leaves nothing at
+//! the requested path or beside it.
+
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
+
+use super::{Environment, Error};
+
+/// Relative path to exact bytes, in path order.
+#[derive(Debug, Default)]
+pub(super) struct Files(BTreeMap<String, Vec<u8>>);
+
+impl Files {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add `contents` at `path`, which must stay inside the directory.
+    pub(super) fn insert(&mut self, path: &str, contents: Vec<u8>) -> Result<(), Error> {
+        inside(path)?;
+        self.0.insert(path.to_owned(), contents);
+        Ok(())
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = (&String, &Vec<u8>)> {
+        self.0.iter()
+    }
+}
+
+/// Refuse a relative `path` that is empty or leaves the directory.
+fn inside(path: &str) -> Result<(), Error> {
+    let inside = !path.is_empty()
+        && Path::new(path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
+    if inside {
+        Ok(())
+    } else {
+        Err(Error::Label {
+            label: path.to_owned(),
+        })
+    }
+}
+
+/// The bytes of the file at the relative `path` inside `root`, at most
+/// `ceiling` of them: a longer file is refused, not truncated. Every
+/// directory on the way must be a real directory and the file a regular
+/// file, so a symbolic link cannot reach outside `root` and a FIFO or device
+/// cannot block the read; anything else is [`Error::Label`].
+pub(super) fn read(root: &Path, path: &str, ceiling: usize) -> Result<Vec<u8>, Error> {
+    use std::io::Read as _;
+    inside(path)?;
+    let target = root.join(path);
+    let failed = io_read(&target);
+    let label = || Error::Label {
+        label: path.to_owned(),
+    };
+    let mut reached = root.to_path_buf();
+    let mut components = Path::new(path).components().peekable();
+    while let Some(component) = components.next() {
+        reached.push(component);
+        let kind = std::fs::symlink_metadata(&reached)
+            .map_err(&failed)?
+            .file_type();
+        let expected = if components.peek().is_some() {
+            kind.is_dir()
+        } else {
+            kind.is_file()
+        };
+        if !expected {
+            return Err(label());
+        }
+    }
+    let file = std::fs::File::open(&target).map_err(&failed)?;
+    let limit = u64::try_from(ceiling).unwrap_or(u64::MAX);
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(&failed)?;
+    if bytes.len() > ceiling {
+        return Err(failed(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("over the {ceiling}-byte ceiling; it is not truncated"),
+        )));
+    }
+    Ok(bytes)
+}
+
+fn io_read(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
+    move |source| Error::Read {
+        path: path.display().to_string(),
+        source,
+    }
+}
+
+/// Whether anything exists at `path`, a dangling link included.
+pub(super) fn exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+fn io(path: &Path) -> impl Fn(std::io::Error) -> Error + '_ {
+    move |source| Error::Io {
+        path: path.display().to_string(),
+        source,
+    }
+}
+
+/// The unused sibling of `directory` the tree is built in.
+fn sibling(directory: &Path) -> PathBuf {
+    let name = directory.file_name().map_or_else(
+        || "handoff".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let parent = directory.parent().unwrap_or_else(|| Path::new("."));
+    let mut attempt = 0_u32;
+    loop {
+        let candidate = parent.join(format!(".{name}.writing-{}-{attempt}", std::process::id()));
+        if !exists(&candidate) {
+            return candidate;
+        }
+        attempt += 1;
+    }
+}
+
+/// Build `files` in a sibling temporary directory and move it to
+/// `directory`. On any failure the temporary directory is removed.
+pub(super) fn publish(
+    directory: &Path,
+    files: &Files,
+    environment: &dyn Environment,
+) -> Result<(), Error> {
+    let temporary = sibling(directory);
+    std::fs::create_dir(&temporary).map_err(io(&temporary))?;
+    let built =
+        build(&temporary, files, environment).and_then(|()| move_into_place(&temporary, directory));
+    if built.is_err() {
+        // Best effort: the temporary tree is ours, and a failed removal can
+        // only leave that tree behind (a later write picks another name), never
+        // anything at `directory`.
+        let _ = std::fs::remove_dir_all(&temporary);
+    }
+    built
+}
+
+/// Move the finished tree to `directory`, which must not exist.
+///
+/// The writer relies on POSIX `rename` semantics (this repository is built and
+/// tested on macOS and Linux only; see the Makefile). Renaming a directory onto
+/// a path that does not exist is atomic, so a crash leaves either the finished
+/// tree or nothing at `directory`, and never an empty claim that every later
+/// write would refuse. The check and the rename are two calls, so a creator
+/// that races between them with a non-empty directory makes the rename fail
+/// (`ENOTEMPTY`, reported as an I/O error) and the temporary tree is removed;
+/// one that races with an empty directory is replaced.
+fn move_into_place(temporary: &Path, directory: &Path) -> Result<(), Error> {
+    if exists(directory) {
+        return Err(Error::Exists {
+            path: directory.display().to_string(),
+        });
+    }
+    std::fs::rename(temporary, directory).map_err(io(directory))
+}
+
+fn build(root: &Path, files: &Files, environment: &dyn Environment) -> Result<(), Error> {
+    for (index, (path, contents)) in files.iter().enumerate() {
+        let target = root.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(io(parent))?;
+        }
+        environment
+            .write_file(index, &target, contents)
+            .map_err(io(&target))?;
+    }
+    Ok(())
+}

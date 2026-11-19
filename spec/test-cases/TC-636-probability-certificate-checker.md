@@ -3,7 +3,7 @@ id: TC-636
 title: "check_probability_certificate accepts sound certificates and rejects flawed ones in exact rationals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: verifies
 ---
 # TC-636: check_probability_certificate accepts sound certificates and rejects flawed ones in exact rationals

@@ -3,37 +3,37 @@ id: FR-145
 title: "Replay a refinement counterexample"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: references
 ---
 # FR-145: Replay a refinement counterexample
 
 ## Description
 
-QSL SHALL replay a refinement counterexample (FR-142, FR-143) through the
+FSL SHALL replay a refinement counterexample (FR-142, FR-143) through the
 layer-6 replay facade at ADR-011 E9 (ADR-020 RC-2, RC-3). The
 `ReplaySource::ModelTrace` arm, entered through
-`qsl_replay::replay_model_trace` (FR-128), recompiles the concrete package
+`fsl_replay::replay_model_trace` (FR-128), recompiles the concrete package
 and the abstract subject's package, re-executes the concrete steps,
 recomputes history values, mapped states and candidate sets along the
 trace, and reruns `check_step` (FR-141) at the failing position, or for a
@@ -63,7 +63,7 @@ count.
   latter holds the typed reason and `AssumptionIdentity` values and either
   the paired concrete/abstract prefixes and loops for `strengthened`, or the
   paired finite prefixes and typed `ContractUndetermined` locus for
-  `relation-undetermined`. It is not a QSpec `TemporalCounterexample` and
+  `relation-undetermined`. It is not an FSpec `TemporalCounterexample` and
   has no `RefinementFailure` member.
 
 ## Outputs
@@ -123,7 +123,7 @@ count.
   as `reproduced-with-evaluated-witness` but leaves the refinement item
   `inconclusive`; it never converts this outcome to `refuted`. A different
   reason, identity, path, predicate result or established relation settles
-  `inconclusive`, `ReplayParity`. This arm does not apply QSpec FR-379's
+  `inconclusive`, `ReplayParity`. This arm does not apply FSpec FR-379's
   concrete-`F_C` fairness requirement to a strengthening witness, because
   that witness necessarily violates the named member of `I`.
 - **Undefined mapping.** For `RefinementFailure::Undefined{position, row}`
@@ -164,4 +164,4 @@ count.
 
 ## References
 
-- The QSpec half (the `RefinementFailure` wire and replay rules): QSpec FR-379 (Linear STD-133).
+- The FSpec half (the `RefinementFailure` wire and replay rules): FSpec FR-379 (Linear STD-133).

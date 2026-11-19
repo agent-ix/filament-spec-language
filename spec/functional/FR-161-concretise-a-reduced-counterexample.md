@@ -3,19 +3,19 @@ id: FR-161
 title: "Concretise a counterexample found by a reduced search"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-153
+  - target: ix://agent-ix/filament-spec-language/FR-153
     type: depends_on
 ---
 # FR-161: Concretise a counterexample found by a reduced search
@@ -23,7 +23,7 @@ relationships:
 ## Description
 
 A counterexample found over a symmetry-reduced graph runs through canonical
-states. When `model_check` emits it, QSL SHALL first turn it into a concrete
+states. When `model_check` emits it, FSL SHALL first turn it into a concrete
 model trace of the subject: it follows the edge permutations to recover
 each concrete step, and repeats a lasso's loop until the concrete state
 returns to the concrete entry (ADR-021 EI-6). With an `each` fairness
@@ -101,7 +101,7 @@ permutation or reduction in it.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-161-AC-1 | ADR-021 §7.1 under `fair weak whole attemptUpdate`, instance `c = a`: the reduced loop `(0,0,0) -upd(b)-> (0,0,1)` (`π = (b c)`), `-upd(c)-> (0,0,2)`, `-upd(c)-> (0,0,0)` concretises to `upd(b)`, `upd(b)`, `upd(b)` through `(0,1,0)`, `(0,2,0)`, `(0,0,0)`, closing after one pass, and replays through FR-128 to `reproduced-with-evaluated-witness`. | Test (TC-585) |
-| FR-161-AC-2 | A loop that needs two passes: the `Token` unit (model alias `M`) has object type `Holder` with `tok: Boolean`, population `holders` annotated `symmetric`, universe `{a, b}`, one class `[a, b]`, two initial states in this order, `a.tok` false with `b.tok` true and `a.tok` true with `b.tok` false (their set is closed under `(a b)`, ADR-021 SYM-4), and `pass()` (frame `modifies tok`, pre `self.tok`, post `not self.tok and forall(o in M::holders: o != self implies o.tok)`, FR-391). The claim is `eventually holds(w = w)` over a watcher `w` of a second, unreduced population `watchers` (a temporal clause always names an `over` parameter, QSpec FR-370-AC-13), so it runs under the full group of `holders`; the run supplies the atom's letter, true exactly in the states where every `holders` object has `tok` true, and the counterexample replays under the same letter. The quotient has one state with a `pass(b)` self-loop whose `π` is `(a b)`. The concretised lasso starts at the first initial state, has an empty stem and the loop `pass(b)`, `pass(a)`, two passes of the quotient loop, and it replays. With only the first initial state, which is not closed under `(a b)`, FR-151's pre-check settles the item `inconclusive`, `SymmetryBroken{holders, InitialStatesNotClosed{0, (a b)}}` with no state expanded (FR-151-AC-3, TC-568). | Test (TC-585) |
+| FR-161-AC-2 | A loop that needs two passes: the `Token` unit (model alias `M`) has object type `Holder` with `tok: Boolean`, population `holders` annotated `symmetric`, universe `{a, b}`, one class `[a, b]`, two initial states in this order, `a.tok` false with `b.tok` true and `a.tok` true with `b.tok` false (their set is closed under `(a b)`, ADR-021 SYM-4), and `pass()` (frame `modifies tok`, pre `self.tok`, post `not self.tok and forall(o in M::holders: o != self implies o.tok)`, FR-391). The claim is `eventually holds(w = w)` over a watcher `w` of a second, unreduced population `watchers` (a temporal clause always names an `over` parameter, FSpec FR-370-AC-13), so it runs under the full group of `holders`; the run supplies the atom's letter, true exactly in the states where every `holders` object has `tok` true, and the counterexample replays under the same letter. The quotient has one state with a `pass(b)` self-loop whose `π` is `(a b)`. The concretised lasso starts at the first initial state, has an empty stem and the loop `pass(b)`, `pass(a)`, two passes of the quotient loop, and it replays. With only the first initial state, which is not closed under `(a b)`, FR-151's pre-check settles the item `inconclusive`, `SymmetryBroken{holders, InitialStatesNotClosed{0, (a b)}}` with no state expanded (FR-151-AC-3, TC-568). | Test (TC-585) |
 | FR-161-AC-3 | ADR-021 §7.1's `each` refutation (`eventually always holds(c.versionNumber != 2)` under `fair weak each attemptUpdate`, instance `c = a`) concretises to a loop from `(0,0,0)` back to `(0,0,0)` that takes `upd(a)`, `upd(b)` and `upd(c)` and passes `a.versionNumber = 2`. FR-128 replays it, confirms each `each` identity taken in the loop, and settles `reproduced-with-evaluated-witness`. | Test (TC-586) |
 | FR-161-AC-4 | FR-156-AC-3's partial-order counterexample and FR-158-AC-1's constrained counterexample are emitted unchanged and replay. No concretised counterexample in AC-1 to AC-4 holds a canonical state, a permutation or a reduction name. Each one is a `TemporalCounterexample` whose every member equals the corresponding member of an unreduced run's counterexample. Concretising AC-1 twice gives equal counterexamples over every member. | Test (TC-586) |
 | FR-161-AC-5 | Concretising AC-1's loop counts exactly 3 transitions against `max_transitions` and charges exactly 6 `work_units`; concretising AC-2's lasso counts exactly 2 and charges exactly 4; emitting AC-4's partial-order and constrained counterexamples counts and charges nothing. With `M` the least `max_transitions` under which AC-2's run returns `Violated`, the same run under `M - 1` returns `Stopped{cause: ResourceExhausted, limit: Some({MaxTransitions, M - 1})}` with no counterexample, although its exploration completes under `M - 2`: the 2 concrete steps count. | Test (TC-586) |
@@ -114,10 +114,10 @@ permutation or reduction in it.
   (replay), [FR-152](FR-152-canonicalise-a-model-state-by-sorting-its-symmetry-classes.md)
   (permutations), [FR-153](FR-153-decide-each-fairness-on-the-annotated-quotient.md)
   (cycle groups and witnesses).
-- QSpec FR-181-AC-5 and the counterexample contract hold unchanged for a
+- FSpec FR-181-AC-5 and the counterexample contract hold unchanged for a
   concretised trace (ADR-021 QS-7).
 
 ## References
 
-- QSpec half: QSpec FR-383 (Linear STD-134; ADR-021 §9 QS-7, QS-10 (d)). Owning ticket:
+- FSpec half: FSpec FR-383 (Linear STD-134; ADR-021 §9 QS-7, QS-10 (d)). Owning ticket:
   Linear QSL-368.

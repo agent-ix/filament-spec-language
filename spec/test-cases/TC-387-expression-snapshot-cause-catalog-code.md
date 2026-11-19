@@ -3,7 +3,7 @@ id: TC-387
 title: "The ProtocolClause snapshot cause maps each WrongSnapshotCause to wrong_snapshot"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-387: The ProtocolClause snapshot cause maps each WrongSnapshotCause to wrong_snapshot
@@ -18,7 +18,7 @@ catalog cause tag. Scope: FR-090-AC-6.
 
 This catches two faults: a `catalog_code()` that returns the wrong cause tag
 for a variant, and one that routes through the native-v1
-`qsl_foundation::diagnostic::Code` (`Code::WrongSnapshot.as_str()`) instead
+`fsl_foundation::diagnostic::Code` (`Code::WrongSnapshot.as_str()`) instead
 of the catalog `CatalogCode`.
 
 ## Test Procedure

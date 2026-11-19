@@ -3,33 +3,33 @@ id: ADR-028
 title: "Exact probabilistic checking: the native engine EN-5"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: relates_to
-  - target: ix://agent-ix/quire-specification/FR-090
+  - target: ix://agent-ix/filament-specification/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-181
+  - target: ix://agent-ix/filament-specification/FR-181
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-241
+  - target: ix://agent-ix/filament-specification/FR-241
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-243
+  - target: ix://agent-ix/filament-specification/FR-243
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
 ---
 # ADR-028: Exact probabilistic checking: the native engine EN-5
@@ -78,7 +78,7 @@ What EN-5 builds on:
   leave S6c over E11 and settle only after a layer-6 checker accepts them;
   EN-5 follows the same path.
 
-"QSpec FR-nnn" names a quire-specification requirement; a bare FR id is a QSL
+"FSpec FR-nnn" names a filament-specification requirement; a bare FR id is an FSL
 requirement. Item ids `SP-`, `PR-`, `SCH-`, `XF-`, `AR-`, `FH-`, `UR-`, `LR-`,
 `FS-`, `XV-`, `WS-`, `CE-`, `LM-`, `TA-`, `RX-`, `DS-`, `QS-` and `RU-` are local to this
 record. Other artifacts cite them as `ADR-028 CE-3`. Items of other records
@@ -91,8 +91,8 @@ are cited as `ADR-024 PM-8`.
 | ID | Rule |
 | --- | --- |
 | SP-1 | **Engine EN-5.** EN-5 computes, over the full finite subject, the exact value or a sound interval of a probabilistic claim's quantity: a probability, a conditional probability, the expectation of a fraction, a long-run fraction or an expected reward. It decides the claim from that value, under a workload or over every scheduler, and every verdict carries evidence a checker verifies in exact rationals with no engine present: a certificate for a proof (§11), a witness for a refutation (§10). |
-| SP-2 | **Placement.** EN-5 lives in QSL layer A, crate `qsl-analyze`, module `exact_probabilistic`, beside `model_check` and `statistical`, above the qualified core (ADR-029 CB-3), and runs in ADR-018's stage S6c over E10. It reuses `model_check`'s product `TransitionSystem`, its monitor translations, its edge retention and its SCC decomposition, and reads FR-120's `ModelSystem` from layer 5, `qsl-eval`. It reads the monitor translation and enabledness from `qsl-eval` (ADR-018 LA-5), so its checker rebuilds the product with no `qsl-analyze` code. Its verdict types (`ExactOutcome`, `ProductKey`, the certificate and witness types), its witness replay arm, its certificate checker and its settlement map live in layer 6, `qsl-replay`, beside `replay_model_trace` (§10, §11), as does every type CG reads. CG keeps the Kani C-09 map (ADR-013 C-09, ADR-011 T-13). QSL owns settlement only for its native engines, and that settlement lives in `qsl-replay`. Every EN-5 proof carries a certificate that the in-core checker checks (CE-4), so the rule that a proof whose engine has no core certificate checker settles `proved` labelled `uncertified` does not arise for EN-5. |
-| SP-3 | **Evidence kind `exact`.** EN-5's provider manifest advertises (`probabilistic-satisfaction`, evidence `exact`) (ADR-024 SV-9). Routing by evidence kind is QSpec FR-290's negotiation rule, which QSL does not restate. One claim may be requested with either kind; the two results are separate items with separate terminal records. |
+| SP-2 | **Placement.** EN-5 lives in FSL layer A, crate `fsl-analyze`, module `exact_probabilistic`, beside `model_check` and `statistical`, above the qualified core (ADR-029 CB-3), and runs in ADR-018's stage S6c over E10. It reuses `model_check`'s product `TransitionSystem`, its monitor translations, its edge retention and its SCC decomposition, and reads FR-120's `ModelSystem` from layer 5, `fsl-eval`. It reads the monitor translation and enabledness from `fsl-eval` (ADR-018 LA-5), so its checker rebuilds the product with no `fsl-analyze` code. Its verdict types (`ExactOutcome`, `ProductKey`, the certificate and witness types), its witness replay arm, its certificate checker and its settlement map live in layer 6, `fsl-replay`, beside `replay_model_trace` (§10, §11), as does every type CG reads. CG keeps the Kani C-09 map (ADR-013 C-09, ADR-011 T-13). FSL owns settlement only for its native engines, and that settlement lives in `fsl-replay`. Every EN-5 proof carries a certificate that the in-core checker checks (CE-4), so the rule that a proof whose engine has no core certificate checker settles `proved` labelled `uncertified` does not arise for EN-5. |
+| SP-3 | **Evidence kind `exact`.** EN-5's provider manifest advertises (`probabilistic-satisfaction`, evidence `exact`) (ADR-024 SV-9). Routing by evidence kind is FSpec FR-290's negotiation rule, which FSL does not restate. One claim may be requested with either kind; the two results are separate items with separate terminal records. |
 | SP-4 | **Confidence parameters.** ADR-024 PF-10's `α`, `β` and `ι` are for statistical evidence only (ADR-024 RU-6, RU-2 here). When a claim states them they stay part of its obligation identity; EN-5 decides the claim's bound itself, which entails every stated confidence, so it reads none of them. A claim that states none is exact-only: statistical checking refuses it at negotiation (`MissingConfidence`, ADR-024 SV-5), and EN-5 checks it. |
 | SP-5 | **Proof from the engine's evidence.** An EN-5 `proved` leaves S6c with its certificate over ADR-018's E11, as a refutation leaves with its counterexample, and settles only after the layer-6 checker accepts the certificate (CE-5), as ADR-026 CF-4 states for EN-6. An EN-5 `refuted` settles only after its witness replays (WS-5). |
 | SP-6 | **Arithmetic.** Every number on the verdict path is an exact rational or a dyadic interval held in integer arithmetic (§5). A result that has no certificate the checker accepts is never admitted. |
@@ -146,7 +146,7 @@ bounded operator and remaining-horizon ranking; FS-9's fair-end-component
 reconstruction applies to forms whose value needs it, not this finite-prefix
 proof. No witness policy or new no-fair-continuation verdict is needed.
 The certificate retains exact weak/strong whole/each constraints through
-QSpec FR-322-AC-293's closed structural operation target. They remain part
+FSpec FR-322-AC-293's closed structural operation target. They remain part
 of checked claim identity and objective, not an added product-key component.
 The existing checked monitor-context constructor remains authoritative.
 Unfair documents and their bytes are unchanged. TC-1406 specifies the
@@ -167,7 +167,7 @@ checks.
 | XF-5 | **Expected reward to a target.** `expected accumulate R until holds(B) <= c` or `>= c`, for a reward `R` (ADR-024 PM-5) and a threshold `c` of the expectation's type, from position 0: an exact rational for an integer reward, a quantity of `R`'s dimension for a quantity reward. On a behaviour that reaches `B`, the value is `R` summed over the steps up to the first position where `B` holds; under a scheduler whose probability of reaching `B` is below 1, the expectation is `+∞`, so a `<= c` bound fails and a `>= c` bound holds there. Over a timed subject, `expected elapsed until holds(B)` reads the time stamp of that position (ADR-026 SS-1). The form is decided by §7, with exact evidence only (XF-7, RU-1): only the exact engine detects the `+∞` cases. |
 | XF-6 | **Long-run fractions (PF-6).** `long-run fraction holds(P)`, unweighted or weighted by `R`, decided by bottom components (§8). With exact evidence the result is a proof or a refutation, not ADR-024 ST-7's `Asymptotic` measurement. |
 | XF-7 | **Exact evidence only.** XF-4 and XF-5, and every form `under every scheduler`, have no finite-window sample or no sampling route, so they are checked with exact evidence; an item that names `statistical` evidence for one settles `unsupported`, `ExactOnlyForm` (or `EveryScheduler`), at negotiation (ADR-024 SV-5). |
-| XF-8 | **Thresholds and units.** Thresholds stay strictly between 0 and 1 for probabilities and fractions, and qualitative claims stay ADR-018 claims (ADR-024 PF-8). A threshold of a reward or time has the reward's dimension and converts by QSpec FR-142 (ADR-024 PF-7). For a `>= θ` bound the value meets the claim when it is at least `θ`, and for `<= θ` when it is at most `θ`: equality meets a non-strict bound. The `>=` quantile form reduces to a strict bound (XF-2), which equality does not meet. |
+| XF-8 | **Thresholds and units.** Thresholds stay strictly between 0 and 1 for probabilities and fractions, and qualitative claims stay ADR-018 claims (ADR-024 PF-8). A threshold of a reward or time has the reward's dimension and converts by FSpec FR-142 (ADR-024 PF-7). For a `>= θ` bound the value meets the claim when it is at least `θ`, and for `<= θ` when it is at most `θ`: equality meets a non-strict bound. The `>=` quantile form reduces to a strict bound (XF-2), which equality does not meet. |
 
 ### 5. Exact arithmetic
 
@@ -206,7 +206,7 @@ checks.
 | LR-1 | **Bottom components.** Under a workload, EN-5 decomposes the DTMC into bottom strongly connected components (BSCCs). Over every scheduler, it decomposes the MDP into MECs. A behaviour ends in one such component with probability 1 (ADR-024 PM-7), and the long-run fraction is constant within it (PF-6). |
 | LR-2 | **Value per component.** In a BSCC `C`, the long-run fraction is `π_C(R · [P]) / π_C(R)`, `π_C` the unique stationary distribution of `C`, found by an exact linear solve; unweighted, `R = 1`. The weighted form is kept over every scheduler (RU-5): time-weighted availability over a timed subject weights by delay (ADR-026 SS-1). In a MEC `C`, the optimal fraction over schedulers that stay in `C` is a ratio of mean payoffs; EN-5 finds it by Dinkelbach's parametric method, each round solving a mean-payoff problem for the reward `R · ([P] − ρ)` by exact policy iteration, and stopping at the `ρ` where the optimal gain is 0. |
 | LR-3 | **Combination.** The claim's value is the expected component value reached: under a workload, `Σ_C Pr(reach C) · ρ_C`; over every scheduler, the minimum or maximum over schedulers of that sum, an expected terminal reward on the MDP with `ρ_C` at each component (de Alfaro). Both are §7 problems. |
-| LR-4 | **Zero weight.** A component in which every cycle has total weight 0 under `R` has no defined fraction. The item settles `unsupported`, `ZeroWeightComponent{component}` (V-8). |
+| LR-4 | **Zero weight.** A bottom component in which every weight under `R` is 0 has no weighted ratio, because its stationary weight is 0. It takes its unweighted fraction, the stationary mass of the states where `P` holds, and is certified by the unweighted gain–bias pair; the checker derives that the component has zero weight from the checked rewards and verifies the unweighted equations (FR-199, FR-201). No item settles `unsupported` for it. |
 | LR-5 | **Relation to EN-4.** ADR-024 ST-7 measures the same quantity by regeneration with `Asymptotic` coverage. With exact evidence the item settles `proved` or `refuted`, and `coverage` does not apply. |
 
 ### 9. Verdicts
@@ -219,7 +219,7 @@ kinds and its own `ProofBasis` members, never with ADR-024's `measured`.
 | XV-1 | **`ProofBasis` members.** `ExactValue{value, reductions}` for a value computed exactly (FH-1 in exact rationals, UR-4, LR-2), and `ValueBounds{lower, upper, method, reductions}` for a sound interval that lies on the claim's side of the threshold (FH-2, UR-3), with `method` one of `BackwardInduction{precision_bits}` and `IntervalIteration{precision_bits, sweeps}`. `reductions` is ADR-021 RV-1's list of applied reductions, empty when none applies. The basis states the least favourable (initial state, binding) pair; the result keeps one entry per pair with its value or interval and, over every scheduler, whether it is a minimum or a maximum. `TerminalValue::category` maps both members to success, and both count as proof evidence. |
 | XV-2 | **Distinct from `measured`.** An EN-5 result carries FR-242 truth and an FR-243 basis, as every proof and refutation does, and no ADR-024 SV-10 `measured` value. An EN-4 result carries `measured` and no truth. The evidence kind the request named decides which record an item gets, and no reader can take one for the other. |
 | XV-3 | **Refutation.** A refutation carries a `ProbabilisticCounterexample` (§10) that replays before the item settles: `refuted`, `decisive-counterexample`, `TerminalValue::Refuted`. |
-| XV-4 | **New causes.** `IncompleteCause::PrecisionBudget{lower, upper}`, the interval at the budget (V-7). `InconclusiveCause::CertificateRejected`, ADR-026 CF-4's cause, for a proof certificate the checker rejects (V-6). V-8 `Unsupported` causes: `ZeroWeightComponent` (LR-4), `StrictClockConstraint`, `DelayDistribution`, `ZeroDelayCycle` and `TimedFormShape` (§13), and ADR-026's `NotStochastic` on the digital route under a workload (TA-1a). ADR-024's `NotMarkov` (PR-2, PR-3) and ADR-018's `UndecidedSuccessor`, `NoInitialState`, `ReplayParity` and `ReplayRefused` keep their meaning. |
+| XV-4 | **New causes.** `IncompleteCause::PrecisionBudget{lower, upper}`, the interval at the budget (V-7). `InconclusiveCause::CertificateRejected`, ADR-026 CF-4's cause, for a proof certificate the checker rejects (V-6). V-8 `Unsupported` causes: `DelayDistribution` for a continuous delay (§13). ADR-024's `NotMarkov` (PR-2, PR-3) and ADR-018's `UndecidedSuccessor`, `NoInitialState`, `ReplayParity` and `ReplayRefused` keep their meaning. |
 | XV-5 | **Evidence on a partial product.** A lower certificate (CE-3) and a path set (WS-3) read only the states they name and those states' successors, and an unexplored successor counts as value 0, which keeps a lower bound sound. So evidence of that kind found before a limit stops exploration settles the item: a refutation of a `<= θ` bound or a proof of a `>= θ` bound, as ADR-022 GV-1 lets a witness settle a run that a limit later stopped. Every other verdict needs the complete product. |
 
 **XV-6 Verdict table.**
@@ -233,7 +233,7 @@ kinds and its own `ProofBasis` members, never with ADR-024's `measured`.
 | Interval straddles the threshold at the budget | V-7 | `incomplete`, execution `resource-incomplete` | `unavailable` | `Incomplete(PrecisionBudget{lower, upper})` | incomplete | Nothing; the caller raises the budget and reruns |
 | A run limit reached first | V-7 | as above | `unavailable` | `Incomplete(LimitReached{limit, value, setting})` naming the `ExactProbLimits` member | incomplete | Nothing |
 | Certificate rejected; witness replay disagrees | V-6 | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected)`; `Inconclusive(ReplayParity)` | inconclusive | — |
-| Strict clock constraint, delay distribution, zero-delay cycle, unsupported timed form shape, zero-weight component, `NotMarkov` | V-8 | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported | Nothing |
+| Continuous delay distribution with exact evidence, `NotMarkov` | V-8 | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported | Nothing |
 
 | ID | Rule |
 | --- | --- |
@@ -246,9 +246,9 @@ kinds and its own `ProofBasis` members, never with ADR-024's `measured`.
 | --- | --- |
 | WS-1 | **Witness scheduler.** `WitnessScheduler{entries}`: for each product state the evidence names, its key (PR-4) and its choice: a scheduled identity; after a draw with several post-states, the complete PostState ProductKey choice for the actual pending drawn vector (SCH-2), retaining CX-2 model-content binding; over a timed subject, FR-196's closed UnitDelay/EnterIdleDelay/IdleDelay/IdleObserve choices or actual identity/post-state choices (§13), and under a workload its WorkloadResolve or post-draw FreeDelays race choice (FR-204). It is memoryless and deterministic on an unrestricted product (SCH-3), or memoryless and randomized for a claim with a fairness set (FS-9) or TS-5 observation admissibility (§13a), and is defined on the evidence's states, including its checked admissibility continuation support. |
 | WS-2 | **`ProbabilisticCounterexample`.** `{initial_state, binding, bound, scheduler, evidence}`: the index of the initial state in the subject and the `over` binding (ADR-018 CX-2), the claim's bound with its threshold, the witness scheduler (absent under a workload with no free delay), and the evidence. It travels in `WitnessEnvelope<ProbabilisticCounterexample>` with a new `ReplaySource::ProbabilisticWitness` arm, and the envelope's obligation identity binds the subject and claim. |
-| WS-3 | **Path-set evidence.** A finite list of finite product paths from the initial state, each as ADR-018 CX-2's step content plus each step's drawn random vector, on which the event is false (for a `>= θ` bound) or true (for a `<= θ` bound), pairwise prefix-free so their cylinders are disjoint, whose exact path probabilities sum past the bound: above `1 − θ` for `>= θ`, above `θ` for `<= θ`. A path's probability is the product of its step probabilities under the workload (ADR-024 PM-3), or of its draw probabilities and the witness scheduler's choice probabilities. For a quantile claim the paths read QSpec FR-413's two masses: `V`, the violating paths' probability, and `N`, the not-activated paths' probability; the evidence refutes `quantile q of M <= c` when `V > (1 − q) · (1 − N)` and `quantile q of M >= c` when `V > 0` and `V >= q · (1 − N)`, since `1 − N` bounds the activation probability from above. EN-5 emits a path set when at most `max_witness_paths` paths reach the bound, most probable first. An undefined evaluation (XV-8) is one path ending at the undefined state, with its `UndefinedEvaluation`, and carries no bound sum. |
+| WS-3 | **Path-set evidence.** A finite list of finite product paths from the initial state, each as ADR-018 CX-2's step content plus each step's drawn random vector, on which the event is false (for a `>= θ` bound) or true (for a `<= θ` bound), pairwise prefix-free so their cylinders are disjoint, whose exact path probabilities sum past the bound: above `1 − θ` for `>= θ`, above `θ` for `<= θ`. A path's probability is the product of its step probabilities under the workload (ADR-024 PM-3), or of its draw probabilities and the witness scheduler's choice probabilities. For a quantile claim the paths read FSpec FR-413's two masses: `V`, the violating paths' probability, and `N`, the not-activated paths' probability; the evidence refutes `quantile q of M <= c` when `V > (1 − q) · (1 − N)` and `quantile q of M >= c` when `V > 0` and `V >= q · (1 − N)`, since `1 − N` bounds the activation probability from above. EN-5 emits a path set when at most `max_witness_paths` paths reach the bound, most probable first. An undefined evaluation (XV-8) is one path ending at the undefined state, with its `UndefinedEvaluation`, and carries no bound sum. |
 | WS-4 | **Subsystem evidence.** Otherwise the evidence is a lower certificate (CE-3), on the chain the witness scheduler induces or under the workload, for the violating quantity (`Pr(not E)` for `>= θ`, `Pr(E)` for `<= θ`) with value past the bound. The certificate's support is a critical subsystem (Funke, Jantsch and Baier): the checker explores only its states and their successors. Long-run and expected-reward refutations use the same shape with their own certificate kinds (CE-3). |
-| WS-5 | **Replay.** `qsl_replay::replay_probabilistic_witness`, a layer-6 facade entry beside `replay_model_trace`, recompiles the package (FR-098) and re-admits the subject's initial state and universes from the byte provision, as ADR-018 CX-3 does. For a path set it re-executes each path through `ModelSystem` with FR-101 `replay`, selects each step's successor by its post-state key, checks that each drawn value lies in its support (ADR-024 SV-8) and, over every scheduler, that each step takes a choice the witness scheduler gives positive probability at its product state and, with a fairness set, that the witness is fair (FS-9); it recomputes each path probability exactly, evaluates the event with SM-1 (ADR-018 SM-1), checks prefix-freeness and checks the sum against the bound. For a subsystem it applies the witness scheduler to rebuild the induced chain over the support and runs the certificate checker (CE-5). An `Undefined` path replays as a path of a path set, checking each step's positive probability, and then by ADR-018 UE-5 in place of the event and the sum. Agreement settles `reproduced-with-evaluated-witness` and the item `refuted`; disagreement settles `inconclusive`, `ReplayParity`. It refuses as CX-3 refuses: `invalid_runtime_input`/`invalid-value` for a step that is not enabled, a value outside its support or a choice that is not the scheduler's. |
+| WS-5 | **Replay.** `fsl_replay::replay_probabilistic_witness`, a layer-6 facade entry beside `replay_model_trace`, recompiles the package (FR-098) and re-admits the subject's initial state and universes from the byte provision, as ADR-018 CX-3 does. For a path set it re-executes each path through `ModelSystem` with FR-101 `replay`, selects each step's successor by its post-state key, checks that each drawn value lies in its support (ADR-024 SV-8) and, over every scheduler, that each step takes a choice the witness scheduler gives positive probability at its product state and, with a fairness set, that the witness is fair (FS-9); it recomputes each path probability exactly, evaluates the event with SM-1 (ADR-018 SM-1), checks prefix-freeness and checks the sum against the bound. For a subsystem it applies the witness scheduler to rebuild the induced chain over the support and runs the certificate checker (CE-5). An `Undefined` path replays as a path of a path set, checking each step's positive probability, and then by ADR-018 UE-5 in place of the event and the sum. Agreement settles `reproduced-with-evaluated-witness` and the item `refuted`; disagreement settles `inconclusive`, `ReplayParity`. It refuses as CX-3 refuses: `invalid_runtime_input`/`invalid-value` for a step that is not enabled, a value outside its support or a choice that is not the scheduler's. |
 | WS-6 | **What the witness scheduler gives a user.** It is an adversary that meets the violation: replaying it through `ModelSystem` with ADR-024's sampler draws behaviours of the violating chain, and any one of its paths on which the event is false is an ADR-018 CX-1 counterexample for the qualitative claim (ADR-024 SV-7). |
 
 ### 11. Certificates and the checker
@@ -256,16 +256,16 @@ kinds and its own `ProofBasis` members, never with ADR-024's `measured`.
 | ID | Rule |
 | --- | --- |
 | CE-1 | **`ProbabilityCertificate`.** `{identity, objective, kind, values, ranking, policy, components}`: the item's obligation identity (ADR-013 O-09, as ADR-026 CF-5); the objective (the target or decided states, the reward, minimum, maximum or workload, and the fairness set, FS-9); the kind `Lower`, `Upper`, `Exact` or `LongRun`; a value per product state, each an exact rational (a dyadic value from interval iteration is an exact rational); for `Lower` and `Exact`, a natural-number ranking per state; for a lower bound on a maximum, or an upper bound on a minimum, a closed FR-202 WitnessEntry policy, deterministic or exact-rational randomized when actual fairness/TS-5 admissibility requires it; and for `LongRun`, per component its value and a gain–bias pair. States are named by product state key (PR-4). The certificate names its states; it carries no qualitative sets, which the checker recomputes. |
-| CE-2 | **The checker re-enumerates.** `qsl_replay::check_probability_certificate`, a layer-6 facade entry, recompiles the package, re-admits the subject and re-enumerates the product through `ModelSystem` and the monitor: every reachable product state for an `Upper`, `Exact` or `LongRun` certificate, the support and its successors for a `Lower` one. It recomputes the decided states, the `Prob0`/`Prob1` sets, the components and, with a fairness set, the maximal fair end components (FS-4) by graph algorithms, and checks the conditions of CE-3 in exact rationals. It solves no equation and runs no iteration. |
+| CE-2 | **The checker re-enumerates.** `fsl_replay::check_probability_certificate`, a layer-6 facade entry, recompiles the package, re-admits the subject and re-enumerates the product through `ModelSystem` and the monitor: every reachable product state for an `Upper`, `Exact` or `LongRun` certificate, the support and its successors for a `Lower` one. It recomputes the decided states, the `Prob0`/`Prob1` sets, the components and, with a fairness set, the maximal fair end components (FS-4) by graph algorithms, and checks the conditions of CE-3 in exact rationals. It solves no equation and runs no iteration. |
 | CE-3 | **Conditions.** With `F` the one-step operator of the objective (the workload's average, the minimum or maximum over actions, or the policy's action) and values fixed at decided, target and `Prob0` states: **Upper**: `F(y) <= y` at every state, so the least fixed point, which is the value, is at most `y` (Knaster–Tarski). **Lower**: `x <= F(x)` at every state of the support, and every non-target state with `x > 0` has, under the workload, under the policy, or for a minimum under every action, a successor with positive probability, `x > 0` and a smaller rank; then no end component inside the support avoids the target, and `x` is at most the value. **Exact**: both, with equality, so `x` is the value. On a finite-horizon product the ranking is the remaining horizon, which the checker reads from the monitor state. **Expected reward**: the same conditions with the reward added to `F`, and the `+∞` states recomputed by the graph check. For TS-5 elapsed-until, §13a supplies observation-edge goals, goal-edge terminal rank0, admissible continuation and positive finite-wait component checks; a goal-edge successor need not have positive value. **LongRun**: per component, the gain–bias pair satisfies Puterman's multichain optimality equations for the reward `R · ([P] − ρ_C)` with gain 0, as equalities under the component's policy (a value attained) and as inequalities over every action (a value no scheduler exceeds), plus an `Exact`, `Lower` or `Upper` certificate for LR-3's expected component value. |
 | CE-4 | **The bound follows.** The checker accepts a certificate that meets its conditions and puts the initial state's value on the claim's side of the threshold: `Lower` for a proof of `>= θ` or a refutation of `<= θ`; `Upper` for a proof of `<= θ`, or for a refutation of `>= θ` by an upper bound on `Pr(E)` below `θ`; `Exact` for either. For the `>=` quantile form (XF-2) the side is strict: an `Upper` certificate `y` for `max E[Y]` proves it when `y(s0) < 0`. When `y(s0) = 0`, the checker takes the actions tight under `y`, those with `Q_y(s, a) = y(s)`, `Q_y(s, a)` the one-step value of action `a` under `y`, and checks by graph search that no activated product state is reachable from the initial state using tight actions alone. A scheduler with `E[Y] = 0` has zero slack at every state it reaches, so it uses only tight actions; when activation is unreachable under them, no scheduler meets equality while activating, and the strict bound holds. Otherwise the certificate is rejected. A dyadic interval from interval iteration yields a `Lower` and an `Upper` certificate at once (UR-3). |
-| CE-5 | **Verdict path.** EN-5 checks its own certificate before emitting it (AR-4). QSL's settlement map in `qsl-replay` runs `check_probability_certificate` on the certificate that left S6c over E11 and settles `proved` only when it accepts; a rejection settles `inconclusive`, `CertificateRejected`; a checker stopped by a budget settles V-7. The checker refuses a certificate whose identity differs from the item's (ADR-026 CF-5). |
+| CE-5 | **Verdict path.** EN-5 checks its own certificate before emitting it (AR-4). FSL's settlement map in `fsl-replay` runs `check_probability_certificate` on the certificate that left S6c over E11 and settles `proved` only when it accepts; a rejection settles `inconclusive`, `CertificateRejected`; a checker stopped by a budget settles V-7. The checker refuses a certificate whose identity differs from the item's (ADR-026 CF-5). |
 | CE-6 | **Size and cost.** A certificate holds one value per state it names, plus a rank and a policy choice where CE-3 needs them. The checker's arithmetic pass is linear in the enumerated edges in exact rationals; qualitative component/refinement/admissibility work (§13a where applicable) is additional checker-owned graph work, charged to the same budgets. It runs under the request's B-5 budgets. |
 | CE-7 | **A small trusted base.** The checker lives in the qualified core, as the owner ruled for certificate checkers (ADR-029, References). The checker's arithmetic and its graph algorithms are separate code from EN-5's iterative and linear-algebra methods and are kept small. The product construction is shared with EN-1, whose translations already answer to SM-1 (ADR-018 SM-7). |
 
 #### Closed cyclic DTMC expected-reward proof profile
 
-FR-201's separate `quire.probability-objective/dtmc-expected-reward/v1`
+FR-201's separate `filament.probability-objective/dtmc-expected-reward/v1`
 keeps the existing exact reward objective and values/ranking transport,
 while replacing the acyclic profile's original-DAG and height restrictions
 with a checked finite-DTMC properness witness. Every non-target state,
@@ -290,7 +290,7 @@ whole-expansion allocation qualification.
 
 #### Closed cyclic MDP expected-reward proof profile
 
-FR-201's distinct `quire.probability-objective/cyclic-mdp-expected-reward/v1`
+FR-201's distinct `filament.probability-objective/cyclic-mdp-expected-reward/v1`
 reuses exact reward values/ranks with source Every AtLeast selecting minimum
 and Every AtMost selecting maximum. Checked reward/comparison-unit identity,
 actual per-action draw costs and full original admission remain authoritative.
@@ -321,14 +321,14 @@ whole-expansion allocation qualification.
 
 #### Closed unweighted DTMC long-run proof profile
 
-FR-201's `quire.probability-objective/dtmc-long-run/v1` closes the
-unweighted untimed workload case only. It retains QSpec's existing
+FR-201's `filament.probability-objective/dtmc-long-run/v1` closes the
+unweighted untimed workload case only. It retains FSpec's existing
 `long-run` document and `{value,gain,bias}` component transport. FR-199's
 original indicator-reward gain is rho; subtracting the component's rho
 gives CE-3's zero gain for the centered reward `[P]-rho`. The checker
 therefore checks `gain=rho` and `h=[P]-rho+Ph`. The zero gain in §15.3
 describes this centered equation, not a requirement to overwrite the
-transported original-reward gain in FR-199/QSpec FR-412's example.
+transported original-reward gain in FR-199/FSpec FR-412's example.
 
 The checker independently rebuilds the complete original graph, including
 terminal infinite stutter, derives every BSCC, and matches each exactly to
@@ -347,7 +347,7 @@ component coverage, failure loci, threshold, limits and cancellation.
 
 #### Closed weighted DTMC long-run proof profile
 
-FR-201's separate `quire.probability-objective/dtmc-weighted-long-run/v1`
+FR-201's separate `filament.probability-objective/dtmc-weighted-long-run/v1`
 retains the finite untimed workload boundary and existing component wire
 shape, adding only the checked weight/unit objective identity. LR-2 and
 FR-199-AC-3 weight CURRENT positions by outgoing draws. Thus each BSCC
@@ -364,7 +364,7 @@ claim. Existing profiles keep their bytes and meanings.
 
 #### Closed cyclic DTMC eventual proof profile
 
-FR-201's `quire.probability-objective/cyclic-dtmc-eventual/v1` is a separate
+FR-201's `filament.probability-objective/cyclic-dtmc-eventual/v1` is a separate
 closed exact proof profile for untimed infinite-trace `eventually holds(P)`.
 The finite original graph may cycle; it has one initial, at most one actual
 binding, no fairness/rewards/clocks and only current FR-196 single-post Markov
@@ -400,7 +400,7 @@ long-run, timed or fairness coverage follows from this proof increment.
 
 #### Closed cyclic MDP eventual proof profile
 
-FR-201's separate `quire.probability-objective/cyclic-mdp-eventual/v1`
+FR-201's separate `filament.probability-objective/cyclic-mdp-eventual/v1`
 admits finite untimed every-scheduler eventual proofs using existing exact
 values/ranking transport. The checker independently reconstructs ALL
 semantic actions. Existing S3 selects minimum for AtLeast and maximum for
@@ -431,7 +431,7 @@ implementation qualification or new shared-wire contract follows.
 
 | ID | Rule |
 | --- | --- |
-| LM-1 | **`ExactProbLimits`.** EN-5's budgets are ADR-014 B-5 budgets of QSL's own provider: an embedded `ModelCheckLimits` (ADR-018), with its members, setting names and defaults unchanged (`max_states`, `max_transitions`, `max_automaton_states`) for the product; `max_iterations`, the interval-iteration sweeps; `precision_bits`, the starting dyadic precision, and `max_precision_bits`, the most it doubles to; `max_rational_bits`, the longest exact rational FH-1 and UR-4 keep; `max_policy_iterations`; and `max_witness_paths` (WS-3); plus time, the clause meter and cancellation. Each is set by the request, with a published default. No budget is a modelling limit, and the language fixes no cap on states, horizon, precision or iterations. |
+| LM-1 | **`ExactProbLimits`.** EN-5's budgets are ADR-014 B-5 budgets of FSL's own provider: an embedded `ModelCheckLimits` (ADR-018), with its members, setting names and defaults unchanged (`max_states`, `max_transitions`, `max_automaton_states`) for the product; `max_iterations`, the interval-iteration sweeps; `precision_bits`, the starting dyadic precision, and `max_precision_bits`, the most it doubles to; `max_rational_bits`, the longest exact rational FH-1 and UR-4 keep; `max_policy_iterations`; and `max_witness_paths` (WS-3); plus time, the clause meter and cancellation. Each is set by the request, with a published default. No budget is a modelling limit, and the language fixes no cap on states, horizon, precision or iterations. |
 | LM-2 | **Reaching a budget.** A budget reached before the method completes settles V-7: `Incomplete(PrecisionBudget{lower, upper})` when the interval still straddles the threshold, `Incomplete(LimitReached{limit, value, setting})` otherwise (ADR-018 V-7), unless XV-5's partial evidence already settles the item. The caller raises the budget and reruns. |
 | LM-3 | **Identity.** Budgets and the method choices they drive are request settings recorded in the result; none enters the obligation identity. |
 
@@ -443,14 +443,15 @@ claim's scheduler resolves each delay (RU-6).
 
 | ID | Rule |
 | --- | --- |
-| TA-1 | **The PTA reading.** A probabilistic claim over a timed subject (ADR-026 TS-1) is read on the digital route (TA-3) as a probabilistic timed automaton, and the claim's scheduler resolves each delay. **Under every scheduler** the scheduler chooses each delay and each scheduled identity, and random arguments are drawn by ADR-024 PM-1; a model that declares a `delay` distribution (ADR-026 SD-1) settles `unsupported`, `DelayDistribution{operation}`, on this form. **Under a workload `W`**, `W` resolves the scheduled identity (ADR-024 PM-2) and, through ADR-026 SD-3's race, every delay a `discrete` distribution gives: when every racing identity's delay is so resolved, the subject is a DTMC over digital timed states, checked exactly by §6 to §8. A delay no distribution gives stays the scheduler's choice, and EN-5 decides the claim over every resolution of those delays, the bound read on their minimum or maximum as SCH-1 reads it. A `uniform`, `uniform[a, b]` or `exponential` distribution has no exact digital reading and settles `unsupported`, `DelayDistribution{operation}`; EN-4 measures it (ADR-026 SS-7). |
-| TA-1a | **Discrete delays on the grid.** A `discrete` distribution's delays scale to integers with the model's constants (TA-3). Under `W`, the race of ADR-026 SD-3 at a digital timed state draws each racing identity's delay from its distribution conditioned on its window, takes the smallest with ties ordered by `W`'s weights, and each such outcome is one probabilistic edge whose probability is an exact rational. A digital timed state with no racing identity and a bounded delay settles `unsupported`, `NotStochastic`, as ADR-026 SD-4 states. |
-| TA-2 | **The closed condition.** Every atomic clock constraint in a guard, every time invariant and every timed interval of the claim is non-strict, and no constraint compares two clocks (ADR-026 CK-4). A strict constraint settles `unsupported`, `StrictClockConstraint{locus}`. |
+| TA-1 | **The PTA reading.** A probabilistic claim over a timed subject (ADR-026 TS-1) is read on the digital route (TA-3) as a probabilistic timed automaton, and the claim's scheduler resolves each delay. **Under every scheduler** the scheduler chooses each delay and each scheduled identity, and random arguments are drawn by ADR-024 PM-1; a `discrete` delay distribution (ADR-026 SD-1) applies as under a workload, the scheduler choosing every free delay and every tie winner after the draw (FR-923). **Under a workload `W`**, `W` resolves the scheduled identity (ADR-024 PM-2) and, through ADR-026 SD-3's race, every delay a `discrete` distribution gives: when every racing identity's delay is so resolved, the subject is a DTMC over digital timed states, checked exactly by §6 to §8. A delay no distribution gives stays the scheduler's choice, and EN-5 decides the claim over every resolution of those delays, the bound read on their minimum or maximum as SCH-1 reads it. A `uniform`, `uniform[a, b]` or `exponential` distribution has no exact digital reading and settles `unsupported`, `DelayDistribution{operation}`; EN-4 measures it (ADR-026 SS-7). |
+| TA-1a | **Discrete delays on the grid.** A `discrete` distribution's delays scale to integers with the model's constants (TA-3). Under `W`, the race of ADR-026 SD-3 at a digital timed state draws each racing identity's delay from its distribution conditioned on its window, takes the smallest with ties ordered by `W`'s weights, and each such outcome is one probabilistic edge whose probability is an exact rational. A digital timed state with no racing identity and a bounded delay is a time-lock, a terminal state (FR-204, FR-924). |
+| TA-2 | **The closed condition.** Every atomic clock constraint in a guard, every time invariant and every timed interval of the claim is non-strict, and no constraint compares two clocks (ADR-026 CK-4). A strict constraint is decided over the region MDP and certified with region keys (FR-922). |
 | TA-3 | **Digital clocks.** EN-5 scales every constant to an integer by the common denominator of the model's and the claim's constants, as ADR-026 EZ-10 does, and explores the digital MDP of Kwiatkowska, Norman, Parker and Sproston: a timed state is the discrete state with an integer value per clock, capped at the clock's largest compared constant plus one; a delay move adds one unit to every clock below its cap and is admissible when the time invariants hold after it and the state is not urgent (ADR-026 CK-7); a discrete move is ADR-026 TS-2's step with integer clocks. For a closed, diagonal-free PTA the minimum and maximum of a reachability probability and of an expected time to a target are equal on the digital and the dense semantics, so the verdict is a verdict on the dense model, and every delay a witness takes is a valid dense delay. |
-| TA-4 | **Admitted forms.** XF-4 reachability and until over state predicates; deadline events under the timed profile, `eventually[0, D] holds(P)` and `holds(A) until[0, D] holds(B)` with `D` closed, by one extra digital clock that no step resets, capped at `D + 1`; and XF-5's `expected elapsed until holds(B)`, with each delay move carrying one unit of time as its reward. Another TT-2 shape settles `unsupported`, `TimedFormShape`. |
-| TA-5 | **Time divergence.** On the digital MDP every infinite path diverges exactly when no reachable cycle consists of discrete moves alone, which EN-5 checks by an SCC decomposition of the discrete-move subgraph. A reachable zero-delay cycle settles `unsupported`, `ZeroDelayCycle{states}`, because a scheduler that follows it is Zeno and lies outside ADR-026 TS-4's admitted behaviours. Time-locks are reported by ADR-026 TD-2's item, as for every timed subject. |
-| TA-6 | **Evidence.** A witness scheduler names FR-196's distinct ordinary delay, enter-idle delay, idle delay and idle observation choices, or an actual identity/post-state at each applicable digital state (WS-1); under `W` it chooses only the delays no distribution gives, after the given delays are drawn (ADR-026 SD-3), as FR-196's `FreeDelays` action at a mixed race. A timed path in a path set carries ADR-026 CT-1 delays and replays by CT-3; its last timed state has no admissible discrete step before the event's time horizon passes, which replay checks from the guards and time invariants. A certificate names digital product states, and the checker re-enumerates the digital MDP. |
+| TA-4 | **Admitted forms.** XF-4 reachability and until over state predicates; deadline events under the timed profile, `eventually[0, D] holds(P)` and `holds(A) until[0, D] holds(B)` with `D` closed, by one extra digital clock that no step resets, capped at `D + 1`; and XF-5's `expected elapsed until holds(B)`, with each delay move carrying one unit of time as its reward. `always[0, D]` is the complement of `eventually[0, D]`, every other TT-2 shape is decided over the product with its monitor, and elapsed quantiles over the elapsed clock (FR-204, FR-877). |
+| TA-5 | **Time divergence.** On the digital MDP every infinite path diverges exactly when no reachable cycle consists of discrete moves alone, which EN-5 checks by an SCC decomposition of the discrete-move subgraph. A scheduler that follows a zero-time end component forever is Zeno and lies outside ADR-026 TS-4's admitted behaviours, so EN-5 decides over the product in which each such component is one state with only its exits, and the checker recomputes the components (FR-924). Time-locks are reported by ADR-026 TD-2's item, as for every timed subject. |
+| TA-6 | **Evidence.** A witness scheduler names FR-196's distinct ordinary delay, enter-idle delay, idle delay and idle observation choices, or an actual identity/post-state at each applicable digital state (WS-1); under `W` it chooses only the delays no distribution gives, after the given delays are drawn (ADR-026 SD-3), as FR-196's `FreeDelays` action at a mixed race. A timed path in a path set carries ADR-026 CT-1 delays and replays by CT-3; its last timed state has no admissible discrete step before the event's time horizon passes, which replay checks from the guards and time invariants. A certificate is FR-920's `timed-product/v1` document, keyed by digital, region or boundary-region states, and the checker rebuilds the product itself (FR-921). |
 | TA-7 | **Size.** The digital MDP has the discrete states times the product over clocks of (cap + 1) values. Its cost grows with the scaled constants, and `max_states` bounds it (LM-1). |
+| TA-8 | **The timed-product certificate.** A timed proof is certified by a document that states values, ranks and a policy over complete timed product keys, plus the route, unit, scale and form it claims, and nothing else. The checker derives the route, scale, caps, moves, races, zero-time components, time-locks and the elapsed measure from the checked package and claim, compares the stated members, and applies CE-3 on its own product (FR-920, FR-921; FSpec FR-725, FR-751). A statement of any of these in the certificate would be an unchecked second copy of what the checker must compute. |
 
 ### 13a. TS-5 observation admissibility, extrema and evidence
 
@@ -737,8 +738,9 @@ no zero-delay cycle exists (TA-5). The scheduler chooses when to send in
   probability 1 under every scheduler. The maximum expected time is
   `2 ms · 10/9 = 20/9 ms ≈ 2.22 ms` and the minimum `10/9 ms`: `proved`,
   `ExactValue{20/9 ms}`.
-- **A strict variant.** With `self.x > 1 ms` in the guard the item settles
-  `unsupported`, `StrictClockConstraint`, and EN-4 measures it. ADR-026 §11's
+- **A strict variant.** With `self.x > 1 ms` in the guard the item is decided
+  over the region MDP (TA-2, FR-922): maximum `20/9 ms`, minimum the
+  infimum `10/9 ms`. ADR-026 §11's
   `RareLate` states `under Even` with `exponential` delays, which have no
   exact digital reading, so on EN-5 it settles `unsupported`,
   `DelayDistribution`, and stays EN-4's. With every delay `discrete` on the
@@ -786,10 +788,10 @@ probabilistic FairTerminates using inf on Coin under every scheduler
 
 | ID | Repository | Change |
 | --- | --- | --- |
-| DS-1 | QSL | S3: the forms XF-4 and XF-5 with their classification, fairness sets on every-scheduler claims (FS-1), claims without confidence parameters (SP-4), the exact-only rule (XF-7), the timed route's closed-condition and shape checks (TA-2, TA-4). Layer A, `qsl-analyze`, `exact_probabilistic`: the probabilistic product (§2), backward induction, qualitative precomputation, MEC and BSCC decomposition, maximal fair end components and fair schedulers (§3a), interval iteration, exact policy iteration and linear solves, long-run values, the digital MDP, dyadic and exact arithmetic, `ExactProbLimits`, witness schedulers, path sets and certificates. `qsl-replay`: `ProofBasis::ExactValue` and `ValueBounds`, `PrecisionBudget`, `CertificateRejected`, the unsupported causes, `ProbabilisticCounterexample`, `ReplaySource::ProbabilisticWitness`, `replay_probabilistic_witness` and `check_probability_certificate`. The EN-5 provider manifest with evidence kind `exact`. |
-| DS-2 | CG | Routes `exact` items by QSpec FR-290 (SP-3). It reads EN-5's settled `TerminalValue` from `qsl-replay`, which owns the map. |
-| DS-3 | Driver | Calls EN-5's entry and records the result that `qsl-replay` settles after the certificate check or witness replay (SP-5, CE-5). |
-| DS-4 | QSpec | §17. |
+| DS-1 | FSL | S3: the forms XF-4 and XF-5 with their classification, fairness sets on every-scheduler claims (FS-1), claims without confidence parameters (SP-4), the exact-only rule (XF-7), the timed route's closed-condition and shape checks (TA-2, TA-4). Layer A, `fsl-analyze`, `exact_probabilistic`: the probabilistic product (§2), backward induction, qualitative precomputation, MEC and BSCC decomposition, maximal fair end components and fair schedulers (§3a), interval iteration, exact policy iteration and linear solves, long-run values, the digital MDP, dyadic and exact arithmetic, `ExactProbLimits`, witness schedulers, path sets and certificates. `fsl-replay`: `ProofBasis::ExactValue` and `ValueBounds`, `PrecisionBudget`, `CertificateRejected`, the unsupported causes, `ProbabilisticCounterexample`, `ReplaySource::ProbabilisticWitness`, `replay_probabilistic_witness` and `check_probability_certificate`. The EN-5 provider manifest with evidence kind `exact`. |
+| DS-2 | CG | Routes `exact` items by FSpec FR-290 (SP-3). It reads EN-5's settled `TerminalValue` from `fsl-replay`, which owns the map. |
+| DS-3 | Driver | Calls EN-5's entry and records the result that `fsl-replay` settles after the certificate check or witness replay (SP-5, CE-5). |
+| DS-4 | FSpec | §17. |
 
 **Sequencing.** EN-5 is built after EN-1 and EN-4. It needs EN-1's product,
 monitors, edge retention and SCC decomposition (ADR-018 §7 step 3), and the
@@ -798,20 +800,20 @@ probabilistic forms and the step probability (ADR-024 DS-1). The timed route
 needs ADR-026's timed subjects and its digitization (EZ-10). Exact checking
 follows v1.
 
-### 17. What QSpec must specify
+### 17. What FSpec must specify
 
 | ID | Item | Where |
 | --- | --- | --- |
-| QS-1 | The evidence kind `exact` for `probabilistic-satisfaction`, its advertisement and the no-substitution rule (ADR-024 QS-6), and claims without confidence parameters as exact-only (SP-4, XF-7) | QSpec FR-290, FR-331, FR-407, FR-408 |
-| QS-2 | `under every scheduler`: minimum and maximum over every history-dependent randomized scheduler, the scheduler's choice after a draw with several post-states, and unrestricted-product memoryless deterministic attainment (SCH-1 to SCH-3), qualified by §13a derived TS-5 infimum/supremum and randomized threshold evidence | QSpec FR-406 |
-| QS-3 | The forms with exact evidence: the probabilistic product with a bounded monitor and accumulators (PR-4, PR-5), the quantile threshold transform (XF-2), the mean of a fraction (XF-3), unbounded reachability, until and always over state predicates (XF-4), expected reward to a target with `+∞` (XF-5), long-run fractions by bottom components with `ZeroWeightComponent` (§8) | QSpec FR-411, FR-407, FR-090 |
-| QS-4 | Result content: `ExactValue` and `ValueBounds` onto FR-331 `proved` with FR-243 `closed-scope`, one entry per initial state and binding with minimum or maximum, `PrecisionBudget`, `CertificateRejected` and the unsupported causes (XV-1 to XV-6) | QSpec FR-411, FR-331, FR-243 |
-| QS-5 | The witness wire: `WitnessScheduler`, `ProbabilisticCounterexample` with path-set and subsystem evidence, and the replay rules of WS-5 | QSpec FR-413 |
-| QS-6 | The certificate wire: `ProbabilityCertificate`, its kinds and the checker's conditions (CE-1 to CE-4), including what the checker recomputes | QSpec FR-412 |
-| QS-7 | `ExactProbLimits` in the request (LM-1) | QSpec FR-411 |
-| QS-8 | The digital route over timed subjects: the closed condition, the digital MDP, delays resolved by the claim's scheduler with `discrete` delays under a workload as a DTMC (TA-1, TA-1a), the admitted forms and the zero-delay-cycle check (TA-2 to TA-5), in step with ADR-026's overlap items | QSpec FR-421, FR-420, FR-161, FR-181 |
-| QS-9 | Conformance vectors, each with its exact value, verdict and evidence that must check (the exact witness is not compared, since engines may return different valid ones): (a) §15.1, the exact rational and a dyadic `ValueBounds` proof; (b) §15.2, `24233/25000` proved at 5 ms and `4491/5000` refuted at 2 ms with a one-path set; (c) §15.3, `1800/1801` proved with its gain–bias certificate, and the per-window claim refuted with a subsystem certificate; (d) §15.4, minimum `24/25`, maximum `99/100`, workload `391/400`, the refutation with its witness scheduler, and the proof with its `Exact` certificate; (e) §15.5, `99/100` proved at equality, `20/9 ms`, the refutation at 0.995, and the strict variant `unsupported`; (f) checker refusals: a certificate that violates one inequality (`CertificateRejected`), a missing rank on a lower certificate, a path set that is not prefix-free, a witness step that departs from its scheduler, a drawn value outside its support; (g) `NotMarkov` under a workload, a delay distribution and a zero-delay cycle on the timed route; (h) a `PrecisionBudget` stop | QSpec TC-360 to TC-365 and TC-374, beside TC-200 and TC-210 |
-| QS-10 | Fair schedulers: the fairness set on every-scheduler claims, fair schedulers as probability-1 fairness, fair end components, the infimum and supremum per form, the randomized witness scheduler and its fairness check, and a vector for §15.6 (FS-1 to FS-9) | QSpec FR-406, FR-411, FR-413 |
+| QS-1 | The evidence kind `exact` for `probabilistic-satisfaction`, its advertisement and the no-substitution rule (ADR-024 QS-6), and claims without confidence parameters as exact-only (SP-4, XF-7) | FSpec FR-290, FR-331, FR-407, FR-408 |
+| QS-2 | `under every scheduler`: minimum and maximum over every history-dependent randomized scheduler, the scheduler's choice after a draw with several post-states, and unrestricted-product memoryless deterministic attainment (SCH-1 to SCH-3), qualified by §13a derived TS-5 infimum/supremum and randomized threshold evidence | FSpec FR-406 |
+| QS-3 | The forms with exact evidence: the probabilistic product with a bounded monitor and accumulators (PR-4, PR-5), the quantile threshold transform (XF-2), the mean of a fraction (XF-3), unbounded reachability, until and always over state predicates (XF-4), expected reward to a target with `+∞` (XF-5), long-run fractions by bottom components, a zero-weight component taking its unweighted fraction (§8, LR-4) | FSpec FR-411, FR-407, FR-090 |
+| QS-4 | Result content: `ExactValue` and `ValueBounds` onto FR-331 `proved` with FR-243 `closed-scope`, one entry per initial state and binding with minimum or maximum, `PrecisionBudget`, `CertificateRejected` and the unsupported causes (XV-1 to XV-6) | FSpec FR-411, FR-331, FR-243 |
+| QS-5 | The witness wire: `WitnessScheduler`, `ProbabilisticCounterexample` with path-set and subsystem evidence, and the replay rules of WS-5 | FSpec FR-413 |
+| QS-6 | The certificate wire: `ProbabilityCertificate`, its kinds and the checker's conditions (CE-1 to CE-4), including what the checker recomputes | FSpec FR-412 |
+| QS-7 | `ExactProbLimits` in the request (LM-1) | FSpec FR-411 |
+| QS-8 | The digital route over timed subjects: the closed condition, the digital MDP, delays resolved by the claim's scheduler with `discrete` delays under a workload as a DTMC (TA-1, TA-1a), the admitted forms and the zero-delay-cycle check (TA-2 to TA-5), in step with ADR-026's overlap items | FSpec FR-421, FR-420, FR-161, FR-181 |
+| QS-9 | Conformance vectors, each with its exact value, verdict and evidence that must check (the exact witness is not compared, since engines may return different valid ones): (a) §15.1, the exact rational and a dyadic `ValueBounds` proof; (b) §15.2, `24233/25000` proved at 5 ms and `4491/5000` refuted at 2 ms with a one-path set; (c) §15.3, `1800/1801` proved with its gain–bias certificate, and the per-window claim refuted with a subsystem certificate; (d) §15.4, minimum `24/25`, maximum `99/100`, workload `391/400`, the refutation with its witness scheduler, and the proof with its `Exact` certificate; (e) §15.5, `99/100` proved at equality, `20/9 ms`, the refutation at 0.995, and the strict variant decided over the region MDP (maximum `20/9 ms`, minimum the infimum `10/9 ms`) with a region certificate; (f) checker refusals: a certificate that violates one inequality (`CertificateRejected`), a missing rank on a lower certificate, a path set that is not prefix-free, a witness step that departs from its scheduler, a drawn value outside its support; (g) `NotMarkov` under a workload and a continuous delay distribution with exact evidence on the timed route `unsupported`, and a `discrete` delay under every scheduler and a zero-time cycle on the timed route decided with an accepted timed-product certificate; (h) a `PrecisionBudget` stop | FSpec TC-360 to TC-365 and TC-374, beside TC-200 and TC-210 |
+| QS-10 | Fair schedulers: the fairness set on every-scheduler claims, fair schedulers as probability-1 fairness, fair end components, the infimum and supremum per form, the randomized witness scheduler and its fairness check, and a vector for §15.6 (FS-1 to FS-9) | FSpec FR-406, FR-411, FR-413 |
 
 ### 18. Rulings on the draft's questions
 
@@ -867,14 +869,14 @@ translator, exact provider or strict-reader qualification.
 
 ## Consequences
 
-FR-201's closed reachability document profile owns the QSL specialization
-inside QSpec FR-412's existing open `objective` object. Its versioned
+FR-201's closed reachability document profile owns the FSL specialization
+inside FSpec FR-412's existing open `objective` object. Its versioned
 `profile` selects extensional complete target keys, independently checked
 against the claim, the existing minimum/maximum/workload optimization and
 an explicitly empty fairness array. Extensional targets avoid inventing a
 second semantic expression language. The discriminator versions this closed
 member contract without adding a top-level certificate field. FR-196's
-complete binding-bearing key basis remains authoritative despite QSpec's
+complete binding-bearing key basis remains authoritative despite FSpec's
 older five-component illustration. Required exact ranks and Bellman
 equalities both remain CE-3 obligations. The codec admits untimed acyclic
 unbounded eventual reachability and origin-activated event-position
@@ -884,7 +886,7 @@ the closed member contract and extensional objective meaning are unchanged,
 and existing unbounded documents retain their meaning. FR-196 already owns
 the complete formula-monitor identity; FR-197 already owns bounded induction.
 The qualified checker independently builds the bounded monitor product using
-qsl-eval-owned canonical key and terminal false-extension operations, with
+fsl-eval-owned canonical key and terminal false-extension operations, with
 ranks matching real monitor horizon/debts rather than unbounded model height.
 A cyclic model is admitted when its bounded undecided product terminates.
 FR-202 separately extends native checked-subject path-set replay to this same
@@ -894,7 +896,7 @@ accepting mass A to establish event probability at least A for a failed maximum
 AtMost; a workload uses the same strict comparisons. It reuses qualified
 formula keys, actual S3 binding context and terminal false-extension closure,
 with finite remaining debts rather than raw unbounded graph height. This is
-exact-only native behavior, not QSpec FR-413 wire completion: closed bound,
+exact-only native behavior, not FSpec FR-413 wire completion: closed bound,
 scheduler-choice and semantic step action/key transport remain shared-owner
 blockers. Dyadic lower/upper codec support remains outstanding; no interval
 becomes an exact document. Unsupported forms retain
@@ -903,7 +905,7 @@ FR-282 defines the independent checked-source
 S1 to S3 facade so S4's emission refusal cannot prevent fresh checking.
 
 FR-201 additionally defines the narrow closed
-`quire.probability-objective/state-predicate/v1` objective for untimed,
+`filament.probability-objective/state-predicate/v1` objective for untimed,
 infinite-trace acyclic state-predicate until and always proofs. Reusing
 reachability/v1 unchanged would lose until's absorbing failure boundary or
 incorrectly make a currently true P an always success. The separate objective
@@ -916,12 +918,12 @@ EN-5's complement implementation of always must exchange extrema first.
 PR-6's real binding-bearing model keys suffice without a synthetic monitor.
 Original-graph acyclicity, one initial state, at most one binding and existing
 Markov restrictions remain admission limits. No bounded false-extension
-semantics, cyclic/fair/reward expansion, new FR-202 refutation or QSpec FR-413
+semantics, cyclic/fair/reward expansion, new FR-202 refutation or FSpec FR-413
 wire is authorized by this proof-only profile. FR-282's existing qualified
 S1 to S3 source facade independently checks these exact document bytes too.
 
-FR-201 additionally specializes QSpec FR-412's existing open objective with
-`quire.probability-objective/expected-reward/v1` for finite untimed acyclic
+FR-201 additionally specializes FSpec FR-412's existing open objective with
+`filament.probability-objective/expected-reward/v1` for finite untimed acyclic
 infinite-trace expected named-reward proofs. The checked source owns the
 model-scoped reward identifier, expression, declaring model and exact unit
 normalization; the objective carries FR-196's actual model/reward identity,
@@ -981,17 +983,16 @@ Each amended text carries an "Amended by ADR-028" note.
 ## Amendments to make on acceptance
 
 - ADR-021 PT-2: RX-2's row.
-- ADR-011 §1 and §6.1: S6c runs EN-5; layer A, crate `qsl-analyze`, gains
+- ADR-011 §1 and §6.1: S6c runs EN-5; layer A, crate `fsl-analyze`, gains
   `exact_probabilistic` (ADR-029 CB-3); E11 carries EN-5 certificates and
   probabilistic witnesses; layer 6 `replay` gains
   `replay_probabilistic_witness` and `check_probability_certificate`.
-- ADR-026 SS-7, RU-5 and §15: the digital route as TA-1 to TA-7 state it.
+- ADR-026 SS-7, RU-5 and §15: the digital and region routes as TA-1 to TA-8 state them.
   Under a workload that gives the delays, the workload resolves the action
   and the delay choice, so the subject is a DTMC checked exactly on EN-5;
   delay nondeterminism left over is decided by its minimum and maximum; a
-  `uniform`, `uniform[a, b]` or `exponential` delay stays EN-4's. The causes
-  `DelayDistribution`, `StrictClockConstraint`, `ZeroDelayCycle` and
-  `TimedFormShape`.
+  `uniform`, `uniform[a, b]` or `exponential` delay stays EN-4's. The cause
+  `DelayDistribution`, for continuous delays only.
 - ADR-026 SD-1: an operation that declares no `delay` declaration has a free,
   nondeterministic delay, never an implied distribution, so the leftover
   delay nondeterminism of TA-1 is defined in one place (team-leader
@@ -1001,7 +1002,7 @@ Each amended text carries an "Amended by ADR-028" note.
 
 - **Lowering to PRISM or Storm.** Not adopted. Their default results are
   floating point with no certificate, and their exact and sound modes give a
-  correct number QSL cannot check without the tool. QSL needs its own witness
+  correct number FSL cannot check without the tool. FSL needs its own witness
   replay and certificate checker in either case, and that checker is about
   half of a native engine. The Modest Toolset's PTA engine is closed source,
   so it cannot be a product dependency.
@@ -1045,9 +1046,9 @@ Each amended text carries an "Amended by ADR-028" note.
 
 ## References
 
-- Owning ticket: Linear QSL-371, which records the rulings of §18. QSpec
-  half: Linear STD-137 (QSpec FR-405 to FR-414) and, for the digital
-  route, Linear STD-139 (QSpec FR-421). Research and the owner's ruling that EN-5
+- Owning ticket: Linear QSL-371, which records the rulings of §18. FSpec
+  half: Linear STD-137 (FSpec FR-405 to FR-414) and, for the digital
+  route, Linear STD-139 (FSpec FR-421). Research and the owner's ruling that EN-5
   is a native engine specified now: Linear RES-53. Zone-based timed analysis: Linear RES-54.
 - ADR-029, the qualified core, its certificate checkers and the crate
   layout (RU-2, CB-2, CB-3), with the uncertified-proof rule the owner

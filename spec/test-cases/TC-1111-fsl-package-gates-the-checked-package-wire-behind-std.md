@@ -1,0 +1,71 @@
+---
+id: TC-1111
+title: "fsl-package keeps the checked-IR path no_std and the v2 wire behind std"
+type: TC
+relationships:
+  - target: ix://agent-ix/filament-spec-language/NFR-015
+    type: verifies
+---
+# TC-1111: fsl-package keeps the checked-IR path no_std and the v2 wire behind std
+
+## Description
+
+Verify the crate-tier row for `fsl-package`: the in-memory checked closure
+builds with `std` disabled, the `filament.checked-package/v2` emitter and I2
+reader are behind `std`, and default-feature output is unchanged. Scope:
+NFR-015-AC-4 to NFR-015-AC-7, NFR-015-AC-9 and NFR-015-AC-10.
+
+## Test Procedure
+
+1. Read `fsl-package/Cargo.toml` and its crate root.
+2. Run `cargo check --locked -p fsl-package --no-default-features` on the
+   host.
+3. Run `cargo tree --locked -p fsl-package --no-default-features -e normal
+   -i filament-contract-model` over the whole closure.
+4. From a test target built with `--no-default-features`, name every export
+   in the "With `std` disabled" column of NFR-015's `fsl-package` surface
+   table: `CheckedPackage` with `link`, `bind_abstraction`,
+   `bind_abstraction_at`, `abstraction`, `graph`, `shared_graph`,
+   `dependencies` and `dependency_selections`; `ResolvedDependency`;
+   `export_bindings`, `BoundItem`, `ExportRefusal` and `UnboundElement`. In
+   one compile-fail case per export, name each export in its "Behind `std`"
+   column: `CheckedPackage::link_with`, `CheckedPackage::emitted_package_id`,
+   `Import`, `LinkRefusal`, `EmittedPackage`; `emit_checked`,
+   `emit_checked_with_cancel`, `emit_package`, `checked_node_id`,
+   `checked_occurrence`, `Emission`, `EmitRefusal`, `OmissionCause`,
+   `OmittedNode`; `read_import_view`, `supply_closure`, `clause_roots`,
+   `resolve_clause_root`, `AdmittedPackages`, `ClauseRoot`,
+   `ClauseRootUnresolved`, `ImportViewRefusal`, `SourceMapDefect`,
+   `UnsupportedWire`, `V2ReadLimits` and `V2ReadRefusal`. Call `link` on a
+   checked graph and read `dependencies` and `dependency_selections`.
+5. With default features, run `cargo test --locked -p fsl-package --lib
+   checked_v2`, which reads the vectors from the pinned standard dependency (FR-760), and the FR-091 round-trip test.
+6. Search the shipped source of each crate in NFR-015's per-crate table, with
+   `#[cfg(feature = "std")]` items excluded, for `serde_json`, `HashMap` and
+   `HashSet`.
+7. With default features, emit a package with `emit_checked`, call
+   `bind_abstraction` with valid bindings and read `emitted_package_id`.
+8. With default features, emit a package with no abstraction relation with `emit_checked`, call
+   `bind_abstraction_at` with valid bindings and one site, read
+   `emitted_package_id`, then emit it again and read it. Emit a second
+   package, call `bind_abstraction_at` with one binding whose key names a
+   declaration the package does not hold, and read `emitted_package_id`.
+
+## Expected Results
+
+1. `default = ["std"]`; `std` enables `dep:filament-contract-model` and
+   `fsl-foundation/std`; `filament-contract-model` is `optional = true`;
+   `fsl-foundation` is declared with `default-features = false`; the crate
+   root has `#![cfg_attr(not(feature = "std"), no_std)]`.
+2. The check succeeds.
+3. Cargo reports no path to `filament-contract-model`.
+4. Every "With `std` disabled" export resolves; each "Behind `std`" export
+   fails to resolve; the package `link` builds has empty `dependencies` and
+   `dependency_selections`.
+5. Both pass: the emitted bytes and `package_id` match the FR-322 vectors.
+6. No match.
+7. It is `None`.
+8. It is `None` after the binding; the second emission's `package_id`
+   differs from the first. The second package's binding is refused with
+   `AbstractionRefusal::MissingDeclaration`, and `emitted_package_id` then
+   equals the emitted `package_id`.

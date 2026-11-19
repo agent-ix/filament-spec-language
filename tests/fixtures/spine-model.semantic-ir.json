@@ -25,7 +25,7 @@
         "identity": "none",
         "shape": "record",
         "members": {},
-        "meaning": "quire.meaning.model.object-type/v1"
+        "meaning": "filament.meaning.model.object-type/v1"
       }
     }
   ],
@@ -55,7 +55,7 @@
         {
           "identity": "ix://acme/orders/Widget/code",
           "name": "code",
-          "typeRef": "ix://quire/native/Integer",
+          "typeRef": "ix://filament/native/Integer",
           "presence": "required",
           "nullable": false,
           "defaultKind": "none",

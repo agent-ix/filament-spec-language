@@ -70,7 +70,7 @@ fn every_retained_criterion_has_a_tagged_checked_package_successor_test() {
         assert_eq!(status, "tagged", "{criterion}");
         assert!(
             binders.split(',').any(|binder| {
-                ["qsl-package/", "qsl-eval/", "qsl-replay/"]
+                ["fsl-package/", "fsl-eval/", "fsl-replay/"]
                     .iter()
                     .any(|root| binder.starts_with(root))
             }),

@@ -3,7 +3,7 @@ id: TC-394
 title: "Each Value expression construct maps to its Expression variant, with grouping from the CST"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-394: Each Value expression construct maps to its Expression variant, with grouping from the CST
@@ -34,13 +34,13 @@ alias is `v`.
    `allInstances<M::T>(p)`.
 5. Run S2 on `a div b`, `a rem b`, `a mod b`, `1 + a div b * 2` and
    `if true then 1 else a mod b`, retaining each operator and operand span.
-   Check each well-typed body under a resolved `quire.value.complete/v1`
+   Check each well-typed body under a resolved `filament.value.complete/v1`
    selection with exactly one of the truncating, floor or Euclidean
    integer-division definitions, and separately check `mod` without selecting
    a division law when no `div`/`rem` occurs. For each of `(7,3)`, `(-7,3)`,
    `(7,-3)` and `(-7,-3)`, check separate `div`, `rem` and `mod` expressions
    against the table below. The checked package's retained FR-147
-   `quire.value.integer-division.*` selection determines the `div`/`rem`
+   `filament.value.integer-division.*` selection determines the `div`/`rem`
    law; `mod` stays Euclidean under every selection. Check `7 / 3` with integer
    operands both without an expected
    rational type and with expected `Rational[0,7;1,3]`, under both state-only

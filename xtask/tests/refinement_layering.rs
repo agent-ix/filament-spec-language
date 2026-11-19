@@ -11,14 +11,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use fsl_foundation::bound::DomainKind;
+use fsl_foundation::BackendId;
+use fsl_replay::spine::RefinementClass;
+use fsl_route::routing::Disposition;
+use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin};
+use fsl_semantics::check::{Capability, CheckedStateClause};
+use fsl_semantics::value::{HeaderLayer, WitnessKind, WitnessRequest};
 use ix_trace_rs::trace;
-use qsl_foundation::bound::DomainKind;
-use qsl_foundation::BackendId;
-use qsl_replay::spine::RefinementClass;
-use qsl_route::routing::Disposition;
-use qsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin};
-use qsl_semantics::check::{Capability, CheckedStateClause};
-use qsl_semantics::value::{HeaderLayer, WitnessKind, WitnessRequest};
 use xtask::refinement::compare::CaseResult;
 use xtask::refinement::layering::{
     compare, compile_unit, Compilation, EntryResult, RegistrySnapshot, RegistrySnapshotBuilder,
@@ -183,14 +183,14 @@ fn production_comparison_matches_cli_and_negotiates_each_witness() {
 /// A subprocess target used to observe writes that libtest normally captures.
 #[test]
 fn compare_capture_child() {
-    match std::env::var("QSL_518_CAPTURE_MODE").as_deref() {
+    match std::env::var("FSL_518_CAPTURE_MODE").as_deref() {
         Ok("probe") => mark_streams("probe", || {
             print!("probe stdout");
             eprint!("probe stderr");
         }),
         Ok("compare") => {
             let corpus = PathBuf::from(
-                std::env::var_os("QSL_518_CAPTURE_CORPUS")
+                std::env::var_os("FSL_518_CAPTURE_CORPUS")
                     .expect("the parent supplies the generated corpus path"),
             );
             assert_ac10_behavior(&corpus);
@@ -203,15 +203,15 @@ fn compare_capture_child() {
 fn run_capture_child(mode: &str, corpus: &Path) -> Output {
     Command::new(std::env::current_exe().expect("the test binary path is available"))
         .args(["--exact", "compare_capture_child", "--nocapture"])
-        .env("QSL_518_CAPTURE_MODE", mode)
-        .env("QSL_518_CAPTURE_CORPUS", corpus)
+        .env("FSL_518_CAPTURE_MODE", mode)
+        .env("FSL_518_CAPTURE_CORPUS", corpus)
         .output()
         .expect("the capture child starts")
 }
 
 fn stream_region<'a>(output: &'a [u8], label: &str, stream: &str) -> &'a [u8] {
-    let begin = format!("QSL-CAPTURE-BEGIN:{stream}:{label}\n");
-    let end = format!("QSL-CAPTURE-END:{stream}:{label}\n");
+    let begin = format!("FSL-CAPTURE-BEGIN:{stream}:{label}\n");
+    let end = format!("FSL-CAPTURE-END:{stream}:{label}\n");
     let start = output
         .windows(begin.len())
         .position(|window| window == begin.as_bytes())
@@ -226,15 +226,15 @@ fn stream_region<'a>(output: &'a [u8], label: &str, stream: &str) -> &'a [u8] {
 }
 
 fn mark_streams<T>(label: &str, call: impl FnOnce() -> T) -> T {
-    println!("QSL-CAPTURE-BEGIN:stdout:{label}");
-    eprintln!("QSL-CAPTURE-BEGIN:stderr:{label}");
+    println!("FSL-CAPTURE-BEGIN:stdout:{label}");
+    eprintln!("FSL-CAPTURE-BEGIN:stderr:{label}");
     std::io::stdout().flush().expect("stdout marker flushes");
     std::io::stderr().flush().expect("stderr marker flushes");
     let result = call();
     std::io::stdout().flush().expect("stdout call flushes");
     std::io::stderr().flush().expect("stderr call flushes");
-    println!("QSL-CAPTURE-END:stdout:{label}");
-    eprintln!("QSL-CAPTURE-END:stderr:{label}");
+    println!("FSL-CAPTURE-END:stdout:{label}");
+    eprintln!("FSL-CAPTURE-END:stderr:{label}");
     std::io::stdout()
         .flush()
         .expect("stdout end marker flushes");
@@ -245,10 +245,10 @@ fn mark_streams<T>(label: &str, call: impl FnOnce() -> T) -> T {
 }
 
 fn assert_ac10_behavior(corpus: &Path) {
-    let registry = RegistrySnapshot::production().expect("QSL's production registry builds");
+    let registry = RegistrySnapshot::production().expect("FSL's production registry builds");
     let candidates = |kind| match registry.candidates(kind) {
-        qsl_route::CandidateOutcome::Candidates(candidates) => candidates,
-        qsl_route::CandidateOutcome::UnknownBackend(backend) => {
+        fsl_route::CandidateOutcome::Candidates(candidates) => candidates,
+        fsl_route::CandidateOutcome::UnknownBackend(backend) => {
             panic!("production candidate lookup for {backend:?} is named")
         }
     };
@@ -682,9 +682,9 @@ fn without(corpus: &Path, names: &[&str]) {
 
 /// FR-345-AC-11, its E6 entries: E6's both-refuse case holds; its
 /// distinguishing unit, a state model writing `time M dense unit ms;`, is
-/// prohibited by `quire.model.complete/v1` with
+/// prohibited by `filament.model.complete/v1` with
 /// `unsupported_construct`/`declaration-form` and admitted under
-/// `quire.temporal.complete/v1`; and a corpus without E6's
+/// `filament.temporal.complete/v1`; and a corpus without E6's
 /// `distinguishing` entry and the temporal `witness` entry gives exactly one
 /// tool-failure result for each, verdict tool failure, exit 30.
 #[trace("TC-868", "FR-345-AC-11")]
@@ -713,7 +713,7 @@ fn the_temporal_edge_holds_and_its_missing_entries_are_named() {
             _ => None,
         })
         .expect("an E6 edge result");
-    assert_eq!(e6.0, "quire.model.complete/v1");
+    assert_eq!(e6.0, "filament.model.complete/v1");
     assert_eq!(*e6.2, CaseResult::Holds);
     let parent = &e6.1[0].parent;
     assert_eq!(parent.class, "prohibited");
@@ -738,7 +738,7 @@ fn the_temporal_edge_holds_and_its_missing_entries_are_named() {
     );
     assert_eq!(
         tool_failures(&report.results),
-        ["E6/distinguishing", "quire.temporal.complete/v1/witness"]
+        ["E6/distinguishing", "filament.temporal.complete/v1/witness"]
     );
     assert_eq!(report.verdict, Verdict::ToolFailure);
     assert_eq!(report.exit, 30);

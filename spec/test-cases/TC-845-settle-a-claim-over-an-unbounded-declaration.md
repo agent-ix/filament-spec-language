@@ -3,7 +3,7 @@ id: TC-845
 title: "A claim over an unbounded declaration settles end to end"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-335
+  - target: ix://agent-ix/filament-spec-language/FR-335
     type: verifies
 ---
 # TC-845: A claim over an unbounded declaration settles end to end
@@ -20,7 +20,7 @@ Scope: FR-335-AC-1 to FR-335-AC-5.
 ## Test Procedure
 
 Compile `f using v(s: Set<Int[0, 9999]>): Integer pure { size(s) + 1 }` from
-source. In QSL's own tests, with test descriptors and fixture dispositions
+source. In FSL's own tests, with test descriptors and fixture dispositions
 (no CG or driver code):
 
 1. Request the `+` claim with an empty registry; read its record.

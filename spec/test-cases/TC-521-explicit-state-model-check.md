@@ -3,7 +3,7 @@ id: TC-521
 title: "The explicit-state model checker proves, refutes and stops over model subjects"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: verifies
 ---
 # TC-521: The explicit-state model checker proves, refutes and stops over model subjects

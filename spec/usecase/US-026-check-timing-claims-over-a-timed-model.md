@@ -3,57 +3,57 @@ id: US-026
 title: "Check timing claims over a timed model"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-233
+  - target: ix://agent-ix/filament-spec-language/FR-233
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-235
+  - target: ix://agent-ix/filament-spec-language/FR-235
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-241
+  - target: ix://agent-ix/filament-spec-language/FR-241
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-242
+  - target: ix://agent-ix/filament-spec-language/FR-242
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-243
+  - target: ix://agent-ix/filament-spec-language/FR-243
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-244
+  - target: ix://agent-ix/filament-spec-language/FR-244
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-246
+  - target: ix://agent-ix/filament-spec-language/FR-246
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-247
+  - target: ix://agent-ix/filament-spec-language/FR-247
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-248
+  - target: ix://agent-ix/filament-spec-language/FR-248
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-250
+  - target: ix://agent-ix/filament-spec-language/FR-250
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-251
+  - target: ix://agent-ix/filament-spec-language/FR-251
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-252
+  - target: ix://agent-ix/filament-spec-language/FR-252
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-253
+  - target: ix://agent-ix/filament-spec-language/FR-253
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-254
+  - target: ix://agent-ix/filament-spec-language/FR-254
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-026: Check timing claims over a timed model
@@ -61,7 +61,7 @@ relationships:
 ## Story
 
 **As a** verification operator building a robot controller or an embedded
-real-time system in QSL
+real-time system in FSL
 **I want** to give my state model real-valued clocks, guards, deadlines and
 urgency, state claims such as "a reply comes within 3 ms", check a task set's
 schedulability, measure timing probabilities, and carry the claims onto the
@@ -76,10 +76,10 @@ reported to me.
 ADR-026 designs dense time. A timed model declares a `time` member and
 clocks; its behaviours alternate real delays and discrete steps, and only
 behaviours whose time diverges count. A claim over it binds `model-time` by
-default, so an interval counts time units. QSL's native zone engine checks
+default, so an interval counts time units. FSL's native zone engine checks
 timed claims and returns a zone certificate with every proof; a native
 closed-form engine checks schedulability; hybrid dynamics go to external
-solvers under QSpec FR-193; stochastic delays are sampled by the statistical
+solvers under FSpec FR-193; stochastic delays are sampled by the statistical
 engine; and the claim reaches an embedded target as a tick-based monitor and
 Kani obligations.
 

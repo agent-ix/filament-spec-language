@@ -3,11 +3,11 @@ id: TC-612
 title: "An undefined predicate refutes a state-graph claim and replays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-170
+  - target: ix://agent-ix/filament-spec-language/FR-170
     type: verifies
 ---
 # TC-612: An undefined predicate refutes a state-graph claim and replays

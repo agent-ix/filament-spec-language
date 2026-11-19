@@ -3,7 +3,7 @@ id: TC-1070
 title: "Evaluate the expressions of protocol nodes from a checked package"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1070: Evaluate the expressions of protocol nodes from a checked package
@@ -25,7 +25,7 @@ returns the value of its neighbour.
 Fixture **E** is a domain package `M` and the protocol `Refunds` below. Like
 TC-1057's fixture R, every binder a trigger guard, retry relation or recovery
 predicate reads is a record value, because those slots bar model state and a
-compensation's attempt record type is a record value type (QSpec FR-464,
+compensation's attempt record type is a record value type (FSpec FR-464,
 FR-466). Fixture E requires of `M`:
 
 - `Total = Int[0, 1000]` and `Tally = Int[0, 3]`;
@@ -107,7 +107,7 @@ protocol Pipeline using P over (view: M::Node) on origin {
 }
 ```
 
-The package is the checked package QSL compiles from the unit, which carries
+The package is the checked package FSL compiles from the unit, which carries
 the protocol as the v2 protocol nodes FR-383 emits. The observation is one
 current snapshot with every population complete: `nodes` holds `n5`
 (`total` 5). Record values are written `Type(field value)`: `Receipt(total 5)`,
@@ -188,8 +188,8 @@ declaration order, are:
   except that of `Composed.case`, which is `(choice: M::Choice)`.
 
 Each attempt control has one constraint slot, as FR-390's slot table gives it.
-Shapes are written in checked-term form, not QSL surface syntax; whether each is
-expressible in QSL's surface syntax is a check for the code lane. The
+Shapes are written in checked-term form, not FSL surface syntax; whether each is
+expressible in FSL's surface syntax is a check for the code lane. The
 constraints of `Tried` and `Picked` both read the one protocol-level capture
 `order`, so the application `order >= 0` is a single graph node held by two
 slots of two origins (`protocol Composed run Main Picked body` and `protocol Composed run Main Tried body`) (the checker builds equal applications over one binder as
@@ -219,7 +219,7 @@ slot, and its binder `m` or `choice` is shared with no other slot.
 | C5a | the package of C5 | any slot, any meter | no slot has a view; the meter is unchanged (AC-36) |
 | C6 | package with a retry-origin `earlier.tally` row inserted directly after the occurrence-1 `earlier.tally` row, keyed to occurrence 1 at `term_ordinal` 1 | any | `MissingLocationProjection` at the `Node` locus of the `earlier.tally` application; no meter charge (AC-37) |
 | C6a | package with a retry-origin row added at `term_ordinal` 1 for `order >= 0` of `Applied.constraint` | any | `MissingLocationProjection` at the `Node` locus of that application; no meter charge (AC-38) |
-| C7 | package with the occurrence-1 retry-origin `earlier.tally` row's `term_ordinal` changed from 0 to 1 | any | refused at I2 by the QSpec reader, `invalid_package`/`invalid-value` at `/checked_term_data/protocol_locations`; view creation not attempted (AC-39) |
+| C7 | package with the occurrence-1 retry-origin `earlier.tally` row's `term_ordinal` changed from 0 to 1 | any | refused at I2 by the FSpec reader, `invalid_package`/`invalid-value` at `/checked_term_data/protocol_locations`; view creation not attempted (AC-39) |
 | C7a | package with a retry-origin `earlier.tally` row duplicated | any | refused at I2 with `invalid_package`/`conflicting-definition` at `/checked_term_data/protocol_locations/<index of the duplicate>`; view creation not attempted (AC-40) |
 | C8 | package whose `Refund.recovery.predicate` slot descriptor holds the real `CheckedBody` of `Refund.retry.relation`, taken through the checked package's existing API | row 12's supply | the reader value, `NodeRead` values and charge log equal the unaltered view's (AC-30) |
 | C9 | Inspection: list FR-322's admitted expression operation identities and FR-400's `NodeKind` variants | n/a | every identity maps to a variant; no identity is left to `MissingOperationProjection` (AC-41) |
@@ -272,7 +272,7 @@ of `Refund.registration_captures[0]`, whose initializer reads only
 
 The test harness constructs occurrence metadata with the checked population
 declaration node keys obtained from the E-P checked package. Paths are
-`quire_semantic_value::admission::PathStep` values, relative to the supplied
+`filament_semantic_value::admission::PathStep` values, relative to the supplied
 value root. The concrete path coverage is:
 
 | Supplied value occurrence | Path | Population declaration |

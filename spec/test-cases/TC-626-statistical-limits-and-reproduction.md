@@ -3,7 +3,7 @@ id: TC-626
 title: "Statistical runs stop on caller-set budgets and reproduce from their provenance"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-191
+  - target: ix://agent-ix/filament-spec-language/FR-191
     type: verifies
 ---
 # TC-626: Statistical runs stop on caller-set budgets and reproduce from their provenance

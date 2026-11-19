@@ -3,7 +3,7 @@ id: TC-862
 title: "Clause-run dispositions classify into one refinement class with their stage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-342
+  - target: ix://agent-ix/filament-spec-language/FR-342
     type: verifies
 ---
 # TC-862: Clause-run dispositions classify into one refinement class with their stage

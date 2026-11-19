@@ -3,17 +3,17 @@ id: TC-1160
 title: "A temporal clause run travels the clause-run request and result wires"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-312
+  - target: ix://agent-ix/filament-spec-language/FR-312
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: verifies
 ---
 # TC-1160: A temporal clause run travels the clause-run request and result wires
@@ -26,7 +26,7 @@ every FR-330 temporal disposition is written and read as
 basis, and that a refused `holds` condition settles as a refusal at its
 position.
 
-Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-266-AC-4,
+Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
 FR-327-AC-6, FR-330-AC-7.
 
 ## Test Procedure
@@ -57,6 +57,9 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
 7. Write and read back each finite-window report FR-267-AC-18 lists
    (constructed reports, not runs), check the `indeterminate` report's exit,
    and apply each edit that AC lists.
+8. Write and read back FR-267-AC-24's `window-limit-reached` and
+   `progress-limit-reached` rows, then read each with `value` a JSON number
+   and with `value` `"02"`.
 
 Tag the tests `#[trace("TC-1160", "<criterion>")]` with the criterion each
 step asserts.
@@ -75,8 +78,10 @@ step asserts.
   `{"lower": "0", "upper": "1"}`.
 - Step 3: each report reads back to an equal typed verdict or trace
   refusal (an `incomplete` report to its row only) with its table
-  row's members, `outcome` and `basis`, the two trace refusals to
-  `EmptyLoop` and `EmptyTrace`; no document has a `refusal` member; each
+  row's members, `outcome` and `basis`; the empty-loop and empty `Finite`
+  reports are FR-645 refusal records (`empty-lasso-loop`,
+  `empty-finite-trace`) with no `temporal` member, each reading back to an
+  equal refusal; no temporal-row document has a `refusal` member; each
   edited document refuses with a located diagnostic naming the member.
 - Step 4: the refused condition at position 1 with
   `integer_out_of_domain`/`outside-domain`; `Completed(false)` at position 0
@@ -90,3 +95,5 @@ step asserts.
 - Step 7: each report reads back to its row with the label `pending` or
   `indeterminate` and the reason intact; the `indeterminate` report exits
   11; each edited document refuses naming the member.
+- Step 8: both rows read back equal with `value` `"2"` and `"4"`; each
+  edited row refuses naming `disposition.temporal.value`.

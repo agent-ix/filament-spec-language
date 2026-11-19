@@ -3,7 +3,7 @@ id: TC-259
 title: "A package type's identity is its checked node id, scoped only by owner"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-259: A package type's identity is its checked node id, scoped only by owner

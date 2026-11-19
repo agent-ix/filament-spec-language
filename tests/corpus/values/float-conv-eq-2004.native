@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F = Float64[nearest-even];
+function f using v(): Boolean pure { convert<F>(1) = convert<F>(1) }

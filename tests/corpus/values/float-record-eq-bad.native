@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F = Float64[nearest-even];
+record R { a: F; }
+function f using v(a: R, b: R): Boolean pure { a = b }

@@ -57,7 +57,7 @@ fn unit_text(model: &Model) -> String {
     format!(
         "// SPDX-License-Identifier: AGPL-3.0-only\n\
          language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          model Config = {:?};\n\
          invariant ParentOrder using v on Config::ConfigVersion at current {{ \
          present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n\
@@ -89,7 +89,7 @@ fn snapshot(model: &Model, name: &str, rows: &[(&str, i64, Option<&str>)]) -> Va
         })
         .collect();
     json!({
-        "format": "quire.state.snapshot/v1",
+        "format": "filament.state.snapshot/v1",
         "identity": {
             "authority": AUTHORITY,
             "identity": format!("ix://example/config-version/spine/current/{name}"),

@@ -3,7 +3,7 @@ id: TC-974
 title: "Statistical evidence kind is admitted for probabilistic backends"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-974: Statistical evidence kind is admitted for probabilistic backends

@@ -3,7 +3,7 @@ id: TC-893
 title: "An SMT proof certificate is accepted or rejected by the core checker"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
 ---
 # TC-893: An SMT proof certificate is accepted or rejected by the core checker

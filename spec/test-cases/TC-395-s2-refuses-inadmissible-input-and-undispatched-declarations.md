@@ -3,7 +3,7 @@ id: TC-395
 title: "S2 refuses an inadmissible source and a unit holding a declaration with no dispatch entry"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-395: S2 refuses an inadmissible source and a unit holding a declaration with no dispatch entry

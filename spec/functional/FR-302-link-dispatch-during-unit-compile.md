@@ -3,17 +3,17 @@ id: FR-302
 title: "Link dispatch at S3 during unit compile"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-083
+  - target: ix://agent-ix/filament-spec-language/FR-083
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-300
+  - target: ix://agent-ix/filament-spec-language/FR-300
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
 ---
 # FR-302: Link dispatch at S3 during unit compile
@@ -31,8 +31,8 @@ checked package.
 
 - A complete-V1 unit, compiled through spine `compile` (ADR-011 S1 to S4),
   with each dispatched call `receiver.member(args)` its invariant,
-  precondition and postcondition clauses make (QSpec FR-151 rule
-  `quire.model.dispatch.single/v1`).
+  precondition and postcondition clauses make (FSpec FR-151 rule
+  `filament.model.dispatch.single/v1`).
 - The admitted model effective view of each selected domain package.
 - A dispatched call in an operation body is not an input. It refuses
   `ill_typed`/`operator-ineligible` where the body is checked (TC-196 D07),
@@ -91,7 +91,7 @@ body type against the operation's declared result, are checked for every unit
 `operation-body`, whether or not a dispatched call reaches its operation
 (FR-576), and for a called operation when dispatch linking first reads the
 body, before any consumer uses it; a mismatch refuses
-`ill_typed`/`type-mismatch` at the body (QSpec FR-151's arity row gives the
+`ill_typed`/`type-mismatch` at the body (FSpec FR-151's arity row gives the
 same code and cause). A body on an operation that declares no result type
 refuses the same way (FR-576). Resolving a body to
 its `DeclarationKey` and setting `has_body` do not depend on that check.
@@ -105,7 +105,7 @@ This reuses the duplicate-declaration diagnostic for repeated same-name
 declarations in [FR-246](FR-246-check-task-sets-and-schedulability-claims.md)
 and the at-most-one declaration rule in
 [FR-211](FR-211-declare-a-protocol-s-intended-terminal-states-and-report-its-deadlocks.md);
-QSpec FR-151 requires the same outcome: across all source units linked into
+FSpec FR-151 requires the same outcome: across all source units linked into
 one package, at most one `operation-body` declaration resolves to a given
 operation identity, and a second is refused as
 `conflicting_declaration`/`duplicate-declaration`. A single unit is the
@@ -115,10 +115,10 @@ one-unit case of that rule.
 
 If FR-083 linking reports a no-applicable or a multiple-undominated failure
 for any subtype of any called family, the compile SHALL refuse at S3 with the
-QSpec FR-151 code and cause for that failure (`ambiguous_dispatch`/
+FSpec FR-151 code and cause for that failure (`ambiguous_dispatch`/
 `no-applicable` or `ambiguous_dispatch`/`multiple-undominated`), naming the
 subtype, the candidates and the dominance pairs. The checker SHALL report
-every failing subtype of every called family in one refusal, as one QSpec
+every failing subtype of every called family in one refusal, as one FSpec
 FR-272 record for each failing subtype. The records SHALL come in charge
 order: families by ascending model alias and then ascending root operation
 key, and the subtypes of one family by ascending effective identity. The
@@ -144,13 +144,13 @@ caller's value, with the published default of
 | FR-302-AC-5 | A unit whose called family has `n` `redefines` edges compiles with `family_steps = n` and, with `family_steps = n - 1`, refuses at S3 with `resource_exhausted`/`insufficient-next-charge` naming the setting `model.family_steps`, the limit `n - 1` and the limits field that raises it. | Test (TC-795) |
 | FR-302-AC-6 | A unit whose precondition makes a dispatched call on an operation redefined at `A` and at `B` (`B` a subtype of `A`) compiles; evaluating the precondition with a receiver whose most-specific type is `B` runs `B`'s body, and with a receiver of type `A` runs `A`'s body. | Test (TC-809) |
 | FR-302-AC-7 | A single body for each of `A.size` and `B.size` joins with retained expressions and unit pre/post clauses to admitted operations by resolved `DeclarationKey`, independent of body labels and declaration order; `has_body` is true for those resolved operations and false for an operation without a body, whose called family is not applicable under FR-151. Two body forms resolving to the same `DeclarationKey` refuse as `conflicting_declaration`/`duplicate-declaration`, naming both forms and producing no checked package or partial table. TC-986 is the single-body control; TC-987 covers the duplicate. | Test |
-| FR-302-AC-8 | A body whose parameter count differs from its operation's signature, and a body whose type does not match its operation's declared result, each refuse at S3 as `ill_typed`/`type-mismatch`, located at the body, for every body, reached by a dispatched call or not, and at first dispatch read, with no checked package or partial dispatch table. QSpec FR-151 refuses an operation-redefinition parameter-count mismatch with the same code and cause. | Test (TC-1011) |
+| FR-302-AC-8 | A body whose parameter count differs from its operation's signature, and a body whose type does not match its operation's declared result, each refuse at S3 as `ill_typed`/`type-mismatch`, located at the body, for every body, reached by a dispatched call or not, and at first dispatch read, with no checked package or partial dispatch table. FSpec FR-151 refuses an operation-redefinition parameter-count mismatch with the same code and cause. | Test (TC-1011) |
 | FR-302-AC-9 | A model holding `A.size` with a body and an unrelated type `Other` declaring its own `size` with no body: a unit whose only `size` call is on an `A` receiver compiles; a unit with a `size` call on an `Other` receiver refuses `ambiguous_dispatch`/`no-applicable` naming `Other.size`. A dispatched call in an operation body refuses `ill_typed`/`operator-ineligible`. | Test (TC-1019) |
 
 ## Dependencies
 
 - **Upstream:** [FR-083](FR-083-resolve-unique-most-specific-dispatch.md)
-  links one family; QSpec FR-151 owns the dispatch rule and its codes;
+  links one family; FSpec FR-151 owns the dispatch rule and its codes;
   ADR-016 SC-3 places dispatch selection at S3;
   [FR-300](FR-300-check-model-forms-through-the-state-model-family.md) types
   the dispatched call.

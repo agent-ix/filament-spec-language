@@ -3,9 +3,9 @@ id: TC-1163
 title: "A probabilistic claim's request item names its evidence kind"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: verifies
 ---
 # TC-1163: A probabilistic claim's request item names its evidence kind

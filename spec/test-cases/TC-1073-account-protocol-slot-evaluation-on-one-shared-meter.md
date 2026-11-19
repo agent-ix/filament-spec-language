@@ -3,7 +3,7 @@ id: TC-1073
 title: "Account protocol slot evaluation on one shared meter"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1073: Account protocol slot evaluation on one shared meter

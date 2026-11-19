@@ -3,7 +3,7 @@ id: TC-889
 title: "S2 builds the refinement form with every row in source order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-310
+  - target: ix://agent-ix/filament-spec-language/FR-310
     type: verifies
 ---
 # TC-889: S2 builds the refinement form with every row in source order

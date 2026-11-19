@@ -3,7 +3,7 @@ id: TC-420
 title: "Occurrence keys and source regions are lexical values, and every checked node has an occurrence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: verifies
 ---
 # TC-420: Occurrence keys and source regions are lexical values, and every checked node has an occurrence

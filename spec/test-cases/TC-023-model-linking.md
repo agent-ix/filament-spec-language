@@ -3,7 +3,7 @@ id: TC-023
 title: "Retired: stale package closure"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-005
+  - target: ix://agent-ix/filament-spec-language/FR-005
     type: verifies
 ---
 

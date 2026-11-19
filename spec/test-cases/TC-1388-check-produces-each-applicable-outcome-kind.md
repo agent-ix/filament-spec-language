@@ -3,7 +3,7 @@ id: TC-1388
 title: "check produces each applicable outcome kind of the lifecycle matrix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: verifies
 ---
 # TC-1388: check produces each applicable outcome kind of the lifecycle matrix

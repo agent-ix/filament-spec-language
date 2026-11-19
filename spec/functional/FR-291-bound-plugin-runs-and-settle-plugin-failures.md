@@ -3,47 +3,47 @@ id: FR-291
 title: "Settle plugin-run failures as typed terminal records per item"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-305"
+  - target: "ix://agent-ix/filament-specification/FR-305"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-331"
+  - target: "ix://agent-ix/filament-specification/FR-331"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-462"
+  - target: "ix://agent-ix/filament-specification/FR-462"
     type: depends_on
 ---
 # FR-291: Settle plugin-run failures as typed terminal records per item
 
 ## Description
 
-QSpec FR-462 owns a plugin run: its lifecycle (start at the path the caller
+FSpec FR-462 owns a plugin run: its lifecycle (start at the path the caller
 names, `hello`, registration, request and result exchanges, `shutdown`,
 exit), its budgets, its cancel and grace period, and the settlement of every
-failure event. QSpec FR-305 owns the plugin forms and the run budgets. The
+failure event. FSpec FR-305 owns the plugin forms and the run budgets. The
 driver's plugin host implements them (ADR-029 PL-2, PL-3, PL-6, PL-7).
 
-QSL's part is the terminal record each FR-462 settlement becomes, and its
+FSL's part is the terminal record each FR-462 settlement becomes, and its
 category:
 
-| FR-462 settlement | QSL terminal record | O-16 category | Exit (FR-285) |
+| FR-462 settlement | FSL terminal record | O-16 category | Exit (FR-285) |
 | --- | --- | --- | --- |
 | `failed` with cause `tool-failure{defect}`, one of the fourteen `defect` values of FR-462's failure table | `failed`, with the typed `ToolFailure` cause whose variant is that `defect`, and for a frame-length or total-byte limit the limit and the byte count that crossed it | internal failure | 30 |
 | `incomplete` with cause `timed-out` | `incomplete`, cause `TimedOut` (ADR-014 B-5) | incomplete | 22 |
 | `incomplete` with cause cancelled | `incomplete`, cause cancelled (FR-276) | incomplete | 22 |
 
-`ToolFailure` has exactly one variant per row of QSpec FR-462's failure
+`ToolFailure` has exactly one variant per row of FSpec FR-462's failure
 table. Only the two byte-limit variants carry a payload:
 
 | `ToolFailure` | FR-462 `defect` |
@@ -63,28 +63,28 @@ table. Only the two byte-limit variants carry a payload:
 | `UnadvertisedKind` | `unadvertised-kind` |
 | `MissingTerminalRecord` | `missing-terminal-record` |
 
-A `failed` record with a `ToolFailure` cause serializes as QSpec FR-331's
+A `failed` record with a `ToolFailure` cause serializes as FSpec FR-331's
 cause `tool-failure{defect}`, `defect` the row's spelling. `FrameLength` and
-`TotalBytes` also write QSpec FR-462's `limit`, the caller's configured
+`TotalBytes` also write FSpec FR-462's `limit`, the caller's configured
 maximum in bytes, and `value`, the byte count that crossed it (the frame's
 length, or the run's running total); no other variant writes either.
 
 ## Inputs
 
-The driver's settlement of each item routed to a plugin, as QSpec FR-462
+The driver's settlement of each item routed to a plugin, as FSpec FR-462
 states it.
 
 ## Outputs
 
-One QSL terminal record per item routed to the plugin, in the outcome that
+One FSL terminal record per item routed to the plugin, in the outcome that
 also holds the records of items routed to other providers.
 
 ## Behavior
 
-- QSL shall represent each FR-462 tool-failure settlement as a `failed`
+- FSL shall represent each FR-462 tool-failure settlement as a `failed`
   terminal record whose typed `ToolFailure` cause is the variant of its
   `defect`.
-- QSL shall serialize a `ToolFailure` cause as FR-331's
+- FSL shall serialize a `ToolFailure` cause as FR-331's
   `tool-failure{defect}` with the `defect` spelling of its variant, with
   `limit` and `value` for `FrameLength` and `TotalBytes`, and with no other
   member.
@@ -93,7 +93,7 @@ also holds the records of items routed to other providers.
 - An `incomplete` record with cause `TimedOut` or cancelled shall have the
   O-16 category incomplete.
 - When an outcome holds a plugin item's `failed` or `incomplete` record
-  beside other providers' records, QSL shall leave each other record
+  beside other providers' records, FSL shall leave each other record
   unchanged.
 
 ## Acceptance Criteria
@@ -111,13 +111,13 @@ also holds the records of items routed to other providers.
 - [FR-276](FR-276-cancel-a-lifecycle-operation.md): cancellation.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md): exit codes.
 - [FR-290](FR-290-settle-plugin-results-as-typed-terminal-records.md): plugin results.
-- QSpec FR-462: the plugin run, its failure events and their settlements;
-  QSpec FR-305: the plugin forms and run budgets; QSpec FR-331: `failed`
+- FSpec FR-462: the plugin run, its failure events and their settlements;
+  FSpec FR-305: the plugin forms and run budgets; FSpec FR-331: `failed`
   and `incomplete`.
 
 ## Overlap
 
-The driver repository specifies and tests `quire-plugin-host` against QSpec
+The driver repository specifies and tests `filament-plugin-host` against FSpec
 FR-462 and FR-305: starting the plugin at the named path, stderr capture up
 to the caller's byte limit, deadline and kill, `cancel` and the grace
 period, and the detection of each failure event.
@@ -126,4 +126,4 @@ period, and the detection of each failure event.
 
 - QSL-393 (V1-A06a): the plugin wire.
 - QSL-390 (ARCH-50).
-- QSpec FR-305, FR-462 (STD-141): the QSpec half.
+- FSpec FR-305, FR-462 (STD-141): the FSpec half.

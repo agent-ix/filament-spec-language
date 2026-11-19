@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Label = Text[0, 8; nfc];
+function f using v(): Boolean pure { "fsl" = "fsl" }

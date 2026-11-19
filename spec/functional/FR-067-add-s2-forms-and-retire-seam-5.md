@@ -3,22 +3,22 @@ id: FR-067
 title: "Add the S2 forms stage and retire SEAM-5"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-007
+  - target: ix://agent-ix/filament-spec-language/US-007
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: traces_to
 ---
 # FR-067: Add the S2 forms stage and retire SEAM-5
 
 ## Description
 
-ADR-011 §7.3 M-3 requires QSL to add the S2 `forms` stage and to retire
+ADR-011 §7.3 M-3 requires FSL to add the S2 `forms` stage and to retire
 SEAM-5, the structural lowering `complete::package::lower_source_graph` /
 `LoweredSourceGraph`. ADR-010 §2.6 X4 records `LoweredSourceGraph` as
 `absent: LoweredSourceGraph in src excluding src/complete` — the two
@@ -26,15 +26,15 @@ occurrences besides its own definition, `complete::package_tests`'s call and
 `complete::mod`'s re-export, are both inside `src/complete`, so X4's claim
 and this requirement's same-change deletion hold together, but X4 does not
 say "no consumer anywhere," and this requirement does not claim that either.
-QSL SHALL add the `forms` core module. QSL SHALL delete
+FSL SHALL add the `forms` core module. FSL SHALL delete
 `LoweredSourceGraph`, `LoweredDeclaration` and `lower_source_graph` in the
 same change: the M-3 row's Compatibility column states this directly
 ("none: `LoweredSourceGraph` is deleted in the same change"); no build after
 this requirement lands carries both the new S2 boundary and the old SEAM-5
 dead end.
 
-The S2 forms stage is QSL's E2 producer of parsed semantic forms from a
-lossless CST. ADR-011 §2.1 names its owner as "QSL `forms`; family form
+The S2 forms stage is FSL's E2 producer of parsed semantic forms from a
+lossless CST. ADR-011 §2.1 names its owner as "FSL `forms`; family form
 builders (ADR-012 §2)" — the core and the family builders together, not the
 core alone. This requirement builds the `forms` core, at the layer-2
 position ADR-011 §6.1 assigns it: the closed, family-keyed dispatch entry
@@ -46,8 +46,8 @@ contract (ADR-011 §2.2 E2 row).
 final paragraph states: "The one `Expression` enum (S2) is defined in the
 `forms` core. Each variant's owning family is the family whose hook its arm
 calls, and that family adds and removes the variant." ADR-012 §5.1's S2 row
-names the seam's owner as "QSL, owning family": the core's shape is QSL's,
-each variant is its family's. This requirement is M-3a, the QSL-owned part:
+names the seam's owner as "FSL, owning family": the core's shape is FSL's,
+each variant is its family's. This requirement is M-3a, the FSL-owned part:
 the `forms` core, its dispatch entry table, the SEAM-5 retirement, and the
 `value::expression::syntax` module move. ADR-011 §6.2's module table stamps
 `value::expression::syntax` — the module that today defines the `Expression`
@@ -102,7 +102,7 @@ adds the S2 boundary they will eventually cut over to.
 
 ## Behavior
 
-### The forms core is QSL's E2 producer, together with family form builders
+### The forms core is FSL's E2 producer, together with family form builders
 
 The forms stage SHALL evaluate each protocol declaration's CST on its own: a
 recovery node inside one declaration's delimited span refuses that declaration
@@ -111,7 +111,7 @@ built as FR-503 states.
 
 The `forms` core module and each family's own form builder SHALL together
 be the only producers of a parsed semantic form from a CST (ADR-011 §2.1 E2
-owner: "QSL `forms`; family form builders"); the core alone is not a
+owner: "FSL `forms`; family form builders"); the core alone is not a
 complete producer, and this requirement does not claim otherwise. The
 `forms` core SHALL depend on layer 1 (`cst`), F and K only (ADR-011 §6.1).
 Given a CST with no error or recovery node, whose root construct's leading
@@ -221,7 +221,7 @@ relocated to `tests/`, `xtask` or anywhere else instead of being deleted.
 ## Dependencies
 
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
-  §2.1 (the E2 edge's owner: "QSL `forms`; family form builders") and §2.2
+  §2.1 (the E2 edge's owner: "FSL `forms`; family form builders") and §2.2
   (the E2 row's five preserved/dropped columns: syntax, provenance, identity,
   version and proof metadata — this requirement covers all five, not only
   identity and provenance), §2.3 (E2's "no partial output" refusal rule),
@@ -239,7 +239,7 @@ relocated to `tests/`, `xtask` or anywhere else instead of being deleted.
   owning family is the family whose hook its arm calls, and that family adds
   and removes the variant" — the basis for this requirement's M-3a/M-3b
   split), §5.1 (the closed parsed-form enum FR-063 governs, whose S2 row
-  names the owner "QSL, owning family").
+  names the owner "FSL, owning family").
 - [ADR-010](../decisions/ADR-010-observed-architecture-baseline.md) §2.6 X4
   records `LoweredSourceGraph` as `absent: LoweredSourceGraph in src
   excluding src/complete`; this requirement's Description quotes that claim

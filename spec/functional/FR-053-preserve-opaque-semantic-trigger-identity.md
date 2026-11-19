@@ -3,12 +3,12 @@ id: FR-053
 title: "Preserve opaque semantic-trigger identity on the checked-package route"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-449, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-390, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-093, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-230, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-479, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-449, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-390, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-093, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-230, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-479, type: references }
 ---
 # FR-053: Preserve opaque semantic-trigger identity on the checked-package route
 
@@ -29,8 +29,8 @@ identities as distinct instances even when their other values are equal, and
 the evaluator SHALL associate a repeated delivery of the same identity with the existing
 instance, subject to FR-044's contradiction rule.
 
-The observation owner selects the identity. QSL SHALL treat it as opaque and
-preserve it byte-for-byte wherever the checked-package route carries it; QSL
+The observation owner selects the identity. FSL SHALL treat it as opaque and
+preserve it byte-for-byte wherever the checked-package route carries it; FSL
 does not authenticate observation-owner evidence or construct a QProtocol
 obligation binding. An absent, empty, malformed, stale, mismatched or
 cross-version identity representation SHALL produce the route's typed
@@ -42,7 +42,7 @@ These obligations apply when the replacement route accepts semantic-trigger
 identity. They do not add a trigger representation to routes that do not carry
 one and do not prescribe a concrete API or encoding. FR-449 supplies the
 checked-package activation-map row; QProtocol joins that row to its admitted
-observation evidence under QSpec FR-479.
+observation evidence under FSpec FR-479.
 
 ## Acceptance Criteria
 
@@ -57,4 +57,4 @@ observation evidence under QSpec FR-479.
 - [FR-044](./FR-044-activate-temporal-obligations.md) owns trigger-keyed activation identity and duplicate-delivery behavior.
 - [FR-449](./FR-449-derive-the-control-to-temporal-activation-map-from-the-protocol-nodes.md) owns the checked-package control-to-temporal activation map.
 - [FR-390](./FR-390-evaluate-a-protocol-node-expression-from-a-checked-package.md) owns checked-package protocol evaluation.
-- QSpec FR-093 and FR-230 establish semantic-trigger and obligation identity; QSpec FR-479 owns the QProtocol binding and its cross-owner checks.
+- FSpec FR-093 and FR-230 establish semantic-trigger and obligation identity; FSpec FR-479 owns the QProtocol binding and its cross-owner checks.

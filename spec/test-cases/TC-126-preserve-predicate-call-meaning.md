@@ -3,7 +3,7 @@ id: TC-126
 title: "Preserve exact predicate meaning at cross-family calls"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-046
+  - target: ix://agent-ix/filament-spec-language/FR-046
     type: verifies
 ---
 # TC-126: Preserve exact predicate meaning at cross-family calls

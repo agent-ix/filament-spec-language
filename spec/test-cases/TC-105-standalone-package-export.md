@@ -3,7 +3,7 @@ id: TC-105
 title: "Compile intake, labels and limits for a 1-draft request"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
 ---
 ## Description
@@ -40,7 +40,7 @@ AC-2, steps 3 to 5 AC-3, step 6 AC-13.
 ## Expected Results
 
 - Step 1: exit code 0; the outcome's package bytes are the
-  `quire.checked-package/v2` bytes with no wrapper or newline.
+  `filament.checked-package/v2` bytes with no wrapper or newline.
 - Step 2: the native-run/1 request refuses `unknown_wire`; each runtime-only
   request member refuses `invalid-request` at the request stage, exit code 20,
   with no package bytes, and no model or runtime file is read.

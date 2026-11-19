@@ -3,27 +3,27 @@ id: FR-222
 title: "Explore the release-acquire memory model with relaxed and seq_cst accesses"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-223
+  - target: ix://agent-ix/filament-spec-language/FR-223
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-229
+  - target: ix://agent-ix/filament-spec-language/FR-229
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-437
+  - target: ix://agent-ix/filament-specification/FR-437
     type: depends_on
 ---
 # FR-222: Explore the release-acquire memory model with relaxed and seq_cst accesses
 
 ## Description
 
-Crate `qsl-eval`'s `simulation` module SHALL provide `Ra: MemoryModel` (ADR-027 SE-1), which
-implements QSpec FR-437's RC11 release-acquire rules through the
+Crate `fsl-eval`'s `simulation` module SHALL provide `Ra: MemoryModel` (ADR-027 SE-1), which
+implements FSpec FR-437's RC11 release-acquire rules through the
 memory-model seam, with the SC event graph of FR-223 for `seq_cst`
 accesses (ADR-025 RA-1 to RA-8).
 
@@ -50,7 +50,7 @@ readers may disagree on the order of independent writes.
 
 ## Behavior
 
-- `Ra` SHALL implement QSpec FR-437's entry, load, store, message-view,
+- `Ra` SHALL implement FSpec FR-437's entry, load, store, message-view,
   RMW, fence, fork, join, channel and garbage-collection rules, and SHALL
   apply them only through the ADR-027 SE-1 members: the messages and views
   as the component (a), a load's message choice as observe (b), a store's
@@ -66,9 +66,9 @@ readers may disagree on the order of independent writes.
   by its depth from the mo-last message in the step's transition identity.
 - `Ra` SHALL serialize its component, FR-223's graph and FR-224's race
   summary as the state key's memory member (FR-229), with each view's race
-  Booleans as the view's `race` member (QSpec FR-438), and SHALL serialize
+  Booleans as the view's `race` member (FSpec FR-438), and SHALL serialize
   the view each in-flight `send` carries as its queue entry's `view` member
-  (QSpec FR-425, FR-437), whether or not the subject has a non-atomic
+  (FSpec FR-425, FR-437), whether or not the subject has a non-atomic
   location.
 
 ## Acceptance Criteria
@@ -76,7 +76,7 @@ readers may disagree on the order of independent writes.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-222-AC-1 | ADR-025 §10's `SB` under `ra` reaches 14 states in the `parallel` and 4 joined states, 18 in all, and the claim settles `refuted` with the canonical counterexample of §10's `ra` table: `Sx`, `Sy`, `Lx` at depth 1 (`x0`), `Ly` at depth 1 (`y0`), each store at slot depth 0, with the messages and views that table gives at each position. | Test (TC-667) |
-| FR-222-AC-2 | Each litmus test of ADR-025 §3.3's table, run under `ra`, reaches its weak outcome exactly when its `ra` column says allowed: SB allowed; SB with `seq_cst` fences forbidden; MP with `release`/`acquire` flag forbidden; MP with `relaxed` flag allowed; LB forbidden; IRIW with `release`/`acquire` allowed; 2+2W with `release` stores allowed; CoRR forbidden. Each verdict equals the expected outcome of QSpec FR-437's litmus vectors. | Test (TC-667) |
+| FR-222-AC-2 | Each litmus test of ADR-025 §3.3's table, run under `ra`, reaches its weak outcome exactly when its `ra` column says allowed: SB allowed; SB with `seq_cst` fences forbidden; MP with `release`/`acquire` flag forbidden; MP with `relaxed` flag allowed; LB forbidden; IRIW with `release`/`acquire` allowed; 2+2W with `release` stores allowed; CoRR forbidden. Each verdict equals the expected outcome of FSpec FR-437's litmus vectors. | Test (TC-667) |
 | FR-222-AC-3 | Two threads each `fetch_add(1)` with `ordering relaxed` on a location at 0: every joined state holds 2, and no state has two RMWs reading one message. After `SB`'s `join all`, each location holds one message. A message earlier in mo than every running thread's current view at its location is absent from the next state, whatever its acquire, release and message views and `S` point at. | Test (TC-667) |
 | FR-222-AC-4 | MP with `relaxed` flag accesses, a `release` fence before the flag store and an `acquire` fence after the flag load, settles `proved` under `ra`. MP whose flag is passed by a channel `send` and `receive` in place of the flag location settles `proved` under `ra`. | Test (TC-667) |
 | FR-222-AC-5 | One branch repeating, with no maximum and a guard that stays true, a `relaxed` store of the constant `x := 1` and then a `relaxed` load of `x`, with no fence, under `ra` with `max_messages` 1: the claim `always holds(true)` settles `proved`, the run states `max_messages` 1 not reached, and every state holds one live message of `x`. | Test (TC-667) |
@@ -86,8 +86,8 @@ readers may disagree on the order of independent writes.
 - ADR-025 §3.3 RA-1 to RA-8 and the litmus table (as amended by ADR-027);
   ADR-027 SE-1.
 - FR-220, FR-223 (SC event graph), FR-229 (the component in the state).
-- QSpec FR-437 owns the `ra` semantics and the litmus vectors.
+- FSpec FR-437 owns the `ra` semantics and the litmus vectors.
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-437 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-437 (Linear STD-138).

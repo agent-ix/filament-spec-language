@@ -3,7 +3,7 @@ id: TC-728
 title: "A deep package's node keys do not depend on the stack"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: verifies
 ---
 # TC-728: A deep package's node keys do not depend on the stack

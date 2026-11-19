@@ -3,7 +3,7 @@ id: TC-052
 title: "Retain population and invocation obligations after checking"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-052: Retain population and invocation obligations after checking

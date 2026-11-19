@@ -3,7 +3,7 @@ id: TC-1398
 title: "The README examples run in the clean clone and give their documented outputs"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-017
+  - target: ix://agent-ix/filament-spec-language/NFR-017
     type: verifies
 ---
 # TC-1398: The README examples run in the clean clone and give their documented outputs

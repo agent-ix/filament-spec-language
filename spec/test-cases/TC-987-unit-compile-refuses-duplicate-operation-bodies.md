@@ -3,7 +3,7 @@ id: TC-987
 title: "Unit compile refuses duplicate operation bodies resolving to one key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-302
+  - target: ix://agent-ix/filament-spec-language/FR-302
     type: verifies
 ---
 # TC-987: Unit compile refuses duplicate operation bodies resolving to one key

@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Revision-bound formatter and editor snapshot over the lossless CST.
-use qsl_foundation::{Phase, SourceIdentity, Span};
+use fsl_foundation::{Phase, SourceIdentity, Span};
 use std::collections::BTreeSet;
 
 use super::SourceEdit;
-use qsl_cst::{
+use fsl_cst::{
     CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, NodeIdentity, ParsedSource,
     Production, TokenClass,
 };
-use qsl_foundation::selection::ProfileCatalog;
+use fsl_foundation::selection::ProfileCatalog;
 
 /// Exact document/profile tuple carried by every editor request and response.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,7 +106,7 @@ pub fn analyze_document(
 ) -> Result<DocumentSnapshot, Box<CompleteDiagnostic>> {
     validate_binding(parsed, &binding, catalog)?;
     if cancelled {
-        return Err(qsl_cst::diagnostic::error(
+        return Err(fsl_cst::diagnostic::error(
             parsed.source(),
             CompleteCode::Cancelled,
             CompleteCause::CallerCancelled,
@@ -148,7 +148,7 @@ pub fn analyze_document(
     navigation.sort_by_key(|entry| (entry.span.start, entry.span.end, entry.production));
     let mut completion_set = BTreeSet::new();
     completion_set.extend(
-        qsl_cst::grammar::base_reserved_spellings()
+        fsl_cst::grammar::base_reserved_spellings()
             .into_iter()
             .map(|spelling| (spelling.to_string(), CompletionKind::GrammarToken)),
     );
@@ -207,7 +207,7 @@ pub fn format_document(
             ),
             |origin| (origin.code, origin.cause),
         );
-        return Err(qsl_cst::diagnostic::error(
+        return Err(fsl_cst::diagnostic::error(
             parsed.source(),
             code,
             cause,
@@ -217,8 +217,8 @@ pub fn format_document(
             "formatting requires an unrecovered complete-V1 source",
         ));
     }
-    let formatted = qsl_cst::format::format_with_limit(parsed, limits.source_bytes)
-        .map_err(qsl_cst::format::FormatRefusal::into_diagnostic)?;
+    let formatted = fsl_cst::format::format_with_limit(parsed, limits.source_bytes)
+        .map_err(fsl_cst::format::FormatRefusal::into_diagnostic)?;
     let candidate = super::parse_with_catalog(
         binding.source.clone(),
         parsed.source().path(),
@@ -227,7 +227,7 @@ pub fn format_document(
         limits,
     )?;
     if !candidate.is_admissible() {
-        return Err(qsl_cst::diagnostic::error(
+        return Err(fsl_cst::diagnostic::error(
             parsed.source(),
             CompleteCode::InvalidProjectionCorrespondence,
             CompleteCause::CorrespondenceLoss,
@@ -255,7 +255,7 @@ pub fn format_document(
             .zip(&candidate_tokens)
             .any(|(original, formatted)| original.spelling() != formatted.spelling())
     {
-        return Err(qsl_cst::diagnostic::error(
+        return Err(fsl_cst::diagnostic::error(
             parsed.source(),
             CompleteCode::InvalidProjectionCorrespondence,
             CompleteCause::CorrespondenceLoss,
@@ -298,7 +298,7 @@ fn validate_binding(
 ) -> Result<(), Box<CompleteDiagnostic>> {
     validate_catalog_profiles(parsed, catalog)?;
     if parsed.source().identity() != &binding.source {
-        return Err(qsl_cst::diagnostic::error_without_region(
+        return Err(fsl_cst::diagnostic::error_without_region(
             parsed.source(),
             CompleteCode::InvalidSourceMap,
             CompleteCause::Host(HostCause::RequestRevision),
@@ -314,7 +314,7 @@ fn validate_binding(
     if selected && catalog.contains(&binding.profile) {
         return Ok(());
     }
-    Err(qsl_cst::diagnostic::error(
+    Err(fsl_cst::diagnostic::error(
         parsed.source(),
         CompleteCode::UnknownProfile,
         CompleteCause::UnsupportedSelection,
@@ -345,7 +345,7 @@ pub(super) fn validate_catalog_profiles(
         let Some((code, cause, message)) = profile_refusal(catalog, &selection.identity) else {
             continue;
         };
-        return Err(qsl_cst::diagnostic::error(
+        return Err(fsl_cst::diagnostic::error(
             parsed.source(),
             code,
             cause,
@@ -403,8 +403,8 @@ fn is_symbol(production: Production) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use fsl_semantics::value::HeaderLayer;
     use ix_trace_rs::trace;
-    use qsl_semantics::value::HeaderLayer;
 
     use super::*;
 

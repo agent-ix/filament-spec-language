@@ -3,7 +3,7 @@ id: TC-455
 title: "Stopped explorations stay incomplete, and unbounded requests require a bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: verifies
 ---
 # TC-455: Stopped explorations stay incomplete, and unbounded requests require a bound
@@ -16,7 +16,7 @@ FR-101-AC-8.
 
 ## Test Procedure
 
-Every step is an integration test in `qsl-eval/tests/it/` through the
+Every step is an integration test in `fsl-eval/tests/it/` through the
 public entries; `explore` and `sample` are `pub(crate)` (FR-101).
 
 1. Call `explore_request` with an empty `domains` set, generous limits and a poll that cancels at the second

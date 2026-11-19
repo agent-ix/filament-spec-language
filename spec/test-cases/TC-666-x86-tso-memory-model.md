@@ -3,7 +3,7 @@ id: TC-666
 title: "The tso memory model explores store buffers, flushes and locked accesses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: verifies
 ---
 # TC-666: The tso memory model explores store buffers, flushes and locked accesses

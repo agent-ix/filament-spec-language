@@ -3,42 +3,42 @@ id: US-021
 title: "Compare runs over every behaviour of a model"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-171
+  - target: ix://agent-ix/filament-spec-language/FR-171
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-174
+  - target: ix://agent-ix/filament-spec-language/FR-174
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-175
+  - target: ix://agent-ix/filament-spec-language/FR-175
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-176
+  - target: ix://agent-ix/filament-spec-language/FR-176
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-177
+  - target: ix://agent-ix/filament-spec-language/FR-177
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-180
+  - target: ix://agent-ix/filament-spec-language/FR-180
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-181
+  - target: ix://agent-ix/filament-spec-language/FR-181
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-184
+  - target: ix://agent-ix/filament-spec-language/FR-184
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-021: Compare runs over every behaviour of a model
 
 ## Story
 
-**As a** verification operator with one or two QSL state models, their
+**As a** verification operator with one or two FSL state models, their
 initial snapshots and a finite key set for each population
 **I want** to state a property that compares runs, such as "runs with the
 same public inputs give the same public outputs" or "for every run there is
@@ -51,7 +51,7 @@ and how to raise it, when the check cannot decide.
 
 ## Context
 
-ADR-023 designs the check. QSpec defines relational properties and
+ADR-023 designs the check. FSpec defines relational properties and
 hyperproperties over declared finite trace sets; ADR-023 extends both to the
 behaviours of model subjects (ADR-018). The explicit-state engine checks
 universal properties by self-composition, `∀∃` properties with a safety body
@@ -123,5 +123,5 @@ the property and squares the model.
 
 ## References
 
-- ADR-023. Owning ticket: Linear QSL-370. QSpec half: QSpec
+- ADR-023. Owning ticket: Linear QSL-370. FSpec half: FSpec
   FR-395 to FR-403 (Linear STD-136).

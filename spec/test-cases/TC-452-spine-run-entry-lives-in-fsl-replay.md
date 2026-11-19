@@ -1,0 +1,177 @@
+---
+id: TC-452
+title: "The spine run entry is fsl_replay::spine::run, agrees with the CLI, and maps every outcome"
+type: TC
+relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-100
+    type: verifies
+---
+# TC-452: The spine run entry is fsl_replay::spine::run, agrees with the CLI, and maps every outcome
+
+## Description
+
+Verify that the library entry `fsl_replay::spine::run` returns the same
+result the CLI renders, that neither the root crate nor `fsl_replay`'s
+public spine surface reaches `fsl-eval`, and that the one outcome mapping
+converts every S6a outcome into its `outcome` member and exit status. This
+catches CLI-only run behavior (ADR-011 §5: no behavior is reachable only
+through the CLI), a layer-5 type leaking through `fsl_replay`, and an
+outcome kind rendered with the wrong spelling or exit status.
+
+Scope: FR-100-AC-7 to FR-100-AC-9, and FR-100-AC-12.
+
+## Test Procedure
+
+1. In `fsl-replay`, call `fsl_replay::spine::run` directly over the inputs
+   of TC-450 step 1 and TC-451 steps 1, 2, 3, 5, 6 and 7, with the default
+   spine stage limits, an empty package input and an empty dependency input.
+2. Run TC-390's dependency check
+   (`tests/it/family_outcome_layering.rs`) after the CLI change.
+3. Run the `tools/arch-lint` API-surface check over `fsl_replay`: every
+   public item of `fsl_replay::spine`, and every `fsl_replay` re-export, is
+   scanned for a `fsl_eval` path. Then run it over a probe that adds
+   `pub use fsl_eval::value::QualifiedName;` to `fsl_replay`.
+4. Compile the fixture unit `F` below through the FR-278 composition
+   as the program source (its bytes are exactly these three lines, each
+   ended by one LF, 136 bytes in all):
+
+   ```text
+   language "ix:native" edition "1-draft";
+   profile v = "filament.value.complete/v1";
+   function f using v(x: Int[0, 9]): Integer pure { x + 5 }
+   ```
+
+   Construct each S6a outcome below with an `Evaluation.location` of
+   `Body{function: "f", index: 0}`, path `[1]` (the literal `5` in `f`'s
+   body), and convert it with the outcome mapping (the `fsl_replay` conversion
+   `spine::run` applies, then the root crate's renderer and exit mapping):
+   - `Outcome::Completed` of `true`, `false`, `0`, `-17` and `2^70`;
+   - `Outcome::Refused(CardinalityOutOfBound)` with kind `Set`, bound
+     `[1, 3]` and count 4 (`above-maximum`), then count 0 (`below-minimum`);
+   - `Outcome::Refused(ForeignReference)` with `required` the universe of 32
+     bytes of `0x01` and `supplied` the universe of 32 bytes of `0x02`;
+   - `Outcome::Refused` of each of the other eleven kernel refusals, with
+     these payloads:
+     - `InexactDecimal` with target domain `Decimal[0, 100; 0, 2]`;
+     - `DecimalOutOfDomain` with target domain `Decimal[0, 100; 0, 2]`;
+     - `DivisionOutOfDomain` with consumer domain `Int[0, 9]`, once for
+       each exposed member;
+     - `ModuloOutOfDomain` with consumer domain `Int[0, 9]`;
+     - `TextLengthOutOfDomain` with bounds and profile `Text[1, 8; binary-utf8]`;
+     - `IntegerOutOfDomain` with target domain `Int[0, 9]`;
+     - `RationalOutOfDomain` with result domain `Rational[-5, 5; 1, 12]`;
+     - `IeeeNotExact` with target width `binary64` and would-be flags
+       `overflow` and `inexact`;
+     - `IeeeNanPayloadNotRepresentable` with target width `binary32` and
+       source width `binary64`;
+     - `IeeeRationalOutOfDomain` with target domain `Rational[-5, 5; 1, 12]`;
+     - `CheckedInvariant`;
+   - `Outcome::Undefined` of each of the five kernel reasons;
+   - `Outcome::Incomplete` at `work_units`;
+   - `FamilyResult::Refused` of `ModelRefusalCause::AbsentKey` with
+     `binding` `"people"` and key bytes `p7`, and of
+     `ModelRefusalCause::ForeignUniverse` with `actual` 32 bytes of `0x01`
+     and `expected` the universe of 32 bytes of `0x02` (each with an FR-096
+     key-table row);
+   - `FamilyResult::Refused` of `ModelRefusalCause::TypeMismatch` and of
+     `ModelRefusalCause::AncestorSteps` (`TypeMismatch` has no row;
+     `AncestorSteps` has the denied-charge record of FR-255 Behavior 1);
+   - `FamilyResult::Undefined` with reason `precondition-false` and
+     `absent-key`;
+   - a `CallFailure::Fault` of `InternalFault::new("S6a",
+     "checked-identity-not-resolved-by-package")`.
+5. Count the charges a live `Cancel::observing` handle sees while
+   `fsl_replay::spine::run` compiles and calls FR-100-AC-1's `seven`:
+   `F` charges up to the end of S4 and `T` in all, with `T > F` (S6a charges
+   at least once, FR-100-AC-6). Run `seven` twice more, each with a fresh
+   handle tripped by the `Cancel::observing` gate harness
+   (`fsl-replay/src/spine/lifecycle/tests.rs`) so that the run observes it
+   only from the chosen charge on: (a) `CancelCause::Requested` at charge
+   `F`, the last front-end charge; (b) `CancelCause::Deadline` at charge
+   `F + 1`, the first S6a charge, inside `CheckedPackage::call`. Pass each
+   result to `OutcomeDocument::from_run`.
+
+Tag the tests `#[trace("TC-452", "FR-100-AC-7")]` (steps 1 and 2),
+`#[trace("TC-452", "FR-100-AC-8")]` (step 3) and
+`#[trace("TC-452", "FR-100-AC-9")]` (step 4) and
+`#[trace("TC-452", "FR-100-AC-12")]` (step 5).
+
+## Expected Results
+
+- Step 1: each call returns the `package_id`, outcome category, value,
+  catalog code, reason, counter, and parameter name or position that the
+  CLI renders for the same input in TC-450 and TC-451.
+- Step 2: the root crate names `fsl-eval` in no normal, dev or build
+  dependency table.
+- Step 3: the check passes over `fsl_replay`, and fails over the probe,
+  naming the re-export.
+- Step 4: each `refused` outcome also carries `location`
+  `{"origin": {"kind": "body", "function": "f", "index": 0}, "path": [1]}`.
+  - `completed` with `{"boolean": true}`,
+    `{"boolean": false}`, and `{"integer": ...}` of `"0"`, `"-17"` and `"1180591620717411303424"`,
+    exit 0.
+  - `CardinalityOutOfBound`: `code` `cardinality_out_of_bound`, `cause`
+    `above-maximum`, `fields` exactly
+    `{"collection": "set", "bound": "[1, 3]", "count": "4"}`, and `locus`
+    exactly `{"file": "<the unit's authored path>",
+    "span": {"start": {"byte": 132, "line": 3, "column": 54}, "end":
+    {"byte": 133, "line": 3, "column": 55}}}`; then `cause` `below-minimum`, `count`
+    `"0"`; exit 20.
+  - `ForeignReference`: `code` `foreign_reference`, `cause`
+    `foreign-universe`, `fields` exactly `{"required": R, "supplied": S}`,
+    where `R` is `"01"` repeated 32 times and `S` is `"02"` repeated 32 times
+    (`"0101…01"` and `"0202…02"`, 64 characters each); exit 20.
+  - Each of the other ten kernel refusals renders its `code` and `cause`
+    and exactly this `fields` object, with `locus`; exit 20:
+    - `InexactDecimal`: `inexact_decimal`, `nonzero-discarded-digit`,
+      `{"expected": "Decimal[0, 100; 0, 2]"}`;
+    - `DecimalOutOfDomain`: `decimal_out_of_domain`, `outside-domain`,
+      `{"expected": "Decimal[0, 100; 0, 2]"}`;
+    - `DivisionOutOfDomain`: `division_out_of_domain`, with cause
+      `quotient-outside-domain` and `remainder-outside-domain` for its
+      two members, each
+      `{"expected": "Int[0, 9]"}`;
+    - `ModuloOutOfDomain`: `modulo_out_of_domain`, `outside-domain`,
+      `{"expected": "Int[0, 9]"}`;
+    - `TextLengthOutOfDomain`: `text_length_out_of_domain`,
+      `outside-domain`, `{"expected": "Text[1, 8; binary-utf8]"}`;
+    - `IntegerOutOfDomain`: `integer_out_of_domain`, `outside-domain`,
+      `{"expected": "Int[0, 9]"}`;
+    - `RationalOutOfDomain`: `rational_out_of_domain`, `outside-domain`,
+      `{"expected": "Rational[-5, 5; 1, 12]"}`;
+    - `IeeeNotExact`: `ieee_not_exact`, `rounding-required`,
+      `{"expected": "binary64", "flags": "overflow,inexact"}`;
+    - `IeeeNanPayloadNotRepresentable`:
+      `ieee_nan_payload_not_representable`, `payload-exceeds-target`,
+      `{"expected": "binary32", "actual": "binary64"}`;
+    - `IeeeRationalOutOfDomain`: `ieee_rational_out_of_domain`,
+      `outside-domain`, `{"expected": "Rational[-5, 5; 1, 12]"}`.
+  - `CheckedInvariant`: no `spine-run-result/1` document; a
+    `runtime_invariant` command error at stage `call` with `details`
+    `{"stage": "S6a", "invariant": "checked-program-invariant"}`, at
+    FR-100's internal-failure exit status.
+  - `undefined` with each kernel reason's tabled spelling, exit 10;
+    `incomplete` with `limit` `work_units`, exit 22.
+  - `AbsentKey`: `code` `invalid_runtime_input`, `cause` `absent-key`,
+    `fields` exactly `{"binding": "people", "key": "p7"}`; exit 20.
+  - `ForeignUniverse`: `code` `foreign_reference`, `cause`
+    `foreign-universe`, `fields` exactly `{"required": R, "supplied": S}`, where
+    `R` is `"02"` repeated 32 times and `S` is `"01"` repeated 32 times
+    (`"0202…02"` and `"0101…01"`, 64 characters each); exit 20.
+  - `TypeMismatch`: `code` `ill_typed`, `cause` `type-mismatch`, no `fields`
+    member; exit 20. `AncestorSteps`: `code` `resource_exhausted`, `cause`
+    `insufficient-next-charge`, `fields` exactly `setting`, `limit`, `actual`,
+    `stage`, `accounting_contract`, `limit_kind`, `consumed`, `next_charge` and `charge_point`;
+    exit 22.
+  - `undefined` with `reason` `precondition-false` and `absent-key`, exit 10.
+  - `CallFailure::Fault`: a `runtime_invariant` command error at stage
+    `call` with `details` `{"stage": "S6a", "invariant":
+    "checked-identity-not-resolved-by-package"}`, at the internal-failure
+    exit status.
+- Step 5: neither handle is cancelled when `run` starts. Run (a) returns
+  `RunRefusal::Cancelled(CancelCause::Requested)` and run (b)
+  `RunRefusal::Cancelled(CancelCause::Deadline)`; neither returns
+  `RunRefusal::Fault`. Each has category incomplete and FR-285 exit 22. Each
+  `from_run` document has `category` incomplete, `last_stage` `null`,
+  `result` `null` and one diagnostic with code `cancelled`, whose cause is
+  `requested` for (a) and `deadline` for (b).

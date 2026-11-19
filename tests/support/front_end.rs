@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{
+use filament_exact::Cancel;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{
     check, package_with_temporal_selections, parse, select, CheckedUnit, CompileRefusal,
     DependencyInput, EmittedUnit, ParseRequest, SpineLimits, SuppliedLibrary,
 };
-use quire_exact::Cancel;
 
 /// `bytes`, labelled `source` and displayed as `path`, through `parse`,
 /// `select`, `check` and `package`.
@@ -18,7 +18,7 @@ pub fn emitted(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
 ) -> Result<EmittedUnit, Box<CompileRefusal>> {
     emitted_with_authority(
@@ -36,7 +36,7 @@ pub fn emitted_with_authority(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<EmittedUnit, Box<CompileRefusal>> {
@@ -60,7 +60,7 @@ pub fn emitted_with_default_clocks(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
 ) -> Result<EmittedUnit, Box<CompileRefusal>> {
     emitted_selecting(
@@ -85,7 +85,7 @@ fn emitted_selecting(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
     clocks: Clocks,
@@ -119,24 +119,24 @@ fn assert_format_identity(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     (limits, clocks): (SpineLimits, Clocks),
 ) {
     // AC-9 isolates semantic identity; the AC-4/5/6 tests exercise exhaustion.
     // Give a fixture with an exact original S1 byte bound enough bytes for
     // its formatted layout, retaining its model/dependency/checking authority.
-    let format_limits = qsl_cst::format::FormatLimits::default().with_output_bytes(usize::MAX);
+    let format_limits = fsl_cst::format::FormatLimits::default().with_output_bytes(usize::MAX);
     let formatted = {
-        let parsed = qsl_cst::parse(source.clone(), path, bytes, limits.source).unwrap();
-        qsl_cst::format::format_with_limits(&parsed, format_limits).unwrap()
+        let parsed = fsl_cst::parse(source.clone(), path, bytes, limits.source).unwrap();
+        fsl_cst::format::format_with_limits(&parsed, format_limits).unwrap()
     };
     let mut formatted_limits = limits;
     formatted_limits.source.source_bytes =
         formatted_limits.source.source_bytes.max(formatted.len());
     let formatted_source = source;
     {
-        let reparsed = qsl_cst::parse(
+        let reparsed = fsl_cst::parse(
             formatted_source.clone(),
             path,
             formatted.as_bytes(),
@@ -144,7 +144,7 @@ fn assert_format_identity(
         )
         .unwrap();
         assert_eq!(
-            qsl_cst::format::format_with_limits(&reparsed, format_limits).unwrap(),
+            fsl_cst::format::format_with_limits(&reparsed, format_limits).unwrap(),
             formatted,
             "{path}: second pass"
         );
@@ -169,13 +169,44 @@ fn assert_format_identity(
         formatted,
         "{path}: formatted source retained"
     );
+    assert_eq!(
+        original.package().name(),
+        checked.package().name(),
+        "{path}: formatted source preserves checked package identity"
+    );
+    let original_wire: serde_json::Value =
+        serde_json::from_slice(original.package().bytes()).expect("original package is JSON");
+    let formatted_wire: serde_json::Value =
+        serde_json::from_slice(checked.package().bytes()).expect("formatted package is JSON");
+    assert_eq!(
+        without_source_regions(&original_wire["semantic_graph"]),
+        without_source_regions(&formatted_wire["semantic_graph"]),
+        "{path}: formatted source preserves semantic package identity"
+    );
+}
+
+/// Source positions move when canonical formatting changes byte layout.
+fn without_source_regions(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match value {
+        Value::Object(members) => Value::Object(
+            members
+                .iter()
+                .filter(|(name, _)| !matches!(name.as_str(), "region" | "regions" | "span"))
+                .map(|(name, member)| (name.clone(), without_source_regions(member)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_source_regions).collect()),
+        other => other.clone(),
+    }
 }
 
 fn emitted_once(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
     clocks: Clocks,
@@ -194,8 +225,8 @@ fn emitted_once(
 
 /// One default selection per configured temporal clause of `checked`, keyed by
 /// the checked source and the clause's declaration span.
-fn default_clock_selections(checked: &CheckedUnit) -> Vec<qsl_package::TemporalClockSelection> {
-    use qsl_semantics::check::TemporalProfile;
+fn default_clock_selections(checked: &CheckedUnit) -> Vec<fsl_package::TemporalClockSelection> {
+    use fsl_semantics::check::TemporalProfile;
     let graph = checked.package().graph();
     graph
         .temporal_clauses()
@@ -204,18 +235,18 @@ fn default_clock_selections(checked: &CheckedUnit) -> Vec<qsl_package::TemporalC
             let clause = node.clause();
             let clock = match clause.profile() {
                 TemporalProfile::EventPositionFalseExtension => {
-                    quire_contract_model::ClockConfiguration::EventPosition {
+                    filament_contract_model::ClockConfiguration::EventPosition {
                         sequence_authority: "events-authority".into(),
                     }
                 }
                 TemporalProfile::TimestampedEventFiniteWindow => {
-                    quire_contract_model::ClockConfiguration::TimestampedEvent {
+                    filament_contract_model::ClockConfiguration::TimestampedEvent {
                         timestamp_unit: "millisecond".into(),
                     }
                 }
                 TemporalProfile::FixedSampleFalseExtension => {
-                    use quire_contract_model::ClockExactNumber::{Integer, Rational};
-                    quire_contract_model::ClockConfiguration::FixedSample {
+                    use filament_contract_model::ClockExactNumber::{Integer, Rational};
+                    filament_contract_model::ClockConfiguration::FixedSample {
                         epoch: Integer {
                             decimal: "0".into(),
                         },
@@ -229,7 +260,7 @@ fn default_clock_selections(checked: &CheckedUnit) -> Vec<qsl_package::TemporalC
                 // Every other profile is not clock-configured and takes no selection.
                 _ => return None,
             };
-            Some(qsl_package::TemporalClockSelection::new(
+            Some(fsl_package::TemporalClockSelection::new(
                 graph.source().clone(),
                 clause.span(),
                 clock,
@@ -238,8 +269,8 @@ fn default_clock_selections(checked: &CheckedUnit) -> Vec<qsl_package::TemporalC
         .collect()
 }
 
-fn refusal(failure: qsl_replay::spine::FrontEndFailure) -> Box<CompileRefusal> {
-    qsl_replay::spine::refusal_or_fault(failure)
+fn refusal(failure: fsl_replay::spine::FrontEndFailure) -> Box<CompileRefusal> {
+    fsl_replay::spine::refusal_or_fault(failure)
         .unwrap_or_else(|fault| panic!("the front end faulted: {fault:?}"))
 }
 
@@ -247,7 +278,7 @@ fn checked_once(
     source: &SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<CheckedUnit, Box<CompileRefusal>> {
@@ -269,7 +300,7 @@ fn checked_once(
     Ok(check(
         &parsed,
         source
-            .label(qsl_foundation::source::SourceLabel::Identity)
+            .label(fsl_foundation::source::SourceLabel::Identity)
             .to_owned(),
         &models,
         dependencies,
@@ -287,7 +318,7 @@ pub fn checked(
     source: SourceIdentity,
     path: &str,
     bytes: &[u8],
-    packages: &qsl_semantics::model::intake::PackageInput,
+    packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
 ) -> Result<CheckedUnit, Box<CompileRefusal>> {
     checked_once(
@@ -310,17 +341,17 @@ pub fn dependency_fixture_identity(
 ) {
     let format = |source: SourceIdentity, path: &str, bytes: &[u8]| {
         let parsed =
-            qsl_cst::parse(source.clone(), path, bytes, qsl_cst::Limits::default()).unwrap();
-        let formatted = qsl_cst::format::format(&parsed).unwrap();
-        let reparsed = qsl_cst::parse(
+            fsl_cst::parse(source.clone(), path, bytes, fsl_cst::Limits::default()).unwrap();
+        let formatted = fsl_cst::format::format(&parsed).unwrap();
+        let reparsed = fsl_cst::parse(
             source,
             path,
             formatted.as_bytes(),
-            qsl_cst::Limits::default(),
+            fsl_cst::Limits::default(),
         )
         .unwrap();
         assert_eq!(
-            qsl_cst::format::format(&reparsed).unwrap(),
+            fsl_cst::format::format(&reparsed).unwrap(),
             formatted,
             "{path}: dependency second pass"
         );
@@ -375,14 +406,14 @@ pub fn dependency_fixture_identity(
     let mut visited = std::collections::BTreeSet::new();
     while let Some((original, formatted)) = pending.pop() {
         let original_emission =
-            qsl_package::emit_checked(original, qsl_package::EmitLimits::fixture()).unwrap();
+            fsl_package::emit_checked(original, fsl_package::EmitLimits::fixture()).unwrap();
         assert!(
             original_emission.omitted().is_empty(),
             "{path}: original dependency emission omitted {:?}",
             original_emission.omitted()
         );
         let formatted_emission =
-            qsl_package::emit_checked(formatted, qsl_package::EmitLimits::fixture()).unwrap();
+            fsl_package::emit_checked(formatted, fsl_package::EmitLimits::fixture()).unwrap();
         assert!(
             formatted_emission.omitted().is_empty(),
             "{path}: formatted dependency emission omitted {:?}",

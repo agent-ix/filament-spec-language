@@ -3,7 +3,7 @@ id: TC-621
 title: "S3 checks probabilistic claim forms, thresholds, units and confidence parameters"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-186
+  - target: ix://agent-ix/filament-spec-language/FR-186
     type: verifies
 ---
 # TC-621: S3 checks probabilistic claim forms, thresholds, units and confidence parameters

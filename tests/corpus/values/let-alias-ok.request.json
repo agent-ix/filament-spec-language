@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"let-alias-ok.native","authority":"agent-ix","identity":"test:corpus:let-alias-ok","document":"let-alias-ok","formal_revision":1}},"call":{"function":"f","arguments":[]}}}

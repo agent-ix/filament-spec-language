@@ -1,12 +1,12 @@
 # Inspect render
 
-`qsl-inspect` renders outcomes and typed inspection views as JSON, text or
+`fsl-inspect` renders outcomes and typed inspection views as JSON, text or
 Graphviz DOT (FR-298, TC-783). This note records the forms and how the render accounts for output bytes.
 
 ## Forms
 
 - **JSON** is authoritative. An outcome is FR-286's document; a view carries
-  `format: quire.inspect-view/v1`. Every field is an explicit serde field or a
+  `format: filament.inspect-view/v1`. Every field is an explicit serde field or a
   snake_case label. Nothing is a `Debug` string. A simulation graph names a
   state by its canonical key and a transition by its canonical encoding, both
   in hex. A package or node requirement is its occurrence, owner and extent

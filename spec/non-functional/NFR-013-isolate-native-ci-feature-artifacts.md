@@ -4,7 +4,7 @@ title: "Isolate native CI feature artifacts"
 type: NFR
 quality_attribute: reliability
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-005
+  - target: ix://agent-ix/filament-spec-language/NFR-005
     type: depends_on
 ---
 # NFR-013: Isolate native CI feature artifacts
@@ -50,10 +50,10 @@ The lane commands, in order, are:
 | Default | 1 | `fmt --all -- --check` |
 | Default | 2 | `clippy --locked --workspace --all-targets -- -D warnings` |
 | Default | 3 | `test --locked --workspace` |
-| Default | 4 | `clippy --locked -p qsl-semantics --all-targets -- -D warnings` |
-| Default | 5 | `test --locked -p qsl-semantics` |
-| Default | 6 | `clippy --locked -p qsl-cst --all-targets -- -D warnings` |
-| Default | 7 | `test --locked -p qsl-cst` |
+| Default | 4 | `clippy --locked -p fsl-semantics --all-targets -- -D warnings` |
+| Default | 5 | `test --locked -p fsl-semantics` |
+| Default | 6 | `clippy --locked -p fsl-cst --all-targets -- -D warnings` |
+| Default | 7 | `test --locked -p fsl-cst` |
 | All | 1 | `clippy --locked --workspace --all-targets --all-features -- -D warnings` |
 | All | 2 | `test --locked --workspace --all-features --exclude <package>...` |
 

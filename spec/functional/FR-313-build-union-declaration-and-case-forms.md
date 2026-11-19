@@ -3,17 +3,17 @@ id: FR-313
 title: "Build union declaration and case expression forms at S1 and S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-032
+  - target: ix://agent-ix/filament-spec-language/US-032
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: traces_to
-  - target: ix://agent-ix/quire-specification/AD-015
+  - target: ix://agent-ix/filament-specification/AD-015
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-143
+  - target: ix://agent-ix/filament-specification/FR-143
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
 ---
 # FR-313: Build union declaration and case expression forms at S1 and S2
@@ -21,7 +21,7 @@ relationships:
 ## Description
 
 When a complete-V1 source unit contains a `union-decl` or an expression
-`case`, S1 SHALL parse it by QSpec's shared-grammar productions
+`case`, S1 SHALL parse it by FSpec's shared-grammar productions
 (`union-decl`, `union-member`, `case`, `case-arm`), and S2 SHALL build one
 `UnionForm` declaration or one `CaseForm` expression for it, each carrying
 its source span (ADR-012 §16.4 S1 and S2 rows).
@@ -43,7 +43,7 @@ its source span (ADR-012 §16.4 S1 and S2 rows).
 ## Behavior
 
 - S1 SHALL treat `union` as a keyword and parse `union-decl` as a
-  declaration (QSpec shared grammar).
+  declaration (FSpec shared grammar).
 - S1 SHALL parse an expression `case` by the expression production, and the
   protocol `choice` `case` by its own production; the two are told apart by
   syntactic context. An expression `case` SHALL produce a different CST
@@ -72,8 +72,8 @@ its source span (ADR-012 §16.4 S1 and S2 rows).
 
 ## Dependencies
 
-- QSpec shared grammar (`union-decl`, `union-member`, `case`, `case-arm`),
-  QSpec AD-015.
+- FSpec shared grammar (`union-decl`, `union-member`, `case`, `case-arm`),
+  FSpec AD-015.
 - FR-091 (forms stage and assembler), FR-317 and FR-318 (S3).
 
 ## References

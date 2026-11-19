@@ -3,23 +3,23 @@ id: FR-364
 title: "Carry relationship instances in an observation and read them for runtime navigation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-362
+  - target: ix://agent-ix/filament-spec-language/FR-362
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-119
+  - target: ix://agent-ix/filament-semantic-value/FR-119
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: references
-  - target: ix://agent-ix/quire-specification/FR-152
+  - target: ix://agent-ix/filament-specification/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-364: Carry relationship instances in an observation and read them for runtime navigation
@@ -32,14 +32,14 @@ relationship instances. It SHALL refuse an instance set that is not a
 well-formed set of links of the declared relationship. When a clause navigates
 a relationship end, the evaluator SHALL take its targets from a read-only view
 of those instances alone, and SHALL decide the refusals and charges
-quire-specification [FR-152](ix://agent-ix/quire-specification/FR-152)'s
+filament-specification [FR-152](ix://agent-ix/filament-specification/FR-152)'s
 "Navigation" section states. When it must tell a missing object that is
 dangling from one it cannot decide, it SHALL read a population manifest that
 the observation's producer issued from an exhausted traversal of the admitted
 package's population declarations, and SHALL decide `dangling` only from a
 closed manifest.
 
-This requirement is QSL's own contract for the runtime half of FR-152's
+This requirement is FSL's own contract for the runtime half of FR-152's
 "Navigation" section, which [FR-085](FR-085-resolve-relationship-end-references.md)
 leaves out of its scope. FR-152 says what navigation returns and charges; it
 does not say how an observation carries the instances navigation reads. This
@@ -69,8 +69,9 @@ binds it to the snapshot document.
 
 - Admission: an admitted extent, or one refusal.
 - Navigation: a `Reference<U>`, an `Option<Reference<U>>`, a
-  `Set<Reference<U>>[l,u]` or a `Bag<Reference<U>>[l,u]`, or one refusal or
-  incomplete result.
+  `Set<Reference<U>>`, a `Bag<Reference<U>>`, an `OrderedSet<Reference<U>>` or a
+  `Sequence<Reference<U>>`, bounded `[l,u]` for a finite end and unbounded for an
+  `unbounded` end, or one refusal or incomplete result.
 
 ## Behavior
 
@@ -100,8 +101,32 @@ all of the relationship's links; an incomplete extent holds the links known
 and states nothing about the rest. The three are different and none is
 converted into another.
 
-An extent has no order. A document's or a caller's listing order is never
-observable: every read is in canonical reference-key order.
+An extent has no order of its own. A document's or a caller's listing order
+is never observable: every read is in canonical reference-key order, except
+that navigation over an ordered end reads that end's positions.
+
+### Positions of an ordered end
+
+An end that declares `ordered: true` and an upper bound above 1 is navigated
+as an ordered collection (FR-363), so its targets need an order the
+observation states. Each instance of a relationship with such an end SHALL
+carry, for that end, a position: a non-negative integer that ranks the
+instance among the instances of the extent that share its opposite-end
+reference. For the target end, the instances sharing one source reference
+are ranked; for the source end, those sharing one target reference. A
+navigation over the ordered end returns the destination references in
+ascending position. A relationship with no ordered end carries no position,
+and a single-valued ordered end needs none.
+
+Admission SHALL decide positions with condition 4 below: an instance of an
+ordered end with no position for it, a position given for an end that is
+not ordered, and two instances that share an opposite-end reference and a
+position for the same end each refuse `invalid_runtime_input`/`invalid-value`
+at the later instance, retaining the relationship and the end. Positions need
+not be consecutive; only their order is read. `targets` and `sources` below
+keep canonical reference-key order; the ordered navigation re-ranks their
+result by position.
+
 
 ### Extent admission is the same for every way of building an extent
 
@@ -203,7 +228,7 @@ rows read and the failure; failure is the only way a manifest is partial. No ope
 from supplied rows, converts a partial manifest into a closed one or closes a
 manifest before the enumerator is exhausted. The semantic-value store builds
 the manifest from the enumerator and keeps its state private
-([FR-119](ix://agent-ix/quire-semantic-value/FR-119)).
+([FR-119](ix://agent-ix/filament-semantic-value/FR-119)).
 
 ### `resolve` decides a missing object by the manifest alone
 
@@ -325,9 +350,12 @@ The result is the multiplicity-determined value of FR-152: `[1,1]` the one
 `Reference<U>`; `[0,1]` the `Option<Reference<U>>`, `none` for count 0 and the
 present reference for count 1; any other finite `{l, u}` the `Set<Reference<U>>[l,u]`
 when `unique` is `true` and the `Bag<Reference<U>>[l,u]` when it is `false`, in
-ascending reference-key order. The static form, direction, ambiguity and
-`unbounded` or `ordered` refusals are decided at checking and are not decided
-here. The role `name` is the one nearest the receiver, as FR-363 and QSpec
+ascending reference-key order, for an unordered end, and the
+`OrderedSet<Reference<U>>[l,u]` or `Sequence<Reference<U>>[l,u]` in ascending
+position for an ordered end; an `unbounded` end gives the same kind with no
+upper bound, its count checked only against `l`. The static form, direction,
+ambiguity and missing-multiplicity refusals are decided at checking and are
+not decided here. The role `name` is the one nearest the receiver, as FR-363 and FSpec
 FR-322 resolve it: the source end's role names the forward traversal from the
 source type, the target end's role the inverse traversal from the target
 type, and `{l, u}` and `U` belong to the end the role does not name, as in
@@ -368,6 +396,7 @@ FR-363; a navigation site reaches the evaluator already resolved.
 | FR-364-AC-12 | Navigation over a model-layer extent whose target is missing and undecidable gives `incomplete_population`/`incomplete-scope` after `model.navigate` and the `collection.visit` of the targets before it, and no cardinality refusal even when the count is above `upper`; the first selected target that is not present decides between `dangling` and `undecidable`. | Test (TC-1041) |
 | FR-364-AC-13 | Condition 3 checks the type of every end of a model-layer extent whether the object is held or not: a missing `Tank` at the `Pump` end refuses `wrong-value-kind` naming the end, `Tank` and `Pump`; a missing `Pump` at that end admits and is decided by `resolve`; a reference whose type is no object type of the model refuses `wrong-value-kind`. A snapshot document end naming an unlisted key skips condition 3 and is decided by the closure rule. | Test (TC-1041) |
 | FR-364-AC-14 | A bundle is refused `invalid_runtime_input`/`conflicting-identity`, naming the first part (`manifest`, `closure`, `types`) whose key differs from the selected key, the selected key and the differing one, when that part carries another source identity under the same authority, another selected clause, another selected document identity, or another observation (a `pre` manifest with a `post` closure of one source and clause); a bundle whose parts all carry the selected key resolves a missing reference by its manifest. | Test (TC-1041) |
+| FR-364-AC-15 | For a relationship whose target end is ordered `{0,3}`, a snapshot entry whose instances for source `o1` carry target positions 7, 2 and 5 navigates from `o1` to the three targets in the order of positions 2, 5 and 7, whatever order the entry lists them in; an instance of that entry with no `positions.target`, an instance carrying `positions.source` for the unordered source end, and two instances of `o1` both at position 2 each refuse `invalid_runtime_input`/`invalid-value` at the later instance. Over an unordered unique `{1,unbounded}` end, a complete extent with no instance at the receiver refuses `cardinality_out_of_bound`/`below-minimum` and one with four instances returns the four references in reference-key order with no `above-maximum` decision. | Test (TC-1902) |
 
 ## Dependencies
 
@@ -376,20 +405,20 @@ FR-363; a navigation site reaches the evaluator already resolved.
   resolves against; [FR-085](FR-085-resolve-relationship-end-references.md)
   supplies the navigation relationship, its ends and its multiplicity;
   [FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md) supplies
-  conformance. quire-specification FR-152 owns the navigation result types,
+  conformance. filament-specification FR-152 owns the navigation result types,
   the traversal rule, the refusals and the `model.navigate` schedule of
-  `quire.value.accounting/v1`; AD-006 owns the decision to keep populations in
+  `filament.value.accounting/v1`; AD-006 owns the decision to keep populations in
   the model view.
 - **Downstream:** [FR-106](FR-106-admit-snapshots-and-invocations.md) binds
   extent admission to the snapshot document and decides the dangling and
   completeness rules for it. The checker's typing of a relationship end, its
-  direction, ambiguity and `unbounded` or `ordered` refusals, and the
-  `quire.op.model.navigate` lowering are FR-363's.
+  direction, ambiguity and missing-multiplicity refusals, and the
+  `filament.op.model.navigate` lowering are FR-363's.
 - [FR-365](FR-365-reach-an-object-over-a-relationship-end-in-a-state-clause.md)
   reads the same extents and `resolve` for `reaches` over a relationship end.
 - [FR-362](FR-362-produce-the-checked-graph-and-the-type-report-from-one-source.md) supplies the
-  source reference the bundle key compares as a whole. quire-semantic-value
-  [FR-119](ix://agent-ix/quire-semantic-value/FR-119) is the store this
+  source reference the bundle key compares as a whole. filament-semantic-value
+  [FR-119](ix://agent-ix/filament-semantic-value/FR-119) is the store this
   requirement's reads and manifest are built in.
 - The object environment holds the extents. Whether the extent store lives in
   the semantic-value object closure or in the model layer's environment beside

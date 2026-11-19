@@ -3,7 +3,7 @@ id: TC-1397
 title: "A clean clone builds locked from public sources, and the gate fails on a broken lock and cleans up"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-017
+  - target: ix://agent-ix/filament-spec-language/NFR-017
     type: verifies
 ---
 # TC-1397: A clean clone builds locked from public sources, and the gate fails on a broken lock and cleans up

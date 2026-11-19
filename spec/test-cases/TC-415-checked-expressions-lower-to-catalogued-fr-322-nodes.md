@@ -3,7 +3,7 @@ id: TC-415
 title: "Each checked Value expression lowers to its FR-322 node with its catalogued operation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
 ---
 # TC-415: Each checked Value expression lowers to its FR-322 node with its catalogued operation
@@ -46,7 +46,7 @@ selection whose alias is `v`, and is checked under owner (`a`, `u`).
    Lower the checked `Attribute`, `AllInstances`, `Lookup` and `Dispatch`
    nodes of FR-093-AC-8's fixtures: functions over `p: Population<M::Order>[3]`
    and `r: Reference<M::Order>`, and a clause function holding a dispatched
-   call (QSpec FR-151, QSpec TC-196 D06). Read the same members.
+   call (FSpec FR-151, FSpec TC-196 D06). Read the same members.
 4. Check `c1`, `c2`, `c3` and `fm` of FR-093-AC-4, and read their body
    nodes.
 5. Check `q` of FR-093-AC-5 and read the levels of `x`, `y` and `z` and the
@@ -123,9 +123,9 @@ The node-limit step's test (`check/lowering/tests/leaves.rs`) asserts
 - Step 2: keys E1, E2 and E3; no node for a `Local` read.
 - Step 3: each node matches its row, and its `result_type` is the type node
   of the checked node's `value_type`.
-- Step 4: `c1` has no convert node; `c2` gives `quire.op.numeric.narrow`
-  naming `Int[0, 9]`; `c3` gives `quire.op.numeric.convert`; `fm`'s body
-  is one `quire.op.collection.flat_map` node with no map node.
+- Step 4: `c1` has no convert node; `c2` gives `filament.op.numeric.narrow`
+  naming `Int[0, 9]`; `c3` gives `filament.op.numeric.convert`; `fm`'s body
+  is one `filament.op.collection.flat_map` node with no map node.
 - Step 5: levels 1, 2 and 1; the `forall` arguments are as FR-093-AC-5 gives.
 - Step 6: the node carries law `text_profile` with the layer table's
   text-profile `DefinitionRef` and mode `nfc`.
@@ -160,7 +160,7 @@ The node-limit step's test (`check/lowering/tests/leaves.rs`) asserts
   position, each package reads back Verified, and each evaluation equals the
   comparison of the converted values. The conversion guards check.
 - Step 14: each `fma` lowers to one `call` node with identity
-  `quire.op.ieee.float64.fma` (`float32` for `Float32`), law `ieee_profile`,
+  `filament.op.ieee.float64.fma` (`float32` for `Float32`), law `ieee_profile`,
   mode `rounding` `nearest-even` and the three arguments in call order; the
   wrong-arity and wrong-width calls refuse `ill_typed`/`type-mismatch` and
   emit no node.

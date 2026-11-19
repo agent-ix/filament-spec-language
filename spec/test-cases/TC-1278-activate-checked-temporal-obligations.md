@@ -3,7 +3,7 @@ id: TC-1278
 title: "Activate checked temporal obligations by semantic identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: verifies
 ---
 # TC-1278: Activate checked temporal obligations by semantic identity

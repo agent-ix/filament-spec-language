@@ -3,7 +3,7 @@ id: TC-246
 title: "ResolvedSourcePackage is retired, with no dangling caller"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: verifies
 ---
 # TC-246: ResolvedSourcePackage is retired, with no dangling caller
@@ -32,7 +32,7 @@ both successors exist"; ruling on QSL-229):
    `xtask/` and each layer crate) for `ResolvedSourcePackage`,
    `resolve_source_package`, `resolve_parsed_source`,
    `struct SourceAuthority`, `complete::SourceAuthority`, `ModelCatalog`,
-   `ModelArtifact` and `qsl_semantics::complete`. The composed linker's
+   `ModelArtifact` and `fsl_semantics::complete`. The composed linker's
    unrelated `ConflictKind::SourceAuthority` variant is not an occurrence.
 2. Search for any re-export, type alias or `pub use` naming a removed item
    under any spelling.
@@ -45,13 +45,13 @@ both successors exist"; ruling on QSL-229):
    against it (TC-446 for imports, TC-490 for profiles, TC-412 for aliases,
    TC-145/TC-147 for models, the spine's S1 refusal for an inadmissible
    parse, TC-491 for the closure, bundle, limits and identity, carrying the
-   scenario's `QSpec-FR-131`/`QSpec-FR-339` tags).
+   scenario's `FSpec-FR-131`/`FSpec-FR-339` tags).
 
 | Former scenario | Backing test |
 | --- | --- |
-| unknown, stale-revision and conflicting header profiles | `a_header_profile_resolves_only_against_the_root_row` (TC-490, `qsl-replay/src/spine.rs`) |
+| unknown, stale-revision and conflicting header profiles | `a_header_profile_resolves_only_against_the_root_row` (TC-490, `fsl-replay/src/spine.rs`) |
 | stale profile at parse time | `tests/it/complete_editor.rs` |
-| duplicate selection alias | `using_aliases_resolve_to_the_units_profile_selections` and its duplicate-alias case (FR-091-AC-22, `qsl-semantics/src/check/assemble/tests.rs`) |
+| duplicate selection alias | `using_aliases_resolve_to_the_units_profile_selections` and its duplicate-alias case (FR-091-AC-22, `fsl-semantics/src/check/assemble/tests.rs`) |
 | inadmissible parse | the spine's S1 refusal (`tests/it/spine_run.rs`, `tests/it/compile_command.rs`) |
 | model selection | `tests/it/compile_command.rs` (FR-056-AC-9) |
 | closure, bundle, limits, identity, causes | TC-491 (`library::bundle_tests`, carrying FR-131/FR-339 tags) |

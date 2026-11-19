@@ -3,7 +3,7 @@ id: TC-231
 title: "A resolved relationship end retains its declared role and multiplicity exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: verifies
 ---
 # TC-231: A resolved relationship end retains its declared role and multiplicity exactly

@@ -3,7 +3,7 @@ id: TC-535
 title: "Candidates carry and are filtered by the fairness kinds their backends advertise"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-134
+  - target: ix://agent-ix/filament-spec-language/FR-134
     type: verifies
 ---
 # TC-535: Candidates carry and are filtered by the fairness kinds their backends advertise

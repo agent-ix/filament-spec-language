@@ -3,25 +3,25 @@
 //! keeps execution, routing and replay stage entries on checked inputs.
 //!
 //! **Stage entries (CK-1).** Every `pub` function and every `pub` method of
-//! an inherent `impl` in the shipped code of `qsl-eval` and `qsl-route`, and
-//! the same in `qsl-replay` outside its `spine` module (`spine.rs` and the
+//! an inherent `impl` in the shipped code of `fsl-eval` and `fsl-route`, and
+//! the same in `fsl-replay` outside its `spine` module (`spine.rs` and the
 //! files under `spine/`). Membership comes from crate and module alone.
 //!
 //! **Pre-check representations (CK-2).** Derived from the scanned code on
 //! every run, never listed:
 //! - a type with fields (a struct or union with a field, an enum with a
-//!   variant that has one) defined in `qsl-source`, `qsl-cst` or
-//!   `qsl-forms`, that the return type of one of those crates' `pub`
+//!   variant that has one) defined in `fsl-source`, `fsl-cst` or
+//!   `fsl-forms`, that the return type of one of those crates' `pub`
 //!   functions or `pub` inherent methods reaches, directly or through the
 //!   fields and `type` aliases of those crates' types;
 //! - the S3 input, the receiver of [`S3_CONSTRUCTOR`];
-//! - every type of `quire-contract-model`: any type path rooted at that
+//! - every type of `filament-contract-model`: any type path rooted at that
 //!   crate, bar its `ADDRESSING_TYPES`.
 //!
 //! A fieldless enum (closed vocabulary such as `StateClauseKind`) is outside
 //! the set, and so is configuration: a type a `pub` free function of those
 //! crates (a pre-check stage) takes as a parameter and no such function's
-//! return type names, even when a stage output holds it (`qsl_cst::Limits`,
+//! return type names, even when a stage output holds it (`fsl_cst::Limits`,
 //! which `ParsedSource` keeps as its effective limits).
 //!
 //! **Signature rule (CK-3).** A stage entry whose receiver, parameter types
@@ -30,7 +30,7 @@
 //!
 //! **Reconstruction rule (CK-4).** A shipped function anywhere in those
 //! crates (outside `spine`) whose signature or body names a `pub` function
-//! or `pub` inherent method of `qsl-source`, `qsl-cst` or `qsl-forms`, or
+//! or `pub` inherent method of `fsl-source`, `fsl-cst` or `fsl-forms`, or
 //! any S3 entry point (`S3_ENTRY_NAMES`), is a `reconstruction` finding, whatever its own
 //! signature. A qualified-self path (`<PackageDeclarations>::check`) names its
 //! self type as the owner. A method call named like an S3 entry point
@@ -43,16 +43,16 @@
 //! **Resolution.** A path's first segment is resolved through the `use`
 //! items of its file (renames, `self` and globs from a pre-check crate) and
 //! through the `type` aliases of the scanned stage crates, so
-//! `use qsl_forms::Expression as Expr;` and `type Node = qsl_cst::Token;`
+//! `use fsl_forms::Expression as Expr;` and `type Node = fsl_cst::Token;`
 //! are seen through. As in `typestate_scan`, the `use` table is per file,
 //! not per scope, and the alias table is global, which over-approximates.
 //! A `pub use` in a crate the stage crates depend on (`REEXPORTING_CRATES`)
-//! that names a pre-check crate is followed: `qsl_semantics::X`, where
-//! `qsl-semantics` holds `pub use qsl_forms::X;`, resolves to
-//! `qsl_forms::X`, at whatever module the re-export sits.
+//! that names a pre-check crate is followed: `fsl_semantics::X`, where
+//! `fsl-semantics` holds `pub use fsl_forms::X;`, resolves to
+//! `fsl_forms::X`, at whatever module the re-export sits.
 //!
 //! **Known limits.** A glob import or glob re-export from
-//! `quire-contract-model` or a re-exporting crate is not expanded.
+//! `filament-contract-model` or a re-exporting crate is not expanded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -69,23 +69,23 @@ use crate::typestate_scan::{shipped_files, S3_CONSTRUCTOR, S3_ENTRY_NAMES};
 /// The pre-check crates (ADR-011 layers I3, 1 and 2): source directory and
 /// the crate name as a path spells it.
 const PRE_CHECK_CRATES: [(&str, &str); 3] = [
-    ("qsl-source/src", "qsl_source"),
-    ("qsl-cst/src", "qsl_cst"),
-    ("qsl-forms/src", "qsl_forms"),
+    ("fsl-source/src", "fsl_source"),
+    ("fsl-cst/src", "fsl_cst"),
+    ("fsl-forms/src", "fsl_forms"),
 ];
 
 /// The IR crate whose every type is a pre-check representation (CK-2 (c)),
 /// bar [`ADDRESSING_TYPES`].
-const CONTRACT_MODEL: &str = "quire_contract_model";
+const CONTRACT_MODEL: &str = "filament_contract_model";
 
-/// ADR-032 CK-2 (c): the `quire-contract-model` addressing values outside
+/// ADR-032 CK-2 (c): the `filament-contract-model` addressing values outside
 /// the set. Each is an identity key or a clock row a stage entry selects
 /// with from a package the I2 reader already admitted; none holds checked
-/// nodes or terms, so none can be executed without that reader. A QSL
+/// nodes or terms, so none can be executed without that reader. An FSL
 /// requirement names each in a stage-entry signature: `CheckedNodeId` and
 /// `CheckedOccurrence` (FR-516's `evaluate_temporal_evidence` and
 /// `subject`), `TemporalBinding` and `ClockConfiguration` (FR-522's clock
-/// authentication), `SourceIdentity` (FR-514's `qsl_inventory`).
+/// authentication), `SourceIdentity` (FR-514's `fsl_inventory`).
 /// `NativeJoinBudget` is the caller-owned native allowance every stage entry
 /// that joins identities takes; it holds a bound and a charge, no node or
 /// term. `CheckedPackageEvidence` and `CheckedPackageReadLimits` are the
@@ -102,21 +102,21 @@ const ADDRESSING_TYPES: [&str; 8] = [
     "CheckedPackageReadLimits",
 ];
 
-/// The stage-entry crates: layer 5 `qsl-eval`, layer R `qsl-route` and the
-/// layer-6 `replay` facade `qsl-replay` (minus [`SPINE`]).
-const STAGE_CRATES: [&str; 3] = ["qsl-eval/src", "qsl-route/src", "qsl-replay/src"];
+/// The stage-entry crates: layer 5 `fsl-eval`, layer R `fsl-route` and the
+/// layer-6 `replay` facade `fsl-replay` (minus [`SPINE`]).
+const STAGE_CRATES: [&str; 3] = ["fsl-eval/src", "fsl-route/src", "fsl-replay/src"];
 
 /// The workspace crates the stage crates depend on whose `pub use` items are
 /// followed: source directory and the crate name as a path spells it.
 const REEXPORTING_CRATES: [(&str, &str); 4] = [
-    ("qsl-foundation/src", "qsl_foundation"),
-    ("qsl-semantics/src", "qsl_semantics"),
-    ("qsl-package/src", "qsl_package"),
-    ("qsl-eval/src", "qsl_eval"),
+    ("fsl-foundation/src", "fsl_foundation"),
+    ("fsl-semantics/src", "fsl_semantics"),
+    ("fsl-package/src", "fsl_package"),
+    ("fsl-eval/src", "fsl_eval"),
 ];
 
-/// The `spine` module of `qsl-replay`: its file and its directory.
-const SPINE: [&str; 2] = ["qsl-replay/src/spine.rs", "qsl-replay/src/spine/"];
+/// The `spine` module of `fsl-replay`: its file and its directory.
+const SPINE: [&str; 2] = ["fsl-replay/src/spine.rs", "fsl-replay/src/spine/"];
 
 /// Which rule a finding breaks.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -305,7 +305,7 @@ impl<'ast> Visit<'ast> for PreCheckCollector {
         let inherent = node
             .trait_
             .is_none()
-            .then(|| qsl_string_edge::impl_self_name(&node.self_ty));
+            .then(|| fsl_string_edge::impl_self_name(&node.self_ty));
         let previous = std::mem::replace(&mut self.inherent_self, inherent);
         syn::visit::visit_item_impl(self, node);
         self.inherent_self = previous;
@@ -339,7 +339,7 @@ impl PreCheck {
             collectors.push((name, collector));
         }
         // Reach closure over the three crates' types and aliases together: a
-        // `qsl-forms` return can reach a `qsl-cst` node through a field.
+        // `fsl-forms` return can reach a `fsl-cst` node through a field.
         let mut reached = BTreeSet::new();
         let mut pending: Vec<String> = collectors
             .iter()
@@ -356,7 +356,7 @@ impl PreCheck {
             }
         }
         // Configuration: what a stage function takes and no stage function
-        // returns, though a stage output may hold it (`qsl_cst::Limits` in
+        // returns, though a stage output may hold it (`fsl_cst::Limits` in
         // `ParsedSource`).
         let stage_returns: BTreeSet<&String> = collectors
             .iter()
@@ -562,7 +562,7 @@ impl Resolver<'_> {
     }
 
     /// `candidate` with a re-exported segment replaced by the pre-check path
-    /// the re-export names: `qsl_semantics::m::X::f` -> `qsl_forms::X::f`.
+    /// the re-export names: `fsl_semantics::m::X::f` -> `fsl_forms::X::f`.
     fn follow_reexports(&self, candidate: &[String]) -> Vec<Vec<String>> {
         let Some((first, rest)) = candidate.split_first() else {
             return Vec::new();
@@ -733,7 +733,7 @@ impl<'ast> Visit<'ast> for StageScanner<'_, '_> {
         if has_cfg_test(&node.attrs) {
             return;
         }
-        let self_name = qsl_string_edge::impl_self_name(&node.self_ty);
+        let self_name = fsl_string_edge::impl_self_name(&node.self_ty);
         let previous = (
             self.inherent_self.replace(self_name),
             std::mem::replace(&mut self.in_trait_impl, node.trait_.is_some()),
@@ -847,7 +847,7 @@ impl<'ast> Visit<'ast> for StageScanner<'_, '_> {
     }
 }
 
-/// Whether `file` is in `qsl-replay`'s `spine` module.
+/// Whether `file` is in `fsl-replay`'s `spine` module.
 fn in_spine(file: &str) -> bool {
     file == SPINE[0] || file.starts_with(SPINE[1])
 }
@@ -894,7 +894,7 @@ pub fn scan(root: &Path) -> Result<Vec<Finding>> {
 }
 
 /// Whether a resolved path is rooted at a pre-check crate or at
-/// `quire-contract-model`.
+/// `filament-contract-model`.
 #[ix_trace_rs::string_edge]
 fn is_pre_check_rooted(path: &[String]) -> bool {
     path.first()
@@ -902,7 +902,7 @@ fn is_pre_check_rooted(path: &[String]) -> bool {
 }
 
 /// Every `pub use` of [`REEXPORTING_CRATES`] that binds a name to a path in
-/// a pre-check crate or `quire-contract-model`.
+/// a pre-check crate or `filament-contract-model`.
 fn reexports(root: &Path) -> Result<Reexports> {
     let mut reexports = Reexports::new();
     for (dir, name) in REEXPORTING_CRATES {
@@ -1032,9 +1032,9 @@ mod tests {
         }
     }
 
-    const EVAL_PLANT: &str = "qsl-eval/src/plant.rs";
-    const ROUTE_PLANT: &str = "qsl-route/src/plant.rs";
-    const REPLAY_PLANT: &str = "qsl-replay/src/plant.rs";
+    const EVAL_PLANT: &str = "fsl-eval/src/plant.rs";
+    const ROUTE_PLANT: &str = "fsl-route/src/plant.rs";
+    const REPLAY_PLANT: &str = "fsl-replay/src/plant.rs";
 
     /// TC-745 step 1: each planted signature gives one `signature` finding
     /// naming the planted file and line, the entry and the type.
@@ -1044,71 +1044,71 @@ mod tests {
         let cases = [
             (
                 EVAL_PLANT,
-                "pub fn plant(e: &qsl_forms::Expression) {}\n",
-                finding(EVAL_PLANT, 1, Rule::Signature, "plant", "qsl_forms::Expression"),
+                "pub fn plant(e: &fsl_forms::Expression) {}\n",
+                finding(EVAL_PLANT, 1, Rule::Signature, "plant", "fsl_forms::Expression"),
             ),
             (
                 EVAL_PLANT,
-                "use qsl_forms::Expression as Expr;\npub fn plant(e: &Expr) {}\n",
-                finding(EVAL_PLANT, 2, Rule::Signature, "plant", "qsl_forms::Expression"),
+                "use fsl_forms::Expression as Expr;\npub fn plant(e: &Expr) {}\n",
+                finding(EVAL_PLANT, 2, Rule::Signature, "plant", "fsl_forms::Expression"),
             ),
             (
                 EVAL_PLANT,
-                "type PlantedNode = qsl_cst::CstNode;\npub fn plant(n: &PlantedNode) {}\n",
-                finding(EVAL_PLANT, 2, Rule::Signature, "plant", "qsl_cst::CstNode"),
+                "type PlantedNode = fsl_cst::CstNode;\npub fn plant(n: &PlantedNode) {}\n",
+                finding(EVAL_PLANT, 2, Rule::Signature, "plant", "fsl_cst::CstNode"),
             ),
             (
                 ROUTE_PLANT,
-                "use qsl_semantics::check::PackageDeclarations;\npub struct Planted;\n\
+                "use fsl_semantics::check::PackageDeclarations;\npub struct Planted;\n\
                  impl Planted {\n    pub fn plant(&self, d: Option<Vec<&PackageDeclarations>>) {}\n}\n",
                 finding(
                     ROUTE_PLANT,
                     4,
                     Rule::Signature,
                     "Planted::plant",
-                    "qsl_semantics::check::PackageDeclarations",
+                    "fsl_semantics::check::PackageDeclarations",
                 ),
             ),
             (
                 REPLAY_PLANT,
-                "pub fn plant(p: &quire_contract_model::ContractPackage) {}\n",
+                "pub fn plant(p: &filament_contract_model::ContractPackage) {}\n",
                 finding(
                     REPLAY_PLANT,
                     1,
                     Rule::Signature,
                     "plant",
-                    "quire_contract_model::ContractPackage",
+                    "filament_contract_model::ContractPackage",
                 ),
             ),
             // The addressing exemption is by exact name: a non-exempt model
             // type beside an exempt one still fails, naming only the former.
             (
                 EVAL_PLANT,
-                "use quire_contract_model::{CheckedNodeId, ContractPackage};\n\
+                "use filament_contract_model::{CheckedNodeId, ContractPackage};\n\
                  pub fn plant(c: &CheckedNodeId, p: &ContractPackage) {}\n",
                 finding(
                     EVAL_PLANT,
                     2,
                     Rule::Signature,
                     "plant",
-                    "quire_contract_model::ContractPackage",
+                    "filament_contract_model::ContractPackage",
                 ),
             ),
         ];
         for (file, source, expected) in cases {
             assert_eq!(scan_planted(&[(file, source)]), vec![expected], "{source}");
         }
-        // ADR-032 CK-2: a pre-check type that `qsl-semantics` re-exports is
+        // ADR-032 CK-2: a pre-check type that `fsl-semantics` re-exports is
         // still caught under the re-exporting path.
         assert_eq!(
             scan_planted(&[
                 (
-                    "qsl-semantics/src/plant.rs",
-                    "pub use qsl_forms::Expression;\n"
+                    "fsl-semantics/src/plant.rs",
+                    "pub use fsl_forms::Expression;\n"
                 ),
                 (
                     EVAL_PLANT,
-                    "pub fn plant(e: &qsl_semantics::plant::Expression) {}\n"
+                    "pub fn plant(e: &fsl_semantics::plant::Expression) {}\n"
                 ),
             ]),
             vec![finding(
@@ -1116,7 +1116,7 @@ mod tests {
                 1,
                 Rule::Signature,
                 "plant",
-                "qsl_forms::Expression"
+                "fsl_forms::Expression"
             )]
         );
     }
@@ -1127,8 +1127,8 @@ mod tests {
     #[test]
     #[trace("TC-745", "FR-270-AC-2")]
     fn tc_745_planted_reconstruction_fails_the_gate() {
-        let parse = "fn plant(graph: &qsl_semantics::check::CheckedGraph) {\n    \
-                     let _ = qsl_cst::parse_source(source, limits);\n}\n";
+        let parse = "fn plant(graph: &fsl_semantics::check::CheckedGraph) {\n    \
+                     let _ = fsl_cst::parse_source(source, limits);\n}\n";
         assert_eq!(
             scan_planted(&[(EVAL_PLANT, parse)]),
             vec![finding(
@@ -1136,7 +1136,7 @@ mod tests {
                 2,
                 Rule::Reconstruction,
                 "plant",
-                "qsl_cst::parse_source"
+                "fsl_cst::parse_source"
             )]
         );
         let check = "fn plant(limits: CheckingLimits) {\n    \
@@ -1178,7 +1178,7 @@ mod tests {
             )]
         );
         assert_eq!(
-            scan_planted(&[("qsl-replay/src/spine/plant.rs", parse)]),
+            scan_planted(&[("fsl-replay/src/spine/plant.rs", parse)]),
             vec![]
         );
     }
@@ -1238,39 +1238,39 @@ mod tests {
         let look_alikes = [
             (
                 EVAL_PLANT,
-                "use qsl_forms::StateClauseKind;\npub fn plant(k: StateClauseKind) {}\n",
+                "use fsl_forms::StateClauseKind;\npub fn plant(k: StateClauseKind) {}\n",
             ),
             (
                 REPLAY_PLANT,
-                "fn plant() -> qsl_cst::Limits {\n    \
-                 qsl_cst::Limits { source_bytes: 1, ..qsl_cst::Limits::default() }\n}\n",
+                "fn plant() -> fsl_cst::Limits {\n    \
+                 fsl_cst::Limits { source_bytes: 1, ..fsl_cst::Limits::default() }\n}\n",
             ),
             (
                 EVAL_PLANT,
-                "#[cfg(test)]\nmod t {\n    pub fn t(e: qsl_forms::Expression) {}\n}\n",
+                "#[cfg(test)]\nmod t {\n    pub fn t(e: fsl_forms::Expression) {}\n}\n",
             ),
             // Configuration: a stage takes it and none returns it.
-            (EVAL_PLANT, "pub fn plant(l: qsl_cst::Limits) {}\n"),
+            (EVAL_PLANT, "pub fn plant(l: fsl_cst::Limits) {}\n"),
             // ADR-032 CK-2 (c): an addressing value into an admitted package.
             (
                 EVAL_PLANT,
-                "use quire_contract_model::CheckedNodeId;\npub fn plant(c: &CheckedNodeId) {}\n",
+                "use filament_contract_model::CheckedNodeId;\npub fn plant(c: &CheckedNodeId) {}\n",
             ),
             (
                 REPLAY_PLANT,
-                "pub fn plant(i: &quire_contract_model::SourceIdentity) {}\n",
+                "pub fn plant(i: &filament_contract_model::SourceIdentity) {}\n",
             ),
         ];
         for (file, source) in look_alikes {
             assert_eq!(scan_planted(&[(file, source)]), vec![], "{source}");
         }
-        let second = "qsl-eval/src/plant_two.rs";
+        let second = "fsl-eval/src/plant_two.rs";
         assert_eq!(
             scan_planted(&[
-                (EVAL_PLANT, "pub fn plant(e: &qsl_forms::Expression) {}\n"),
+                (EVAL_PLANT, "pub fn plant(e: &fsl_forms::Expression) {}\n"),
                 (
                     second,
-                    "use qsl_forms::Expression as Expr;\npub fn plant(e: &Expr) {}\n"
+                    "use fsl_forms::Expression as Expr;\npub fn plant(e: &Expr) {}\n"
                 ),
             ]),
             vec![
@@ -1279,26 +1279,26 @@ mod tests {
                     1,
                     Rule::Signature,
                     "plant",
-                    "qsl_forms::Expression"
+                    "fsl_forms::Expression"
                 ),
-                finding(second, 2, Rule::Signature, "plant", "qsl_forms::Expression"),
+                finding(second, 2, Rule::Signature, "plant", "fsl_forms::Expression"),
             ]
         );
     }
 
     /// TC-745 step 4: the workspace as it is passes, and the gate's command
     /// fails with a finding exit code once a signature is planted in
-    /// `qsl-eval`.
+    /// `fsl-eval`.
     #[test]
     #[trace("TC-745", "FR-270-AC-4")]
     fn tc_745_the_workspace_passes_and_a_plant_fails_the_command() {
         assert_eq!(scan(&workspace_root()).expect("scan runs"), vec![]);
-        let copy = planted_copy(&[(EVAL_PLANT, "pub fn plant(e: &qsl_forms::Expression) {}\n")]);
+        let copy = planted_copy(&[(EVAL_PLANT, "pub fn plant(e: &fsl_forms::Expression) {}\n")]);
         let error = run(copy.path()).expect_err("the planted signature fails the gate");
         assert_eq!(error.code(), crate::error::Code::CheckedInput);
         assert_eq!(error.exit_code(), 1);
         assert!(error
             .to_string()
-            .contains("qsl-eval/src/plant.rs:1: signature"));
+            .contains("fsl-eval/src/plant.rs:1: signature"));
     }
 }

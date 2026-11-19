@@ -3,7 +3,7 @@ id: TC-1006
 title: "A field, parameter or result typed by a variant type is admitted, exported without a reference and assembled as the enum type"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: verifies
 ---
 # TC-1006: A field, parameter or result typed by a variant type is admitted, exported without a reference and assembled as the enum type

@@ -3,7 +3,7 @@ id: TC-597
 title: "S3 binds trace variables to models, types indexed atoms and step labels, splits the match and checks align skip"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: verifies
 ---
 # TC-597: S3 binds trace variables to models, types indexed atoms and step labels, splits the match and checks align skip

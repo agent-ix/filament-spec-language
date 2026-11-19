@@ -55,7 +55,7 @@ fn assert_absent(root: &Path, forbidden: &[&str]) {
 fn spine_crates_do_not_import_the_retained_root_frontend_or_protocol_reader() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
     assert_absent(
-        &workspace.join("qsl-replay/src/spine"),
+        &workspace.join("fsl-replay/src/spine"),
         &[
             "parse_native",
             "parse_native_source",
@@ -64,20 +64,20 @@ fn spine_crates_do_not_import_the_retained_root_frontend_or_protocol_reader() {
             "checking::composed",
         ],
     );
-    for crate_name in ["qsl-package", "qsl-eval", "qsl-replay"] {
+    for crate_name in ["fsl-package", "fsl-eval", "fsl-replay"] {
         assert_absent(
             &workspace.join(crate_name).join("src"),
             &[
                 "DeclarationKind::Protocol",
                 "Family::Protocol",
                 "RegisteredDefinition::Protocol",
-                "quire_spec_language::parser",
-                "quire_spec_language::syntax",
-                "quire_spec_language::linking::native",
-                "quire_spec_language::checking",
-                "quire_spec_language::model_source",
-                "quire_spec_language::located_json",
-                "quire_spec_language::protocol_artifact",
+                "filament_spec_language::parser",
+                "filament_spec_language::syntax",
+                "filament_spec_language::linking::native",
+                "filament_spec_language::checking",
+                "filament_spec_language::model_source",
+                "filament_spec_language::located_json",
+                "filament_spec_language::protocol_artifact",
             ],
         );
     }
@@ -86,7 +86,7 @@ fn spine_crates_do_not_import_the_retained_root_frontend_or_protocol_reader() {
 /// TC-1027 steps 2 and 3: after the composed lane is deleted, no source under
 /// the root crate or any layer crate names its entry points or types, and none
 /// of its source directories exist. The composed parser was the only parser
-/// besides `qsl_cst::parse` that admitted a profile line with a version or
+/// besides `fsl_cst::parse` that admitted a profile line with a version or
 /// digest, so its absence is FR-362-AC-2's by-absence check.
 #[trace("FR-362-AC-2", "FR-362-AC-6", "FR-499-AC-5")]
 #[test]
@@ -98,7 +98,7 @@ fn no_source_names_the_composed_lane() {
         let is_layer = path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("qsl-"));
+            .is_some_and(|name| name.starts_with("fsl-"));
         if is_layer && path.join("src").is_dir() {
             roots.push(path.join("src"));
         }
@@ -144,7 +144,7 @@ fn the_native_model_module_is_absent() {
         let is_layer = path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("qsl-"));
+            .is_some_and(|name| name.starts_with("fsl-"));
         if is_layer && path.join("src").is_dir() {
             roots.push(path.join("src"));
         }
@@ -152,7 +152,7 @@ fn the_native_model_module_is_absent() {
     // Assembled so that this file does not name the paths it forbids.
     let forbidden = [
         ["crate::", "native_model"].concat(),
-        ["quire_spec_language::", "native_model"].concat(),
+        ["filament_spec_language::", "native_model"].concat(),
     ];
     let forbidden: Vec<&str> = forbidden.iter().map(String::as_str).collect();
     for root in &roots {
@@ -187,11 +187,11 @@ fn no_root_source_names_the_deleted_protocol_reader_or_protocol_definition() {
         let is_layer = path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("qsl-"));
+            .is_some_and(|name| name.starts_with("fsl-"));
         if is_layer && path.join("src").is_dir() {
             assert_absent(
                 &path.join("src"),
-                &["quire_spec_language::protocol_artifact"],
+                &["filament_spec_language::protocol_artifact"],
             );
         }
     }
@@ -243,11 +243,11 @@ fn the_zero_draft_front_end_is_absent() {
         ["Linked", "Package"].concat(),
         ["Native", "Type"].concat(),
         ["Domain", "Type"].concat(),
-        ["quire_spec_language::", "parse"].concat(),
-        ["quire_spec_language::", "link"].concat(),
-        ["quire_spec_language::", "syntax"].concat(),
-        ["quire_spec_language::", "linking"].concat(),
-        ["quire_spec_language::", "checking"].concat(),
+        ["filament_spec_language::", "parse"].concat(),
+        ["filament_spec_language::", "link"].concat(),
+        ["filament_spec_language::", "syntax"].concat(),
+        ["filament_spec_language::", "linking"].concat(),
+        ["filament_spec_language::", "checking"].concat(),
         ["crate::", "syntax"].concat(),
         ["crate::", "linking"].concat(),
         ["crate::", "checking"].concat(),

@@ -3,23 +3,23 @@ id: FR-213
 title: "Measure interval operators over a protocol subject in counted steps"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-091
+  - target: ix://agent-ix/filament-specification/FR-091
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-092
+  - target: ix://agent-ix/filament-specification/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-431
+  - target: ix://agent-ix/filament-specification/FR-431
     type: depends_on
 ---
 # FR-213: Measure interval operators over a protocol subject in counted steps
@@ -33,7 +33,7 @@ and the model checker SHALL measure interval distance, and a bounded
 profile's horizon, in **counted** steps: operations (`attempt`,
 `cattempt`), events (`event`, `activate`), `send` and `receive`, and the
 terminal stutter step (ADR-027 PB-3). Both SHALL treat every other step,
-`fence` and memory steps included, as uncounted (QSpec FR-431).
+`fence` and memory steps included, as uncounted (FSpec FR-431).
 
 ## Use case
 
@@ -58,11 +58,11 @@ around two attempts does not change what "two steps" means.
 ## Behavior
 
 - The TemporalTrace evaluator SHALL read positions and anchors over a
-  protocol subject as QSpec FR-431 states, with a memory step carrying the
+  protocol subject as FSpec FR-431 states, with a memory step carrying the
   anchor its model gives.
 - A `holds` atom SHALL evaluate over the model observation at its position,
   each location read through the memory model's atom values (FR-215).
-- The evaluator SHALL measure interval distance in QSpec FR-431's counted
+- The evaluator SHALL measure interval distance in FSpec FR-431's counted
   steps, and unbounded operators SHALL range over every position.
 - FR-126's expansion of an interval operator into next-position steps SHALL
   advance its offset only on counted steps.
@@ -85,10 +85,10 @@ around two attempts does not change what "two steps" means.
   (positions and the evaluator),
   [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (interval expansion), FR-206.
-- QSpec owns counted and uncounted steps, interval distance over a protocol
-  subject and the `protocol` anchor kind (ADR-027 QS-6, QS-12): QSpec
+- FSpec owns counted and uncounted steps, interval distance over a protocol
+  subject and the `protocol` anchor kind (ADR-027 QS-6, QS-12): FSpec
   FR-431, over FR-091, FR-092 and FR-161.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-431 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-431 (Linear STD-140).

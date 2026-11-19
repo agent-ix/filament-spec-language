@@ -3,21 +3,21 @@ id: FR-115
 title: "Run an operation frame over an invocation through the spine"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: references
-  - target: ix://agent-ix/quire-specification/FR-013
+  - target: ix://agent-ix/filament-specification/FR-013
     type: depends_on
 ---
 # FR-115: Run an operation frame over an invocation through the spine
@@ -25,7 +25,7 @@ relationships:
 ## Description
 
 Each operation frame records one `operation-contract` requirement (FR-104,
-FR-114). FR-109's `qsl_replay::spine::run_clause` SHALL run that frame on
+FR-114). FR-109's `fsl_replay::spine::run_clause` SHALL run that frame on
 its own: a `Frame` selection names the operation, the entry admits the
 supplied invocation, and the `ProtocolClause` S6a `evaluate` arm checks the
 invocation against the operation's frame. A write, creation, deletion or
@@ -49,7 +49,7 @@ clause under test.
   invocation }`: `operation` is the `OperationName` `M::T::op` (model
   alias, owner (an object type, a process or a state machine) and
   operation, a type the spine owns), and
-  `invocation` a `DocumentRef` (FR-106) naming a `quire.state.invocation/v1`
+  `invocation` a `DocumentRef` (FR-106) naming a `filament.state.invocation/v1`
   document, with its pre and post snapshots in the provision.
 
 ## Outputs
@@ -88,7 +88,7 @@ the frame node (FR-105) carries it.
 
 `Link` names one changed instance of a relationship (FR-364) that FR-106's
 check 11.5 refuses. `relationship` is the `DeclarationKey` of the
-relationship node, the key a `modifies` entry names (QSpec FR-340).
+relationship node, the key a `modifies` entry names (FSpec FR-340).
 `difference` is `added` when the instance occurs more often in the post
 extent than in the pre extent, and `removed` when it occurs less often.
 `source` and `target` are the instance's ends, each an object reference
@@ -114,7 +114,7 @@ witness's `population` is the one of its `source`.
   operation. A failure SHALL report stage
   `admit` with FR-106's code, cause and record. An absent document SHALL
   report `incomplete`, `unavailable_observation`, and never a violation
-  (QSpec FR-013-AC-4).
+  (FSpec FR-013-AC-4).
 - The frame check SHALL apply each entry's scope as FR-154 states: the
   receiver is the invocation's `self`, and a `deletes p` entry grants the
   argument the invocation binds to `p`. A change that only a scope other than
@@ -148,7 +148,7 @@ witness's `population` is the one of its `source`.
   `delta-disagreement`, exit 20: the invocation's own inventory is
   inconsistent, so the frame cannot be evaluated over it.
 - The frame SHALL come only from the compiled package. The request carries no
-  frame and no permission, so no caller can widen it (QSpec FR-013-AC-3).
+  frame and no permission, so no caller can widen it (FSpec FR-013-AC-3).
 - A document whose `model` differs from the package's selection refuses
   before evaluation (`invalid_model_binding`/`wrong-model-selection`), by the
   rules FR-109 and FR-106 already state.
@@ -175,7 +175,7 @@ witness's `population` is the one of its `source`.
   `ProtocolClause` S6a family kind), FR-109 (the run entry, its report and
   exit codes), FR-104 and FR-114 (the frame's requirement record).
 - FR-069 and FR-070 (the violation verdict with its witness).
-- QSpec FR-013 (frame enforcement), `native-diagnostics.md`
+- FSpec FR-013 (frame enforcement), `native-diagnostics.md`
   (`frame_violation`, `population_delta_mismatch`).
 
 ## References

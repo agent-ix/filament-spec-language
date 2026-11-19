@@ -3,7 +3,7 @@ id: TC-654
 title: "Activation on each starts instances under max_live_instances and states the bound used"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: verifies
 ---
 # TC-654: Activation on each starts instances under max_live_instances and states the bound used
@@ -12,7 +12,7 @@ relationships:
 
 Verify per-trigger activation, instance ordinals and removal, the instance bound's default, its V-6 cause and precedence, and its statement in every terminal record.
 
-Scope: FR-209-AC-1 to FR-209-AC-8.
+Scope: FR-209-AC-1 to FR-209-AC-9.
 
 ## Test Procedure
 
@@ -33,6 +33,8 @@ Scope: FR-209-AC-1 to FR-209-AC-8.
 8. With FR-209-AC-8's `record Tick { n: Int[0, 2]; up: Boolean; }` trigger
    and guard `x.n > 0`, list the initial state's `activate` steps; run the
    `n: Integer` variant; check the `lookup` guard variant.
+9. With FR-209-AC-9's captures `lower`, `big` and `fresh`, list `event(E)`
+   after `attempt(T)` for each trigger.
 
 Tag the tests `#[trace("TC-654", "FR-209-AC-n")]`.
 
@@ -59,3 +61,4 @@ Tag the tests `#[trace("TC-654", "FR-209-AC-n")]`.
   refusal when the system is built; `RequiresBound` naming `x`, `Tick` and
   `n` before exploring; `ill_typed`/`operator-ineligible` at the `lookup`
   naming `protocol-activation`.
+- Step 9: `event(E)` enabled for the triggers 2 and 3 only.

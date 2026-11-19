@@ -3,7 +3,7 @@ id: TC-186
 title: "The replay request's byte provision is reachable only by label or identity, never by path, is complete, and stays within the size bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: verifies
 ---
 # TC-186: The replay request's byte provision is reachable only by label or identity, never by path, is complete, and stays within the size bound
@@ -18,7 +18,7 @@ entries under one key refuse; that the
 byte provision must be complete for every source the package reference
 names; and that an oversized encoding refuses rather than decoding
 partially. This is the type-level guarantee #243's executor depends on
-(QSpec FR-323-AC-5: "the executor reads no recompilation input by path,
+(FSpec FR-323-AC-5: "the executor reads no recompilation input by path,
 environment variable or search location"). A wrong implementation this
 test would catch: a request type that carries an optional
 `source_root: Option<PathBuf>` "fallback" field for local development,
@@ -54,7 +54,7 @@ FR-071-AC-9, FR-071-AC-10, FR-071-AC-13 (AC-6 and AC-11 are retired).
    entries and round-trip it; omit one entry's source from the byte
    provision; decode an entry with an empty identity.
 8. Decode a request whose semantic profile selection names
-   `quire.profile.unknown/v1`.
+   `filament.profile.unknown/v1`.
 9. (Retired with FR-071-AC-11.)
 10. Round-trip a request whose package reference and `dependencies` entry carry
     `refinement_internals`, one with the member absent, and ones with the
@@ -76,7 +76,7 @@ FR-071-AC-9, FR-071-AC-10, FR-071-AC-13 (AC-6 and AC-11 are retired).
 - Step 7: the round trip preserves both entries in order; the omitted
   source refuses construction as step 5 does; the empty identity refuses at decode.
 - Step 8 refuses `unknown_profile`/`unsupported-selection`, keeping the selection
-  (`quire.profile.unknown/v1`) and its role
+  (`filament.profile.unknown/v1`) and its role
   (`replay.semantic_profile_selections`).
 - Step 9 is retired.
 - Step 10: each member round-trips exactly, absent stays absent, and no value is refused at decode.

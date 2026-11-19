@@ -3,9 +3,9 @@ id: TC-602
 title: "EN-1 checks a forall-exists safety hyperproperty by witness sets"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-177
+  - target: ix://agent-ix/filament-spec-language/FR-177
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-183
+  - target: ix://agent-ix/filament-spec-language/FR-183
     type: verifies
 ---
 # TC-602: EN-1 checks a forall-exists safety hyperproperty by witness sets

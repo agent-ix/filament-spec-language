@@ -3,7 +3,7 @@ id: TC-692
 title: "The replay facade replays timed counterexamples and time-locks in exact arithmetic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: verifies
 ---
 # TC-692: The replay facade replays timed counterexamples and time-locks in exact arithmetic

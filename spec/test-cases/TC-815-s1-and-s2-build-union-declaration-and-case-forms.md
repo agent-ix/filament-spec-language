@@ -3,7 +3,7 @@ id: TC-815
 title: "S1 and S2 build union declaration and case forms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-313
+  - target: ix://agent-ix/filament-spec-language/FR-313
     type: verifies
 ---
 # TC-815: S1 and S2 build union declaration and case forms

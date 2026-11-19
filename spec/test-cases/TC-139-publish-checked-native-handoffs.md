@@ -3,7 +3,7 @@ id: TC-139
 title: "Publish and read checked native handoffs"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-051, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-051, type: verifies }
 ---
 # TC-139: Publish and read checked native handoffs
 
@@ -38,8 +38,8 @@ trigger and anchor handles remain invalid predicate selections.~~
 
 **FR-051-AC-6 stays live**, amended to the production-dependency-graph fact:
 `arch-lint direction` (FR-059), run over the four repositories' checkouts,
-confirms that no dependency of QSL depends back on QSL, so the graph is
-cycle-free; the production dependency key is `quire-contract-model`, the
+confirms that no dependency of FSL depends back on FSL, so the graph is
+cycle-free; the production dependency key is `filament-contract-model`, the
 package's own name.
 
 ## Expected Results
@@ -47,5 +47,5 @@ package's own name.
 FR-051-AC-1 through FR-051-AC-5 (retired): no longer applicable; the surface
 they described does not exist.
 
-FR-051-AC-6 (live): `arch-lint direction` reports no FB-05 edge into QSL and
+FR-051-AC-6 (live): `arch-lint direction` reports no FB-05 edge into FSL and
 no FB-11 cycle.

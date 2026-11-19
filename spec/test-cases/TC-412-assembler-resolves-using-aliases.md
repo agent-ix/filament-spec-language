@@ -3,7 +3,7 @@ id: TC-412
 title: "The assembler resolves each using alias to a declared profile selection and refuses an undeclared one"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-412: The assembler resolves each using alias to a declared profile selection and refuses an undeclared one
@@ -12,8 +12,8 @@ relationships:
 
 Verify that E3 resolves a form's `using` alias against the unit's own
 profile selections, which S2 carries, and that an alias naming no declared
-profile selection refuses. There is no default profile (QSpec
-`proposals/quire-v1/shared-grammar.md`).
+profile selection refuses. There is no default profile (FSpec
+`proposals/filament-v1/shared-grammar.md`).
 
 This catches an assembler that ignores `using`, and one that falls back to
 a default profile for an undeclared alias.

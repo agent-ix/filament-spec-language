@@ -3,7 +3,7 @@ id: TC-630
 title: "S3 checks exact-only forms and fairness sets, and EN-5 advertises exact evidence"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: verifies
 ---
 # TC-630: S3 checks exact-only forms and fairness sets, and EN-5 advertises exact evidence

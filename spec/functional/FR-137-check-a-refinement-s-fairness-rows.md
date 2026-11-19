@@ -3,17 +3,17 @@ id: FR-137
 title: "Check a refinement's fairness rows at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: depends_on
 ---
 # FR-137: Check a refinement's fairness rows at S3
@@ -58,13 +58,13 @@ written again.
 - An `assume` row's operation SHALL resolve to an operation of the concrete
   model, and an `ensure` row's to an operation of the abstract model. If a row's
   operation resolves in neither model, or only in the other model, then the
-  checker SHALL refuse it `missing_declaration`/`missing-name`, as QSpec
+  checker SHALL refuse it `missing_declaration`/`missing-name`, as FSpec
   FR-375 states, naming the model the operation belongs to when it
   resolves in the other model.
 - The checker SHALL record each constraint of each set in source order. Two
   rows of one set with the same kind, operation and granularity (an
   unwritten granularity read as `whole`) SHALL refuse
-  `invalid_model_binding`/`conflicting-binding`, naming both rows, as QSpec
+  `invalid_model_binding`/`conflicting-binding`, naming both rows, as FSpec
   FR-375 states; a `weak` and a `strong` row on one operation are different
   constraints.
 - The checker SHALL accept a declaration whose `F_C` or `F_A` is empty.
@@ -99,4 +99,4 @@ written again.
 
 ## References
 
-- The QSpec half (fairness rows in the grammar): QSpec FR-375 and FR-377 (Linear STD-133).
+- The FSpec half (fairness rows in the grammar): FSpec FR-375 and FR-377 (Linear STD-133).

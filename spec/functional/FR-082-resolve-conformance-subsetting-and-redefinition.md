@@ -3,21 +3,21 @@ id: FR-082
 title: "Resolve conformance, subsetting and redefinition over the closed declaration set"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-108
+  - target: ix://agent-ix/filament-semantic-value/FR-108
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: references
 ---
 # FR-082: Resolve conformance, subsetting and redefinition over the closed declaration set
@@ -31,8 +31,8 @@ checker SHALL check every independent variance axis the redefined member kind
 defines. The model checker SHALL report every failing axis rather than
 stopping at the first.
 
-This requirement is QSL's own binding of quire-specification
-[FR-151](ix://agent-ix/quire-specification/FR-151)'s conformance and
+This requirement is FSL's own binding of filament-specification
+[FR-151](ix://agent-ix/filament-specification/FR-151)'s conformance and
 redefinition rules into the compiler's behavior. It does not restate FR-151's
 axis table; it states the checker's exhaustiveness, boundedness and refusal
 contract for applying it.
@@ -90,7 +90,7 @@ per-parameter type or multiplicity axis for that pair — there is no
 parameter-by-position correspondence to check across an unequal parameter
 list. The result-type, result-multiplicity and effect axes remain
 independent of arity and are still checked and reported on their own. This
-is quire-specification [FR-151](ix://agent-ix/quire-specification/FR-151)'s
+is filament-specification [FR-151](ix://agent-ix/filament-specification/FR-151)'s
 arity row ("equal parameter count; when unequal, no parameter axis is
 checked"), which this exhaustiveness requirement's own "every independent
 axis is checked" rule above does not override.
@@ -138,9 +138,9 @@ the obligation like any other.
 
 The model checker SHALL read a field's optionality from its declared
 `presence` ([FR-056](FR-056-admit-domain-package-model-declarations.md);
-QSpec `model-complete.md` Presence row) and never from its multiplicity.
+FSpec `model-complete.md` Presence row) and never from its multiplicity.
 A field redefinition whose redefined field is `optional` and whose
-redefining field is `required` narrows presence, and SHALL engage QSpec
+redefining field is `required` narrows presence, and SHALL engage FSpec
 FR-151's `field-presence` obligation whatever the two multiplicities are.
 A redefinition whose two fields declare the same presence engages no
 obligation through presence. Its multiplicity axis engages the obligation
@@ -163,7 +163,7 @@ the model checker SHALL stop with the `Incomplete` outcome naming
 `ancestor_steps`, its configured value and the count the denied charge would
 have reached (ADR-013 O-21, ADR-030 D-1), and SHALL NOT report a conformance
 or non-conformance verdict for that walk. The denied charge refuses
-`resource_exhausted`/`insufficient-next-charge`, the shape QSpec FR-150-AC-11
+`resource_exhausted`/`insufficient-next-charge`, the shape FSpec FR-150-AC-11
 gives it (`incomplete(ancestor_steps, limit, consumed, 1,
 model.ancestor-edge)`), carrying `setting`, `limit` (the effective limit), `actual`, `stage`, `accounting_contract`, `limit_kind`, `consumed`, `next_charge` and `charge_point`. Its `charge_point` is `admission.ancestor-edge` (stage `population-admission`,
 contract `PopulationAdmissionLimitsV1`) when the setting is `admission.ancestor_steps`, and
@@ -225,7 +225,7 @@ give the same verdict the model gives at evaluation:
   exposed field SHALL narrow every field it stands for: required wherever
   one of them is, and admitting only values that field's type admits. A
   reference field of type `Reference<T>` SHALL, under
-  `quire.model.complete/v1`, admit a redefining field of type `Reference<S>`
+  `filament.model.complete/v1`, admit a redefining field of type `Reference<S>`
   exactly when `S` conforms to `T` in the closed FR-151 effective view:
   `S` is `T` or a proper subtype of `T`. This covariance SHALL preserve the
   reference's qualified identity and SHALL NOT admit an implicit downcast.
@@ -242,7 +242,7 @@ give the same verdict the model gives at evaluation:
 ### Shared-registry storage failure retains its measured request and unit
 
 When shared type-environment admission reports an allocator denial under
-[QSV FR-108](ix://agent-ix/quire-semantic-value/FR-108), the expression
+[FSV FR-108](ix://agent-ix/filament-semantic-value/FR-108), the expression
 checker SHALL stop with `StageFailure::Refused` carrying a typed registry
 allocation cause, catalog `resource_exhausted`/`allocation-failed`.
 This is an admission resource refusal, in category refusal; it produces no
@@ -259,7 +259,7 @@ carry exactly one `requested` field, rendered as `<unit>:<amount>`:
 | `bytes` | The byte amount passed to the failed reservation, in unpadded base-10. |
 | `additional-elements` | The additional element count passed to the failed collection reservation, not its length or final capacity, in unpadded base-10. |
 
-QSL SHALL preserve the amount and unit observed at the upstream production
+FSL SHALL preserve the amount and unit observed at the upstream production
 reservation boundary without inferring bytes from a count, multiplying by a
 guessed element size, or substituting a configured budget. This payload has
 no configured bound, setting, or work-counter interpretation. An allocation
@@ -268,7 +268,7 @@ input, an ill-typed declaration, a Boolean `false`, cancellation, or an
 `InternalFault` or kernel checked-invariant cause.
 
 When upstream instead reports reservation-size arithmetic or representation
-overflow, QSL SHALL preserve that distinct typed capacity/size resource
+overflow, FSL SHALL preserve that distinct typed capacity/size resource
 failure as `resource_exhausted`/`reservation-size-overflow`, preserving the
 upstream `StorageRequest` amount and native unit. It SHALL NOT report
 `allocation-failed` or claim a measured allocator-denied request for that
@@ -282,9 +282,9 @@ The registry's resource-failure causes and payloads are:
 | `resource_exhausted` | `allocation-failed` | Exactly `requested`: the native unit and upstream amount as `<unit>:<amount>` (`bytes` or `additional-elements`, then unpadded base-10 amount). |
 | `resource_exhausted` | `reservation-size-overflow` | `upstream`: the exact upstream `StorageRequest` amount and unit rendered as `<unit>:<amount>`; `<unit>` is `bytes` or `additional-elements`, and `<amount>` is unpadded base-10. Preserve the capacity/size arithmetic or representation overflow reason. |
 
-When either storage failure stops admission, QSL SHALL expose no admitted
+When either storage failure stops admission, FSL SHALL expose no admitted
 descriptor prefix, registry index, member key join, type environment, or
-checked package from that attempt. QSL SHALL perform no evaluation and charge
+checked package from that attempt. FSL SHALL perform no evaluation and charge
 no evaluation work before this denial. Admission work already performed keeps
 its existing accounting. Retrying identical declarations after removing the
 denial SHALL give the same complete admitted environment and member links as
@@ -292,8 +292,8 @@ a fresh successful attempt.
 
 The `TypeEnvironmentLimits` denials above SHALL retain their existing
 `StageFailure::Limit`, limit kind, configured bound, actual counter and
-setting. QSV owns the fallible storage design and reservation measurement;
-QSL owns this consumer mapping. Canonical reader/encoder allocation at the
+setting. FSV owns the fallible storage design and reservation measurement;
+FSL owns this consumer mapping. Canonical reader/encoder allocation at the
 calling sites of [FR-259](FR-259-encode-identities-and-read-json-through-quire-canonical-at-any-depth.md)
 continues to carry requested **bytes** under its own typed cause, with no
 bound or setting. A registry request, even when measured in bytes, SHALL NOT
@@ -313,27 +313,27 @@ be presented as canonical `IdentityRefusal::Allocation`.
 | FR-082-AC-8 | Given a field `f` declared `optional` with multiplicity `[1, 1]`, redefined by a field declared `required` with multiplicity `[1, 1]` and written by an exposed operation whose postcondition establishes no presence fact, the checker refuses `unproved-refinement` with obligation `field-presence`; with `present(self.f)` established it admits the redefinition. Given `f` and its redefinition both declared `required` with multiplicity `[0, 1]`, or both `optional` with multiplicity `[1, 1]`, written by the same operation with no established fact, the checker admits the redefinition and engages no obligation. | Test (TC-896) |
 | FR-082-AC-9 | Given a domain package whose scalar type `Wide` is bound to `[0, 18446744073709551615]` (its bounds written as decimal strings, FR-056), a field `f: Wide` redefined by a field of scalar type `Narrow` bound to `[0, 9223372036854775808]`, and an exposed operation writing `f` whose stated postcondition is `self.f <= 9223372036854775808`, the checker admits the redefinition; with the postcondition `self.f <= 9223372036854775809` it refuses `unproved-refinement` with obligation `field-domain`. | Test (TC-911) |
 | FR-082-AC-10 | With valid declarations and sufficient configured limits, an isolated allocator seam denies a real production reservation during shared registry, index or traversal construction. S3 returns `StageFailure::Refused` with `resource_exhausted`/`allocation-failed` and exactly one `requested` field containing the upstream native unit and amount as `<unit>:<amount>` (`bytes` or `additional-elements`, then unpadded base-10), with no bound or setting. The consumer neither returns false nor reports a limit, malformed/type refusal, cancellation or fault. | Test |
-| FR-082-AC-11 | A production reservation-size arithmetic or representation overflow reaches QSL as `resource_exhausted`/`reservation-size-overflow`, preserving the upstream amount and native unit, never `allocation-failed` or a fabricated measured allocator-denied request. A genuine allocator denial with representable request remains the AC-10 case. | Test |
+| FR-082-AC-11 | A production reservation-size arithmetic or representation overflow reaches FSL as `resource_exhausted`/`reservation-size-overflow`, preserving the upstream amount and native unit, never `allocation-failed` or a fabricated measured allocator-denied request. A genuine allocator denial with representable request remains the AC-10 case. | Test |
 | FR-082-AC-12 | Denial after earlier descriptors or member links have been staged exposes no admitted prefix, index, key join, environment or checked package; evaluation invocation count and evaluation charge are both zero. Removing the denial and retrying identical declarations gives the same complete environment and member links as fresh admission. | Test |
 | FR-082-AC-13 | For the same valid declaration fixture with allocation enabled, exact N-1/N controls for `environment.work_units` and `environment.ancestor_steps` retain their original stage-limit kind, configured bound and actual denied counter, and admit at sufficient limits. Malformed input, cancellation, FR-259's 4096-byte canonical allocation control and released checked-invariant causes retain their existing classifications and payloads. Budget denial and capacity overflow do not stand in for AC-10's measured reservation failure. | Test |
 | FR-082-AC-15 | Types `A` (`supertypes: [B, C]`), `B` (`supertypes: [A]`) and `C` (`supertypes: [A]`) are refused as four `invalid_model_binding`/`specialization-cycle` refusals: `A` and `B` each listing `[A, B]`, then `A` and `C` each listing `[A, C]`, so `A` is refused once per cycle. Types `A` (`supertypes: [C]`), `B` (`supertypes: [C]`), `C` (`supertypes: [D]`) and `D` (`supertypes: [B]`) are refused as three refusals, at `B`, `C` and `D`, each listing `[B, C, D]`; `A` only leads into the cycle and is neither refused nor listed. Types `A` and `B` of two-node cycle `A -> B -> A` are refused at `A`, then at `B`, each listing `[A, B]`. | Test (TC-1020) |
-| FR-082-AC-16 | Under `quire.model.complete/v1`, given `S` a proper subtype of `T`, a field of type `Reference<T>` redefined by `Reference<S>` with identical multiplicity and presence and no outstanding writer refinement obligation passes the value-type axis and preserves qualified reference identity. A reverse or unrelated target type refuses `ill_typed`/`variance-result` and admits no implicit downcast. If an exposed operation writes the narrowed object-typed domain and no FR-146 fact form expresses the narrowing, the checker refuses `undefined_expression`/`unproved-refinement` with obligation `no-proof-form`. | Test |
+| FR-082-AC-16 | Under `filament.model.complete/v1`, given `S` a proper subtype of `T`, a field of type `Reference<T>` redefined by `Reference<S>` with identical multiplicity and presence and no outstanding writer refinement obligation passes the value-type axis and preserves qualified reference identity. A reverse or unrelated target type refuses `ill_typed`/`variance-result` and admits no implicit downcast. If an exposed operation writes the narrowed object-typed domain and no FR-146 fact form expresses the narrowing, the checker refuses `undefined_expression`/`unproved-refinement` with obligation `no-proof-form`. | Test |
 | FR-082-AC-17 | The model conformance stage runs inside the checker, after source resolution, structural assembly and clause checking and before dispatch linking, on the same meter that admitted the models. A source or clause refusal is reported without charging the stage; a stage ceiling that denies a charge reports an incomplete result naming the limit kind, the limit, the work consumed, the next charge and the `conformance.axis` charge point, and withholds failures found so far. A redefinition whose target is reached through several direct supertypes is judged along each of them, and one failing lineage refuses the axis. | Test |
 
 ## Dependencies
 
 - **Upstream:** [FR-081](FR-081-preserve-model-correspondence-and-declaration-identity.md)
   supplies the effective declarations this requirement checks;
-  quire-specification FR-151 owns the normative variance-axis table and
+  filament-specification FR-151 owns the normative variance-axis table and
   AD-006 owns the model-view decision to keep conformance edges, subsetting
   and redefinition in the checked model view.
 - **Downstream:** [FR-083](FR-083-resolve-unique-most-specific-dispatch.md)
   uses this requirement's conformance relation to decide dispatch
   applicability and dominance.
-- [QSV FR-108](ix://agent-ix/quire-semantic-value/FR-108) owns shared
+- [FSV FR-108](ix://agent-ix/filament-semantic-value/FR-108) owns shared
   admission storage and its native reservation failure units (IR-713).
   [TC-914](../test-cases/TC-914-registry-allocation-preserves-native-units.md)
-  specifies the QSL consumer checks for AC-10 through AC-13 after upstream
+  specifies the FSL consumer checks for AC-10 through AC-13 after upstream
   delivery. It does not qualify an unpublished carrier or replace the
   upstream storage tests.
 - This requirement's behavior touches the same compiler surface as

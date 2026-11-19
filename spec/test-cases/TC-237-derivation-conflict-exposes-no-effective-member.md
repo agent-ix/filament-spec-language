@@ -3,7 +3,7 @@ id: TC-237
 title: "A derivation conflict with no descendant redefiner exposes no effective member for either path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-237: A derivation conflict with no descendant redefiner exposes no effective member for either path

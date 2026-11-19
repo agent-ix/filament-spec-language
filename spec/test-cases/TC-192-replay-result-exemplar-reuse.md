@@ -3,7 +3,7 @@ id: TC-192
 title: "#217's function exemplar builds on the existing result/request/witness types with no new type"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: verifies
 ---
 # TC-192: #217's function exemplar builds on the existing result/request/witness types with no new type

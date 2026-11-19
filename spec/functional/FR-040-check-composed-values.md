@@ -3,37 +3,37 @@ id: FR-040
 title: "Check composed value types and guarded definedness"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-041
+  - target: ix://agent-ix/filament-spec-language/FR-041
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-033
+  - target: ix://agent-ix/filament-specification/FR-033
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-034
+  - target: ix://agent-ix/filament-specification/FR-034
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-039
+  - target: ix://agent-ix/filament-specification/FR-039
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-040
+  - target: ix://agent-ix/filament-specification/FR-040
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-041
+  - target: ix://agent-ix/filament-specification/FR-041
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-042
+  - target: ix://agent-ix/filament-specification/FR-042
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-043
+  - target: ix://agent-ix/filament-specification/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-044
+  - target: ix://agent-ix/filament-specification/FR-044
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-045
+  - target: ix://agent-ix/filament-specification/FR-045
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-046
+  - target: ix://agent-ix/filament-specification/FR-046
     type: depends_on
 ---
 # FR-040: Check composed value types and guarded definedness
@@ -59,7 +59,7 @@ Missing, duplicate, foreign or inconsistent bindings prevent dependent discharge
 already established native typing remains inspectable.
 
 The selected StateCore, StateQueries and StateGraph definitions and their
-[state contract](../../resources/native-v1/proposals/quire-v1/state-contract.md)
+[state contract](../../resources/native-v1/proposals/filament-v1/state-contract.md)
 own the value semantics. Shared values and explicitly bound predicate calls in
 temporal/protocol guards, captures and obligations use the same rules; their
 family-specific admission and execution remain separate stages.
@@ -95,7 +95,7 @@ If the admitted domain package or selected proof interface cannot represent a re
 
 The compiler SHALL derive declaration-owned typed runtime requirements from checked values and authoritative contracts without supplying concrete assessment data.
 
-For spine compilation, `qsl_replay::spine::check` SHALL retain a typed
+For spine compilation, `fsl_replay::spine::check` SHALL retain a typed
 protocol-proof result for each protocol declaration. The result SHALL preserve
 the actual proof disposition, proof goals, typed causes and the formal
 correspondence that binds each value root to its authored source, clause and
@@ -142,7 +142,7 @@ The dedicated composed checking-accounting contract, its charge table and its pe
 | FR-040-AC-8 | Exact authored formal correspondence permits actual supported IR discharge. Omitted, duplicate, changed-source, foreign-declaration or wrong-execution-point correspondence prevents dependent proof without synthetic ownership. Unproved definedness, unsupported prerequisite and resource exhaustion retain distinct typed causes; typing remains inspectable. | Test (TC-119) |
 | FR-040-AC-9 | **RETIRED in QSL-499; historical only.** Independently calculated small chain/diamond, nested-query and proof-expansion vectors distinguish zero, exact and one-step-insufficient limits in every public dimension, including output retention and overflow. Shared work/retries obey the published charges; an exhausted or refused dependent remains unadmitted beside unrelated completed work. | Test (TC-119) |
 | FR-040-AC-10 | **RETIRED in QSL-499; historical only.** Historical checker/profile/package fixtures retain their original identities, successes and atomic refusals. Composed typed/partial reports cannot enter historical checked/execution interfaces by retagging or introduce an implicit wire contract. | Test (TC-119) |
-| FR-040-AC-11 | Through `qsl_replay::spine::check`, a protocol declaration with a typed Boolean `check` expression whose definedness is supported and whose exact authored source, clause and handler execution point are supplied has a per-declaration typed protocol-proof result with disposition `Discharged`, no causes, retained proof goals and exact formal correspondence; omitting, duplicating or substituting the formal source, declaration mapping or execution point yields a typed correspondence refusal or unfinished result and never `Discharged`. This proof result alone does not admit or execute the protocol. | Test (TC-119) |
+| FR-040-AC-11 | Through `fsl_replay::spine::check`, a protocol declaration with a typed Boolean `check` expression whose definedness is supported and whose exact authored source, clause and handler execution point are supplied has a per-declaration typed protocol-proof result with disposition `Discharged`, no causes, retained proof goals and exact formal correspondence; omitting, duplicating or substituting the formal source, declaration mapping or execution point yields a typed correspondence refusal or unfinished result and never `Discharged`. This proof result alone does not admit or execute the protocol. | Test (TC-119) |
 
 ## Dependencies
 
@@ -154,9 +154,9 @@ type and IR proof seams.
 test case; [IT-012](../integration/IT-012-domain-package-model-intake.md) owns
 the real domain-package intake integration.
 
-Compiler [#35](https://github.com/agent-ix/quire-spec-language/issues/35),
-[#36](https://github.com/agent-ix/quire-spec-language/issues/36) and
-[#39](https://github.com/agent-ix/quire-spec-language/issues/39) retain full
+Compiler [#35](https://github.com/agent-ix/filament-spec-language/issues/35),
+[#36](https://github.com/agent-ix/filament-spec-language/issues/36) and
+[#39](https://github.com/agent-ix/filament-spec-language/issues/39) retain full
 delivery obligations. The IR already supplies rational types, literals,
 arithmetic and definedness. [FR-041](FR-041-admit-rational-native-model-profile.md)
 specifies the explicit `/2` native model source extension while historical

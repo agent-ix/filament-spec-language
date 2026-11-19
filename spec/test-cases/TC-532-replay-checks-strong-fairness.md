@@ -3,7 +3,7 @@ id: TC-532
 title: "Replay checks strong fairness on a model counterexample"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-131
+  - target: ix://agent-ix/filament-spec-language/FR-131
     type: verifies
 ---
 # TC-532: Replay checks strong fairness on a model counterexample

@@ -3,23 +3,23 @@ id: FR-410
 title: "Emit a checked state-graph claim as a v2 claim node"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-170
+  - target: ix://agent-ix/filament-spec-language/FR-170
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: depends_on
 ---
 # FR-410: Emit a checked state-graph claim as a v2 claim node
@@ -27,11 +27,11 @@ relationships:
 ## Description
 
 The S4 package emitter (ADR-011 layer 4 `package`, edge E4) SHALL emit each
-checked state-graph claim (FR-165) as one `quire.checked-semantic-graph/v2`
+checked state-graph claim (FR-165) as one `filament.checked-semantic-graph/v2`
 node with `node_tag: "claim"` and `semantic_form: "state_graph"`, whose body
-is the aggregate QSpec FR-475 states, and QSL's I2 reader SHALL read that
-node back. QSpec FR-475 owns the body, the predicate nodes, the obligation
-identity and the reader's refusals; this requirement states what QSL's
+is the aggregate FSpec FR-475 states, and FSL's I2 reader SHALL read that
+node back. FSpec FR-475 owns the body, the predicate nodes, the obligation
+identity and the reader's refusals; this requirement states what FSL's
 emitter writes from its `CheckedStateGraphClaim` and what its I2 reader
 returns.
 
@@ -52,7 +52,7 @@ identity the request named.
 
 ## Outputs
 
-- One v2 node per distinct checked claim, body as QSpec FR-475 states, with
+- One v2 node per distinct checked claim, body as FSpec FR-475 states, with
   `semantic_type` the package's `scalar_type`/`boolean` node, no
   `declaration` and no `owner`, and one occurrence of role `claim` per
   declaration. The node is content-addressed: two declarations with equal
@@ -110,7 +110,7 @@ identity the request named.
 | FR-410-AC-1 | Compiling ADR-022 §7's units emits `ReachesTwo` as a `claim`/`state_graph` node with `kind` `possible`, `over` a reference to `c`'s parameter node, `from` the empty aggregate and `target` a reference to the `expression` node of `c.versionNumber = 2`; `CanStillWin` with `from (x.phase != G::Phase::Lost)` with `kind` `always-possible` and `from` that predicate's node; `InOneWay` with `kind` `unique-path`. Each node's occurrences have role `claim`, and the I2 reader admits each and returns its form, predicates and `over` node. No checked claim is refused as not emitted. | Test (TC-1140) |
 | FR-410-AC-2 | `possible P` and `always possible P` over one `P` emit different node ids and different `package_id`s; `CanStillWin` without `from` and with `from (true)` emit one node id; `possible Anything using v { true }` emits `over` as the empty aggregate and `target` a reference to the `true` literal node; one unit that declares `ReachesTwo` twice under two names emits one node with two `claim` occurrences, ordinals 0 and 1, and no `declaration`. | Test (TC-1140) |
 | FR-410-AC-3 | The I2 reader returns for `ReachesTwo` the triple `[node, "claim", ordinal]` with `node` the emitted NodeId, and resolving it in the recompiled package finds the claim; a triple with an unknown NodeId, with a `temporal`/`temporal_clause` node's NodeId, or with another ordinal returns `clause-root-unresolved` at that triple from the state-graph lookup, and `ReachesTwo`'s triple given to FR-337's temporal lookup returns `clause-root-unresolved`; a request whose claim triple is unresolved calls no `check_state_graph` and settles the item `Failed`. | Test (TC-1140) |
-| FR-410-AC-4 | Fed to QSL's I2 reader, AC-1's `ReachesTwo` node with `kind` `eventually-possible` refuses `invalid_package`/`invalid-value`, and with `target` a reference to `c`'s parameter node and `dependencies` rewritten to the body's targets refuses `ill_typed`/`operator-ineligible`, each at FR-475's locus, with the node key and `package_id` recomputed after each edit. | Test (TC-1140) |
+| FR-410-AC-4 | Fed to FSL's I2 reader, AC-1's `ReachesTwo` node with `kind` `eventually-possible` refuses `invalid_package`/`invalid-value`, and with `target` a reference to `c`'s parameter node and `dependencies` rewritten to the body's targets refuses `ill_typed`/`operator-ineligible`, each at FR-475's locus, with the node key and `package_id` recomputed after each edit. | Test (TC-1140) |
 
 ## Dependencies
 
@@ -126,6 +126,6 @@ identity the request named.
 
 ## References
 
-- QSpec FR-475 (checked-package state-graph claim body and obligation
+- FSpec FR-475 (checked-package state-graph claim body and obligation
   identity), FR-322 (the artifact and its reader order).
 - Owning ticket: Linear STD-267; code: QSL-987.

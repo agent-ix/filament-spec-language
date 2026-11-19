@@ -3,13 +3,13 @@ id: US-004
 title: "Use native clauses through the existing toolchain"
 type: US
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-042"
+  - target: "ix://agent-ix/filament-spec-language/FR-042"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-038"
+  - target: "ix://agent-ix/filament-spec-language/FR-038"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/FR-045"
+  - target: "ix://agent-ix/filament-spec-language/FR-045"
     type: exercises
 ---
 # US-004: Use native clauses through the existing toolchain

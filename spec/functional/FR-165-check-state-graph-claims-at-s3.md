@@ -3,23 +3,23 @@ id: FR-165
 title: "Check state-graph claims at S3 and record their form"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-165: Check state-graph claims at S3 and record their form
@@ -47,7 +47,7 @@ does not recognise is a syntax error.
 
 ## Inputs
 
-- Parsed state-graph claim syntax (S1), in the spellings QSpec's shared
+- Parsed state-graph claim syntax (S1), in the spellings FSpec's shared
   grammar gives the three forms. The `over` parameter is optional in all
   three, and a predicate is read through `graph-predicate` (see Parsing).
 - The admitted domain packages and the unit's state models (FR-103).
@@ -86,9 +86,9 @@ pub enum StateGraphForm {
   binding.
 - S1 SHALL parse each predicate of a state-graph claim (a body, a `from`
   operand, a `to` operand) through the `graph-predicate` production of
-  QSpec's shared grammar (state-graph section), and a body's leading
+  FSpec's shared grammar (state-graph section), and a body's leading
   fairness constraints through `graph-body`. The production is recognition
-  only and is owned by QSpec; this requirement does not restate it. QSpec
+  only and is owned by FSpec; this requirement does not restate it. FSpec
   FR-390 and its TC-330 vectors SG-R09 to SG-R18 are the reference for what
   it recognises.
 - S1 SHALL NOT refuse a temporal operator, with or without an interval, that
@@ -145,6 +145,22 @@ pub enum StateGraphForm {
 - S3 SHALL check each predicate (`target`, `from`, `to`) as a Boolean state
   clause under the unit's value profile, through the clause checker that
   invariants use (FR-104).
+- A state-graph claim's `using` alias SHALL name a state-bearing header
+  layer, the set FR-508 admits for `check` (which holds
+  `filament.temporal.complete/v1`, a header layer and not a clause profile).
+  If it names any identity outside that set (a temporal clause profile:
+  `filament.temporal.infinite-trace/v1`,
+  `filament.temporal.event-position.false-extension/v1`,
+  `filament.temporal.fixed-sample.false-extension/v1`,
+  `filament.temporal.timestamped-event.finite-window/v1` or
+  `filament.temporal.timed/v1`; the protocol profile
+  `filament.protocol.finite-global/v1`; or another profile such as
+  `filament.observation.binding/v1`), then S3 SHALL refuse `unknown_profile`/`wrong-selection-role` at the
+  alias, retaining the alias, the selected identity and the required kind, and
+  produce no checked claim. The predicates are state clauses, a state-graph
+  claim carries no temporal profile (below), and the claim's branching meaning
+  comes from its form, not from a profile; admitting a temporal profile there
+  would suggest a temporal reading the claim does not have.
 - If a predicate reads an operation anchor, a result or a pre-state, then S3
   SHALL refuse `unsupported_construct`/`expression-form` located at the read
   (ADR-022 GM-3). These are the forms that name an operation context.
@@ -182,6 +198,11 @@ pub enum StateGraphForm {
 - The request writer SHALL add none for a subject whose state model declares
   `terminal any` (FR-124).
 
+### Analyze request
+
+A state-graph claim is requested by name in a `native-analyze/1` item
+(FR-628), which owns its request members and result.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -192,6 +213,7 @@ pub enum StateGraphForm {
 | FR-165-AC-4 | S1 parses `possible Anything using v { true }` (no `over`) to a claim with no `over` binding. Over `over (c: Config::ConfigVersion)`, S1 parses with no refusal the bodies `c.versionNumber = 2 and eventually c.versionNumber = 3`, `not eventually c.versionNumber = 2`, `not eventually[0,5] c.versionNumber = 2`, `eventually[1,*] c.versionNumber = 2`, `(c.versionNumber = 1 until c.versionNumber = 2)`, `(c.versionNumber = 1 until c.versionNumber = 2) until c.versionNumber = 3`, `if c.versionNumber = 1 then eventually c.versionNumber = 2 else c.versionNumber = 3`, `let n = c.versionNumber in eventually n = 2`, and `(eventually c.versionNumber = 2)`; `always possible` with `from (always c.versionNumber = 1)`; `unique path` with `to (eventually c.versionNumber = 2)`; and a body led by `fair weak Config::ConfigVersion::attemptUpdate;`. S3 checks the first with `over` recorded as `None` and refuses each other claim `unsupported_construct`/`expression-form`, with no checked claim and no profile refusal, at the first temporal operator in source order or at the constraint. | Test (TC-590) |
 | FR-165-AC-5 | Over a fixture unit whose operation `setVersion` takes parameter `newVersion: Int`, S3 refuses a `possible` claim whose predicate is `c.versionNumber = newVersion` with `missing-name` at `newVersion`, not `expression-form`; the same claim with `pre(c.versionNumber)` still refuses `expression-form`, with no checked claim. A predicate with an unknown name and a recognised operator, `{ eventually c.versionNumber = newName }`, refuses `missing-name` at `newName`, not `expression-form`. | Test (TC-590) |
 | FR-165-AC-6 | Over the same `over (c: Config::ConfigVersion)`, S1 refuses `invalid_syntax`, with no claim, at the named token: `{ if eventually c.versionNumber = 1 then c.versionNumber = 2 else c.versionNumber = 3 }` and `{ let n = eventually c.versionNumber = 1 in n = 2 }` at `eventually`; `{ exists(d in c.versionNumber: eventually d = 2) }`, `{ f(c.versionNumber, eventually c.versionNumber = 1) }` and `{ c.versionNumber = eventually c.versionNumber = 2 }` at `eventually`; `{ c.versionNumber = 1; fair weak Config::ConfigVersion::attemptUpdate }` at the `;` after the predicate; `from (c.versionNumber = 1; fair weak Config::ConfigVersion::attemptUpdate)` at the `;`; `from (fair weak Config::ConfigVersion::attemptUpdate; c.versionNumber = 1)` at `fair`; `unique path ... to (c.versionNumber = 2); fair weak Config::ConfigVersion::attemptUpdate` at `fair`; `{ c.versionNumber = 1 until c.versionNumber = 2 until c.versionNumber = 3 }` at the second `until`. | Test (TC-590) |
+| FR-165-AC-7 | In a unit with `profile v = "filament.value.complete/v1";` and `profile inf = "filament.temporal.infinite-trace/v1";`, `possible Bad using inf over (c: Config::ConfigVersion) { c.versionNumber = 2 }` refuses `unknown_profile`/`wrong-selection-role` at `inf`, retaining alias `inf`, the identity and the required kind state-bearing layer, with no checked claim; the same claim `using v` checks to `Possible`; `always possible` and `unique path` claims `using inf` refuse the same way. With `profile pp = "filament.protocol.finite-global/v1";` the same three claims `using pp` each refuse `unknown_profile`/`wrong-selection-role` at `pp`, retaining alias `pp`, identity `filament.protocol.finite-global/v1` and the required kind, with no checked claim; with `profile tc = "filament.temporal.complete/v1";` the `possible` claim `using tc` checks. | Test (TC-1545) |
 
 ## Dependencies
 
@@ -203,9 +225,9 @@ pub enum StateGraphForm {
   (model subject and `over` instantiation),
   [FR-057](FR-057-admit-shared-capability-kinds.md)
   (`temporal-satisfaction`).
-- QSpec owns the surface grammar of the three forms and their refusals
+- FSpec owns the surface grammar of the three forms and their refusals
   (ADR-022 QS-1); the spellings here follow ADR-022 §7.
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-390 (Linear STD-135; ADR-022 QS-1, QS-8).
+- ADR-022. FSpec half: FSpec FR-390 (Linear STD-135; ADR-022 QS-1, QS-8).

@@ -3,7 +3,7 @@ id: TC-221
 title: "A narrowing field redefinition requires an established postcondition, not just a narrower declared shape"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
 ---
 # TC-221: A narrowing field redefinition requires an established postcondition, not just a narrower declared shape

@@ -3,7 +3,7 @@ id: TC-117
 title: "Preserve exact compiled protocol numbers and reject alternate forms"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-038, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-038, type: verifies }
 ---
 # TC-117: Preserve exact compiled protocol numbers and reject alternate forms
 

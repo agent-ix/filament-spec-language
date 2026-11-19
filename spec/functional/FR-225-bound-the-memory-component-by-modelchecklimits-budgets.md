@@ -3,29 +3,33 @@ id: FR-225
 title: "Bound the memory component by request method bounds, default 4, stated in the result"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/FR-206
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-636
+    type: traces_to
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-221
+  - target: ix://agent-ix/filament-spec-language/FR-221
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-222
+  - target: ix://agent-ix/filament-spec-language/FR-222
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-439
+  - target: ix://agent-ix/filament-specification/FR-439
     type: depends_on
 ---
 # FR-225: Bound the memory component by request method bounds, default 4, stated in the result
@@ -38,9 +42,35 @@ as method bounds, like the `max_depth` search horizon: bounds on the
 explored state space that every result states, not resource limits. The
 request sets them with no ceiling, and their published default is 4
 (ADR-025 MB-2). The model checker SHALL apply them and settle under them as
-QSpec FR-439 states (ADR-025 MB-3, MB-4), and every terminal record of an
+FSpec FR-439 states (ADR-025 MB-3, MB-4), and every terminal record of an
 item over a subject with a weak `parallel` SHALL state the bound used and
 whether it was reached.
+
+### Decision: `max_messages` also bounds each channel's occupancy
+
+Under `ra`, `max_messages` bounds the live messages per location after
+garbage collection (ADR-025 MB-2, FSpec FR-439), and that meaning is
+unchanged. A protocol's channels also hold messages, and a protocol loop that
+sends repeatedly can grow a channel's queue toward its declared capacity on
+every path, as a loop that stores grows a store buffer. A channel's declared
+capacity is part of the model, and its overflow policy (FR-206, FR-572)
+decides what an overflowing send does; the method needs a bound outside the
+model, and no other setting carries one. So `max_messages` SHALL also bound
+the occupancy of each protocol channel, counted per channel, of every
+channel kind, on every subject whose model holds a channel, RA or not. A
+`send` offered to a channel that already holds `max_messages` entries is a
+cut step under the bound rule below, exactly as a store FSpec FR-439 cuts,
+whatever the channel's overflow policy: the bound is checked before the
+policy applies, because the policy's outcome (enqueue, reject, loss or
+displacement) is part of the step the bound leaves unexplored. A step that
+offers no message to a channel (a `receive`, a `finish`, a structural move)
+is never cut by the channel bound. The two counts are separate: an RA
+location's live messages and a channel's entries never add together, so a
+run with no channel whose capacity reaches the bound explores exactly what
+it explored before. The terminal record of an item over a subject with a
+channel states `max_messages`, its value and whether it was reached, as for
+a weak `parallel`, and FR-255's `model_check.max_messages` and FR-636's
+`temporal.limits.max_messages` raise it.
 
 ## Use case
 
@@ -69,11 +99,11 @@ again.
 - When a request leaves a memory bound unset, the model checker SHALL run
   with 4. The model checker SHALL treat the bounds as method parameters outside
   the model, the subject and its obligation identity.
-- The model checker SHALL leave unexpanded each store that QSpec FR-439's
+- The model checker SHALL leave unexpanded each store that FSpec FR-439's
   bound rule cuts, expand every other enabled step, record the state as
   bound-limited, and read a state whose only enabled steps are cut stores as
   a boundary state (ADR-025 MB-3).
-- The model checker SHALL return the outcome QSpec FR-439's verdict table
+- The model checker SHALL return the outcome FSpec FR-439's verdict table
   gives a run under a bound, which FR-127 settles: V-4 with a counterexample, V-1 with the bound stated as not
   reached when no state was bound-limited, and otherwise V-6,
   `MemoryBoundReached{bound, states}`, with `bound` naming the request
@@ -103,8 +133,9 @@ again.
 | FR-225-AC-1 | ADR-025 §10's three requests leave both bounds unset: the `tso` record states `max_store_buffer` 4 and the `ra` record states `max_messages` 4, neither reached; the `sc` record states no memory bound. `ModelCheckRequest` and its protocol request form `ProtocolCheckRequest` (FR-215) carry `max_store_buffer` and `max_messages` as independent optional members; two `tso` requests that differ only in `max_store_buffer` carry equal obligation identities. | Test (TC-670) |
 | FR-225-AC-2 | A branch that stores to `x`, `y` and `z` in sequence with no fence, beside a branch that loads `x`, `y` and `z`, so that all three are shared, under `tso` with the claim `always holds(x.v <= 1)`: with `max_store_buffer` 2 the run settles V-6 `MemoryBoundReached{bound: max_store_buffer 2, states}` with `states` at least 1; with 3 it settles V-1, bound not reached. | Test (TC-670) |
 | FR-225-AC-3 | `SB` under `tso` with `max_store_buffer` 1 still settles `refuted` (V-4). `SB` under `ra` with `max_messages` 1 settles V-6 `MemoryBoundReached` with `bound: max_messages 1`, since no store can add a second message. | Test (TC-670) |
-| FR-225-AC-4 | In AC-2 with bound 2, a state whose only enabled step is the third store is not reported by the deadlock-freedom item and has no stutter successor. AC-2's protocol written in ADR-025 §10's vocabulary (`Cell` with `v: Int[0, 1]`, universe `{x, y, z}` at 0, `set()` storing 1 with `ordering release`; `Core` with `r: Int[0, 2]` at 2; branch `left` on `c1` runs `set` on `x`, `y`, then `z`; branch `right` on `c2` runs `read(x)`, `read(y)`, then `read(z)` with `ordering acquire`), under `tso` with `max_store_buffer` 2, the claim `always holds(x.v <= 1)` and the request naming `constraint Zero using v on M::Cell at current { self.v <= 0 }`, stores 20 states: 12 expanded states with no store flushed, 4 of them bound-limited (`left`'s third store cut), and 8 boundary states reached by `left`'s first flush. It settles `ConstraintReached{boundary_states: 8}` with no counterexample, and its terminal record states `max_store_buffer` 2 as reached; the same request without `Zero` settles `MemoryBoundReached` (AC-2). | Test (TC-670) |
+| FR-225-AC-4 | In AC-2 with bound 2, a state whose only enabled step is the third store is not reported by the deadlock-freedom item and has no stutter successor. AC-2's protocol written in ADR-025 §10's vocabulary (`Cell` with `v: Int[0, 2]`, so a `read` stores it in `Core.r: Int[0, 2]`, universe `{x, y, z}` at 0, `set()` storing 1 with `ordering release`; `Core` with `r: Int[0, 2]` at 2; branch `left` on `c1` runs `set` on `x`, `y`, then `z`; branch `right` on `c2` runs `read(x)`, `read(y)`, then `read(z)` with `ordering acquire`), under `tso` with `max_store_buffer` 2, the claim `always holds(x.v <= 1)` and the request naming `constraint Zero using v on M::Cell at current { self.v <= 0 }`, stores 21 states: the initial state, at the `parallel` before its fork (the fork is a step, so the state before it is a reached state of its own); 12 expanded states after the fork with no store flushed, 4 of them bound-limited (`left`'s third store cut); and 8 boundary states reached by `left`'s first flush. Widening `v` to `Int[0, 2]` adds no reachable value, since `set()` stores only 1 over an initial 0, so the 12 and the 8 are unchanged. It settles `ConstraintReached{boundary_states: 8}` with no counterexample, and its terminal record states `max_store_buffer` 2 as reached; the same request without `Zero` settles `MemoryBoundReached` (AC-2). | Test (TC-670) |
 | FR-225-AC-5 | ADR-025 §10's `SB` under `ra` with `max_messages` 1 (AC-3) and the request naming `constraint One using v on M::Cell at current { self.v >= 1 }`, false at the initial state, stores one state and settles `ConstraintReached{boundary_states: 1}`; the initial state, whose only enabled steps are stores the bound would cut, is not bound-limited, and the terminal record states `max_messages` 1 as not reached. | Test (TC-670) |
+| FR-225-AC-6 | FR-636-AC-4's `Burst`, a parallel join whose two branches each send on the `unordered` channel `Order` of capacity 1 with `overflow reject` and which has no RA access, checked with `max_messages` 1 leaves the second send unexpanded in the state where `Order` holds one entry, so the overflow is never reached and the item settles as FR-636-AC-4 states, its cause naming `max_messages`, its record stating `max_messages` 1 reached; with `max_messages` 2, and unset (4, stated not reached), `Order` never holds the bound, the second send is rejected and the item settles `refuted` with the overflow as FR-572 keys it; ADR-025 §10's `SB` under `ra`, which has no channel, gives AC-1's and AC-3's records unchanged. | Test (TC-2986) |
 
 ## Dependencies
 
@@ -114,10 +145,10 @@ again.
   [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md)
   (the V-6 row and the terminal record), FR-215 (protocol request form),
   FR-221, FR-222.
-- QSpec owns the memory bounds as request method bounds, their default, the bound
-  semantics and verdicts, and their statement in the terminal record (QSpec
+- FSpec owns the memory bounds as request method bounds, their default, the bound
+  semantics and verdicts, and their statement in the terminal record (FSpec
   FR-439, FR-331).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-439 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-439 (Linear STD-138).

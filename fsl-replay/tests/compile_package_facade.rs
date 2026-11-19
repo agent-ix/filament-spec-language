@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! TC-908 (FR-060-AC-5, FR-060-AC-6, FR-060-AC-7): `compile_package` emits the bytes and
+//! package bytes the spine emits, and refuses as the spine does. As an
+//! integration test it reaches only the crate's public API.
+
+use std::collections::BTreeMap;
+
+use filament_exact::Cancel;
+use fsl_foundation::Setting;
+use fsl_replay::spine::{self, CompileRefusal, ParseRequest, SpineLimits};
+use fsl_replay::{
+    compile_package, Code, DependencyInput, ReplayLimits, ReplayRefusal, SourceIdentity,
+    StageLimits, SuppliedLibrary,
+};
+use fsl_semantics::model::intake::package_input;
+use ix_trace_rs::trace;
+
+const HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+const LIST: &str = "record List { next: List?; }\n";
+const TREE: &str = "record Tree { kids: Sequence<Tree>[0, 3]; }\n";
+
+fn identity() -> SourceIdentity {
+    SourceIdentity::new("a", "u")
+}
+
+fn limits(source_bytes: u64) -> StageLimits {
+    [(Setting::S1InputBytes, source_bytes)]
+        .into_iter()
+        .collect()
+}
+
+/// The spine's own run over `text`: its package bytes, or its refusal.
+fn spine_run(
+    text: &str,
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> Result<Vec<u8>, Box<CompileRefusal>> {
+    let source = identity();
+    let limits = SpineLimits::default();
+    let cancel = Cancel::new();
+    let refusal = |failure| {
+        spine::refusal_or_fault(failure).expect("the front end does not fault on this source")
+    };
+    let parsed = spine::parse(
+        &ParseRequest {
+            source: &source,
+            path: "unit.native",
+            bytes: text.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .map_err(refusal)?
+    .into_value();
+    let models = spine::select(&parsed, packages, limits.model, &cancel)
+        .map_err(refusal)?
+        .into_value();
+    let checked = spine::check(
+        &parsed,
+        "fixture".to_owned(),
+        &models,
+        &DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .map_err(refusal)?
+    .into_value();
+    let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
+        .map_err(refusal)?
+        .into_value();
+    Ok(emitted.package().bytes().to_vec())
+}
+
+fn compile(text: &str, stages: StageLimits) -> Result<fsl_replay::CompiledPackage, ReplayRefusal> {
+    compile_package(
+        fsl_replay::CompileUnit {
+            source: identity(),
+            package_name: "fixture".to_owned(),
+            path: "unit.native",
+            bytes: text.as_bytes(),
+        },
+        [],
+        &DependencyInput::default(),
+        stages,
+        ReplayLimits::default(),
+    )
+}
+
+/// FR-092's recursive `List` and `Tree` compile through the facade to the
+/// spine's bytes.
+#[trace("TC-908", "FR-060-AC-5")]
+#[test]
+fn recursive_records_compile_to_the_spine_bytes() {
+    for record in [LIST, TREE] {
+        let text = format!("{HEADER}{record}");
+        let bytes = spine_run(&text, &BTreeMap::new()).expect("the spine compiles the record");
+        let compiled = compile(&text, limits(1 << 20)).expect("the facade compiles the record");
+        assert!(!bytes.is_empty());
+        assert_eq!(compiled.bytes(), bytes.as_slice());
+    }
+    let list = compile(&format!("{HEADER}{LIST}"), limits(1 << 20)).unwrap();
+    let tree = compile(&format!("{HEADER}{TREE}"), limits(1 << 20)).unwrap();
+    assert_ne!(list.bytes(), tree.bytes());
+}
+
+/// A malformed source refuses with the spine refusal's code and stage.
+#[trace("TC-908", "FR-060-AC-6")]
+#[test]
+fn a_malformed_source_refuses_as_the_spine_does() {
+    let text = format!("{HEADER}record {{ ");
+    let expected = spine_run(&text, &BTreeMap::new()).expect_err("the spine refuses the source");
+    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(1 << 20)) else {
+        panic!("the facade refuses the source at the recompile");
+    };
+    assert_eq!(refusal.code(), expected.code());
+    assert_eq!(refusal.stage(), expected.stage());
+    assert_eq!(refusal.code(), Code::InvalidSyntax);
+}
+
+/// A library whose source has the unit's owner is no dependency input of it.
+#[trace("TC-908", "FR-060-AC-6")]
+#[test]
+fn a_library_with_the_units_owner_refuses() {
+    let library = SuppliedLibrary {
+        identity: "lib".to_owned(),
+        source: SourceIdentity::new("a", "u"),
+        path: "lib.native".to_owned(),
+        bytes: HEADER.as_bytes().to_vec(),
+    };
+    let dependencies = DependencyInput::new([library]).unwrap();
+    let refusal = compile_package(
+        fsl_replay::CompileUnit {
+            source: identity(),
+            package_name: "fixture".to_owned(),
+            path: "unit.native",
+            bytes: format!("{HEADER}{LIST}").as_bytes(),
+        },
+        [],
+        &dependencies,
+        limits(1 << 20),
+        ReplayLimits::default(),
+    );
+    assert!(matches!(refusal, Err(ReplayRefusal::DependencyInput(_))));
+}
+
+/// The S1 byte limit stops a source above it, and a limit above the reader
+/// limit is an invalid request.
+#[trace("TC-908", "FR-060-AC-6")]
+#[test]
+fn stage_limits_refuse_as_the_replay_recompile_does() {
+    let text = format!("{HEADER}{LIST}");
+    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(4)) else {
+        panic!("a 4-byte S1 limit stops the source");
+    };
+    assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    assert!(matches!(
+        compile(&text, limits(u64::MAX)),
+        Err(ReplayRefusal::LimitAboveReader(_))
+    ));
+}
+
+/// `replay.input_bytes` is the caller's: an S1 limit above the default reader
+/// limit refuses under the default `ReplayLimits` and compiles once the
+/// caller raises it.
+#[trace("TC-908", "FR-060-AC-6")]
+#[test]
+fn a_raised_replay_input_bound_admits_an_s1_limit_the_default_refuses() {
+    let text = format!("{HEADER}{LIST}");
+    let above = fsl_replay::DEFAULT_REPLAY_INPUT_BYTES * 2;
+    let compile_with = |replay: ReplayLimits| {
+        compile_package(
+            fsl_replay::CompileUnit {
+                source: identity(),
+                package_name: "fixture".to_owned(),
+                path: "unit.native",
+                bytes: text.as_bytes(),
+            },
+            [],
+            &DependencyInput::default(),
+            limits(above),
+            replay,
+        )
+    };
+    assert!(matches!(
+        compile_with(ReplayLimits::default()),
+        Err(ReplayRefusal::LimitAboveReader(_))
+    ));
+    assert!(compile_with(ReplayLimits::default().with_input_bytes(above)).is_ok());
+}
+
+/// A unit selecting a domain package compiles through the facade to the
+/// spine's bytes when the package is supplied, and refuses
+/// at I1 as the spine does when it is not.
+#[trace("TC-908", "FR-060-AC-7")]
+#[test]
+fn a_domain_package_is_the_i1_input_as_in_the_spine() {
+    let document = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .unwrap();
+    let packages = package_input([document.as_slice()]).unwrap();
+    let text = format!(
+        "{HEADER}model M = \"acme/orders\";\n\
+         function small using v(x: Int[0, 9]): Boolean pure {{ x < 5 }}\n"
+    );
+    let bytes = spine_run(&text, &packages).expect("the spine compiles the unit");
+    let compiled = compile_package(
+        fsl_replay::CompileUnit {
+            source: identity(),
+            package_name: "fixture".to_owned(),
+            path: "unit.native",
+            bytes: text.as_bytes(),
+        },
+        [document.as_slice()],
+        &DependencyInput::default(),
+        limits(1 << 20),
+        ReplayLimits::default(),
+    )
+    .expect("the facade compiles the unit");
+    assert_eq!(compiled.bytes(), bytes.as_slice());
+
+    let expected = spine_run(&text, &BTreeMap::new()).expect_err("the spine refuses at I1");
+    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(1 << 20)) else {
+        panic!("the facade refuses the unit at the recompile");
+    };
+    assert_eq!(refusal.code(), expected.code());
+    assert_eq!(refusal.stage(), expected.stage());
+    assert_eq!(refusal.code(), Code::MissingImport);
+}

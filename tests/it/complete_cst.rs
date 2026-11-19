@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Complete-V1 incremental editing over the lossless CST (`complete::{apply_edit,
 //! apply_edits}`). The layer-1-only CST construction/recovery tests that used to
-//! live here moved to `qsl-cst/tests/it/complete_cst.rs`.
+//! live here moved to `fsl-cst/tests/it/complete_cst.rs`.
+use filament_spec_language::complete::{self, SourceEdit};
+use fsl_cst::{CompleteCause, CompleteCode, HostCause, Limits, SourceChange};
+use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
-use qsl_cst::{CompleteCause, CompleteCode, HostCause, Limits, SourceChange};
-use qsl_foundation::{SourceIdentity, Span};
-use quire_spec_language::complete::{self, SourceEdit};
 
 const SOURCE: &str = concat!(
     "language \"ix:native\" edition \"1-draft\";\r\n",
     "// exact trivia remains authored\r\n",
-    "profile Complete = \"quire.value.complete/v1\";\r\n",
+    "profile Complete = \"filament.value.complete/v1\";\r\n",
     "import \"acme/base\" as Base;\r\n",
     "model M = \"acme/model\";\r\n",
     "dimension Length = M::Length;\r\n",
@@ -35,10 +35,10 @@ fn identity() -> SourceIdentity {
     }
 }
 
-#[trace("QSpec-TC-222", "QSpec-FR-302-AC-3")]
+#[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
 fn incremental_edit_reuses_only_unchanged_byte_correspondent_nodes() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -90,10 +90,10 @@ fn incremental_edit_reuses_only_unchanged_byte_correspondent_nodes() {
     assert_eq!(map[replaced.identity().node.get()], None);
 }
 
-#[trace("QSpec-TC-222", "QSpec-FR-302-AC-3")]
+#[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
 fn stable_identity_survives_unrelated_preceding_sibling_insertion() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -153,10 +153,10 @@ fn stable_identity_survives_unrelated_preceding_sibling_insertion() {
         .eq(inserted.cst().ancestor_productions(unchanged)));
 }
 
-#[trace("QSpec-TC-222", "QSpec-FR-302-AC-3")]
+#[trace("FSpec-TC-222", "FSpec-FR-302-AC-3")]
 #[test]
 fn stable_identity_survives_unrelated_whitespace_inside_one_ancestor() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -212,10 +212,10 @@ fn stable_identity_survives_unrelated_whitespace_inside_one_ancestor() {
     );
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-3")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-3")]
 #[test]
 fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -256,7 +256,7 @@ fn stale_and_overlapping_incremental_changes_refuse_with_typed_codes() {
 #[test]
 fn invalid_caller_edit_ranges_refuse_without_panicking() {
     let text = format!("{SOURCE}\r\n// 😀");
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         text.as_bytes(),
@@ -311,7 +311,7 @@ fn invalid_caller_edit_ranges_refuse_without_panicking() {
 
 #[test]
 fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -355,10 +355,10 @@ fn oversized_single_and_aggregate_replacements_refuse_before_reparse() {
     assert_eq!(aggregate.code, CompleteCode::StageLimitExceeded);
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-2")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
 fn insertion_inside_crlf_falls_back_to_full_lexing() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -380,7 +380,7 @@ fn insertion_inside_crlf_falls_back_to_full_lexing() {
     )
     .unwrap();
     assert!(!edited.is_incremental_result());
-    let full = qsl_cst::parse(
+    let full = fsl_cst::parse(
         identity(),
         "complete.native",
         edited.source().text().as_bytes(),
@@ -391,14 +391,14 @@ fn insertion_inside_crlf_falls_back_to_full_lexing() {
     assert_eq!(edited.cst().render(), full.cst().render());
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-2")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-2")]
 #[test]
 fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
     for (case, source, at, replacement) in [
         ("leading", format!(" {SOURCE}"), 0, "\t"),
         ("trailing", format!("{SOURCE}\n"), SOURCE.len() + 1, "\n"),
     ] {
-        let parsed = qsl_cst::parse(
+        let parsed = fsl_cst::parse(
             identity(),
             "complete.native",
             source.as_bytes(),
@@ -416,7 +416,7 @@ fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
         )
         .unwrap();
         assert!(edited.is_incremental_result(), "{case}");
-        let full = qsl_cst::parse(
+        let full = fsl_cst::parse(
             identity(),
             "complete.native",
             edited.source().text().as_bytes(),
@@ -437,10 +437,10 @@ fn incremental_boundary_whitespace_keeps_the_root_on_the_full_document() {
     }
 }
 
-#[trace("QSpec-TC-223", "QSpec-FR-303-AC-3")]
+#[trace("FSpec-TC-223", "FSpec-FR-303-AC-3")]
 #[test]
 fn adjacent_half_open_edits_are_not_overlaps() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -471,7 +471,7 @@ fn adjacent_half_open_edits_are_not_overlaps() {
 #[trace("TC-424", "FR-001-AC-5")]
 #[test]
 fn an_edit_that_changes_a_source_label_refuses() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),
@@ -520,7 +520,7 @@ fn an_edit_that_changes_a_source_label_refuses() {
 #[trace("TC-424", "FR-001-AC-12")]
 #[test]
 fn a_stale_edit_predecessor_refuses_as_a_source_map_with_no_region() {
-    let parsed = qsl_cst::parse(
+    let parsed = fsl_cst::parse(
         identity(),
         "complete.native",
         SOURCE.as_bytes(),

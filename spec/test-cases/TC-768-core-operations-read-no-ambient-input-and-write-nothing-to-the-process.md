@@ -3,7 +3,7 @@ id: TC-768
 title: "Core operations read no ambient input and write nothing to the process streams"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-284
+  - target: ix://agent-ix/filament-spec-language/FR-284
     type: verifies
 ---
 # TC-768: Core operations read no ambient input and write nothing to the process streams

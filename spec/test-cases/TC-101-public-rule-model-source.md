@@ -3,7 +3,7 @@ id: TC-101
 title: "Compile rule-model source through the public frontend"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-025
+  - target: ix://agent-ix/filament-spec-language/FR-025
     type: verifies
 ---
 ## Description

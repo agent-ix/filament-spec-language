@@ -3,7 +3,7 @@ id: TC-146
 title: "Refuse an unknown or mismatched construct meaning id"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: verifies }
 ---
 # TC-146: Refuse an unknown or mismatched construct meaning id
 

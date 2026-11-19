@@ -3,7 +3,7 @@ id: TC-747
 title: "The canonical-types gate finds namesakes, re-exports and same-shaped copies"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-272
+  - target: ix://agent-ix/filament-spec-language/FR-272
     type: verifies
 ---
 # TC-747: The canonical-types gate finds namesakes, re-exports and same-shaped copies
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify FR-272's identifier, re-export and copy rules, its exclusions, a
-backend-workspace run and its reporting, over fixture workspaces and the QSL
+backend-workspace run and its reporting, over fixture workspaces and the FSL
 workspace.
 
 Scope: FR-272-AC-1 to FR-272-AC-5.
@@ -35,16 +35,16 @@ Scope: FR-272-AC-1 to FR-272-AC-5.
    names. Then the same copy in a package outside the ecosystem.
 3. A fixture backend workspace depending on K as an ecosystem package and
    defining `pub enum Value` with K's variants and holding
-   `pub use qsl_replay::Value as Kernel;`, where the QSL facade
-   `qsl-replay` holds `pub use quire_exact::Value;`. Then run the gate over
-   the QSL workspace and read the `quire-contract-model` findings.
+   `pub use fsl_replay::Value as Kernel;`, where the FSL facade
+   `fsl-replay` holds `pub use filament_exact::Value;`. Then run the gate over
+   the FSL workspace and read the `filament-contract-model` findings.
 4. Plant two namesakes in W in one run; run over a fixture with none.
-5. Fixture `cargo metadata` in which `quire-eval` and `quire-checked`
+5. Fixture `cargo metadata` in which `filament-eval` and `filament-checked`
    resolve from a git source outside `graph::classify`'s ecosystem
-   repositories: `quire-eval` tags `pub struct Evaluation`; a workspace
+   repositories: `filament-eval` tags `pub struct Evaluation`; a workspace
    member holds `struct Evaluation`; another ecosystem package holds a
-   `struct Evaluation` with the tagged one's field names; `quire-eval` holds a
-   second `Evaluation`; `quire-checked` holds a struct matching a canonical
+   `struct Evaluation` with the tagged one's field names; `filament-eval` holds a
+   second `Evaluation`; `filament-checked` holds a struct matching a canonical
    type the workspace tags. Then the same fixture with neither crate
    resolved.
 
@@ -67,6 +67,6 @@ Tag the tests `#[trace("TC-747", "FR-272-AC-n")]`.
   non-zero exit; then exit 0.
 - Step 5: `Evaluation` is in the canonical set; an `identifier` finding for
   the workspace member's `Evaluation` naming both locations; a `copy`
-  finding for the other ecosystem package's; none for `quire-eval`'s second
-  `Evaluation`; a `copy` finding for `quire-checked`'s struct. Without the
+  finding for the other ecosystem package's; none for `filament-eval`'s second
+  `Evaluation`; a `copy` finding for `filament-checked`'s struct. Without the
   two crates resolved, no finding names either.

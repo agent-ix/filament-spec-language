@@ -3,7 +3,7 @@ id: TC-104
 title: "Native-v1 request intake failures, limits and path resolution"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-026
+  - target: ix://agent-ix/filament-spec-language/FR-026
     type: verifies
 ---
 ## Description

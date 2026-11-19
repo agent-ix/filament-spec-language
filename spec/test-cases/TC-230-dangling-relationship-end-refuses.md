@@ -3,7 +3,7 @@ id: TC-230
 title: "A relationship end naming an undeclared type refuses the whole relationship record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-085
+  - target: ix://agent-ix/filament-spec-language/FR-085
     type: verifies
 ---
 # TC-230: A relationship end naming an undeclared type refuses the whole relationship record

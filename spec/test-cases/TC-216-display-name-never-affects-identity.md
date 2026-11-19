@@ -3,7 +3,7 @@ id: TC-216
 title: "Changing only a display name leaves every key, identity and ordering unchanged"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: verifies
 ---
 # TC-216: Changing only a display name leaves every key, identity and ordering unchanged

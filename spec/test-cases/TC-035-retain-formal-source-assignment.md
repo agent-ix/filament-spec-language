@@ -3,7 +3,7 @@ id: TC-035
 title: "Retain explicit native and formal source assignment"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-014
+  - target: ix://agent-ix/filament-spec-language/FR-014
     type: verifies
 ---
 # TC-035: Retain explicit native and formal source assignment

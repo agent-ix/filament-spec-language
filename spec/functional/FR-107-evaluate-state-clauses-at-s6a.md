@@ -3,23 +3,23 @@ id: FR-107
 title: "Evaluate a state clause over admitted observations at S6a"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-003
+  - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: references
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-207
+  - target: ix://agent-ix/filament-specification/FR-207
     type: depends_on
 ---
 # FR-107: Evaluate a state clause over admitted observations at S6a
@@ -34,9 +34,9 @@ S6a SHALL evaluate one checked state clause (FR-104) over one
 family-owned result, beside the location of the node that stopped it.
 
 S6a is function-call only today. `S6aFamilyKind` has one variant, `Value`
-(`qsl-eval/src/value/expression/s6a.rs:78-101`), and `CheckedPackageEvaluation`
+(`fsl-eval/src/value/expression/s6a.rs:78-101`), and `CheckedPackageEvaluation`
 has `call` and `evaluate` over one `ObjectEnvironment`
-(`qsl-eval/src/value/expression/mod.rs:272-321`). `pre(..)` switches only the
+(`fsl-eval/src/value/expression/mod.rs:272-321`). `pre(..)` switches only the
 population anchor that `allInstances` and `lookup` read (`Anchor { Post, Pre }`,
 `evaluate.rs:284`, `:749-755`); a field read under `pre` still reads the one
 object environment.
@@ -96,7 +96,7 @@ object environment.
   ignoring the observation, so a pre and a post reference to one object are
   equal.
 - The evaluator SHALL evaluate `reaches(a, b, edge)` and charge it exactly as
-  QSpec `value-accounting.md` ("Model and graph evaluation") states: it
+  FSpec `value-accounting.md` ("Model and graph evaluation") states: it
   evaluates `a` and `b`, charges `graph.expand` for `a` and enqueues it; for
   each dequeued node in discovery order and each target `t` of `edge` in the
   edge's own order (sequence order for a sequence edge), it charges one
@@ -107,7 +107,7 @@ object environment.
   itself, and a self-loop or a cycle back to `a` does.
 - The evaluator SHALL charge `model.deref` for each `deref(...)` and
   `model.navigate` for each field read, as `value-accounting.md` states.
-  `quire-exact`'s `ChargePoint` has no `graph.*` or `model.*` charge point
+  `filament-exact`'s `ChargePoint` has no `graph.*` or `model.*` charge point
   today, so this requirement adds them there.
 - The evaluator SHALL skip the right operand of `and`, `or` and `implies`
   when the left decides the result, as `Value` does today.
@@ -126,25 +126,25 @@ object environment.
 
 ### The receiver path
 
-`ClauseEvaluation::receiver_path()` SHALL return the QSpec FR-207 runtime
+`ClauseEvaluation::receiver_path()` SHALL return the FSpec FR-207 runtime
 value path of `self` under the clause's own observation, with no steps, or
 none:
 
-- If `self` has a declared object identity (QSpec FR-204), then the path's
+- If `self` has a declared object identity (FSpec FR-204), then the path's
   subject SHALL be that declared object identity, whether or not an
   invocation is selected.
 - If `self` is a context with no declared object identity (a state machine's
-  context, QSpec FR-208) and the admitted observations select an invocation,
+  context, FSpec FR-208) and the admitted observations select an invocation,
   then the path's subject SHALL be that invocation's receiver binding.
 - If `self` is such a context and no invocation is selected (a precondition
   selected by `PreCall`), then the path SHALL be none: there is no invocation
-  to name, and QSpec FR-207 gives an absent subject no path.
+  to name, and FSpec FR-207 gives an absent subject no path.
 - The path's observation SHALL be the clause's own observation (`current` for
   an invariant of an object type, the selected side's `pre` or `post`
   snapshot for a state machine's invariant, `pre` for a precondition, `post`
   for a postcondition).
 
-The observation of a state machine's invariant over an invocation (QSpec
+The observation of a state machine's invariant over an invocation (FSpec
 FR-208 "State-machine context anchors" and AC-10, which bind it to the
 invocation's pre and post contexts) is admitted by FR-106 from the invocation
 document and its `pre` and `post` snapshots, which carry the machine's context
@@ -182,23 +182,23 @@ the selection read, or none.
   `self`; `self` of a context receiver, the invocation's receiver binding; a
   parameter `p`, the invocation's parameter binding `p`; `result`, the
   invocation's result binding; an element of a quantifier's domain, the
-  stored or built location FR-265 gives that element (QSpec FR-207-AC-9 and
+  stored or built location FR-265 gives that element (FSpec FR-207-AC-9 and
   AC-11). A selection whose operand has no such location (a literal, an
   arithmetic or function result, a navigation) has no path of its own, with
   the one exception below. A parameter, result or receiver binding with no
   selected invocation has none.
 - The steps SHALL extend the operand's path by one step per selection: the
-  `member` step (QSpec FR-207's member selection, FR-265-AC-7) for a
+  `member` step (FSpec FR-207's member selection, FR-265-AC-7) for a
   selection from a declared object, `field` for a selection from a record
-  value and for a context receiver's field (QSpec FR-208 "Locations"),
+  value and for a context receiver's field (FSpec FR-208 "Locations"),
   `option_value` for each `value(e)` between the operand and the selection,
-  and `reference` naming the referenced object's declared identity (QSpec
+  and `reference` naming the referenced object's declared identity (FSpec
   FR-207-AC-10) for each dereference of a `Reference`, explicit or implicit,
   other than `self` of an object receiver, which is already the declared
   object identity.
 - A selection on the result of a relationship navigation `e.end` (FR-363,
   FR-364) has the referenced object's declared object identity as its subject
-  and the member step alone, because QSpec FR-207 has no step for a
+  and the member step alone, because FSpec FR-207 has no step for a
   relationship end: the path locates the stored value, not the route that
   reached it.
 - A path SHALL name no value the evaluation did not read: it holds exactly
@@ -221,7 +221,7 @@ it, with a fresh meter built from `limits` (FR-120).
   postconditions, each group in ascending name order (UTF-8 bytes) whatever
   order the slice lists them in.
 - The set SHALL stop its preconditions at the first one that is not
-  `Completed(true)` (FR-006's short-circuit, QSpec FR-151-AC-19): the
+  `Completed(true)` (FR-006's short-circuit, FSpec FR-151-AC-19): the
   preconditions after it are neither evaluated nor charged, and have no
   entry.
 - The set SHALL evaluate its postconditions only when it evaluated every
@@ -239,7 +239,7 @@ it, with a fresh meter built from `limits` (FR-120).
 - The combined outcome SHALL be a function of the entries' verdicts alone
   (`True`, `False`, not a completed Boolean, `Incomplete`). A clause checked
   in `CheckMode::Linked` evaluates to a kernel `Undefined` or `Refused` only
-  through an IEEE operation that QSpec FR-148 leaves undefined or refuses
+  through an IEEE operation that FSpec FR-148 leaves undefined or refuses
   (a strict `exact` rounding, a NaN payload that the target width cannot
   hold, a NaN or infinity converted to a `Rational`; FR-397): a
   division and a `value(..)` carry nonzero and presence obligations
@@ -291,8 +291,8 @@ it, with a fresh meter built from `limits` (FR-120).
   S6a seam and probe).
 - FR-265 (the decisions and stop reports `ClauseEvaluation` carries),
   FR-120 (the conjunction and enabling rules the set shares), FR-363 and
-  FR-364 (navigation). QSpec FR-207 (the runtime value path: subjects,
+  FR-364 (navigation). FSpec FR-207 (the runtime value path: subjects,
   steps, absence), FR-208 ("Locations", AC-10) and FR-204.
-- QSpec `state-contract.md` ("Operation anchors, aliases and captures",
+- FSpec `state-contract.md` ("Operation anchors, aliases and captures",
   "Finite graph extension"), `value-accounting.md` ("Model and graph
   evaluation") and FR-153.

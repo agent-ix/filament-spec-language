@@ -120,7 +120,7 @@ fn carries_marker(text: &str) -> bool {
 /// What a source file defines, re-exports or aliases that FR-064-AC-14 rules
 /// out: an attribute macro (or any `#[proc_macro_attribute]` function) named
 /// `string_edge`; a `use` that renames `string_edge`, or that makes it or the
-/// `ix_trace_rs` glob visible beyond the module; and any `qsl_attrs` path.
+/// `ix_trace_rs` glob visible beyond the module; and any `fsl_attrs` path.
 fn marker_violations(source: &str) -> Vec<String> {
     use syn::visit::Visit;
 
@@ -134,8 +134,8 @@ fn marker_violations(source: &str) -> Vec<String> {
             match tree {
                 syn::UseTree::Path(path) => {
                     let marker_crate = path.ident == "ix_trace_rs";
-                    if path.ident == "qsl_attrs" {
-                        self.found.push("a `qsl_attrs` path".to_owned());
+                    if path.ident == "fsl_attrs" {
+                        self.found.push("a `fsl_attrs` path".to_owned());
                     }
                     self.tree(&path.tree, public, marker_crate);
                 }
@@ -179,8 +179,8 @@ fn marker_violations(source: &str) -> Vec<String> {
 
         fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
             let first = attr.path().segments.first();
-            if first.is_some_and(|segment| segment.ident == "qsl_attrs") {
-                self.found.push("a `qsl_attrs` path".to_owned());
+            if first.is_some_and(|segment| segment.ident == "fsl_attrs") {
+                self.found.push("a `fsl_attrs` path".to_owned());
             }
             syn::visit::visit_attribute(self, attr);
         }
@@ -208,8 +208,8 @@ fn the_guard_rejects_aliases_reexports_and_definitions() {
         "pub use ix_trace_rs::*;",
         "mod inner { pub(super) use ix_trace_rs::string_edge; }",
         "#[proc_macro_attribute]\npub fn string_edge(a: TokenStream, i: TokenStream) -> TokenStream { i }",
-        "use qsl_attrs::string_edge;",
-        "#[qsl_attrs::string_edge]\nfn f() {}",
+        "use fsl_attrs::string_edge;",
+        "#[fsl_attrs::string_edge]\nfn f() {}",
     ] {
         assert!(
             !marker_violations(rejected).is_empty(),

@@ -3,7 +3,7 @@ id: TC-490
 title: "E3 resolves header profile selections against the layer table"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: verifies
 ---
 # TC-490: E3 resolves header profile selections against the layer table
@@ -39,22 +39,22 @@ table, never from a literal.
    `ieee_profile` definition's identity) and `x` (`test:unknown-profile`). Then
    compile a unit with profiles `v` and `u`, both `R`'s identity.
 6. Compile six units, each with one profile `v` naming, in turn,
-   `quire.state.core/v1`, `quire.state.queries/v1`,
-   `quire.state.graph/v1`, `quire.value.complete/v1`,
-   `quire.model.complete/v1` and `quire.temporal.complete/v1`; each unit's
+   `filament.state.core/v1`, `filament.state.queries/v1`,
+   `filament.state.graph/v1`, `filament.value.complete/v1`,
+   `filament.model.complete/v1` and `filament.temporal.complete/v1`; each unit's
    declaration uses only forms admitted by that profile.
-7. Compile a unit whose profile `v` names `quire.state.core/v1` and whose
+7. Compile a unit whose profile `v` names `filament.state.core/v1` and whose
    declaration calls a named predicate, then one that declares a named
-   predicate; then both units with `v` naming `quire.state.queries/v1`.
+   predicate; then both units with `v` naming `filament.state.queries/v1`.
 
 8. (Retired with FR-110-AC-9: no layer-table comparison.)
 9. For each layer FR-110-AC-10 names, compile a unit whose profile `v`
    names the layer and whose declaration holds one equality of each
    FR-110-AC-10 operand family, then the `r = 1` unit under
-   `quire.state.core/v1`.
+   `filament.state.core/v1`.
 10. Compile a unit with no header profile holding `r = q` over records and
-    `x = y` over `Int[0, 9]`; then, under `quire.value.complete/v1`,
-    `quire.state.graph/v1` and `quire.model.complete/v1`, a unit holding
+    `x = y` over `Int[0, 9]`; then, under `filament.value.complete/v1`,
+    `filament.state.graph/v1` and `filament.model.complete/v1`, a unit holding
     `s = t` over `Sequence<Reference<Order>>` and `r = q` over a record with
     a `Reference<Order>` field (FR-110-AC-11).
 11. Build `complete::header_profile_catalog()`. Call `contains` with each
@@ -65,7 +65,7 @@ table, never from a literal.
     then over the unit with `test:unknown-profile`, and over the unit with
     the `ieee_profile` definition's identity (FR-110-AC-12).
 
-12. Compile a unit whose profile `v` names `quire.temporal.complete/v1` and
+12. Compile a unit whose profile `v` names `filament.temporal.complete/v1` and
     whose declarations hold one equality of each FR-110-AC-10 operand
     family (FR-110-AC-13).
 
@@ -99,11 +99,11 @@ criteria each step backs.
 - Step 7: the call refuses `unsupported_construct`/`expression-form` at the
   call's span and the predicate declaration refuses
   `unsupported_construct`/`declaration-form` at the declaration's span,
-  each naming `quire.state.core/v1`, with no package; both
-  `quire.state.queries/v1` units compile.
+  each naming `filament.state.core/v1`, with no package; both
+  `filament.state.queries/v1` units compile.
 - Step 8: retired.
 - Step 9: each equality compiles or refuses `unsupported_construct`/`expression-form` at the operator's span, naming the selected layer and the admitting layer, as FR-110-AC-10 lists; `r = 1` refuses `ill_typed`/`type-mismatch` with no layer refusal (FR-110-AC-10).
-- Step 10: the no-profile unit compiles; each nested-reference equality refuses `unsupported_construct`/`expression-form` naming `quire.state.graph/v1` under value.complete and `quire.value.complete/v1` under state.graph, and compiles under model.complete (FR-110-AC-11).
+- Step 10: the no-profile unit compiles; each nested-reference equality refuses `unsupported_construct`/`expression-form` naming `filament.state.graph/v1` under value.complete and `filament.value.complete/v1` under state.graph, and compiles under model.complete (FR-110-AC-11).
 - Step 11: `contains` is true for each layer identity and false for `test:unknown-profile` and every qualification definition identity; each layer unit carries no `unknown_profile` diagnostic; the `test:unknown-profile` unit and the `ieee_profile` unit each carry `unknown_profile`/`unsupported-selection` at the identity literal's span (FR-110-AC-12).
 - Step 12: the unit compiles; every equality compiles (FR-110-AC-13).
 - Step 13: the first compile resolves `r` to the extension selection

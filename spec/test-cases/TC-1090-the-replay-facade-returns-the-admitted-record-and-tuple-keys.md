@@ -3,21 +3,21 @@ id: TC-1090
 title: "The replay facade returns the admitted record, tuple and union keys"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-396
+  - target: ix://agent-ix/filament-spec-language/FR-396
     type: verifies
 ---
 # TC-1090: The replay facade returns the admitted record, tuple and union keys
 
 ## Description
 
-Verify `qsl_replay::compile_admitted`'s context lists the admitted record, tuple
+Verify `fsl_replay::compile_admitted`'s context lists the admitted record, tuple
 and union keys and a union's member ids, finds them by wire node id, and
 refuses as typed. Scope: FR-396-AC-1 to FR-396-AC-10.
 
 ## Test Procedure
 
-1. From an integration test that names only the `qsl_replay` root, the
-   kernel and the QSV declaration API, compile a unit declaring a tuple and a
+1. From an integration test that names only the `fsl_replay` root, the
+   kernel and the FSV declaration API, compile a unit declaring a tuple and a
    record with a field of that tuple's type; look both up; build a
    `TypeEnvironment`, a tuple value and a record value from the keys.
 2. Compile a unit with two same-shaped records, tuples and unions

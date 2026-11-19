@@ -3,20 +3,20 @@ id: FR-535
 title: "Expose the bounded native-run-result/2 consumer boundary"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
 ---
 # FR-535: Expose the bounded native-run-result/2 consumer boundary
 
 ## Description
 
-`qsl_replay` SHALL export, at its crate root, the producer, the strict reader,
+`fsl_replay` SHALL export, at its crate root, the producer, the strict reader,
 the typed results and the caller-supplied bounds of
 [FR-267](FR-267-write-and-read-run-results-as-native-run-result-2.md), so a
 consumer reads and writes exact `native-run-result/2` bytes without naming
-`qsl_replay::spine`.
+`fsl_replay::spine`.
 
 ## Inputs
 
@@ -58,5 +58,6 @@ the bytes and its own invocation.
 
 ## Dependencies
 
+- Consumer facts (FSpec FR-661, bound in FR-761): `CF-DR-01` (`read_native_run_result_bounded`), `CF-DR-02` (`write_clause_run_result`) and `CF-DR-03` (`NativeRunResult`) at the `fsl_replay` crate root.
 - [FR-267](FR-267-write-and-read-run-results-as-native-run-result-2.md) owns the `/2` wire contract.
 - [TC-1340](../test-cases/TC-1340-bounded-native-run-result-consumer-boundary.md) defines verification.

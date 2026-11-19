@@ -3,15 +3,15 @@ id: US-016
 title: "Prove liveness of a contended model under strong fairness"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-129
+  - target: ix://agent-ix/filament-spec-language/FR-129
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-130
+  - target: ix://agent-ix/filament-spec-language/FR-130
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-131
+  - target: ix://agent-ix/filament-spec-language/FR-131
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-134
+  - target: ix://agent-ix/filament-spec-language/FR-134
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-016: Prove liveness of a contended model under strong fairness

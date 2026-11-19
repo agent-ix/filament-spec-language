@@ -3,21 +3,21 @@ id: FR-116
 title: "Replay a frame counterexample through the replay facade"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-115
+  - target: ix://agent-ix/filament-spec-language/FR-115
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-323
+  - target: ix://agent-ix/filament-specification/FR-323
     type: depends_on
 ---
 # FR-116: Replay a frame counterexample through the replay facade
@@ -26,7 +26,7 @@ relationships:
 
 A frame counterexample is an invocation that writes, creates, deletes or
 retypes an object, or adds or removes a relationship link, outside its
-operation's frame. QSL SHALL replay one through the layer-6
+operation's frame. FSL SHALL replay one through the layer-6
 `replay` facade (FR-098) and the `ProtocolClause` S6a `evaluate` arm
 (FR-115), keeping the clause, frame, anchor and occurrence identity and the
 witness's values through replay, and SHALL settle an FR-072 replay result
@@ -34,12 +34,12 @@ witness's values through replay, and SHALL settle an FR-072 replay result
 
 The frame counterexample is the `ProtocolClause` family's own payload on the
 FR-070 envelope: `FrameCounterexample`, which implements `FamilyPayload`
-(FR-070-AC-5). Today `qsl-replay` has only `NoPayload` and a test-only
+(FR-070-AC-5). Today `fsl-replay` has only `NoPayload` and a test-only
 payload.
 
 ## Inputs
 
-- FR-098's request, whose replay target is `frame_operation` (QSpec
+- FR-098's request, whose replay target is `frame_operation` (FSpec
   FR-323): `object`, the `QualifiedName` of the object type, process or
   state machine that declares the operation (for an inherited operation,
   the supertype that declares it, as FR-121's `OperationSite` names it),
@@ -82,20 +82,20 @@ payload.
 
 - The executor SHALL decode the request by FR-098's rules first, refusing
   by FR-098's decode refusals.
-- The executor SHALL apply the two envelope checks below after the request decodes by FR-071 (QSpec FR-323 decode rule 1, then the byte-provision rule) and before it recompiles, in the order listed, refusing with the first that applies:
+- The executor SHALL apply the two envelope checks below after the request decodes by FR-071 (FSpec FR-323 decode rule 1, then the byte-provision rule) and before it recompiles, in the order listed, refusing with the first that applies:
   1. If the request's replay target is not `frame_operation`, then the
      executor SHALL refuse `invalid_runtime_input`/`unknown-member` at that
      member's `/replay/<member>` pointer, naming the target, the entry
      `replay_frame` and the member it reads (`frame_operation`). The code
-     and pointer tell it apart from QSpec FR-323's refusal of a request
+     and pointer tell it apart from FSpec FR-323's refusal of a request
      carrying two targets (`invalid-value`).
   2. If the envelope's replay target differs from the request's, then the
      executor SHALL refuse `invalid-request`, naming
      both targets.
 - The executor SHALL recompile and check the package by FR-098's rules, in
   FR-098's order, before it resolves the request's `frame_operation`.
-- The executor SHALL resolve `frame_operation` by QSpec FR-342's operation
-  resolution (QSpec FR-323). If `object` names no declaration, the object
+- The executor SHALL resolve `frame_operation` by FSpec FR-342's operation
+  resolution (FSpec FR-323). If `object` names no declaration, the object
   has no operation of that name, or the operation has no frame node, then
   the executor SHALL refuse `missing_declaration`/`missing-name`; if
   `object` names a node that cannot declare operations, or an object that
@@ -123,7 +123,7 @@ payload.
 - Replay SHALL read no path, environment variable, clock or search location,
   and SHALL give the same result for the same request.
 - CG builds the frame witness bindings over IR's `WitnessBinding` (AD-016)
-  once agent-ix/quire-contract-ir#109 and agent-ix/quire-contract-codegen#49
+  once agent-ix/filament-contract-ir#109 and agent-ix/filament-contract-codegen#49
   land. Until then this requirement's input is the in-process envelope, and
   the decode from IR's witness is the part that waits.
 
@@ -143,16 +143,16 @@ payload.
 
 ## Dependencies
 
-- QSpec FR-323 (the `frame_operation` replay target, its decode refusals and
+- FSpec FR-323 (the `frame_operation` replay target, its decode refusals and
   its resolution) and FR-121 (the `OperationSite` whose `frame_operation`
   CG copies, CG FR-024).
 - FR-070 (envelope, its replay target and `FamilyPayload`), FR-072 (replay result), FR-098
   (replay facade), FR-104 and FR-105 (frame identity and occurrence),
   FR-106 and FR-115 (admission and the frame check).
 - ADR-013 O-25 to O-27; AD-016 (`WitnessBinding`).
-- agent-ix/quire-contract-ir#109 and agent-ix/quire-contract-codegen#49 for
+- agent-ix/filament-contract-ir#109 and agent-ix/filament-contract-codegen#49 for
   the end-to-end path from a Kani frame counterexample.
 
 The decode
-from IR's witness waits on agent-ix/quire-contract-ir#109 and
-agent-ix/quire-contract-codegen#49.
+from IR's witness waits on agent-ix/filament-contract-ir#109 and
+agent-ix/filament-contract-codegen#49.

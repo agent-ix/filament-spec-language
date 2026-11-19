@@ -3,7 +3,7 @@ id: TC-128
 title: "Keep incomplete query inputs and exhausted work distinct from values"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-046
+  - target: ix://agent-ix/filament-spec-language/FR-046
     type: verifies
 ---
 # TC-128: Keep incomplete query inputs and exhausted work distinct from values

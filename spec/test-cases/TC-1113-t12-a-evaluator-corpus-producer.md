@@ -3,7 +3,7 @@ id: TC-1113
 title: "T12-A keeps CG's evaluator corpus compile_package call in its replay module"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: verifies
 ---
 # TC-1113: T12-A keeps CG's evaluator corpus compile_package call in its replay module
@@ -16,11 +16,11 @@ Scope: FR-060-AC-8.
 
 ## Test Procedure
 
-1. Run `arch-lint api-surface` with a QSL fixture tree whose
-   `qsl-replay/src/lib.rs` exists and a CG fixture tree holding a
-   `qsl_replay::compile_package(..)` call in
+1. Run `arch-lint api-surface` with an FSL fixture tree whose
+   `fsl-replay/src/lib.rs` exists and a CG fixture tree holding a
+   `fsl_replay::compile_package(..)` call in
    `src/replay/evaluator_corpus.rs`.
-2. Move the `qsl_replay::compile_package(..)` call to `src/oracle/mod.rs`
+2. Move the `fsl_replay::compile_package(..)` call to `src/oracle/mod.rs`
    and rerun.
 
 ## Expected Results
@@ -36,5 +36,5 @@ Scope: FR-060-AC-8.
 
 ## Dependencies
 
-**Upstream:** [FR-060](../functional/FR-060-check-qsl-api-surface-boundary.md).
+**Upstream:** [FR-060](../functional/FR-060-check-fsl-api-surface-boundary.md).
 **Downstream:** none.

@@ -1,26 +1,26 @@
 ---
 id: FR-344
-title: "Report every refinement case result with one verdict and its QSpec FR-301 exit code"
+title: "Report every refinement case result with one verdict and its FSpec FR-301 exit code"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-343
+  - target: ix://agent-ix/filament-spec-language/FR-343
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-345
+  - target: ix://agent-ix/filament-spec-language/FR-345
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
 ---
-# FR-344: Report every refinement case result with one verdict and its QSpec FR-301 exit code
+# FR-344: Report every refinement case result with one verdict and its FSpec FR-301 exit code
 
 ## Description
 
 When a refinement gate (FR-340, FR-345) has a result for every case and
 every malformed pair, it SHALL write one report listing every result, give
-one verdict for the run, and exit with the QSpec FR-301 exit code for that
+one verdict for the run, and exit with the FSpec FR-301 exit code for that
 verdict.
 
 ## Inputs
@@ -42,7 +42,7 @@ FR-340's pair-level tool-failure results.
 
 The refinement gates are xtask repository gates, in the family of
 `seam-probe`, `string-edge` and `route-lint`: a contributor or `make ci`
-runs them, and no QSL frontend (`command`, the driver's `quire` binary)
+runs them, and no FSL frontend (`command`, the driver's `quire` binary)
 exposes them as a verb, so FR-285's frontend exit function governs none of
 their exits.
 
@@ -85,8 +85,8 @@ their exits.
 - If either side's class of a case is `incomplete`, then the report SHALL
   name, in that case's entry, the limit reached, its value and the case member that raises
   it (`limits`, `observation_limits`, `model_limits` or `accounting`).
-- The verdict SHALL be the highest-severity result present under QSpec
-  FR-301's order, and the exit code QSpec FR-301's code for it:
+- The verdict SHALL be the highest-severity result present under FSpec
+  FR-301's order, and the exit code FSpec FR-301's code for it:
 
 | Results present | Verdict | Exit |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ their exits.
 
 - FR-343 and FR-345 (case, layer and edge results), FR-340 (pair-level
   results).
-- QSpec FR-301 (exit codes and severity order).
+- FSpec FR-301 (exit codes and severity order).
 
 ## References
 

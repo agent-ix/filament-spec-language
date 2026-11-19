@@ -3,35 +3,35 @@ id: FR-048
 title: "Preserve native choreography semantics for assessment"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-002, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/US-003, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-040, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-043, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-045, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-384, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-049, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-050, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-051, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-052, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-053, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-054, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-055, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-056, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-057, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-058, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-059, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-060, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-061, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-062, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/US-002, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/US-003, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-040, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-043, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-045, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-384, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-049, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-050, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-051, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-052, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-053, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-054, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-055, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-057, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-058, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-059, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-060, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-061, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-062, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: depends_on }
   - { target: ix://agent-ix/filament-core-data/FR-142, type: references }
   - { target: ix://agent-ix/filament-core-data/FR-143, type: references }
-  - { target: ix://agent-ix/quire-protocol/FR-001, type: references }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-protocol/FR-001, type: references }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
 ---
 # FR-048: Preserve native choreography semantics for assessment
 
@@ -42,7 +42,7 @@ source-owned choreography, binding requirements and causal/recovery structure
 needed by downstream protocol and observation assessment.
 
 This requirement retrospectively scopes roadmap L6 under compiler
-[#39](https://github.com/agent-ix/quire-spec-language/issues/39). The compiler
+[#39](https://github.com/agent-ix/filament-spec-language/issues/39). The compiler
 produces an immutable assessment subject; it does not send messages, execute
 business operations, infer observations or decide protocol conformance.
 
@@ -80,8 +80,8 @@ An admitted compiled-protocol family retaining exact typed role and occurrence
 handles, value/control graphs, temporal/recovery requirements and domain-package
 model selections, or a typed invalid, unsupported or resource-incomplete family
 disposition. An untimed subject remains representable by strict
-`quire.compiled-protocol/1`. A timed choreography requires the separately
-reviewed `quire.compiled-protocol/2` extension described under Dependencies;
+`filament.compiled-protocol/1`. A timed choreography requires the separately
+reviewed `filament.compiled-protocol/2` extension described under Dependencies;
 it cannot be emitted as `/1`, which cannot carry the required temporal
 selections and clock configurations. Both versions
 are consumed only through the version-exact parser-free Rust readers owned by
@@ -169,7 +169,7 @@ configuration refuses the timed family. A compensation's own timed clause
 declaration with its own clock name, so it has its own typed clock configuration
 and, on the checked-package route, its own `temporal_bindings` row beside the
 rows of the `temporal` clauses (FR-050, "Checked-package clock bindings", whose
-compensation rows await QSpec STD-644 for reader admission); the lock's
+compensation rows await FSpec STD-644 for reader admission); the lock's
 `temporal_profile` selection alone does not supply it.
 The strict `/1` reader SHALL continue
 to reject `/2`, and the strict `/2` reader SHALL NOT reinterpret or silently
@@ -234,10 +234,10 @@ deadline settlement and late evidence. The `/2` extension and L5 acceptance are
 prerequisites only for the timed campaign case, not for untimed static
 choreography emission.
 
-`quire-protocol` [#11](https://github.com/agent-ix/quire-protocol/issues/11)
-owns artifact intake, [#6](https://github.com/agent-ix/quire-protocol/issues/6)
+`filament-protocol` [#11](https://github.com/agent-ix/filament-protocol/issues/11)
+owns artifact intake, [#6](https://github.com/agent-ix/filament-protocol/issues/6)
 owns PT02 conformance, and
-[#12](https://github.com/agent-ix/quire-protocol/issues/12) owns the temporal/
+[#12](https://github.com/agent-ix/filament-protocol/issues/12) owns the temporal/
 observation integration. D owns the version-lock manifest, Rust integration
 driver and aggregate campaign record under
 [quire-research#39](https://github.com/agent-ix/quire-research/issues/39) and
@@ -247,5 +247,5 @@ FR-050–059 supply protocol meaning; FR-060–062 are downstream claim, result 
 portable-projection boundaries referenced but not implemented here. The compiler
 owns only source-to-artifact preservation and the exact static roles and runtime
 key requirements those consumers must bind. This retrospective cycle under
-[#66](https://github.com/agent-ix/quire-spec-language/issues/66) records that
+[#66](https://github.com/agent-ix/filament-spec-language/issues/66) records that
 earlier choreography implementation and tests preceded this requirement.

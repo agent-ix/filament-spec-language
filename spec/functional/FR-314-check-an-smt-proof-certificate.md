@@ -3,34 +3,34 @@ id: FR-314
 title: "Check an SMT proof certificate"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-163
+  - target: ix://agent-ix/filament-spec-language/FR-163
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: references
-  - target: ix://agent-ix/quire-specification/FR-375
+  - target: ix://agent-ix/filament-specification/FR-375
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
 ---
 # FR-314: Check an SMT proof certificate
 
 ## Description
 
-`qsl-replay`'s `check_smt_proof` SHALL accept an `SmtProofCertificate` that
+`fsl-replay`'s `check_smt_proof` SHALL accept an `SmtProofCertificate` that
 comes with an SMT backend's `BoundedComplete{depth}` or
 `Inductive{depth}` proof, before it settles, exactly when every query it carries is
 the query FR-315 encodes for the item at that depth and every proof it
@@ -42,7 +42,7 @@ verify because a step uses an unchecked rule settles `proved`,
 `Uncertified`, as an SMT proof that arrives with no certificate does. The
 settlement rule under "Outputs" states the whole mapping once.
 
-For a refinement's per-step simulation obligations (QSpec FR-468),
+For a refinement's per-step simulation obligations (FSpec FR-468),
 `check_refinement_smt_proof` SHALL accept a `RefinementSmtCertificate` exactly
 when it holds one base part and one step part per step row, each the query
 FR-315 encodes for it, and every part refutes its query using only checked
@@ -81,9 +81,9 @@ pub enum SmtProofCertificate {
     Inductive { format: ProofFormat, base: RefutedQuery, step: RefutedQuery },
 }
 
-/// A refinement's per-step simulation obligations (QSpec FR-468): the refuted
+/// A refinement's per-step simulation obligations (FSpec FR-468): the refuted
 /// initial query and one refuted step query per step row, in the order of the
-/// refinement node's `steps` array (QSpec FR-375).
+/// refinement node's `steps` array (FSpec FR-375).
 pub struct RefinementSmtCertificate {
     pub format: ProofFormat,
     pub base: RefutedQuery,
@@ -139,7 +139,7 @@ FR-338's `CertificateRule` gains `QueryMismatch`, `ShapeMismatch`,
 FR-163's `Malformed`. `CertificateRejection.at` is FR-338's
 `CertificateLocus`, here `Query { part }` or `ProofStep { part, index: u64 }`,
 `part` being `Unrolling`, `Base` or `Step`; for a refinement certificate `Step`
-carries its row, `Step { row: Some(r) }`. QSpec FR-331's Certification
+carries its row, `Step { row: Some(r) }`. FSpec FR-331's Certification
 table spells every rule and both loci, `step/<r>` for a step row included,
 and lists the rules this checker may name at a query part and at a proof
 step; FR-338's "Rejection spellings" applies it.
@@ -334,14 +334,14 @@ number of step rows of the recompiled refinement's `steps` array.
 
 ### Assembly from CG run records
 
-A `RefinementSmtCertificate` is assembled by the QSL adapter (QSL-908) from
-the CG run records of the refinement item; it is never read from the QSpec
-wire, which carries no refinement SMT certificate (QSpec FR-331). The record
+A `RefinementSmtCertificate` is assembled by the FSL adapter (QSL-908) from
+the CG run records of the refinement item; it is never read from the FSpec
+wire, which carries no refinement SMT certificate (FSpec FR-331). The record
 kinds and their serialization are defined by the CG run-record format (the
-STD-566 delta to the CG SMT adapter), not by QSL or QSpec. QSL states only the
+STD-566 delta to the CG SMT adapter), not by FSL or FSpec. FSL states only the
 adapter's input contract: one `Base` record, and one step record per step row
 identified by its zero-based `row`, the row indexing the recompiled
-refinement's `steps` array (QSpec FR-375). Let `N` be the number of step rows
+refinement's `steps` array (FSpec FR-375). Let `N` be the number of step rows
 of the recompiled refinement's `steps` array.
 
 - The adapter SHALL set `format` to `Alethe`, `base` to a `RefutedQuery` built
@@ -368,7 +368,7 @@ of the recompiled refinement's `steps` array.
 
 The public replay adapter is the existing `RefinementQueryRequest`'s
 `assemble_smt_certificate` method (FR-492). Its input is CG FR-045's serialized
-handoff, not a QSpec certificate wire format. Its fresh assembly byte/record
+handoff, not an FSpec certificate wire format. Its fresh assembly byte/record
 budget and typed framing/shape/resource/fault refusals are FR-492's; a refusal
 produces no certificate and therefore no `CertificateRejected` proof verdict.
 `RefinementQueryRequest::check_smt_proof` delegates this requirement's checker
@@ -498,7 +498,7 @@ a blanket rule.
 - [FR-315](FR-315-encode-the-smt-lib-transition-relation.md) (the encoding
   and its canonical printing), [FR-338](FR-338-check-an-en-1-closure-certificate.md)
   (the request, rule and rejection types and the wire spelling of a
-  `QueryPart`), QSpec FR-468 (the refinement's queries and certificate), QSpec FR-375
+  `QueryPart`), FSpec FR-468 (the refinement's queries and certificate), FSpec FR-375
   (the `steps` order the CG records follow),
   [FR-163](FR-163-check-a-hyper-item-s-product-closure-certificate.md)
   (the `Malformed` rule),

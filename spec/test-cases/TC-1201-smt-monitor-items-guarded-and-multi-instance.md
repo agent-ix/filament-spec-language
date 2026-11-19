@@ -3,11 +3,11 @@ id: TC-1201
 title: "The SMT encoding reads every TP-2 formula, guarded clauses and several instances through per-instance monitors"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: verifies
 ---
 # TC-1201: The SMT encoding reads every TP-2 formula, guarded clauses and several instances through per-instance monitors

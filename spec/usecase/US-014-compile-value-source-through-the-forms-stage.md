@@ -3,16 +3,16 @@ id: US-014
 title: "Compile Value-family source through the S2 forms stage into checked declarations"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-014: Compile Value-family source through the S2 forms stage into checked declarations
 
 ## Story
 
-**As a** QSL caller who compiles complete-V1 source (the CLI, a library
+**As a** FSL caller who compiles complete-V1 source (the CLI, a library
 caller, or the layer-6 `replay` facade recompiling a proved package)
 **I want** source that declares `Value`-family types and functions to reach
 the checker through S1, the S2 forms stage and one assembler

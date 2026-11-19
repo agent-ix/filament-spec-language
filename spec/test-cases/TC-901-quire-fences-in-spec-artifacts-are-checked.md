@@ -3,7 +3,7 @@ id: TC-901
 title: "The quire fences of spec artifacts are checked against the objects they declare"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-355
+  - target: ix://agent-ix/filament-spec-language/FR-355
     type: verifies
 ---
 # TC-901: The quire fences of spec artifacts are checked against the objects they declare

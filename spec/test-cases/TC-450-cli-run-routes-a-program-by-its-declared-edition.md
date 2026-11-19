@@ -3,7 +3,7 @@ id: TC-450
 title: "`command` run routes a program by its declared edition and calls a 1-draft function"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 # TC-450: `command` run routes a program by its declared edition and calls a 1-draft function
@@ -12,7 +12,7 @@ relationships:
 
 Verify that `command`'s `run`, called in process, reads the program source's
 declared edition once, runs a `1-draft` source through
-`qsl_replay::spine::run` and refuses every other declared edition, `0-draft`
+`fsl_replay::spine::run` and refuses every other declared edition, `0-draft`
 included, with `unknown_edition`. This catches a `0-draft` or unknown edition
 that is admitted, and a `1-draft` request whose native-only members are
 silently ignored.
@@ -53,7 +53,7 @@ Tag the tests `#[trace("TC-450", "FR-100-AC-1")]` (step 1),
 - Step 1: exit 0 and no refusal envelope; the result document is one document
   whose `format` is `spine-run-result/1`, whose `source` names the request's two labels
   and authored path, whose `function` is `seven`, and whose `outcome` is
-  `{"kind": "completed", "value": {"kind": "integer", "decimal": "7"}}`.
+  `{"kind": "completed", "value": {"integer": "7"}}`.
 - Step 2: the two `0-draft` requests refuse `unknown_edition`, stage
   `profile`, exit 20, no result document, with a `message` naming the
   program file and `0-draft`; the source with no header refuses

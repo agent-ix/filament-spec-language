@@ -3,7 +3,7 @@ id: TC-473
 title: "Model effects and results are trace data, and ambient-state reads refuse at S3"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
 ---
 # TC-473: Model effects and results are trace data, and ambient-state reads refuse at S3
@@ -19,7 +19,7 @@ Scope: FR-120-AC-10, FR-120-AC-11, FR-120-AC-12.
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/`, with TC-471's package and
+Integration tests in `fsl-eval/tests/it/`, with TC-471's package and
 compile path. Each step effect is read from a `ModelTrace` built by
 `replay` of a hand-written FR-101 `Trace` (its transition identities and
 state keys written out in the test), which is the path

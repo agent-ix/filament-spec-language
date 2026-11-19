@@ -3,7 +3,7 @@ id: TC-842
 title: "An infinite-trace item settles only through negotiation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-332
+  - target: ix://agent-ix/filament-spec-language/FR-332
     type: verifies
 ---
 # TC-842: An infinite-trace item settles only through negotiation
@@ -18,7 +18,7 @@ Scope: FR-332-AC-1 to FR-332-AC-4.
 
 ## Test Procedure
 
-In QSL's own tests, with test descriptors and fixture dispositions (no CG
+In FSL's own tests, with test descriptors and fixture dispositions (no CG
 or driver code):
 
 1. Write `Reaches` as an item; request a bounded version with a

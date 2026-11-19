@@ -3,7 +3,7 @@ id: TC-909
 title: "Integer bounds and literals up to i128 check, and one beyond refuses at check"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-909: Integer bounds and literals up to i128 check, and one beyond refuses at check

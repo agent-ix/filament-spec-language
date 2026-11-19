@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type T = Text[0, 8; nfc];
+function f using v(a: String, b: T): Boolean pure { a = b }

@@ -3,11 +3,11 @@ id: TC-792
 title: "StateModel causes raised under Value and ProtocolClause evaluation render with the state-model prefix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-301
+  - target: ix://agent-ix/filament-spec-language/FR-301
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: verifies
 ---
 # TC-792: StateModel causes raised under Value and ProtocolClause evaluation render with the state-model prefix
@@ -45,7 +45,7 @@ Admit an object world holding a real object `r`, and a closed query
 population in the same selected model/universe that does not contain it.
 Use the PopulationId minted by real binding admission and registered in
 that actual environment, and the world's admitted Reference. Call
-`qsl_replay::spine::run` with shared typed arguments, the borrowed context,
+`fsl_replay::spine::run` with shared typed arguments, the borrowed context,
 the actual caller limits and the original Cancel. Retain evidence that
 the lookup reached the enclosing Value evaluation: its real catalog cause,
 payload and lookup location, not merely a generic non-success exit.
@@ -100,7 +100,7 @@ the same inputs and returns `true` without using them. Exact and subtype
 inputs complete `true`; the four invalid vectors keep their admission
 refusals and zero evaluation consumption despite unused parameters.
 Independently confirm that the unchanged kernel exact predicate rejects
-the proper subtype for `Reference<T>` while the real selected-model QSV
+the proper subtype for `Reference<T>` while the real selected-model FSV
 conformance predicate accepts it; this predicate comparison supplements,
 and does not replace, the public-call execution controls.
 

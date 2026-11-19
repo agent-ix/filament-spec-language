@@ -3,26 +3,26 @@ id: FR-288
 title: "Build the backend registry from provider manifests by one conversion"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-030
+  - target: ix://agent-ix/filament-spec-language/US-030
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-331"
+  - target: "ix://agent-ix/filament-specification/FR-331"
     type: depends_on
 ---
 # FR-288: Build the backend registry from provider manifests by one conversion
 
 ## Description
 
-The registry is the layer-R `qsl_route::Registry` value, and nothing else
+The registry is the layer-R `fsl_route::Registry` value, and nothing else
 registers backends (ADR-029 PV-1, FR-075, FR-080). It is built from two
 sources: the compile-time providers linked into the binary, each giving its
 FR-331 provider manifest, and the plugin processes the caller names, each
@@ -34,12 +34,12 @@ A provider's `BackendId` is its backend identity alone, the identity
 string its manifest states (ADR-013 O-19). A `proved` record names
 the provider that produced it by its `BackendId` (FR-290).
 
-`BackendId` is one type, defined in `qsl-foundation`, holding exactly that
-identity. Every QSL crate that names a backend uses it: layer R's
+`BackendId` is one type, defined in `fsl-foundation`, holding exactly that
+identity. Every FSL crate that names a backend uses it: layer R's
 registry and descriptors, and layer 6's replay envelopes and terminal
 records. A `BackendDescriptor` holds the `BackendId` and the manifest's
 advertised capabilities, and no other identity of the tool; the
-manifest's `tool` member (QSpec FR-331) reaches it only through the manifest
+manifest's `tool` member (FSpec FR-331) reaches it only through the manifest
 descriptor value. A descriptor
 also holds a `ProviderOrigin` (`Linked` or `Process`), a fact the host
 supplies when it builds the descriptor and that no manifest member states.
@@ -59,7 +59,7 @@ FR-331 provider manifests.
   manifests alike.
 - The conversion shall take the descriptor's `BackendId` from the
   manifest's backend identity, verbatim.
-- Layer R and layer 6 shall name a backend by the one `qsl-foundation`
+- Layer R and layer 6 shall name a backend by the one `fsl-foundation`
   `BackendId` type.
 - Layer R shall give every `BackendDescriptor` a `ProviderOrigin`, `Linked` or
   `Process`, and shall hold the origin passed to `BackendDescriptor::new` or `descriptor_from_manifest`; no
@@ -93,7 +93,7 @@ FR-288-AC-4 withdrawn clause: two manifests differing only in `tool.version` giv
 - ADR-012 §7.1: the registry as an argument.
 - ADR-013 O-19: `BackendId`, the backend identity alone.
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md), [FR-080](FR-080-registry-evidence-and-gates.md): the registry.
-- QSpec FR-331: the provider manifest.
+- FSpec FR-331: the provider manifest.
 
 ## Overlap
 
@@ -103,7 +103,7 @@ providers give their manifests (ADR-029 PV-3).
 ## References
 
 - QSL-393 (V1-A06): provider negotiation.
-- QSpec FR-305, FR-462 (STD-141): the QSpec half.
-- `qsl-foundation` holds the one `BackendId`, with no `qsl_route::BackendId`
-  or `qsl_replay::identity::Backend`. `BackendDescriptor` already
+- FSpec FR-305, FR-462 (STD-141): the FSpec half.
+- `fsl-foundation` holds the one `BackendId`, with no `fsl_route::BackendId`
+  or `fsl_replay::identity::Backend`. `BackendDescriptor` already
   carries no tool identity.

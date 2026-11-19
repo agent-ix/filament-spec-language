@@ -3,19 +3,19 @@ id: FR-216
 title: "Give every protocol step a static footprint, enabling footprint and visibility"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-206
+  - target: ix://agent-ix/filament-spec-language/FR-206
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-207
+  - target: ix://agent-ix/filament-spec-language/FR-207
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-208
+  - target: ix://agent-ix/filament-spec-language/FR-208
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-209
+  - target: ix://agent-ix/filament-spec-language/FR-209
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
 ---
 # FR-216: Give every protocol step a static footprint, enabling footprint and visibility

@@ -3,7 +3,7 @@ id: TC-1297
 title: "Protocol results stay independent when one protocol is refused"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-383
+  - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
 ---
 # TC-1297: Protocol results stay independent when one protocol is refused

@@ -3,11 +3,11 @@ id: FR-025
 title: "Compile explicit rule-model source"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-017
+  - target: ix://agent-ix/filament-spec-language/FR-017
     type: references
 ---
 # FR-025: Compile explicit rule-model source

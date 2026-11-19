@@ -3,7 +3,7 @@ id: TC-185
 title: "The replay request carries exactly the O-26 members and round-trips them exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: verifies
 ---
 # TC-185: The replay request carries exactly the O-26 members and round-trips them exactly
@@ -24,7 +24,7 @@ Scope: FR-071-AC-1, FR-071-AC-14, FR-071-AC-15.
 ## Test Procedure
 
 1. Build a replay request from a packet and an envelope whose S1-to-S4
-   stage limits differ from QSL's own compiled-in defaults.
+   stage limits differ from FSL's own compiled-in defaults.
 2. Inspect the request type's public fields/accessors and confirm each maps
    to a named ADR-013 O-26 member, with none unaccounted for.
 3. Serialize the request and read it back.
@@ -51,7 +51,7 @@ Scope: FR-071-AC-1, FR-071-AC-14, FR-071-AC-15.
 
 - Step 2 finds no request member outside the named O-26 set.
 - The stage limits from step 1 are exactly the ones read back in step 4,
-  not QSL's defaults.
+  not FSL's defaults.
 - Every member from step 4 matches byte-for-byte.
 - The two requests in step 5 have distinct identities.
 - Step 6: all three round-trip with their one target unchanged; the reader

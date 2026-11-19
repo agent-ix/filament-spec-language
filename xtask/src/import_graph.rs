@@ -5,7 +5,7 @@
 //!
 //! TC-172's scan of `check` for edges into `value::expression` or
 //! `checking` is retired: both modules are in the root crate,
-//! which depends on `qsl-semantics`, so Cargo refuses either edge from
+//! which depends on `fsl-semantics`, so Cargo refuses either edge from
 //! `check` and the scan could never fire.
 //!
 //! FR-068-CON-4 lets `value::mod.rs` go on re-exporting `check`'s
@@ -19,9 +19,9 @@
 //! at the *resolved* level.
 //!
 //! This module closes that gap by reading
-//! `qsl-semantics/src/value/mod.rs`'s own aggregate `use` block (`pub use
+//! `fsl-semantics/src/value/mod.rs`'s own aggregate `use` block (`pub use
 //! crate::check::{...}`) to build the name set that matters, then resolving
-//! every `use` edge found under `qsl-semantics/src/model/` against it: a flat
+//! every `use` edge found under `fsl-semantics/src/model/` against it: a flat
 //! `crate::value::Name` import whose `Name` is in that set resolves into
 //! `crate::check` exactly as surely as a direct `crate::check::Name` import
 //! would.
@@ -47,7 +47,7 @@
 //! This covers every shipped `use` item at any depth, every inline
 //! `crate::`/`super::`/`self::` path (including one inside a macro's
 //! arguments), and every later path through a module a `use` binds, under
-//! `qsl-semantics/src/check/`. A flat `crate::value::Name` aggregate import resolves to its
+//! `fsl-semantics/src/check/`. A flat `crate::value::Name` aggregate import resolves to its
 //! real submodule (failing regardless, since the rule requires the qualified
 //! form), and a `super::`/`self::` path resolves relative to its own file.
 
@@ -207,7 +207,7 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// The name set `qsl-semantics/src/value/mod.rs`'s own aggregate `use`
+/// The name set `fsl-semantics/src/value/mod.rs`'s own aggregate `use`
 /// block establishes (see this module's own doc): every name a flat
 /// `crate::value::Name` import can reach that really resolves into
 /// `crate::check`.
@@ -217,7 +217,7 @@ pub struct ValueReexports {
     pub check: BTreeSet<String>,
 }
 
-/// Read `qsl-semantics/src/value/mod.rs` and extract [`ValueReexports`] by
+/// Read `fsl-semantics/src/value/mod.rs` and extract [`ValueReexports`] by
 /// finding the one `use` item whose path starts `crate::check`.
 #[ix_trace_rs::string_edge]
 pub fn value_reexports(workspace_root: &Path) -> Result<ValueReexports> {
@@ -281,7 +281,7 @@ fn strip_leading_crate(path: &[String]) -> &[String] {
 
 // TC-172 (FR-068-AC-3) used to scan `check` here for an edge into
 // `value::expression` or `checking`. Both are in the root crate, and Cargo
-// gates crate direction: the root crate depends on `qsl-semantics`, so
+// gates crate direction: the root crate depends on `fsl-semantics`, so
 // neither edge compiles from `check` (the scan is retired).
 
 /// One resolved `model` -> `check` edge (TC-262/FR-074-AC-3, inverted from
@@ -290,7 +290,7 @@ fn strip_leading_crate(path: &[String]) -> &[String] {
 /// `check` -- a glob binds no single leaf, see [`UseEdge::is_glob`]), and
 /// whether it was written directly against `crate::check` or reached
 /// indirectly through `value`'s flat aggregate. After M-2 this edge set
-/// SHALL be empty everywhere under `qsl-semantics/src/model/`.
+/// SHALL be empty everywhere under `fsl-semantics/src/model/`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelCheckEdge {
     /// The file the edge was found in, relative to the workspace root.
@@ -303,7 +303,7 @@ pub struct ModelCheckEdge {
     pub direct: bool,
 }
 
-/// TC-262: every `use` edge under `qsl-semantics/src/model/` that resolves, directly or
+/// TC-262: every `use` edge under `fsl-semantics/src/model/` that resolves, directly or
 /// through `value`'s flat aggregate, into `crate::check` -- including a
 /// glob (`use crate::check::*;`) whose own path resolves into `check`.
 /// `resolves_into_check` doesn't need `leaf` for that branch (it only
@@ -312,7 +312,7 @@ pub struct ModelCheckEdge {
 /// used to be the bug (PR #291 review finding 1: an earlier revision
 /// skipped every glob edge outright before ever calling
 /// `resolves_into_check`, so a `use crate::check::*;` planted under
-/// `qsl-semantics/src/model/` passed `real_model_check_edge_is_empty` completely
+/// `fsl-semantics/src/model/` passed `real_model_check_edge_is_empty` completely
 /// undetected -- a genuine gate hole, not a false alarm; confirmed live
 /// against the real tree and reverted, see
 /// `glob_import_into_check_is_recorded_not_skipped` below for the pinned
@@ -363,19 +363,19 @@ fn value_submodule_reexports(workspace_root: &Path) -> Result<BTreeMap<String, S
     Ok(map)
 }
 
-/// The source tree these scans read: the `qsl-semantics` crate's `src/`,
+/// The source tree these scans read: the `fsl-semantics` crate's `src/`,
 /// where `check`, `model`, `family`, `library` and the layer-3 `value`
 /// submodules live since ADR-011 §7.3 X-6. Every scanned path, and
 /// every module FR-068-AC-6 names, is relative to this crate.
-const LAYER3_SRC: &str = "qsl-semantics/src";
+const LAYER3_SRC: &str = "fsl-semantics/src";
 
-/// That crate's own Rust name. A path rooted at it (`qsl_semantics::value::
+/// That crate's own Rust name. A path rooted at it (`fsl_semantics::value::
 /// unit::UnitTable`, as a doctest or an `extern crate self` alias would
 /// write one) is the same crate-relative path as `crate::value::unit::
 /// UnitTable`. Every scan here treats it as a crate root, the same as
 /// `crate`: [`strip_leading_crate`] (TC-262), [`resolve_relative_path`]
 /// and inline-path resolution (TC-175).
-const LAYER3_CRATE: &str = "qsl_semantics";
+const LAYER3_CRATE: &str = "fsl_semantics";
 
 // ---------------------------------------------------------------------
 // FR-068-AC-6: `check`'s imports are bounded by module and layer, not by
@@ -384,8 +384,8 @@ const LAYER3_CRATE: &str = "qsl_semantics";
 // Cargo is the gate for crate direction: every later-layer module
 // (`checked_package`, `package`, `value::expression`, `route`, `replay`, the SEAM
 // modules) is in a crate that depends on
-// `qsl-semantics`, so an import of one from here does not compile. This scan
-// checks what Cargo cannot see: the module order inside `qsl-semantics`.
+// `fsl-semantics`, so an import of one from here does not compile. This scan
+// checks what Cargo cannot see: the module order inside `fsl-semantics`.
 // ---------------------------------------------------------------------
 
 /// FR-068-AC-6's permitted-module list (closed): any item of a listed
@@ -397,11 +397,11 @@ const LAYER3_CRATE: &str = "qsl_semantics";
 /// [`in_layer_rule_scope`] reads them from here.
 const LAYER_PERMITTED_MODULES: &[&str] = &[
     // K, SV, F.
-    "quire_exact",
-    "quire_semantic_value",
-    "qsl_foundation",
-    // Layer 2: the `qsl-forms` crate (ADR-011 §7.3 X-5).
-    "qsl_forms",
+    "filament_exact",
+    "filament_semantic_value",
+    "fsl_foundation",
+    // Layer 2: the `fsl-forms` crate (ADR-011 §7.3 X-5).
+    "fsl_forms",
     // Layer 3, before `check` core (ADR-011 §6.1: `semantic_value < model <
     // library < check core`).
     "value::definition",
@@ -462,7 +462,7 @@ fn is_real_crate_module(workspace_root: &Path, name: &str) -> bool {
 }
 
 /// Whether `name` is a real submodule of `value` -- a file or directory
-/// directly under `qsl-semantics/src/value/` -- used to tell a genuinely nested
+/// directly under `fsl-semantics/src/value/` -- used to tell a genuinely nested
 /// `crate::value::<submodule>::Name` path apart from a flat
 /// `crate::value::Name` one at the inline-path level, where (unlike a `use`
 /// line) source syntax alone does not separate a path's module prefix from
@@ -473,8 +473,8 @@ fn is_real_value_submodule(workspace_root: &Path, name: &str) -> bool {
 }
 
 /// Whether `top` (a resolved path's first segment) is in FR-068-AC-6's
-/// scope at all: a crate named on [`LAYER_PERMITTED_MODULES`] (`quire_exact`,
-/// `qsl_foundation`, `qsl_forms`), or any real module of this crate. `std`
+/// scope at all: a crate named on [`LAYER_PERMITTED_MODULES`] (`filament_exact`,
+/// `fsl_foundation`, `fsl_forms`), or any real module of this crate. `std`
 /// and every other crate are out of scope and return `false`.
 fn in_layer_rule_scope(workspace_root: &Path, top: &str) -> bool {
     LAYER_PERMITTED_MODULES.contains(&top) || is_real_crate_module(workspace_root, top)
@@ -546,7 +546,7 @@ fn resolve_relative_path(raw: &[String], current_module: &[String]) -> Vec<Strin
 }
 
 /// One FR-068-AC-6 layer-rule edge: a `use` line or inline
-/// `crate::`/`super::`/`self::` path under `qsl-semantics/src/check/`, resolved and
+/// `crate::`/`super::`/`self::` path under `fsl-semantics/src/check/`, resolved and
 /// classified (TC-175).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LayerEdge {
@@ -577,7 +577,7 @@ impl LayerEdge {
 }
 
 /// Classify one already-resolved path (crate-relative, `crate`/`super`/`self`
-/// substituted) found at `file:line` under `qsl-semantics/src/check/`. `None` when the
+/// substituted) found at `file:line` under `fsl-semantics/src/check/`. `None` when the
 /// path's root is `std` or a crate not on [`LAYER_PERMITTED_MODULES`] -- out
 /// of FR-068-AC-6's scope entirely, not
 /// a finding. `next_is_module_by_syntax`: see [`resolve_layer_module`].
@@ -610,7 +610,7 @@ fn classify_resolved(
     })
 }
 
-/// Classify one `use` edge found under `qsl-semantics/src/check/`, on the resolved path of
+/// Classify one `use` edge found under `fsl-semantics/src/check/`, on the resolved path of
 /// what it binds -- so `use crate::complete;`, `use
 /// crate::{complete, model};` and `use super::super::complete;`, which bind a
 /// module by name, are classified on that module. Every resolved segment but
@@ -641,7 +641,7 @@ fn classify_use_edge(
 
 /// The crate-relative module path segments for a `.rs` file given relative
 /// to the workspace root, dropping everything up to and including its
-/// crate's `src` directory (`qsl-semantics/src/check/check.rs` -> `["check", "check"]`;
+/// crate's `src` directory (`fsl-semantics/src/check/check.rs` -> `["check", "check"]`;
 /// `src/check/mod.rs` -> `["check"]`; `src/lib.rs` -> `[]`) -- Rust's own
 /// `mod.rs`/`foo.rs` file-to-module convention, needed to resolve a
 /// `super::`/`self::` path relative to its file.
@@ -903,7 +903,7 @@ fn file_edges(workspace_root: &Path, file: &str) -> Result<FileEdges> {
 }
 
 /// FR-068-AC-6/TC-175: every shipped `use` edge and inline path under
-/// `qsl-semantics/src/check/`, classified against the module-level layer
+/// `fsl-semantics/src/check/`, classified against the module-level layer
 /// rule: each resolves into a permitted module of this crate, names its
 /// `value` submodule, or is a violation. Inline paths resolve as
 /// `file_edges` describes.
@@ -1091,7 +1091,7 @@ mod tests {
     }
 
     /// `value_reexports` against the real tree: layer-3 `value`
-    /// (`qsl-semantics/src/value/mod.rs`) re-exports nothing from `check`
+    /// (`fsl-semantics/src/value/mod.rs`) re-exports nothing from `check`
     /// (X-6a: `semantic_value` sits before `check` in ADR-011 §6.1's
     /// order). Its own submodule re-exports are non-empty, so the resolver
     /// is reading the real file. This fails if a `check` re-export comes
@@ -1117,7 +1117,7 @@ mod tests {
         fs::write(path, contents).unwrap();
     }
 
-    /// A minimal `qsl-semantics`-shaped fixture tree: a bare marker file for
+    /// A minimal `fsl-semantics`-shaped fixture tree: a bare marker file for
     /// each of its real top-level modules (so [`is_real_crate_module`] can
     /// tell each apart from an external crate) and each of its real `value`
     /// submodules. `complete` and `value::stop` are real modules of the
@@ -1145,12 +1145,12 @@ mod tests {
                 "",
             );
         }
-        write(dir.path(), "qsl-semantics/src/value/mod.rs", "");
+        write(dir.path(), "fsl-semantics/src/value/mod.rs", "");
         dir
     }
 
     /// Against the real, current tree: every shipped edge under
-    /// `qsl-semantics/src/check/` -- `use` line and inline path alike -- is permitted,
+    /// `fsl-semantics/src/check/` -- `use` line and inline path alike -- is permitted,
     /// and every `value` edge names its submodule. This is TC-175 steps 1-2
     /// against the module-level layer rule.
     #[trace("TC-175", "FR-068-AC-6")]
@@ -1183,7 +1183,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::complete::ReaderAuthority;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1194,48 +1194,48 @@ mod tests {
         assert!(edges[0].is_violation());
     }
 
-    /// TC-175: layer 2 is the `qsl-forms` crate, so a shipped
-    /// `use qsl_forms::Expression;` under `src/check/` is classified, and
-    /// permitted, as the `qsl_forms` module rather than skipped as an
+    /// TC-175: layer 2 is the `fsl-forms` crate, so a shipped
+    /// `use fsl_forms::Expression;` under `src/check/` is classified, and
+    /// permitted, as the `fsl_forms` module rather than skipped as an
     /// external crate.
     #[trace("TC-175", "FR-068-AC-6")]
     #[test]
-    fn qsl_forms_use_edge_is_permitted() {
+    fn fsl_forms_use_edge_is_permitted() {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
-            "use qsl_forms::Expression;\n",
+            "fsl-semantics/src/check/fixture.rs",
+            "use fsl_forms::Expression;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].module, "qsl_forms");
+        assert_eq!(edges[0].module, "fsl_forms");
         assert_eq!(edges[0].class, LayerClass::Permitted);
         assert!(!edges[0].is_violation());
     }
 
-    /// TC-175: the scanned crate is `qsl-semantics`, so a path
+    /// TC-175: the scanned crate is `fsl-semantics`, so a path
     /// rooted at its own name is classified exactly as a `crate::` one would
-    /// be, not skipped as an external crate: `qsl_semantics::value::stop`
-    /// is unlisted, a flat `qsl_semantics::value::UnitTable` names no
-    /// submodule, `qsl_semantics::value::unit` is permitted, and an
-    /// inline `qsl_semantics::complete::..` path is unlisted.
+    /// be, not skipped as an external crate: `fsl_semantics::value::stop`
+    /// is unlisted, a flat `fsl_semantics::value::UnitTable` names no
+    /// submodule, `fsl_semantics::value::unit` is permitted, and an
+    /// inline `fsl_semantics::complete::..` path is unlisted.
     #[trace("TC-175", "FR-068-AC-6")]
     #[test]
-    fn qsl_semantics_rooted_paths_are_classified_like_crate_paths() {
+    fn fsl_semantics_rooted_paths_are_classified_like_crate_paths() {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/value/mod.rs",
+            "fsl-semantics/src/value/mod.rs",
             "pub use unit::UnitTable;\n",
         );
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
-            "use qsl_semantics::value::stop::SomeThing;\n\
-             use qsl_semantics::value::UnitTable;\n\
-             use qsl_semantics::value::unit::QuantityUnit;\n\
-             pub fn f(_: qsl_semantics::complete::ReaderAuthority) {}\n",
+            "fsl-semantics/src/check/fixture.rs",
+            "use fsl_semantics::value::stop::SomeThing;\n\
+             use fsl_semantics::value::UnitTable;\n\
+             use fsl_semantics::value::unit::QuantityUnit;\n\
+             pub fn f(_: fsl_semantics::complete::ReaderAuthority) {}\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
         let summary: Vec<(usize, &str, bool)> = edges
@@ -1253,7 +1253,7 @@ mod tests {
         );
         // TC-262 resolves through `strip_leading_crate`, which strips
         // the crate's own name the same way.
-        let path = vec!["qsl_semantics".to_owned(), "check".to_owned()];
+        let path = vec!["fsl_semantics".to_owned(), "check".to_owned()];
         assert!(resolves_into_check(&path, "X", &ValueReexports::default()));
     }
 
@@ -1266,7 +1266,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::complete::*;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1284,7 +1284,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "pub fn f() -> crate::value::stop::Stop {\n    todo!()\n}\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1305,12 +1305,12 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/value/mod.rs",
+            "fsl-semantics/src/value/mod.rs",
             "pub use unit::UnitTable;\n",
         );
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::value::UnitTable;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1331,12 +1331,12 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/value/mod.rs",
+            "fsl-semantics/src/value/mod.rs",
             "pub use unit::UnitTable;\n",
         );
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "pub fn f(_: &crate::value::UnitTable) {}\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1357,7 +1357,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::value::stop::SomeThing;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1376,7 +1376,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "#[cfg(test)]\nmod tests {\n    use crate::complete::ReaderAuthority;\n}\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1392,7 +1392,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::value::unit::BrandNewUnitItem;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1412,7 +1412,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use std::collections::BTreeMap;\nuse serde_json::Value;\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1448,7 +1448,7 @@ mod tests {
     #[test]
     fn module_segments_of_matches_the_mod_rs_convention() {
         assert_eq!(
-            module_segments_of("qsl-semantics/src/check/check.rs"),
+            module_segments_of("fsl-semantics/src/check/check.rs"),
             vec!["check", "check"]
         );
         assert_eq!(module_segments_of("src/check/mod.rs"), vec!["check"]);
@@ -1475,7 +1475,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::complete;\nuse crate::{value::stop, complete as c};\nuse super::super::complete as d;\n",
         );
         assert_eq!(
@@ -1498,7 +1498,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::complete::{self};\nuse crate::value::unit::{self as q};\n",
         );
         let edges = check_layer_edges(dir.path()).expect("scan runs");
@@ -1519,12 +1519,12 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/value/mod.rs",
+            "fsl-semantics/src/value/mod.rs",
             "pub use unit::UnitTable;\n",
         );
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::value;\npub fn f() -> bool {\n    matches!(g(), value::UnitTable::Foo)\n}\n",
         );
         assert_eq!(
@@ -1543,7 +1543,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "use crate::complete as cp;\nuse crate::value::unit;\n\
              pub fn f() {\n    let _ = cp::ReaderAuthority::new();\n    let _ = unit::UnitTable::default();\n}\n",
         );
@@ -1567,7 +1567,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "pub fn f() {\n    use crate::complete::ReaderAuthority;\n}\n\
              #[cfg(test)]\nfn t() {\n    use crate::value::stop::Stop;\n}\n",
         );
@@ -1583,7 +1583,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "pub fn f() {\n    let _ = vec![crate::complete::X];\n    let _ = format!(\"{}\", crate::value::stop::M);\n}\n",
         );
         assert_eq!(
@@ -1601,7 +1601,7 @@ mod tests {
         let dir = layer_fixture_root();
         write(
             dir.path(),
-            "qsl-semantics/src/check/fixture.rs",
+            "fsl-semantics/src/check/fixture.rs",
             "pub fn f() -> self::super::super::complete::C {\n    todo!()\n}\n",
         );
         assert_eq!(violations_of(dir.path()), vec![("complete".to_owned(), 1)]);

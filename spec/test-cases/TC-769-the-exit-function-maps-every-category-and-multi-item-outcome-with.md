@@ -3,7 +3,7 @@ id: TC-769
 title: "The exit function maps every category and multi-item outcome, with undefined at 10"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: verifies
 ---
 # TC-769: The exit function maps every category and multi-item outcome, with undefined at 10
@@ -26,7 +26,7 @@ Scope: FR-285-AC-1 to FR-285-AC-12.
 8. Render a clause pending at the end of its supplied trace and a run whose clauses are all discharged; read each machine-output record.
 
 9. Run FR-501-AC-3's `Pending` case and FR-501-AC-4's `Indeterminate` case, FR-501-AC-1's `Completed(true)` and `Completed(false)` cases and a work-stopped `Incomplete` case through `run_clause`, and read each label and exit from the report and from the multi-item ranking.
-10. Read the label and exit of the `Pending` and `Indeterminate` cases and compare them with the catalog's `Category::Pending` and `Category::Indeterminate`; compare `trace_exit_code` with `exit_code` for each of the ten categories; and search the production source (`src/` trees; tests, fixtures, examples, fuzz and xtask excluded) of every workspace member (`qsl-analyze`, `qsl-cst`, `qsl-eval`, `qsl-forms`, `qsl-foundation`, `qsl-inspect`, `qsl-package`, `qsl-replay`, `qsl-route`, `qsl-semantics`, `qsl-source`, `qsl-string-edge`, `qsl-walk-grow`) and of the root crate's `src/`, `src/command` included, for (a) the literal pairs `"pending"` with `0` and `"indeterminate"` with `11` in one expression, and (b) a `match` or `if let` over `TemporalCategory`, `ClauseDisposition` or any type that maps a temporal or trace outcome to a label string or an exit integer. Pass means zero hits for both searches and every label and exit read by a call to `as_str`, `exit_code` or `trace_exit_code` on a `Category`.
+10. Read the label and exit of the `Pending` and `Indeterminate` cases and compare them with the catalog's `Category::Pending` and `Category::Indeterminate`; compare `trace_exit_code` with `exit_code` for each of the ten categories; and search the production source (`src/` trees; tests, fixtures, examples, fuzz and xtask excluded) of every workspace member (`fsl-analyze`, `fsl-cst`, `fsl-eval`, `fsl-forms`, `fsl-foundation`, `fsl-inspect`, `fsl-package`, `fsl-replay`, `fsl-route`, `fsl-semantics`, `fsl-source`, `fsl-string-edge`, `fsl-walk-grow`) and of the root crate's `src/`, `src/command` included, for (a) the literal pairs `"pending"` with `0` and `"indeterminate"` with `11` in one expression, and (b) a `match` or `if let` over `TemporalCategory`, `ClauseDisposition` or any type that maps a temporal or trace outcome to a label string or an exit integer. Pass means zero hits for both searches and every label and exit read by a call to `as_str`, `exit_code` or `trace_exit_code` on a `Category`.
 
 Tag the tests `#[trace("TC-769", "<AC id>")]`.
 

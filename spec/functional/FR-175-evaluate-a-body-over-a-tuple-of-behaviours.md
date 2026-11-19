@@ -3,17 +3,17 @@ id: FR-175
 title: "Evaluate a hyper body over a tuple of behaviours in lockstep"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: depends_on
 ---
 # FR-175: Evaluate a hyper body over a tuple of behaviours in lockstep
@@ -90,9 +90,9 @@ the first position where the outputs differ.
   as amended by ADR-023; ADR-018 SM-1, SM-3, SM-8.
 - [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md)
   (one behaviour as a trace), [FR-172](FR-172-check-hyper-and-relation-clauses-over-model-subjects.md).
-- QSpec owns lockstep alignment and tuple evaluation over behaviours
+- FSpec owns lockstep alignment and tuple evaluation over behaviours
   (ADR-023 QS-2).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-395 (Linear STD-136; ADR-023 QS-2).
+- ADR-023. FSpec half: FSpec FR-395 (Linear STD-136; ADR-023 QS-2).

@@ -3,21 +3,21 @@ id: FR-448
 title: "Cross-check verification backends over the conformance corpus"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-035
+  - target: ix://agent-ix/filament-spec-language/US-035
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-353
+  - target: ix://agent-ix/filament-spec-language/FR-353
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-402
+  - target: ix://agent-ix/filament-spec-language/FR-402
     type: traces_to
 ---
 # FR-448: Cross-check verification backends over the conformance corpus
@@ -35,14 +35,14 @@ agreement relation.
 Two verification backends that both answer an item and disagree mean that
 at least one of them returns a wrong verdict. The qualification gate
 ([FR-353](FR-353-settle-the-complete-v1-qualification-verdict.md)) compares
-QSL with the corpus's expected dispositions; this gate compares QSL's
+FSL with the corpus's expected dispositions; this gate compares FSL's
 backends with one another, including items whose expected disposition the
 corpus does not record. The verdict agreement relation is ADR-013 O-16's
 "Agreement across backends".
 
 ## Inputs
 
-- The QSpec conformance corpus, read in place, as for FR-350 (`--corpus`).
+- The FSpec conformance corpus, read in place, as for FR-350 (`--corpus`).
 - An optional capability scope, resolved as FR-351 resolves it
   (`--capability`, repeatable).
 - Resource limits, resolved through the
@@ -198,7 +198,7 @@ with cause `no-comparable-item` and exit 2.
 - [FR-072](FR-072-implement-typed-replay-result.md) and ADR-018 SM-7: the
   replay that settles a counterexample.
 - ADR-013 O-16: the terminal records and the agreement relation.
-- [FR-350](FR-350-run-the-conformance-corpus-against-qsl.md),
+- [FR-350](FR-350-run-the-conformance-corpus-against-fsl.md),
   [FR-351](FR-351-settle-each-capability-from-its-executed-vectors.md),
   [FR-353](FR-353-settle-the-complete-v1-qualification-verdict.md): the
   corpus, scope and preflight it shares with `qualify`.

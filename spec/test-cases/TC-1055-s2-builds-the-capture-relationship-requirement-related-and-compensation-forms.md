@@ -3,7 +3,7 @@ id: TC-1055
 title: "S2 builds the capture, relationship, requirement, related-by and compensation forms with their spans"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: verifies
 ---
 # TC-1055: S2 builds the capture, relationship, requirement, related-by and compensation forms with their spans

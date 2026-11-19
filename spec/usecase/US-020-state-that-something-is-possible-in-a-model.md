@@ -3,26 +3,26 @@ id: US-020
 title: "State that something is possible, always still possible, or reachable in one way"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-165
+  - target: ix://agent-ix/filament-spec-language/FR-165
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-166
+  - target: ix://agent-ix/filament-spec-language/FR-166
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-167
+  - target: ix://agent-ix/filament-spec-language/FR-167
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-169
+  - target: ix://agent-ix/filament-spec-language/FR-169
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-170
+  - target: ix://agent-ix/filament-spec-language/FR-170
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-020: State that something is possible, always still possible, or reachable in one way
 
 ## Story
 
-**As a** verification operator with a QSL state model, a few initial
+**As a** verification operator with an FSL state model, a few initial
 snapshots and a finite key set for each population
 **I want** to state that a condition can be reached from every start, that
 it can still be reached from every reachable state, or that every state of
@@ -37,7 +37,7 @@ on an exploration that found no state where the claim has no value.
 
 ADR-022 designs these claims. A temporal claim (US-015) is true or false on
 each behaviour; these claims quantify over the paths that branch from a
-state, so they are a property family of their own. QSL's explicit-state
+state, so they are a property family of their own. FSL's explicit-state
 engine explores the model's state graph once, samples seeded walks first for
 `possible`, and decides each claim by one linear pass over the explored
 graph.
@@ -96,5 +96,5 @@ witness shape.
 
 ## References
 
-- ADR-022. Owning ticket: Linear QSL-369. QSpec half: QSpec
+- ADR-022. Owning ticket: Linear QSL-369. FSpec half: FSpec
   FR-390 to FR-394 (Linear STD-135).

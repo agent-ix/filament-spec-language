@@ -3,11 +3,11 @@ id: US-008
 title: "Trust a compiled artifact's domain-package provenance"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-042
+  - target: ix://agent-ix/filament-spec-language/FR-042
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-008: Trust a compiled artifact's domain-package provenance
@@ -55,7 +55,7 @@ able to go absent.
 
 ### US-008-EX-3: An old-shaped payload does not pass silently
 
-- **Given** a `quire.compiled-protocol/1` payload whose `Model` still carries
+- **Given** a `filament.compiled-protocol/1` payload whose `Model` still carries
   a `correspondence`, `producer` or `interface` member from before this
   migration.
 - **When** it is offered to the reader built under this requirement.

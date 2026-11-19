@@ -3,7 +3,7 @@ id: TC-433
 title: "A backend member is its identity, kept verbatim"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-433: A backend member is its identity, kept verbatim

@@ -3,7 +3,7 @@ id: TC-182
 title: "A positive witness envelope round-trips its transcript and every O-25 member exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-182: A positive witness envelope round-trips its transcript and every O-25 member exactly

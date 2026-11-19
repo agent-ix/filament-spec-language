@@ -3,32 +3,32 @@ id: FR-142
 title: "Check a refinement's safety half on the explicit-state product"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-018
+  - target: ix://agent-ix/filament-spec-language/US-018
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
 ---
 # FR-142: Check a refinement's safety half on the explicit-state product
 
 ## Description
 
-QSL's layer-A crate `qsl-analyze`, module `model_check`, SHALL decide the safety half of a
+FSL's layer-A crate `fsl-analyze`, module `model_check`, SHALL decide the safety half of a
 refinement (ADR-020 RS-2 to RS-6, CO-1) on the explicit-state product
 (ADR-020 RE-1, ADR-018 EN-1) at stage S6c over edge E10. The product's state
 is the concrete state, its history values and, when the refinement has
@@ -83,7 +83,7 @@ pub fn check_refinement(
 ## Behavior
 
 - The engine SHALL pass `check_initial` and `check_step` the refinement's concrete `ModelSystem` (the system whose states it explores) and its abstract system.
-- A `StepVerdict::Fault` from FR-141 SHALL end the run with a fault outcome that FR-144 settles `failed` (QSpec FR-383), and writes no counterexample for it. A `StepVerdict::Stopped` SHALL end the run with `Stopped{ResourceExhausted, limit}` naming that `EvaluationMeter` or `MaxCandidates` limit and its value, which FR-144 settles by FR-127's V-7 row (execution `resource-incomplete`, `Incomplete(LimitReached)`, category incomplete); it writes no counterexample.
+- A `StepVerdict::Fault` from FR-141 SHALL end the run with a fault outcome that FR-144 settles `failed` (FSpec FR-383), and writes no counterexample for it. A `StepVerdict::Stopped` SHALL end the run with `Stopped{ResourceExhausted, limit}` naming that `EvaluationMeter` or `MaxCandidates` limit and its value, which FR-144 settles by FR-127's V-7 row (execution `resource-incomplete`, `Incomplete(LimitReached)`, category incomplete); it writes no counterexample.
 
 ### Subjects and pre-check
 
@@ -126,7 +126,7 @@ pub fn check_refinement(
   `check_step` or `check_initial` returns `Undefined` SHALL end the phase
   with `Violated`. Its counterexample's prefix SHALL be the canonical path
   to that edge's pre-state followed by the edge, or empty for an initial
-  state, with `RefinementFailure::Undefined{position, row}` (QSpec FR-379)
+  state, with `RefinementFailure::Undefined{position, row}` (FSpec FR-379)
   and `kind: UndefinedEvaluation{where, cause}`. An undefined mapping SHALL rank with a `Fails` edge
   by the same order (ADR-020 RE-5).
 - `Undetermined(MappingUndetermined)` or `Undetermined(UndecidedSuccessor)`
@@ -166,7 +166,7 @@ pub fn check_refinement(
 - ADR-020 §2 RS-2 to RS-6, §3 CO-1, §4 AX-2 to AX-4, §5 RE-1 and RE-4, §6
   RC-1; ADR-018 §3 EN-1; ADR-011 §1 S6c and E10 as amended by ADR-018;
   ADR-027 TS-1 and TS-6.
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-125](FR-125-read-a-model-subject-s-behaviours-as-temporal-traces.md),
   [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
@@ -177,4 +177,4 @@ pub fn check_refinement(
 
 ## References
 
-- The QSpec half (semantics and the `RefinementFailure` wire): QSpec FR-377 and FR-379 (Linear STD-133).
+- The FSpec half (semantics and the `RefinementFailure` wire): FSpec FR-377 and FR-379 (Linear STD-133).

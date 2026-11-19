@@ -3,7 +3,7 @@ id: TC-048
 title: "Solve exact native contextual types"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-048: Solve exact native contextual types

@@ -3,7 +3,7 @@ id: TC-722
 title: "Deep sources parse on a small stack under raised S1 limits"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-256
+  - target: ix://agent-ix/filament-spec-language/FR-256
     type: verifies
 ---
 # TC-722: Deep sources parse on a small stack under raised S1 limits

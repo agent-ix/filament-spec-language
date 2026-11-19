@@ -3,7 +3,7 @@ id: TC-1031
 title: "r.name over a relationship end types by the destination multiplicity and refuses by name, direction and bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-363
+  - target: ix://agent-ix/filament-spec-language/FR-363
     type: verifies
 ---
 # TC-1031: r.name over a relationship end types by the destination multiplicity and refuses by name, direction and bound

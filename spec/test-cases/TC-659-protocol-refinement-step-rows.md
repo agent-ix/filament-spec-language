@@ -3,7 +3,7 @@ id: TC-659
 title: "Every protocol step class needs an explicit refinement row"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-214
+  - target: ix://agent-ix/filament-spec-language/FR-214
     type: verifies
 ---
 # TC-659: Every protocol step class needs an explicit refinement row

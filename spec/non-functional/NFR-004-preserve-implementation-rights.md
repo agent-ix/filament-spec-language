@@ -4,7 +4,7 @@ title: "Preserve implementation and dependency grants"
 type: NFR
 quality_attribute: compliance
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-002"
+  - target: "ix://agent-ix/filament-spec-language/FR-002"
     type: constrains
 ---
 # NFR-004: Preserve implementation and dependency grants

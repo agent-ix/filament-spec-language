@@ -3,7 +3,7 @@ id: TC-384
 title: "S6a invariant breaks are InternalFaults, not panics or refusals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-384: S6a invariant breaks are InternalFaults, not panics or refusals

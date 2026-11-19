@@ -3,7 +3,7 @@ id: TC-731
 title: "Intake reports composite cycles of any length"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-260
+  - target: ix://agent-ix/filament-spec-language/FR-260
     type: verifies
 ---
 # TC-731: Intake reports composite cycles of any length

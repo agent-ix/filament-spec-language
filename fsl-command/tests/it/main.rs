@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! External consumers of the non-core request-file owner.
+
+mod check_imports;
+mod check_source_identity;
+mod compile_limits;
+#[path = "../../../examples/config-version/spine_corpus.rs"]
+pub mod config_version_spine;
+mod extraction_request_refusals;
+mod integer_division_request;
+mod model_unit_request;
+mod native_source_projection;
+mod negotiation;
+mod package_run;
+mod prepared_command;
+mod protocol_refusal_text;
+mod probabilistic_package_locus;
+mod protocol_refusal_names;
+mod request_overrides;
+mod revision_validation;
+mod run_requirement_items;
+mod short_circuit_integer_division;

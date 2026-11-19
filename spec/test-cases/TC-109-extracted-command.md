@@ -3,18 +3,18 @@ id: TC-109
 title: "Run a selected Markdown clause through the spine clause runner"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-031
+  - target: ix://agent-ix/filament-spec-language/FR-031
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: verifies
 ---
 ## Description
 
-Integration, P1, in `qsl-replay`'s tests built with
-`cargo test -p qsl-replay --features quire-extraction`: extract licensed
-generated Markdown through `qsl_source::extract` and run the extracted body
-through `qsl_replay::spine::run_clause` over FR-108's fixtures; and, in the
-root crate's tests built with `--features qsl-replay/quire-extraction`, run
+Integration, P1, in `fsl-replay`'s tests built with
+`cargo test -p fsl-replay --features quire-extraction`: extract licensed
+generated Markdown through `fsl_source::extract` and run the extracted body
+through `fsl_replay::spine::run_clause` over FR-108's fixtures; and, in the
+root crate's tests built with `--features fsl-replay/quire-extraction`, run
 the library `command::run` extraction mode. Scope: FR-031-AC-1 to
 FR-031-AC-4, FR-031-AC-6 to FR-031-AC-10 and FR-267-AC-17.
 

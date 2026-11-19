@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+enum Color { Red, Green }
+function f using v(): Boolean pure { Color::Red = Color::Red }

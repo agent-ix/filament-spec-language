@@ -3,7 +3,7 @@ id: TC-996
 title: "Empty, spanless, mis-shaped and duplicate variant cases refuse with their causes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-996: Empty, spanless, mis-shaped and duplicate variant cases refuse with their causes
@@ -18,7 +18,7 @@ Every step offers hand-authored Semantic IR bytes unless stated.
 
 1. `Tier` with an empty `variants` list.
 2. `Tier` with one case whose `origin` is a generated origin with no source span.
-3. A construct with meaning `quire.meaning.model.variant-type/v1` and shape `record`.
+3. A construct with meaning `filament.meaning.model.variant-type/v1` and shape `record`.
 4. `Tier` with two cases named `Gold` and one identity `variant/Tier-Gold`. Then lift a bundle whose enumeration rows slug alike (`Snap_Shot`, `Snap__Shot`).
 5. `Tier` with two cases named `Gold` carrying distinct identities, which the reader admits. Then one case whose identity is not `variant/Tier-<name>`.
 6. `Tier` with a case that has no `name`.

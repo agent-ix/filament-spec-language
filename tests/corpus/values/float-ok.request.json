@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"float-ok.native","authority":"agent-ix","identity":"test:corpus:float-ok","document":"float-ok","formal_revision":1}},"call":{"function":"f","arguments":[]}}}

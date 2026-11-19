@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Single integration-test binary for `fsl-cst`, following the
+//! same `it` pattern the root crate uses (`tests/it/main.rs`) --
+//! one link step per `cargo test` invocation instead of one per file.
+
+mod abstraction_declaration;
+mod aggregate_atom;
+mod aggregate_connectives;
+mod annotated_let;
+mod complete_cst;
+mod complete_grammar;
+mod composition_declaration;
+mod cst_identity;
+mod decimal_constructor;
+mod deep_sources;
+mod expression_syntax;
+mod formatter_style;
+mod guarantee_declaration;
+mod hyper_clause;
+mod limit_messages;
+mod limits;
+mod model_source;
+mod model_unit;
+mod nesting_levels;
+mod probabilistic;
+mod protocol_memory_refinement;
+mod readme_snippets;
+mod reserved_declaration_names;
+mod selection;
+mod source_refusal;
+mod standard_forms;
+mod syntax_messages;
+mod taskset;
+mod terminal_declaration;

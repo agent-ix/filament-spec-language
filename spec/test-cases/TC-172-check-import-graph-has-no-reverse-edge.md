@@ -3,7 +3,7 @@ id: TC-172
 title: "check's real import graph has no edge into value::expression or into checking, and value::expression re-exports no check item"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: verifies
 ---
 # TC-172: check's real import graph has no edge into value::expression or into checking, and value::expression re-exports no check item
@@ -28,22 +28,22 @@ catches a reverse edge that would make the "split" a repackaging rather than
 a real dependency cut — for example, `check` calling back into
 `evaluate::Machine` for a shortcut, or a careless implementation writing the
 new checking content into the existing `checking` module by name confusion,
-or merging the two. It also verified FR-068-AC-10's other direction, `value::expression`'s re-export of `check`'s `CheckedExpression`; FR-068-AC-10 is retired and that re-export deleted (ADR-011 §7.2: the root crate re-exports no item that moves to `qsl-semantics`), so step 6 now confirms the re-export is absent. Scope: FR-068-AC-3; FR-068-AC-10 (retired).
+or merging the two. It also verified FR-068-AC-10's other direction, `value::expression`'s re-export of `check`'s `CheckedExpression`; FR-068-AC-10 is retired and that re-export deleted (ADR-011 §7.2: the root crate re-exports no item that moves to `fsl-semantics`), so step 6 now confirms the re-export is absent. Scope: FR-068-AC-3; FR-068-AC-10 (retired).
 
 ## Test Procedure
 
 **Steps 1-5 RETIRED (X-7).** `value::expression` and `checking`
-are modules of the root crate `quire-spec-language`, and the root crate
-depends on `qsl-semantics`, where `check` is. Cargo refuses a dependency
-from `qsl-semantics` back to the root crate as a cycle, and TC-390 refuses
-one in `qsl-semantics`' `[dev-dependencies]`, where Cargo would accept it. So
-no file under `qsl-semantics/src/check/` can import either module, and the
+are modules of the root crate `filament-spec-language`, and the root crate
+depends on `fsl-semantics`, where `check` is. Cargo refuses a dependency
+from `fsl-semantics` back to the root crate as a cycle, and TC-390 refuses
+one in `fsl-semantics`' `[dev-dependencies]`, where Cargo would accept it. So
+no file under `fsl-semantics/src/check/` can import either module, and the
 `xtask` scan these steps described could never report an edge; it is
-deleted. Cargo's crate-edge refusal, `qsl-semantics` → `quire-spec-language`,
+deleted. Cargo's crate-edge refusal, `fsl-semantics` → `filament-spec-language`,
 is the gate for steps 1-5. Step 4's `src/checking/` baseline comparison was
 a one-time check on the M-5 diff. Step 6 stays live.
 
-1. Enumerate every `.rs` file under `qsl-semantics/src/check/`.
+1. Enumerate every `.rs` file under `fsl-semantics/src/check/`.
 2. Parse or grep each file's `use` statements (including glob imports) and
    resolve each import path against the crate's module tree.
 3. Flag any import that resolves into `value::expression` at all — the
@@ -65,7 +65,7 @@ a one-time check on the M-5 diff. Step 6 stays live.
    level, in case a macro or re-export obscures a textual scan.
 6. Read `value::expression`'s `use` lines naming `check`. **Amended
    (FR-068-AC-10 retired):** `value::expression` imports
-   `CheckedExpression` with a plain `use qsl_semantics::check::CheckedExpression;`
+   `CheckedExpression` with a plain `use fsl_semantics::check::CheckedExpression;`
    and re-exports no `check` item. **Amended:** the scan in
    `tests/it/layer_crate_reexports.rs` refuses any root-crate `pub use` rooted
    at a layer crate, which covers this step; `CheckedPackage`'s re-export is
@@ -86,6 +86,6 @@ a one-time check on the M-5 diff. Step 6 stays live.
   found; a discrepancy (a hidden edge a textual scan misses) fails this
   step and names the actual resolved path.
 - Step 6 (amended): no `pub use` in the root crate
-  is rooted at `qsl_semantics`, and `qsl_semantics::check::CheckedExpression`
-  is the type's only public path; a `pub use qsl_semantics::...` line of any
+  is rooted at `fsl_semantics`, and `fsl_semantics::check::CheckedExpression`
+  is the type's only public path; a `pub use fsl_semantics::...` line of any
   shape fails this step.

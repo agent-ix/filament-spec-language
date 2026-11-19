@@ -3,7 +3,7 @@ id: TC-539
 title: "Replay reproduces an undefined claim evaluation at its position"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: verifies
 ---
 # TC-539: Replay reproduces an undefined claim evaluation at its position

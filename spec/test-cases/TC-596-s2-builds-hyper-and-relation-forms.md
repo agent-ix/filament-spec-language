@@ -3,7 +3,7 @@ id: TC-596
 title: "S2 builds forms for hyper clauses over behaviours and relations over model executions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-171
+  - target: ix://agent-ix/filament-spec-language/FR-171
     type: verifies
 ---
 # TC-596: S2 builds forms for hyper clauses over behaviours and relations over model executions

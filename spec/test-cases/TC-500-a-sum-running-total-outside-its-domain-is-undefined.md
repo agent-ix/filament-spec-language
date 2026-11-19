@@ -3,14 +3,14 @@ id: TC-500
 title: "A sum seed or running total outside its domain is a located undefined outcome"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-500: A sum seed or running total outside its domain is a located undefined outcome
 
 ## Description
 
-Verify FR-096's `sum` rule (QSpec FR-044, FR-145): at S6a a `sum<N>` whose
+Verify FR-096's `sum` rule (FSpec FR-044, FR-145): at S6a a `sum<N>` whose
 seed or running total leaves `N`'s domain returns the kernel undefined
 reason `Undefined::SumOutOfDomain` at the summand or the `sum` node, never
 the `integer_out_of_domain` refusal. This catches an evaluator that checks

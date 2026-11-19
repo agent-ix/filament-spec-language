@@ -3,7 +3,7 @@ id: TC-1281
 title: "Witness entry names preserve node identity and escape transcript delimiters"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
 ---
 # TC-1281: Witness entry names preserve node identity and escape transcript delimiters
@@ -20,7 +20,7 @@ based on the structural node identities rather than their display strings.
 1. Construct a `NodeKey` whose package/path text contains `%`, `=`, `;`, `|`,
    `<`, `>`, a DEL byte, a quote, a backslash and a non-ASCII scalar. Obtain
    the compact node spelling independently from the shared node-wire codec,
-   then call `qsl_replay::witness_entry_name` through the crate root.
+   then call `fsl_replay::witness_entry_name` through the crate root.
 2. Construct two keys whose source text differs as `=` versus `%3D`. Call
    `witness_entry_name` for both. Put each name in a one-entry assertion
    transcript with the Boolean value `1`, parse it as a `Witness`, and decode

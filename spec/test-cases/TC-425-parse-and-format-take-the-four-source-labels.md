@@ -3,7 +3,7 @@ id: TC-425
 title: "parse and format take the two source labels and report the source reference"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: verifies
 ---
 # TC-425: parse and format take the two source labels and report the source reference

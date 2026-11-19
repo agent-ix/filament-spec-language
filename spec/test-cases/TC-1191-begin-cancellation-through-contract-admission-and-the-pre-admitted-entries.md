@@ -3,18 +3,18 @@ id: TC-1191
 title: "Begin cancellation through contract admission and through the pre-admitted entries"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-401
+  - target: ix://agent-ix/filament-spec-language/FR-401
     type: verifies
 ---
 # TC-1191: Begin cancellation through contract admission and through the pre-admitted entries
 
 ## Description
 
-Verify where a cancelled meter handle is observed. `quire-eval`'s Begin with
+Verify where a cancelled meter handle is observed. `filament-eval`'s Begin with
 contract admission polls the meter's installed handle during argument
-admission and ends with the pre-charge `CallFailure::Cancelled`. `qsl-eval`'s
+admission and ends with the pre-charge `CallFailure::Cancelled`. `fsl-eval`'s
 `call`, `evaluate` and `call_supplied` admit under a run of their own or of
 the caller and begin pre-admitted, so a cancelled meter handle is first
 observed at the first meter charge. Scope: FR-262-AC-12, FR-401-AC-9 and
@@ -22,7 +22,7 @@ FR-401-AC-10.
 
 ## Test Procedure
 
-1. Through `quire-eval`'s Begin with contract admission, begin the admitted
+1. Through `filament-eval`'s Begin with contract admission, begin the admitted
    `g(x: Int[0, 9], y: Int[0, 9]): Boolean` with `3` and `4`, and a checked
    expression with those two parameter values: once with the meter's
    installed handle cancelled with `Requested` before Begin, once with the

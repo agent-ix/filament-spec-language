@@ -3,7 +3,7 @@ id: TC-051
 title: "Bound constraint checking and shared proof expansion"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-051: Bound constraint checking and shared proof expansion

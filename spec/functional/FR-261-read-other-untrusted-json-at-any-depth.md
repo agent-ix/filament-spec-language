@@ -3,24 +3,24 @@ id: FR-261
 title: "Read observation documents at any depth"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-027
+  - target: ix://agent-ix/filament-spec-language/US-027
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-030
+  - target: ix://agent-ix/filament-spec-language/ADR-030
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-259
+  - target: ix://agent-ix/filament-spec-language/FR-259
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-111
+  - target: ix://agent-ix/filament-spec-language/FR-111
     type: traces_to
 ---
 # FR-261: Read observation documents at any depth
 
 ## Description
 
-Every QSL read of untrusted JSON that has no typed reader SHALL go through
+Every FSL read of untrusted JSON that has no typed reader SHALL go through
 `quire-canonical`'s shared reader and its arena tree (FR-259), under the
 calling stage's input byte limit, and SHALL report the document on its
 content whatever its nesting (ADR-030 D-4.10). The site is the observation
@@ -65,7 +65,7 @@ identity document to read: it is identified by its `LibraryName` alone
 - [ADR-030](../decisions/ADR-030-arbitrary-nesting-depth-no-fixed-caps.md)
   D-4.10.
 - [FR-259](FR-259-encode-identities-and-read-json-through-quire-canonical-at-any-depth.md)
-  defines the shared reader QSL consumes.
+  defines the shared reader FSL consumes.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md) defines observation
   admission and its checks.
 - [FR-111](FR-111-link-a-complete-v1-definition-bundle.md) defines the
@@ -75,6 +75,6 @@ identity document to read: it is identified by its `LibraryName` alone
 
 ## References
 
-- QSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
+- FSpec FR-460, the ecosystem depth rule (Linear STD-143, which supersedes
   STD-125).
 - Linear QSL-381.

@@ -3,9 +3,9 @@ id: TC-833
 title: "Union values as collection elements, in queries and in predicates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-323
+  - target: ix://agent-ix/filament-spec-language/FR-323
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-046
+  - target: ix://agent-ix/filament-spec-language/FR-046
     type: verifies
 ---
 # TC-833: Union values as collection elements, in queries and in predicates
@@ -31,7 +31,7 @@ Tag each test `#[trace("TC-833", "<AC id>")]`.
 ## Expected Results
 
 - Step 1: all admitted; the set holds three elements and the bag four, each
-  in QSpec's union-key order, the same for both input orders; the ordered
+  in FSpec's union-key order, the same for both input orders; the ordered
   set holds `Rect(2, 3)`, `Empty`, `Circle(1)` and, from the reversed input,
   `Circle(1)`, `Rect(2, 3)`, `Empty` (first-occurrence order, not key
   order); the sequence keeps all four in input order.

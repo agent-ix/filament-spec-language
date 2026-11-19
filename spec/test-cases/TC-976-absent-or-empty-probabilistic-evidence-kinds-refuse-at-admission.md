@@ -3,7 +3,7 @@ id: TC-976
 title: "Absent or empty probabilistic evidence kinds refuse at admission"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-976: Absent or empty probabilistic evidence kinds refuse at admission

@@ -3,7 +3,7 @@ id: TC-435
 title: "`command` compile routes a program by its declared edition"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
 ---
 # TC-435: `command` compile routes a program by its declared edition
@@ -21,8 +21,8 @@ Scope: FR-027-AC-5, FR-027-AC-7 and FR-027-AC-8.
 ## Test Procedure
 
 1. Run `tests/fixtures/spine-compile.native` (a record, an Integer function
-   and a function with parameters) S1 to S4 through `emit_checked` and QSL's
-   I2 reader (`qsl-package`).
+   and a function with parameters) S1 to S4 through `emit_checked` and FSL's
+   I2 reader (`fsl-package`).
 2. Compile a native-compile/1 request selecting that fixture, no models and no
    clause bindings, and compare the outcome's package bytes with the FR-278 composition over the
    same source and labels. Compile it again with a different `document` and
@@ -52,7 +52,7 @@ carry `#[trace("TC-435", "FR-027-AC-5")]`.
 - Step 1: nothing is omitted; the read is Verified and exports `Point`,
   `seven` and `px`.
 - Step 2: exit 0; the package bytes equal the library bytes and names
-  `quire.checked-package/v2`; the relabelled request writes identical bytes;
+  `filament.checked-package/v2`; the relabelled request writes identical bytes;
   the blank `document` refuses at the request stage, exit 20.
 - Step 3: each refuses `unknown_edition`, stage `profile`, exit 20, no package
   bytes; the message names `program.native` and the declared edition

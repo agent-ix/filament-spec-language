@@ -3,7 +3,7 @@ id: FR-528
 title: "RETIRED: write a source_integrity claim on every source reference of an emitted checked package"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
 ---
 # FR-528: RETIRED: write a source_integrity claim on every source reference of an emitted checked package
@@ -12,7 +12,7 @@ relationships:
 
 This requirement is retired. The checked package carries no digest, claim or
 hash of any source's bytes: a source reference is `{authority, identity}`
-(QSpec FR-322), the emitter writes no `source_integrity` member, and no
+(FSpec FR-322), the emitter writes no `source_integrity` member, and no
 `SourceDigest` or `SourceDigests` type exists. The id and the acceptance
 criterion ids are kept so they are not reused.
 
@@ -55,4 +55,4 @@ criterion ids are kept so they are not reused.
 
 ## Dependencies
 
-- QSpec FR-322 (the source reference).
+- FSpec FR-322 (the source reference).

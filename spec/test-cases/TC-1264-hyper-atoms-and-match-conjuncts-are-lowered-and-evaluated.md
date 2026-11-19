@@ -3,11 +3,11 @@ id: TC-1264
 title: "Hyper atoms and match conjuncts are lowered to checked nodes and evaluated by the one clause evaluator"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-487
+  - target: ix://agent-ix/filament-spec-language/FR-487
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-172
+  - target: ix://agent-ix/filament-spec-language/FR-172
     type: verifies
 ---
 # TC-1264: Hyper atoms and match conjuncts are lowered to checked nodes and evaluated by the one clause evaluator
@@ -55,7 +55,7 @@ Acceptance Criteria.
 5. Add, in turn, each of these as conjunct 2:
    - FR-176-AC-4's conjunct;
    - a conjunct calling a declared function that exhausts the meter;
-   - a conjunct comparing `quire::value::ieee::sqrt` under `Float64[exact]`
+   - a conjunct comparing `filament::value::ieee::sqrt` under `Float64[exact]`
      of a constant that is not a perfect square with a constant.
 
    For each, call `universal` over `(step(0), step(0))` and over
@@ -65,7 +65,7 @@ Acceptance Criteria.
    step 5's FR-176-AC-4 conjunct.
 7. Encode `InductionBase{depth: 1}` and `InductionStep{depth: 1}` for
    `NonInterference` at instance `v`. Build the request in a crate that names
-   `HyperQueryRequest` through `qsl-replay`, setting each of its public
+   `HyperQueryRequest` through `fsl-replay`, setting each of its public
    members.
 8. Encode FR-315-AC-10's request, whose conjunct calls a function. Then
    encode the same request with `present(a.step.Vault::step.i) implies

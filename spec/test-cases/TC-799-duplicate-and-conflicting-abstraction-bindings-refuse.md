@@ -3,7 +3,7 @@ id: TC-799
 title: "Duplicate and conflicting abstraction bindings refuse conflicting-binding"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-304
+  - target: ix://agent-ix/filament-spec-language/FR-304
     type: verifies
 ---
 # TC-799: Duplicate and conflicting abstraction bindings refuse conflicting-binding

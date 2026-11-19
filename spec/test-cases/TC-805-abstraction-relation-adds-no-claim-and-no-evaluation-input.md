@@ -3,7 +3,7 @@ id: TC-805
 title: "The abstraction relation changes no requirement record, route result or clause run"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-306
+  - target: ix://agent-ix/filament-spec-language/FR-306
     type: verifies
 ---
 # TC-805: The abstraction relation changes no requirement record, route result or clause run

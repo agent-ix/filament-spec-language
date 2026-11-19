@@ -3,13 +3,13 @@
 //! stdout and stderr FR-285 and FR-287 assign them.
 //!
 //! The root package builds no executable (FR-287-AC-1), so these tests call
-//! `qsl_command::command` directly. The rendering is the driver's
+//! `fsl_command::command` directly. The rendering is the driver's
 //! contract for a library outcome: a success writes its bytes to stdout, a
 //! refusal writes its envelope to stderr, and the exit code is FR-285's.
 //! The process boundary (arguments, streams, `/dev/full`) is the driver's
 //! and is tested there (FR-287-AC-3 to AC-9, TC-1262).
 
-use qsl_command::command::{self, RunLimits};
+use fsl_command::command::{self, RunLimits};
 use std::path::Path;
 
 /// The exit status of one in-process call.
@@ -68,7 +68,7 @@ pub(crate) fn run_file(path: &Path) -> Output {
 
 /// `command::run_with_limits` over the request file at `path`.
 pub(crate) fn run_file_with_limits(path: &Path, limits: RunLimits) -> Output {
-    match command::run_with_limits(path, limits) {
+    match command::run_with_limits(path, limits, &crate::negotiation::Fr290) {
         Ok(result) => Output {
             status: Status(result.exit_code),
             stdout: format!("{}\n", result.value).into_bytes(),

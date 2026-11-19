@@ -3,7 +3,7 @@ id: TC-737
 title: "Replay passes every stage limit through and names the setting it reached"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-263
+  - target: ix://agent-ix/filament-spec-language/FR-263
     type: verifies
 ---
 # TC-737: Replay passes every stage limit through and names the setting it reached

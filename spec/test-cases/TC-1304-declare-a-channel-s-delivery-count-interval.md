@@ -3,7 +3,7 @@ id: TC-1304
 title: "Declare a channel's delivery count interval"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-509
+  - target: ix://agent-ix/filament-spec-language/FR-509
     type: verifies
 ---
 # TC-1304: Declare a channel's delivery count interval
@@ -11,8 +11,8 @@ relationships:
 ## Description
 
 Verify the delivery interval of FR-509: parsing, refusals, premises, canonical
-emission, the strict package reader and the QSpec FR-426 interval-send queue
-semantics. Scope: FR-509-AC-1 to FR-509-AC-10. The QSpec vectors are TC-947
+emission, the strict package reader and the FSpec FR-426 interval-send queue
+semantics. Scope: FR-509-AC-1 to FR-509-AC-10. The FSpec vectors are TC-947
 `CH13a`, `CH13b`, `CH14a` and TC-378, referenced by row id and never copied.
 
 ## Test Procedure

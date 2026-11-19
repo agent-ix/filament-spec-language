@@ -3,11 +3,11 @@ id: TC-194
 title: "Registry candidate sets are invariant under registration-order permutation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: verifies
 ---
 # TC-194: Registry candidate sets are invariant under registration-order permutation
@@ -21,7 +21,7 @@ sets in identical order for every item in a fixture item set. Scope:
 FR-075-AC-2, FR-080-AC-1.
 
 The fixed descriptor set is not required to be free of repeats or conflicts
-(FR-075-AC-4, FR-075-AC-7; quire-specification FR-290-AC-9, FR-290-AC-10). A
+(FR-075-AC-4, FR-075-AC-7; filament-specification FR-290-AC-9, FR-290-AC-10). A
 multiset that includes an identical repeat of one identity's descriptor, and
 a second identity with two conflicting descriptors, is built under every
 sampled order; the resulting registries,

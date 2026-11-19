@@ -3,22 +3,24 @@ id: FR-027
 title: "Compile a 1-draft program source into a checked package"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-026
+  - target: ix://agent-ix/filament-spec-language/FR-026
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-640
+    type: references
 ---
 ## Description
 
-When a caller hands QSL's library operation `command` (FR-287) a native-compile/1 request file, `command` shall compile the selected program source by the edition its header declares. A `1-draft` source compiles through the spine (S1 to S4, ADR-011 §7.3 M-6a) into `quire.checked-package/v2` bytes. Every other declared edition, `0-draft` included, is one no compiler reads, and `command` refuses it with `unknown_edition`. A source that does not open with a `language "ix:native" edition` header goes to the spine, whose S1 refuses it.
+When a caller hands FSL's library operation `command` (FR-287) a native-compile/1 request file, `command` shall compile the selected program source by the edition its header declares. A `1-draft` source compiles through the spine (S1 to S4, ADR-011 §7.3 M-6a) into `filament.checked-package/v2` bytes. Every other declared edition, `0-draft` included, is one no compiler reads, and `command` refuses it with `unknown_edition`. A source that does not open with a `language "ix:native" edition` header goes to the spine, whose S1 refuses it.
 
 A `1-draft` request's `program` is one source selection or a non-empty array of source selections: the package unit list in request order (FR-480). Every unit of the list compiles into the one checked package.
 
@@ -32,12 +34,12 @@ request is the command encoding of the `parse`, `select`, `check` and
 `package` operations composed (FR-278). Every exit status this requirement
 states is FR-285's exit code of the outcome's ADR-013 O-16 category.
 
-The request-file owner is the non-core `qsl_command::command` module
+The request-file owner is the non-core `fsl_command::command` module
 ([ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
 §6.1). Its existing `compile(&std::path::Path)` returns the package bytes.
 For the driver, `compile_outcome(&std::path::Path)` returns
 `Result<CompileOutcome, Box<RunError>>`, where `CompileOutcome` exposes
-`package_bytes() -> &[u8]` and `document() -> &qsl_replay::OutcomeDocument`.
+`package_bytes() -> &[u8]` and `document() -> &fsl_replay::OutcomeDocument`.
 The command SHALL construct that document with
 `OutcomeDocument::from_package` over the actual typed package result,
 before discarding its staged value. The existing `compile` entry SHALL
@@ -48,18 +50,21 @@ and no successful `CompileOutcome`.
 ## Inputs
 
 A closed format/request JSON envelope. The request contains only models,
-program and, for a `1-draft` program, `libraries`, using the same source selections and complete authored clause bindings
-as native-run/1. It contains no runtime artifacts or execution selection.
+program and, for a `1-draft` program, `libraries`, the optional `clocks` member
+that configures trace-subject clocks
+([FR-640](FR-640-select-clock-configurations-in-compile-and-run-requests.md)), using the same source selections and complete authored clause bindings
+as native-run/1, the optional `handoff` member (FR-665) and the optional `output` member that writes the package to a file ([FR-810](FR-810-write-the-checked-package-to-a-file-from-a-compile-request.md)). It contains no runtime artifacts or execution selection.
 The command uses FR-026's default `request_bytes` and `dependent_bytes` intake
 ceilings, relative-path resolution, source selection checks and existing
-model/compiler stage defaults. `compile` has no caller-configurable limit
-options; a refusal at either fixed intake ceiling names the setting and its
-maximum without an option hint.
+model/compiler stage defaults, unless the caller raises them: `compile` takes
+the `--request-bytes` and `--dependent-bytes` intake ceilings and the stage
+settings of FR-869, and a refusal at either intake ceiling names the setting,
+its maximum and the option that raises it.
 
 ## Outputs
 
 For a `1-draft` program, the successful outcome's package artifact is exactly the
-`quire.checked-package/v2` bytes the FR-278 composition writes for that
+`filament.checked-package/v2` bytes the FR-278 composition writes for that
 source, with no command wrapper or extra newline; exit code 0. A `1-draft`
 program's `program` carries no `clauses` key at all -- any presence,
 including an empty array, refuses with `invalid-request` (FR-027-AC-7),
@@ -68,10 +73,13 @@ consistent with FR-100's `1-draft` request. A compile request whose
 at stage `request`, exit 20, before it reads a dependent file, in every
 build (FR-031). Each model a `1-draft` request
 selects is a domain package
-document in format `semantic-ir/2.0.0`, read and handed
-to spine `compile` as FR-056's package input; the program's `model`
+document in format `semantic-ir/2.0.0`, or a model unit in format
+`native-model-unit/1` that the command compiles to its document (FR-710),
+read and handed to spine `compile` as FR-056's package input; a model in
+any other format refuses `invalid-request`, exit 20, naming `models` and the
+format; the program's `model`
 declarations select it by identity, and the package records each selected
-package by its `model_root` node, which carries the identity (QSpec FR-322). A `1-draft` request may carry `libraries`: one
+package by its `model_root` node, which carries the identity (FSpec FR-322). A `1-draft` request may carry `libraries`: one
 `{identity, source}` object per supplied library, where `source` is
 the same source selection a model or the program uses (file and the FR-001
 labels), and each library object may carry `refinement_internals`, a JSON
@@ -83,9 +91,9 @@ request with no `libraries` supplies none, and one with no
 `refinement_internals` supplies the empty list. Each library source counts toward
 FR-026's `dependent_bytes` limit. A `1-draft` request
 with a library of an empty identity, or with a library object that has any
-member besides `identity`, `source` and `refinement_internals` (a `version`, for one), refuses with `invalid-request`. A `1-draft` compile validates the
+member besides `identity`, `source`, `refinement_internals` and `integer_division` (a `version`, for one), refuses with `invalid-request`. A `1-draft` request may carry `integer_division`, the integer-division law name, at its top level for the program units and on each library object for that library ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md)). A `1-draft` compile validates the
 program selection's `document` and `formal_revision` but does not record them:
-the `quire.checked-package/v2` wire has no member for them, so two requests that
+the `filament.checked-package/v2` wire has no member for them, so two requests that
 differ only in those fields write identical bytes. A spine refusal uses the same
 command-error envelope, with the refusing spine stage (`source`, `forms`,
 `intake`, `assembly`, `check` or `emit`) as its stage and that stage's cause code as its
@@ -134,14 +142,14 @@ toward FR-026's shared 64-selected-file ceiling under the file category
 | --- | --- | --- |
 | FR-027-AC-2 | Through `command` in process, a directory containing only the selected `1-draft` sources and their compile request compiles, exit code 0. A native-run/1 request given to `compile` refuses `unknown_wire` at the envelope stage; a native-compile/1 request carrying `snapshots`, `invocations`, `selection` or `package` refuses `invalid-request` at the request stage, exit code 20, with no package bytes, without reading a model or runtime file. | Test (TC-105) |
 | FR-027-AC-3 | Through `command` in process, for a `1-draft` request, a missing source file returns its original I/O code and malformed syntax returns its original code in an outcome with no package bytes; a program source without `identity`, and one without `authority`, refuses `invalid-request`, exit code 20; request and dependent files past the fixed `request_bytes` or `dependent_bytes` ceiling refuse naming the setting and its maximum, with no package bytes or option hint; no call writes a byte to stdout or stderr. | Test (TC-105) |
-| FR-027-AC-5 | A native-compile/1 request whose program source declares `edition "1-draft"` and holds a record, an Integer function and a function with parameters writes exactly the bytes the FR-278 composition returns for that source, and QSL's I2 reader reads those bytes back Verified with no node omitted. Two such requests that differ only in the program's `document` and `formal_revision` write identical bytes. | Test (TC-435) |
+| FR-027-AC-5 | A native-compile/1 request whose program source declares `edition "1-draft"` and holds a record, an Integer function and a function with parameters writes exactly the bytes the FR-278 composition returns for that source, and FSL's I2 reader reads those bytes back Verified with no node omitted. Two such requests that differ only in the program's `document` and `formal_revision` write identical bytes. | Test (TC-435) |
 | FR-027-AC-7 | A program source declaring `edition "0-draft"`, the same source in a request carrying a library and `refinement_internals`, and a source declaring `edition "7-draft"` each refuse with `unknown_edition` at stage `profile`, exit code 20, no package bytes, and a message naming the file and the edition. A source with no header refuses `invalid_syntax` and one declaring `language "ix:other"` refuses `unknown_language`, each at stage `source`, exit code 20, no package bytes. A `1-draft` request selecting native rule models or clause bindings refuses with `invalid-request`, exit code 20, whatever state the model files are in. | Test (TC-435) |
 | FR-027-AC-8 | A `1-draft` source each spine stage refuses (`source`, `forms`, `assembly`, `check`, `emit`) returns that stage's cause code and reports the stage, with no package bytes. | Test (TC-435) |
-| FR-027-AC-9 | A `1-draft` request selecting a `semantic-ir/2.0.0` domain package document whose program declares `model M` by that document's identity writes exactly the bytes the FR-278 composition returns over the same source and package input. Their `model_root` node holds that package's identity, and QSL's I2 reader, given that package as domain package evidence, reads them back Verified. `M::Nope` refuses at stage `assembly` (`missing_declaration`) at `M::Nope`; a missing document or an identity that names no supplied document refuses at stage `intake` at the `model` declaration. | Test |
+| FR-027-AC-9 | A `1-draft` request selecting a `semantic-ir/2.0.0` domain package document whose program declares `model M` by that document's identity writes exactly the bytes the FR-278 composition returns over the same source and package input. Their `model_root` node holds that package's identity, and FSL's I2 reader, given that package as domain package evidence, reads them back Verified. `M::Nope` refuses at stage `assembly` (`missing_declaration`) at `M::Nope`; a missing document or an identity that names no supplied document refuses at stage `intake` at the `model` declaration. | Test |
 | FR-027-AC-10 | A `1-draft` request whose program imports `test/geometry` and whose `libraries` supplies it by file and labels writes exactly the bytes the FR-278 composition returns over the same source and dependency input, exit code 0. A `1-draft` request with a library of an empty identity refuses with `invalid-request`, exit code 20, no package bytes; so does one with a library object that has any member besides `identity`, `source` and `refinement_internals`, a `version` for one. | Test (TC-446) |
 | FR-027-AC-12 | A `1-draft` request carrying `refinement_internals` at its top level and on a library object hands those values to spine `compile` unchanged, and writes exactly the bytes the FR-278 composition returns over the same source, dependency input and refinement internals input, exit code 0; a request with the member absent supplies the empty list. | Test (TC-446) |
 | FR-027-AC-11 | For FR-027-AC-5's, AC-9's and AC-10's requests, the bytes the command writes equal the `package` output of `parse`, `select`, `check` and `package` composed over the same source, domain packages and libraries; for FR-027-AC-8's sources, the refusing operation's stage and cause code equal the command's, and its FR-285 exit code equals the command's exit status. | Test (TC-785) |
-| FR-027-AC-13 | A `1-draft` request whose program source and selected models total less than the fixed `dependent_bytes` ceiling, and whose one `libraries` source makes the aggregate one byte over it, refuses at intake naming `dependent_bytes` and its maximum, with no package bytes or option hint; compile has no caller override for this ceiling. A request selecting 64 library sources in addition to its program exceeds the 64-file compile limit and refuses at intake naming `selected files`, `programs`, requested count 65 and maximum 64, before reading a selected source. | Test (TC-105, TC-446) |
+| FR-027-AC-13 | A `1-draft` request whose program source and selected models total less than the fixed `dependent_bytes` ceiling, and whose one `libraries` source makes the aggregate one byte over it, refuses at intake naming `dependent_bytes` and its maximum, with no package bytes, naming the option `--dependent-bytes` that raises it (FR-869). A request selecting 64 library sources in addition to its program exceeds the 64-file compile limit and refuses at intake naming `selected files`, `programs`, requested count 65 and maximum 64, before reading a selected source. | Test (TC-105, TC-446) |
 
 | FR-027-AC-14 | Through `command`, a `1-draft` request whose `program` is an array of FR-480-AC-1's units `U1` and `U2` writes exactly the bytes the FR-278 composition returns over that unit list, exit 0, and the same request with the array reversed writes the same bytes. An array whose second unit declares `edition "0-draft"` refuses `unknown_edition` at that unit's edition literal, naming its file, with no package bytes and before FR-480's header agreement is checked; an empty array refuses `invalid-request`; and an array whose two units exceed `dependent_bytes` together, though each fits alone, refuses at intake naming `dependent_bytes`. | Test (TC-1210) |
 
@@ -153,4 +161,4 @@ toward FR-026's shared 64-selected-file ceiling under the file category
 - [FR-099](FR-099-compile-against-supplied-libraries.md): the dependency input `libraries` supplies.
 - [FR-278](FR-278-parse-select-check-and-package-as-library-operations.md): the library operations the command encodes.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md): the exit function.
-- [FR-287](FR-287-reach-qsl-through-the-driver-cli.md): the driver CLI.
+- [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the driver CLI.

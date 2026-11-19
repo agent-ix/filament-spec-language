@@ -3,9 +3,9 @@ id: TC-449
 title: "The request builder writes one item per requirement record"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
 ---
 # TC-449: The request builder writes one item per requirement record

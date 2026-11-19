@@ -3,7 +3,7 @@ id: TC-251
 title: "Qualified-name resolution is confined to the check stage (R-06)"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-251: Qualified-name resolution is confined to the check stage (R-06)

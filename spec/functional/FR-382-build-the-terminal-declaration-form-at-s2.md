@@ -3,17 +3,17 @@ id: FR-382
 title: "Build the terminal declaration form at S2"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: depends_on
 ---
 # FR-382: Build the terminal declaration form at S2
@@ -36,14 +36,14 @@ refusal about the declaration points at the text the operator wrote.
 
 ## Inputs
 
-- The CST of one `TerminalDeclaration`, parsed by QSpec's shared-grammar
+- The CST of one `TerminalDeclaration`, parsed by FSpec's shared-grammar
   production `terminal-decl = 'terminal', ident, 'using', ident, 'on', ident,
   ( 'when', block | 'any' ), ';'` (FR-124-AC-4). The `block` is the same
   `block` production a state clause reads.
 
 ## Outputs
 
-In `forms::terminal_declaration` (crate `qsl-forms`):
+In `forms::terminal_declaration` (crate `fsl-forms`):
 
 - `TerminalDeclarationForm{name: DeclaredName, profile: UsingAlias, model:
   DeclaredName, kind: TerminalDeclarationKind, span}`.
@@ -70,7 +70,7 @@ In `forms::terminal_declaration` (crate `qsl-forms`):
 - S3 resolves both aliases and checks the declaration (FR-124). A `terminal`
   declaration on an alias that names no `model` declaration refuses
   `missing_declaration`/`missing-name` at that alias. S4 emits a checked
-  `terminal` declaration as one QSpec FR-476 `temporal`/`terminal` node
+  `terminal` declaration as one FSpec FR-476 `temporal`/`terminal` node
   (FR-411), so the declaration never compiles as silently ignored.
 - A well-formed CST adds no S2 refusal. A CST that carries an error or
   recovery node SHALL refuse as `FormsCause::RecoveringCst`, with no partial
@@ -92,8 +92,8 @@ In `forms::terminal_declaration` (crate `qsl-forms`):
 - ADR-012 §1, §3 (forms); [FR-124](FR-124-declare-intended-terminal-states-and-derive-deadlock-freedom.md)
   (the `terminal` declaration and its S3 check); FR-308 (the protocol forms
   that S2 builds beside it); FR-325 (`ExpressionForm`).
-- QSpec owns the grammar: the shared grammar's `terminal-decl` production.
+- FSpec owns the grammar: the shared grammar's `terminal-decl` production.
 
 ## References
 
-- QSpec FR-366 (deadlock freedom: the `terminal` declaration).
+- FSpec FR-366 (deadlock freedom: the `terminal` declaration).

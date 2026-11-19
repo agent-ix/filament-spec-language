@@ -3,7 +3,7 @@ id: TC-1396
 title: "qualify covers the corpus, the lifecycle matrix and parity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-567
+  - target: ix://agent-ix/filament-spec-language/FR-567
     type: verifies
 ---
 # TC-1396: qualify covers the corpus, the lifecycle matrix and parity
@@ -26,8 +26,8 @@ Scope: FR-567-AC-1 to FR-567-AC-5.
 4. Repeat step 1 with no non-interpreter backend, and with a substituted
    parity reference that returns `Fault`.
 
-5. Read step 1's report's QSL version; build a scratch copy whose
-   `quire-spec-language` package version is `9.9.9` and run step 1 there.
+5. Read step 1's report's FSL version; build a scratch copy whose
+   `filament-spec-language` package version is `9.9.9` and run step 1 there.
 
 Tag the tests `#[trace("TC-1396", "<AC id>")]`.
 

@@ -3,9 +3,9 @@ id: TC-160
 title: "Every family implements the six-part checked contract with no bypass"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-160: Every family implements the six-part checked contract with no bypass
@@ -36,7 +36,7 @@ FR-057-AC-10's value-function row.
    on `check`; the `requirements` method. Confirm each omission fails to
    compile, and that the complete implementation compiles. These are the
    `compile_fail` doctests, and the control doctest, on `FamilyContract`
-   (`qsl-semantics/src/family/contract.rs`). `evaluate` is a member of the
+   (`fsl-semantics/src/family/contract.rs`). `evaluate` is a member of the
    crate-private `ReferenceEvaluation`, which no external family can name,
    so its omission is not a case. Identity and provenance are not tested this way: they are
    properties of the `Checked` node type and the package's source map, not
@@ -52,7 +52,7 @@ FR-057-AC-10's value-function row.
    form; check the same form through the other, unmutated, context.
    Compare the two checked outputs and the mutated context's own observable
    state.
-   A per-check counter held by the scope (`qsl_foundation::tally::Tally`) is
+   A per-check counter held by the scope (`fsl_foundation::tally::Tally`) is
    allowed (FR-062-AC-3); the scan still flags `static mut`, `thread_local!`,
    `lazy_static!` and the banned type names, and flags no `Tally`.
 5. Call the pure requirements function on the checked function
@@ -64,7 +64,7 @@ FR-057-AC-10's value-function row.
    is a `Limit` outcome, not `Incomplete` and not a refusal. Separately, run
    a family's `evaluate` hook on a checked node under a meter small enough to
    exhaust mid-evaluation and confirm it returns `Incomplete`. Run `check`
-   and `qsl_package::emit_checked` across each stage's fixture set and confirm
+   and `fsl_package::emit_checked` across each stage's fixture set and confirm
    neither returns `Incomplete`.
 7. Construct a fixture of N expression nodes nested N deep (for example,
    `not` applied N - 1 times to `true`). Check it with the `CheckingLimits`
@@ -74,7 +74,7 @@ FR-057-AC-10's value-function row.
    `example-model`, which the package's lock does not select, and two
    functions: `area(value: Foreign): Boolean { value = Foreign::Ready }` and
    `keep(): Boolean { true }`. Emit it with `emit_checked` and read the bytes
-   back through QSL's I2 read. Emit the same package again through
+   back through FSL's I2 read. Emit the same package again through
    `emit_package` with a region conversion that places no occurrence.
 9. Check every family's evaluation hook for display-string reads. A
    "display string" is rendered text (`Display` or `Debug` output,

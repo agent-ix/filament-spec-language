@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-059/FR-060 (ADR-011 §7.1 T-12, #215 scope amendment):
-//! architecture-conformance checks over the QSL/IR/RT/CG ecosystem.
+//! architecture-conformance checks over the FSL/IR/RT/CG ecosystem.
 //!
 //! `arch-lint direction` is FR-059 (backend direction, FB-05/FB-11).
 //! `arch-lint api-surface` is FR-060 (the reusable API-surface check).
@@ -28,9 +28,9 @@ use error::{Code, Error, Result};
 fn usage() -> Error {
     Error::new(
         Code::Usage,
-        "arch-lint direction --qsl <path> --ir <path> --rt <path> --cg <path>\n\
-         arch-lint api-surface --qsl <path> [--cg <path> | --qsl-only]\n\
-         arch-lint qualified-core --qsl <path>",
+        "arch-lint direction --fsl <path> --ir <path> --rt <path> --cg <path>\n\
+         arch-lint api-surface --fsl <path> [--cg <path> | --fsl-only]\n\
+         arch-lint qualified-core --fsl <path>",
     )
 }
 
@@ -60,7 +60,7 @@ fn require(args: &mut Vec<String>, name: &str) -> Result<PathBuf> {
 }
 
 fn run_direction(mut args: Vec<String>) -> Result<(String, bool)> {
-    let qsl = require(&mut args, "--qsl")?;
+    let fsl = require(&mut args, "--fsl")?;
     let ir = require(&mut args, "--ir")?;
     let rt = require(&mut args, "--rt")?;
     let cg = require(&mut args, "--cg")?;
@@ -68,11 +68,11 @@ fn run_direction(mut args: Vec<String>) -> Result<(String, bool)> {
         return Err(usage());
     }
     let mut edges = Vec::new();
-    for root in [&qsl, &ir, &rt, &cg] {
+    for root in [&fsl, &ir, &rt, &cg] {
         edges.extend(metadata::edges_for_manifest(&root.join("Cargo.toml"))?);
     }
     let mut construct_edges = Vec::new();
-    for root in [&qsl, &ir, &rt, &cg] {
+    for root in [&fsl, &ir, &rt, &cg] {
         construct_edges.extend(metadata::construct_edges_for_manifest(
             &root.join("Cargo.toml"),
         )?);
@@ -82,19 +82,20 @@ fn run_direction(mut args: Vec<String>) -> Result<(String, bool)> {
     summary.push_str("FR-059 backend direction check (ADR-011 FB-05/FB-11)\n");
     let report = graph::check(&edges);
     if construct.is_empty() {
-        summary
-            .push_str("  FB-05 construct: PASS (no backend enables `quire-checked/construct`)\n");
+        summary.push_str(
+            "  FB-05 construct: PASS (no backend enables `filament-checked/construct`)\n",
+        );
     } else {
         summary.push_str("  FB-05 construct: FAIL\n");
         for violation in &construct {
             summary.push_str(&format!(
-                "    {} enables `quire-checked/construct` (via {})\n",
+                "    {} enables `filament-checked/construct` (via {})\n",
                 violation.from, violation.via_crate
             ));
         }
     }
     if report.fb05.is_empty() {
-        summary.push_str("  FB-05: PASS (no unapproved edge into QSL)\n");
+        summary.push_str("  FB-05: PASS (no unapproved edge into FSL)\n");
     } else {
         summary.push_str("  FB-05: FAIL\n");
         for violation in &report.fb05 {
@@ -108,7 +109,7 @@ fn run_direction(mut args: Vec<String>) -> Result<(String, bool)> {
         }
     }
     if report.fb11.is_empty() {
-        summary.push_str("  FB-11: PASS (no cycle among QSL/IR/RT/CG)\n");
+        summary.push_str("  FB-11: PASS (no cycle among FSL/IR/RT/CG)\n");
     } else {
         summary.push_str("  FB-11: FAIL\n");
         for cycle in &report.fb11 {
@@ -119,18 +120,18 @@ fn run_direction(mut args: Vec<String>) -> Result<(String, bool)> {
     Ok((summary, report.is_clean() && construct.is_empty()))
 }
 
-/// `--qsl-only` runs every rule whose scan root is QSL's own tree (T12-G
+/// `--fsl-only` runs every rule whose scan root is FSL's own tree (T12-G
 /// and FR-100-AC-8) and skips the rules that scan the CG tree
-/// (T12-A), reporting each as skipped, so `make ci` can gate the QSL rules
+/// (T12-A), reporting each as skipped, so `make ci` can gate the FSL rules
 /// without a CG checkout. Without it, a missing `--cg` is a usage error.
 fn run_api_surface(mut args: Vec<String>) -> Result<(String, bool)> {
-    let qsl = require(&mut args, "--qsl")?;
+    let fsl = require(&mut args, "--fsl")?;
     let cg = take_flag(&mut args, "--cg")?.map(PathBuf::from);
-    let qsl_only = take_bool(&mut args, "--qsl-only");
-    if !args.is_empty() || (qsl_only && cg.is_some()) {
+    let fsl_only = take_bool(&mut args, "--fsl-only");
+    if !args.is_empty() || (fsl_only && cg.is_some()) {
         return Err(usage());
     }
-    api_surface::assert_is_qsl_root(&qsl)?;
+    api_surface::assert_is_fsl_root(&fsl)?;
     let mut summary = String::new();
     summary.push_str("FR-060 API-surface check (ADR-011 T-12)\n");
     summary.push_str(
@@ -138,7 +139,7 @@ fn run_api_surface(mut args: Vec<String>) -> Result<(String, bool)> {
          string literals and `#[cfg(test)]` items are excluded, and each site's enclosing \
          function is named. T12-A's call patterns \
          are a textual scan of the CG tree, so a match inside a comment or string literal \
-         is reported; its forbidden module `qsl_replay::spine` is found by parsing `use` \
+         is reported; its forbidden module `fsl_replay::spine` is found by parsing `use` \
          trees and paths, through crate aliases and glob imports. No rule resolves a `use ... as` rename of the constructor's type -- a stated \
          limitation of this check, not a silent gap.\n",
     );
@@ -149,13 +150,13 @@ fn run_api_surface(mut args: Vec<String>) -> Result<(String, bool)> {
     let mut missing_flags: Vec<&'static str> = Vec::new();
     for rule in api_surface::RULES {
         let scan_root = match rule.role {
-            api_surface::Role::Qsl => Some(qsl.as_path()),
+            api_surface::Role::Fsl => Some(fsl.as_path()),
             api_surface::Role::Cg => cg.as_deref(),
         };
-        let outcome = api_surface::evaluate(rule, &qsl, scan_root)?;
-        if qsl_only && rule.role == api_surface::Role::Cg {
+        let outcome = api_surface::evaluate(rule, &fsl, scan_root)?;
+        if fsl_only && rule.role == api_surface::Role::Cg {
             summary.push_str(&format!(
-                "  {} [{}]: SKIPPED -- --qsl-only runs the rules over QSL's own tree only\n",
+                "  {} [{}]: SKIPPED -- --fsl-only runs the rules over FSL's own tree only\n",
                 outcome.rule_id, rule.description
             ));
             continue;
@@ -211,27 +212,27 @@ fn run_api_surface(mut args: Vec<String>) -> Result<(String, bool)> {
         }
     }
     // FR-100-AC-8 (TC-452 step 3): the facade's own public surface, scanned
-    // for a forbidden *callee* (no `qsl_replay::spine` public item, and no
-    // `qsl_replay` re-export, names a `qsl_eval` path) -- the opposite
+    // for a forbidden *callee* (no `fsl_replay::spine` public item, and no
+    // `fsl_replay` re-export, names a `fsl_eval` path) -- the opposite
     // direction from the `RULES` above, which each name a disallowed
-    // *caller* of one of QSL's own constructors, so it is evaluated
+    // *caller* of one of FSL's own constructors, so it is evaluated
     // separately rather than as one more `Rule` entry.
-    let qsl_replay_src = qsl.join("qsl-replay/src");
-    if qsl_replay_src.join("spine.rs").is_file() {
-        let findings = api_surface::spine_surface_qsl_eval_findings(&qsl_replay_src)?;
+    let fsl_replay_src = fsl.join("fsl-replay/src");
+    if fsl_replay_src.join("spine.rs").is_file() {
+        let findings = api_surface::spine_surface_fsl_eval_findings(&fsl_replay_src)?;
         if findings.is_empty() {
-            summary.push_str("  FR-100-AC-8 [qsl_replay::spine names no qsl_eval path]: PASS\n");
+            summary.push_str("  FR-100-AC-8 [fsl_replay::spine names no fsl_eval path]: PASS\n");
         } else {
             all_passed = false;
-            summary.push_str("  FR-100-AC-8 [qsl_replay::spine names no qsl_eval path]: FAIL\n");
+            summary.push_str("  FR-100-AC-8 [fsl_replay::spine names no fsl_eval path]: FAIL\n");
             for finding in &findings {
                 summary.push_str(&format!("    {finding}\n"));
             }
         }
     } else {
         summary.push_str(
-            "  FR-100-AC-8 [qsl_replay::spine names no qsl_eval path]: NOT EVALUATED -- \
-             qsl-replay/src/spine.rs is absent from the --qsl tree\n",
+            "  FR-100-AC-8 [fsl_replay::spine names no fsl_eval path]: NOT EVALUATED -- \
+             fsl-replay/src/spine.rs is absent from the --fsl tree\n",
         );
     }
     if !missing_flags.is_empty() {
@@ -247,13 +248,13 @@ fn run_api_surface(mut args: Vec<String>) -> Result<(String, bool)> {
 }
 
 fn run_qualified_core(mut args: Vec<String>) -> Result<(String, bool)> {
-    let qsl = require(&mut args, "--qsl")?;
+    let fsl = require(&mut args, "--fsl")?;
     if !args.is_empty() {
         return Err(usage());
     }
-    let direction = qualified_core::check_direction(&qualified_core::workspace_graph(&qsl)?)?;
-    let ambient = qualified_core::scan_ambient(&qsl)?;
-    Ok(qualified_core::report(&qsl, &direction, &ambient))
+    let direction = qualified_core::check_direction(&qualified_core::workspace_graph(&fsl)?)?;
+    let ambient = qualified_core::scan_ambient(&fsl)?;
+    Ok(qualified_core::report(&fsl, &direction, &ambient))
 }
 
 fn run(arguments: &[OsString]) -> Result<(String, bool)> {
@@ -313,36 +314,36 @@ mod tests {
     /// results. The run fails as a usage error carrying the full report.
     #[trace("TC-157", "FR-060-AC-4")]
     #[test]
-    fn tc_arch_lint_api_surface_021_missing_cg_still_runs_qsl_rules() {
+    fn tc_arch_lint_api_surface_021_missing_cg_still_runs_fsl_rules() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         write(
             root,
             "Cargo.toml",
-            "[package]\nname = \"quire-spec-language\"\nversion = \"0.2.0\"\n",
+            "[package]\nname = \"filament-spec-language\"\nversion = \"0.2.0\"\n",
         );
         for relative in [
             "src",
-            "qsl-foundation/src",
-            "qsl-cst/src",
-            "qsl-source/src",
-            "qsl-forms/src",
-            "qsl-semantics/src",
-            "qsl-package/src",
-            "qsl-route/src",
-            "qsl-eval/src",
-            "qsl-analyze/src",
+            "fsl-foundation/src",
+            "fsl-cst/src",
+            "fsl-source/src",
+            "fsl-forms/src",
+            "fsl-semantics/src",
+            "fsl-package/src",
+            "fsl-route/src",
+            "fsl-eval/src",
+            "fsl-analyze/src",
         ] {
             fs::create_dir_all(root.join(relative)).unwrap();
         }
-        write(root, "qsl-replay/src/lib.rs", "pub fn run() {}\n");
+        write(root, "fsl-replay/src/lib.rs", "pub fn run() {}\n");
         write(
             root,
-            "qsl-semantics/src/value/model_query.rs",
-            "fn f() {\n    quire_checked::construct::term(k);\n    quire_checked::construct::term(d);\n}\n",
+            "fsl-semantics/src/value/model_query.rs",
+            "fn f() {\n    filament_checked::construct::term(k);\n    filament_checked::construct::term(d);\n}\n",
         );
 
-        let arguments: Vec<OsString> = ["api-surface", "--qsl"]
+        let arguments: Vec<OsString> = ["api-surface", "--fsl"]
             .into_iter()
             .map(OsString::from)
             .chain([root.as_os_str().to_owned()])
@@ -362,9 +363,9 @@ mod tests {
         assert!(report.contains("model_query.rs:3 (module value::model_query, fn f)"));
         assert!(report.ends_with("missing input: pass --cg to evaluate every rule"));
 
-        // `--qsl-only`: the same tree is no usage error. T12-A is skipped,
-        // and the QSL rules still run and fail the check.
-        let arguments: Vec<OsString> = ["api-surface", "--qsl-only", "--qsl"]
+        // `--fsl-only`: the same tree is no usage error. T12-A is skipped,
+        // and the FSL rules still run and fail the check.
+        let arguments: Vec<OsString> = ["api-surface", "--fsl-only", "--fsl"]
             .into_iter()
             .map(OsString::from)
             .chain([root.as_os_str().to_owned()])
@@ -381,8 +382,8 @@ mod tests {
         assert!(line_of("T12-A").contains(": SKIPPED"), "{report}");
         assert!(line_of("T12-G").ends_with(": FAIL"), "{report}");
 
-        // `--qsl-only` with `--cg` is a usage error.
-        let arguments: Vec<OsString> = ["api-surface", "--qsl-only", "--cg", "x", "--qsl"]
+        // `--fsl-only` with `--cg` is a usage error.
+        let arguments: Vec<OsString> = ["api-surface", "--fsl-only", "--cg", "x", "--fsl"]
             .into_iter()
             .map(OsString::from)
             .chain([root.as_os_str().to_owned()])

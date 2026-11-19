@@ -3,7 +3,7 @@ id: TC-588
 title: "An undefined claim evaluation found on a reduced run refutes with a concrete prefix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-160
+  - target: ix://agent-ix/filament-spec-language/FR-160
     type: verifies
 ---
 # TC-588: An undefined claim evaluation found on a reduced run refutes with a concrete prefix

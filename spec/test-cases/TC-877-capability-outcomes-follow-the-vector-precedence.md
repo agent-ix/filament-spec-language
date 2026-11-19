@@ -3,7 +3,7 @@ id: TC-877
 title: "Each capability settles from its vectors in the stated precedence, and an empty capability is uncovered"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-351
+  - target: ix://agent-ix/filament-spec-language/FR-351
     type: verifies
 ---
 # TC-877: Each capability settles from its vectors in the stated precedence, and an empty capability is uncovered
@@ -18,7 +18,7 @@ Scope: FR-351-AC-1, FR-351-AC-2.
 
 Build a fixture corpus with capabilities `CAP-A` (three passing vectors), `CAP-B` (one passing, one failing), `CAP-C` (one `unsupported`, one `incomplete` under a zero budget), `CAP-D` (one `tool-failure`, one failing), `CAP-E` (applicability: language, no vector) and `CAP-F` (applicability: a monitor subject only, one vector). Run over the default scope.
 
-Give `CAP-A` through `CAP-E` a profile held by QSL's definition catalog.
+Give `CAP-A` through `CAP-E` a profile held by FSL's definition catalog.
 Add `CAP-G`, whose capability applicability names `language` but only a
 profile absent from that catalog. Include a vector for `CAP-G` whose source
 does not exist, so accidental execution is observable as `tool-failure`.

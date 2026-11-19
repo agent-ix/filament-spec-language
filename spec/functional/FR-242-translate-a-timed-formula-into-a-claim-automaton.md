@@ -3,15 +3,15 @@ id: FR-242
 title: "Translate a timed formula into a claim automaton"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
 ---
 # FR-242: Translate a timed formula into a claim automaton
@@ -55,6 +55,10 @@ point is still decided by the horizon construction.
   translation SHALL admit punctual intervals in a `BoundedWindow` formula.
 - A `TimedInvariant` clause SHALL read its predicate at each symbolic
   state; a data predicate SHALL decide on the discrete state alone.
+- The translation SHALL translate an interval operator with a lower bound and no upper bound (`[q, *]`)
+  to FR-1034's lower-bound-only component (one clock, the
+  lower guard only, `q` its one constant), never to a horizon clock or block
+  copies, and SHALL NOT refuse it for having no upper bound.
 - Each automaton location's constants SHALL contribute to the LU bounds.
 - The engine SHALL materialize automaton states as the product reaches them
   and count them against `max_automaton_states` (FR-239).

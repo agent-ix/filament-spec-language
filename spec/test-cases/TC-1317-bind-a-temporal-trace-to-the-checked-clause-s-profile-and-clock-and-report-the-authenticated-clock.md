@@ -3,9 +3,9 @@ id: TC-1317
 title: "Bind a temporal trace to the checked clause's profile and clock and report the authenticated clock"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-522
+  - target: ix://agent-ix/filament-spec-language/FR-522
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
 ---
 # TC-1317: Bind a temporal trace to the checked clause's profile and clock and report the authenticated clock

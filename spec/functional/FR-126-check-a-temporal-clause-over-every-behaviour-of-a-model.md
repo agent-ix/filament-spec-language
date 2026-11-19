@@ -3,32 +3,32 @@ id: FR-126
 title: "Check a temporal clause over every behaviour of a model (explicit-state)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
 ---
 # FR-126: Check a temporal clause over every behaviour of a model (explicit-state)
 
 ## Description
 
-The `model_check` module of the `qsl-analyze` crate, layer A above the
+The `model_check` module of the `fsl-analyze` crate, layer A above the
 qualified core (ADR-018 LA-1), SHALL decide a temporal item over a model
 subject by exploring the product of the subject's state graph with the
 item's property automaton (ADR-018 EN-1). It runs at stage S6c over edge E10
@@ -39,7 +39,7 @@ retains every product edge it explores (ADR-018 EN-1). A safety form needs the f
 phase only. A liveness form adds a second phase that decomposes the
 retained graph into strongly connected components (SCCs) and looks for a
 fair accepting cycle. The engine returns a `ModelCheckOutcome`
-(`qsl-replay`, ADR-018 LA-3) that FR-127 settles; a proof carries the
+(`fsl-replay`, ADR-018 LA-3) that FR-127 settles; a proof carries the
 certificate FR-338's or FR-339's core checker verifies (ADR-018 PC-3, PC-4).
 
 ## Use case
@@ -60,6 +60,7 @@ pub struct ModelCheckRequest<'a> {
     pub item: ModelCheckItem<'a>,
     pub max_depth: Option<usize>,           // the search horizon k
     pub max_live_instances: Option<u64>,    // FR-209: method bound
+    pub workers: usize,                     // FR-101 "Workers": setting `model_check.workers`, default 1
     pub max_store_buffer: Option<u64>,      // FR-225: method bound
     pub max_messages: Option<u64>,          // FR-225: method bound
     pub limits: ModelCheckLimits,
@@ -89,17 +90,17 @@ pub fn check_model(
 ```
 
 `max_states`, `max_transitions` and `max_automaton_states` are
-caller-raisable ADR-014 B-5 budgets of QSL's own provider (ADR-018 §1,
+caller-raisable ADR-014 B-5 budgets of FSL's own provider (ADR-018 §1,
 IV-6), raised by the settings `model_check.max_states`,
 `model_check.max_transitions` and `model_check.max_automaton_states`
 (FR-255's engine table). `ModelCheckLimits::default()` takes `limits` as FR-101's
 `Limits::default()` (`max_states` 10,000,000, `max_transitions`
 100,000,000) and publishes `max_automaton_states` 1,048,576 (2^20). A request
 raises any of them; reaching one settles `incomplete`,
-`LimitReached{limit, value, setting}` (V-7, FR-127, QSpec FR-331), and
+`LimitReached{limit, value, setting}` (V-7, FR-127, FSpec FR-331), and
 every terminal record states the values used and whether one was reached.
 `ModelCheckOutcome`, `ModelCheckLimits` and `ModelCheckLimit` are
-`qsl-replay` types (ADR-018 LA-5). `max_depth` is the search horizon `k`
+`fsl-replay` types (ADR-018 LA-5). `max_depth` is the search horizon `k`
 of a bounded search, a request member beside the limits and never one of
 them: a run that completes it settles V-5, and the result states
 the `k` it used. `None` sets no horizon. `max_live_instances` is a method bound, a request member beside
@@ -143,7 +144,7 @@ refuses as a standing decision (FR-337 "Capture observation", QSL-1092).
   `MaxAutomatonStates` (members of `ModelCheckLimits`), or
   `EvaluationMeter { counter }` or `MaxCandidates` (the subject's FR-120
   meter budget and `ExpansionLimits`). `counter` is the
-  `quire.value.accounting/v1` counter whose next charge the evaluation
+  `filament.value.accounting/v1` counter whose next charge the evaluation
   denied (one of the ten of FR-255's accounting table), and `value` is that
   counter's configured bound in the subject's meter budget, whichever
   counter ran out. Each limit has exactly one FR-255 setting that raises it,
@@ -289,7 +290,7 @@ automaton states and the depth reached.
 - Under a bounded profile, at a terminal model state the engine SHALL close
   a TP-2 monitor by the profile's closed-boundary rule: it reads the
   remaining positions of the horizon with every atomic predicate false and
-  every constant unchanged (QSpec FR-091), and the item is violated when
+  every constant unchanged (FSpec FR-091), and the item is violated when
   that closure reaches the rejecting state.
 - Under infinite-trace, a terminal model state SHALL contribute one terminal
   stutter edge from each of its product states (FR-125).
@@ -324,6 +325,25 @@ automaton states and the depth reached.
   Some({MaxStates | MaxTransitions, value})}`. When the `Cancel` handle is
   cancelled, checked at every charge of the run's meter (ADR-029 FR-276),
   the engine SHALL return `Stopped{cause: Cancelled, limit: None}`.
+- The engine SHALL take the worker count of FR-101 "Workers" from
+  `workers`, setting `model_check.workers`.
+- The engine SHALL return the same verdict, the same counterexample (its
+  states, loop and order), the same certificate bytes, the same limit and
+  value of a `Stopped` result and the same `ModelCheckRefusal` for every
+  `workers >= 1`.
+- The engine SHALL refuse `workers` 0 with `ModelCheckRefusal::Workers`,
+  catalog code `invalid_runtime_input`/`invalid-value`, before any check.
+  It SHALL accept `workers` above 1 for every claim kind and engine of this
+  requirement, over every subject.
+- The engine SHALL charge every budget (`max_states`, `max_transitions`,
+  `max_automaton_states`, the evaluation meter and the system's
+  `max_candidates`) in the merge order of FR-101, so a run stops at the
+  state a one-worker run stops at.
+- When `cancel` is cancelled, the engine SHALL return the one-worker
+  result of some prefix of that run's merge order; the prefix MAY differ
+  from one run to the next.
+- The engine SHALL NOT make `workers` a member of the certificate, the
+  record or the obligation identity.
 - With `max_depth = Some(k)`, the engine SHALL expand every product state at
   depth below `k` and retain its edges. When it reaches depth `k` with no
   first-phase violation, a safety item SHALL return `BoundReached{depth:
@@ -453,7 +473,7 @@ automaton states and the depth reached.
   subject: the index of its initial state in `subject.initial`; its steps in
   the `CounterexampleSteps::Model` arm (FR-128), each step as its FR-120
   transition identity and its post-state's
-  `quire.simulation.state-key/v1` state key, which selects the step's
+  `filament.simulation.state-key/v1` state key, which selects the step's
   successor among the post-states of its transition identity; the loop
   entry, when there is a loop; the terminal stutter marker, when the loop
   is the stutter step, and on a formula counterexample of a safety clause
@@ -546,15 +566,16 @@ automaton states and the depth reached.
 | FR-126-AC-17 | Over the `Counter` subject under infinite-trace, `always (holds(c.value = 3) implies eventually[1,1] not holds(c.value = 3))` `on origin`, violated only at the stutter position after value 3, returns `Violated` with the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`, a loop at position 3 with the terminal stutter marker set, and length 4; the counterexample replays to `reproduced-with-evaluated-witness`. | Test (TC-521) |
 | FR-126-AC-18 | Certificate order. AC-1's weak `each` proof returns a `ComponentCertificate` whose closure `states` are ascending by `ProductStateRef` with no duplicate, every component of binding `a` listed before every component of binding `b`, each component's `states` ascending by `ProductStateRef`, and each binding's components in the order the "Components within a binding" rule computes from the retained product graph; running the request twice gives byte-equal certificates. The `Fork` unit (population `forks`, field `phase: Int[0, 2]`, universe `{f}`, initial phase 0, operations `left` from phase 0 to 1, `right` from phase 0 to 2 and `back` from phase 2 to 1, no `terminal` declaration) with `always eventually holds(f.phase = 1)` and no fairness constraint returns `Holds{Exhaustive}` over the five product states `(0,q0)`, `(0,q1)`, `(1,q0)`, `(2,q0)`, `(2,q1)` (the negation automaton's `q0` reads any letter, its accepting `q1` reads only letters in which `f.phase = 1` is false, and a product state reads the letter of its own model state), with canonical breadth-first indices 0, 1, 2, 3, 4 in that order, and a certificate whose five singleton components are listed `(0,q0)`, `(0,q1)`, `(2,q0)`, `(1,q0)`, `(2,q1)`: the edge `(2,q0)` to `(1,q0)` lists `(2,q0)` before `(1,q0)` although `(1,q0)` has the smaller vertex index, and `(2,q1)`, which no edge leaves, is listed last, after the phase-1 component. The only component with a self-edge, `(1,q0)` (the terminal stutter edge), carries `MissingAcceptance`, every other component carries `Trivial`, and FR-339's checker accepts it. FR-130-AC-5's entry lists `acq(1)` before `acq(2)`. | Test (TC-521) |
 | FR-126-AC-19 | Over the `Counter` subject and the `DeadlockFreedom` claim, a meter budget whose `work_units` is 0 and every other counter at its FR-255 accounting-table default stops the run with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the `inc` precondition's evaluation, the counter the precondition's `Incomplete` names. Over a `Counter` variant whose `inc` has no precondition, under `work_units` 0, `always holds(c.value <= 3)` stops with `Stopped{ResourceExhausted, {EvaluationMeter{work_units}, 0}}` at the letter of position 0, with no counterexample and no certificate. Over the example subject of AC-1 and the `DeadlockFreedom` claim with `max_candidates` 1, the run stops with `Stopped{ResourceExhausted, {MaxCandidates, 1}}`. Each `ReachedLimit` names its limit's FR-255 setting: `accounting.work_units` for the meter stops and `expansion.max_candidates` for the candidate stop, and the settings operation given `accounting.work_units=1000000` or `expansion.max_candidates=1000000` raises the bound that stopped the run. | Test (TC-521) |
+| FR-126-AC-20 | Over a `Counter` subject whose product has at least 50 states, `check_model` with `workers` 1, 2, 4 and 64 returns, for a `Violated` claim, a `Holds` claim with a certificate and a claim stopped by `max_states` 5, the same verdict, the same counterexample states and loop in the same order, byte-equal certificates and, for the stopped claim, `Stopped{ResourceExhausted, {MaxStates, 5}}` with equal counts. With `max_candidates` set to the first charge that the one-worker run's seventh expanded state exceeds, every `workers` value stops at that same seventh state with the same `MaxCandidates` limit, equal states and transitions counts and an equal frontier, although a later state's expansion is made to finish first. A run whose `Cancel` handle is cancelled after a delay, with `workers` 4, returns `Stopped{Cancelled, None}` whose counts and frontier equal the one-worker run cancelled after the merge of the same number `n` of states, for some `n`. `workers` 0 returns `ModelCheckRefusal::Workers`. | Test (TC-1417) |
 
 ## Dependencies
 
 - ADR-018 §1 (with UE-1 to UE-4), §2 SM-6, §3 EN-1 (its explicit-state limits and determinism),
   §4 FA-1 to FA-6, §5 CX-1, CX-2 and CX-5, §10 DL-4 and DL-7, §11 IV-3, IV-5
-  and IV-6; ADR-011 §1 and §6.1 (S6c, E10, layer A `qsl-analyze` `model_check`) as amended
+  and IV-6; ADR-011 §1 and §6.1 (S6c, E10, layer A `fsl-analyze` `model_check`) as amended
   by ADR-018; ADR-014 §1 B-5 as amended; ADR-016 §2 (the requires-bound
   pre-check).
-- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+- [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (engine, canonical order, state key, limits),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
   (`ModelSystem`, evaluation meter, `ExpansionLimits`),

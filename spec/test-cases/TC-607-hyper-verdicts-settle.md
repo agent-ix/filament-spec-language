@@ -3,7 +3,7 @@ id: TC-607
 title: "Hyper and step-relation outcomes settle as terminal records with their causes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-182
+  - target: ix://agent-ix/filament-spec-language/FR-182
     type: verifies
 ---
 # TC-607: Hyper and step-relation outcomes settle as terminal records with their causes

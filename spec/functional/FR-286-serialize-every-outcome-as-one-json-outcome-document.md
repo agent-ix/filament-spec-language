@@ -3,57 +3,64 @@ id: FR-286
 title: "Serialize every library outcome as one JSON outcome document"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-285
+  - target: ix://agent-ix/filament-spec-language/FR-285
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-331"
+  - target: "ix://agent-ix/filament-specification/FR-331"
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-301"
+  - target: "ix://agent-ix/filament-specification/FR-301"
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-283
+  - target: ix://agent-ix/filament-spec-language/FR-283
     type: depends_on
 ---
 # FR-286: Serialize every library outcome as one JSON outcome document
 
 ## Description
 
-Each QSL lifecycle operation's outcome SHALL serialize to one JSON outcome
+Each FSL lifecycle operation's outcome SHALL serialize to one JSON outcome
 document (ADR-029 CB-4). A CLI in machine mode writes exactly that document
 to stdout, so the same request through the library and through the CLI gives
-the same document (QSpec FR-300-AC-3). The document's members are:
+the same document (FSpec FR-300-AC-3). The document's members are:
 
-- `format`: the document's format identity, `quire-outcome/1`.
+- `format`: the document's format identity, `filament-outcome/1`.
 - `operation`: the library operation that produced it.
 - `last_stage`: the last ADR-011 stage the operation reached, or `null`
   when no stage is known: a cancelled outcome that stopped before its first
   stage, or an internal-failure (fault) outcome.
+  The stages are ordered `S1`, `S2`, `S3`, `S4`, `S5`, `S6a`, `S6b`, `S6c`,
+  `S7`, `S8`, ADR-011's numbering; an operation whose work enters several
+  stages writes the greatest it entered. A refusal of the request document
+  itself, before any source is read (request intake), writes `null`.
+  FR-621 "Last stage" gives every `analyze` outcome's stage and "Monitor
+  documents from clause runs" every `monitor` outcome's.
 - `category`: the ADR-013 O-16 category of the whole outcome, as the one
   `Category` type (FR-285); each item's category is the same type.
 - `items`: for `prove`, `analyze` and `monitor`, one entry per requested item
-  with its category. The member is always present;
+  with its category, and for an `execute` outcome of a call carrying
+  `requirements`, one entry per settled requirement item of the call (FR-963). The member is always present;
   it is an empty array for every other operation and for an outcome with no
   items. Each item that has a terminal record, every proof result, carries its
-  QSpec FR-331 terminal record with its label
+  FSpec FR-331 terminal record with its label
   and cause in FR-331's wire spelling (its wire-spelling table): for example
   `undefined-evaluation{where, cause}` and `replay-parity`. A record settled by
-  an `unsupported` or `invalid-request` disposition (QSpec FR-331
+  an `unsupported` or `invalid-request` disposition (FSpec FR-331
   `settled_by` `disposition`) carries its FR-272 diagnostic as the record's
   `diagnostic` member, with code, cause and payload, and an `unsupported`
   record carries exactly one of `cause` and `diagnostic`, so a disposition's
@@ -72,7 +79,7 @@ the same document (QSpec FR-300-AC-3). The document's members are:
   on a `monitor` item for FR-283's `InsufficientData` (category undefined,
   reason `insufficient-data`), and on no item of any other category (FR-285).
 - `diagnostics`: each with its typed cause, catalog code, `Locus` (ADR-013
-  T-5, FR-095) and message. A source `blank-label` cause also carries
+  T-5, FR-095), message and `details` ("Diagnostic details"). A source `blank-label` cause also carries
   `label`, exactly `authority` or `identity` from the source owner's typed
   `SourceLabel`. Every other source cause omits `label`, including
   `empty-path`. A source refusal with no region has `locus` `null`, never a
@@ -82,27 +89,43 @@ the same document (QSpec FR-300-AC-3). The document's members are:
   no `package_id` (ADR-029 OP-1).
 - `result`: the evaluation result of an `execute` outcome, the outcome
   FR-100's `spine-run-result/1` member `outcome` carries for a completed,
-  undefined or incomplete call. It is `null` for every other operation, and
-  for an `execute` outcome that is refused (its refusal record is a
+  undefined or incomplete call. It is `null` for every other operation, except a
+  `parse` outcome whose S1 and S2 complete, which carries FR-663's `parsed`
+  report ([FR-663](FR-663-report-the-parsed-unit-and-the-locus-of-every-refusal.md)),
+  a `format` outcome whose formatting completes, which carries
+  `{"kind": "formatted", "text": T}` with `T` the exact formatted source as a
+  JSON string (FR-003), so the JSON form of a format run holds the same text
+  its plain-text form writes. A `replay` outcome whose replay runs carries
+  `{"kind": "replayed", "results": [R, ...]}`, each `R` one row of the FSpec
+  FR-323 `results` document FR-862 returns, unchanged and in row order, so its
+  `arm`, `settlement`, `category`, `value`, `charges` and other FR-072 members
+  are all present;
+  `OutcomeDocument::from_replay` builds it from the replay result, so the
+  replay's outcome document and its text carry the arm and settlement the
+  results document carries. A refused replay carries `null`. The library's format outcome owns this member:
+  `OutcomeDocument::from_format` builds it from the completed format before
+  serialization, and the CLI writes the document unchanged, adding no member
+  (driver FR-002-AC-3). Formatting is idempotent, so formatting `T` gives
+  `T` again. A refused format outcome carries `null`, and so does an
+  `execute` outcome that is refused (its refusal record is a
   diagnostic), cancelled or a fault. Otherwise it is exactly one of:
-  - `{"kind": "completed", "value": V}`, where `V` is FR-100's value
-    rendering: `{"kind": "boolean", "value": true|false}` or
-    `{"kind": "integer", "decimal": "<ASCII decimal>"}` (FR-038's integer
-    spelling), or the existing canonical Reference value
-    `{"kind":"reference","universe":U,"type":T,"object_identity":O}`.
-    For a Reference completion, `U` and `T` are the actual returned shared
-    reference's universe and most-specific effective type, each as 64
-    lowercase hexadecimal characters; `O` is its exact nonempty UTF-8
+  - `{"kind": "completed", "value": V}`, where `V` is the completed value
+    in FR-650's run value form, the form FR-100's `spine-run-result/1`
+    writes: `{"boolean": true|false}`, `{"integer": "<ASCII decimal>"}`
+    (FR-038's integer spelling), the Reference value
+    `{"reference": {"universe": U, "type": T, "object_identity": O}}`, or
+    FR-650's form of every other kind. For a Reference completion, `U` and `T` are the actual returned shared
+    reference's universe and most-specific effective type, each as the structural
+    identity object of FR-650 "Identity spellings"; `O` is its exact nonempty UTF-8
     object identity, without normalization, reminting or substitution by an
-    input reference. This reuses the kernel value wire Reference form; it
-    carries neither object state nor a Population binding. A clause
+    input reference. It carries neither object state nor a Population binding. A clause
     evaluation still completes with its `Boolean` value.
   - `{"kind": "undefined", "reason": "<reason>"}`, `reason` spelled as
     FR-100's undefined tables spell it, such as `sum-out-of-domain` or
     `precondition-false`.
   - `{"kind": "incomplete", "limit": {"kind": K, "bound": B, "counter": C,
     "field": F, "setting": S}}`, the exhausted limit as FR-277 names one: `K` the limit
-    kind, the exhausted counter's `quire.value.accounting/v1` member name
+    kind, the exhausted counter's `filament.value.accounting/v1` member name
     (such as `work_units`); `B` the configured value; `C` the counter at the failed
     charge as FR-277 defines it (the consumed value plus the denied amount for
     a cumulative counter, the denied size for a high-water counter); `F` the name of the `execute`
@@ -114,15 +137,29 @@ the same document (QSpec FR-300-AC-3). The document's members are:
 ## Monitor documents from clause runs
 
 A `monitor` document is built from clause runs. The producer lives with the
-outcome types in `qsl-replay` (the one renderer a core crate may hold,
+outcome types in `fsl-replay` (the one renderer a core crate may hold,
 FR-284): `OutcomeItem::from_clause_run(request_index, clause, &ClauseRunReport)`
 builds one item from one FR-109 / FR-330 clause run, and
 `OutcomeDocument::from_clause_runs(last_stage, runs)` builds the document
 with operation `monitor` through `OutcomeDocument::settled`, one item per
-selected clause in request order. `qsl-inspect` and the driver read the
+selected clause in request order. `fsl-inspect` and the driver read the
 document and build no item of their own. The `monitor` operation's records
 (FR-283) are rendered into items through this producer, and no other code path
 builds an item for a clause run.
+
+A `monitor` document's `last_stage` is `S6a`, where FR-330 and FR-109
+evaluate each clause, for a document of settled clause runs, whatever their
+verdicts, and for a whole-request refusal that arises while input is admitted
+to or written from that evaluation: a trace position's admission
+(`Admission`), a clause refused at stage `admit` (`ClauseRefused`), a
+record's missing source (`SourceNotSupplied`), a session's observation,
+progress contradiction or checkpoint refusal (`Observation`,
+`Contradiction`, `State`). It is `S4` for a selected name that resolves to
+no temporal clause of the linked package (`UnknownClause`); the refusing
+stage for a compile refusal; and `null` for a defective trace document
+(`TraceDocument`, request intake), a cancelled request and an internal
+failure (an evaluator fault, `TemporalRefusal::Fault`, FR-283), which
+FR-286's fault rule settles as category internal-failure with no stage.
 
 Each item takes its category from `ClauseRunReport::category()` (the catalog's
 `Category`, FR-285) and from nowhere else, and its `result` label from that
@@ -145,11 +182,13 @@ A `monitor` item carries the members of FR-283's record for its verdict, besides
 
 | Verdict | Members besides `clause`, `result`, `category` and `cause` |
 | --- | --- |
-| `Violated` | `position`; `counterexample`, FR-283's `TemporalCounterexample` with its `prefix`, its `loop` (`[]` for a finite trace, as FR-330 and QSpec FR-364 spell it) and `trace_position`; for a temporal violation `decisive` (FR-283, with its `position` member) when the report holds one, a sibling of `counterexample`; `witness`, the QSpec FR-351 record, only when `ClauseRunReport::witness` holds one, never for a temporal `Violated` or `Undefined` record |
+| `Violated` | `position`; `counterexample`, FR-283's `TemporalCounterexample` with its `prefix`, its `loop` (`[]` for a finite trace, as FR-330 and FSpec FR-364 spell it) and `trace_position`; for a temporal violation `decisive` (FR-283, with its `position` member) when the report holds one, a sibling of `counterexample`; `witness`, the FSpec FR-351 record, only when `ClauseRunReport::witness` holds one, never for a temporal `Violated` or `Undefined` record |
 | `Undefined` | `position`; `counterexample` as for `Violated`; no `witness` |
 | `InsufficientData` | `position`, `count` and `min_count`; no `counterexample` and no `witness` |
 | `Pending`, `Tested` | none |
 | `Indeterminate` | `position` where FR-501's reason names one |
+| `Declined` at stage `select` | `diagnostic` `{code, cause, detail}`: the refusal's catalog code and cause, and its FR-272 payload as `detail`, so the selected name and, for a non-`Boolean` function, its expected and actual result types reach the document ([FR-867](FR-867-name-the-function-and-its-result-type-when-a-non-boolean-function-is-selected-as-a-claim.md)) |
+| `Declined` at any other stage, `Unsupported`, `Incomplete` | none |
 
 `pending` and `indeterminate` are catalog labels (`Category::as_str`), not
 FR-331 terminal-record labels: a clause run that did not settle has no terminal
@@ -165,7 +204,7 @@ exit 0, and a document with a pending and an indeterminate item has category
 indeterminate, exit 11, and with a violated item beside either it has category
 violation, exit 10.
 
-`quire-outcome/1` is the outcome document of every operation, `execute`
+`filament-outcome/1` is the outcome document of every operation, `execute`
 included; it replaces FR-100's `spine-run-result/1` when the driver's verbs
 land (ADR-029 CB-1).
 
@@ -179,18 +218,18 @@ An `analyze` or `prove` item is built from one terminal record and, for a
 `OutcomeItem::from_analyze(record, counterexample) -> Result<OutcomeItem,
 OutcomeItemError>`. The item carries the record's label, cause and, for a
 disposition, `diagnostic` as above. A `refuted` item carries `counterexample`
-in the wire spelling of the member of QSpec FR-331's `counterexamples` entry
+in the wire spelling of the member of FSpec FR-331's `counterexamples` entry
 that the `Counterexample` variant is:
 
 | Variant | Spelling |
 | --- | --- |
-| `Temporal` | QSpec FR-364's `TemporalCounterexample`: `trace`, `kind` (`formula`, `deadlock`, `undefined-evaluation`, `race`, `time-lock` with its `final_delay`, or a refinement's `refinement_failure`), `initial_state`, `prefix`, `loop` (`[]` for a finite trace), `over_binding`, `fairness`, `interval` and `trace_position`; the monitor `Violated` row's `counterexample` (FR-283) is the same record |
-| `Probabilistic` | QSpec FR-413's `ProbabilisticCounterexample` (FR-202's witness scheduler and path set) |
-| `Hybrid` | QSpec FR-193's `HybridCounterexample`: `type` `hybrid-counterexample`, its `kind` and `HybridTrace` |
-| `Hyper` | QSpec FR-400's `HyperCounterexample` |
-| `Graph` | QSpec FR-393's `GraphEvidence` |
-| `Assignments` | QSpec FR-197's canonical assignments `{type: "assignments", values}`, one FR-181 typed value per parameter node |
-| `Contract` | QSpec FR-485's `contract-counterexample` `{type, obligation, violated, bound, executions}` |
+| `Temporal` | FSpec FR-364's `TemporalCounterexample`: `trace`, `kind` (`formula`, `deadlock`, `undefined-evaluation`, `race`, `time-lock` with its `final_delay`, or a refinement's `refinement_failure`), `initial_state`, `prefix`, `loop` (`[]` for a finite trace), `over_binding`, `fairness`, `interval` and `trace_position`; the monitor `Violated` row's `counterexample` (FR-283) is the same record |
+| `Probabilistic` | FSpec FR-413's `ProbabilisticCounterexample` (FR-202's witness scheduler and path set) |
+| `Hybrid` | FSpec FR-193's `HybridCounterexample`: `type` `hybrid-counterexample`, its `kind` and `HybridTrace` |
+| `Hyper` | FSpec FR-400's `HyperCounterexample` |
+| `Graph` | FSpec FR-393's `GraphEvidence` |
+| `Assignments` | FSpec FR-197's canonical assignments `{type: "assignments", values}`, one FR-181 typed value per parameter node |
+| `Contract` | FSpec FR-485's `contract-counterexample` `{type, obligation, violated, bound, executions}` |
 
 An item has none of `position`, `decisive` and `witness`, which belong to a
 clause run. An item of any result but `refuted` carries no `counterexample`.
@@ -199,12 +238,41 @@ clause run. An item of any result but `refuted` carries no `counterexample`.
 spelling serves the document `analyze` writes and the item `prove` writes, so
 the same item through either gives the same bytes.
 
+## Export outcomes
+
+The `export` operation (FR-1015, FSpec FR-817) writes one outcome document
+with `operation` `export` and FR-285's standard categories, read from the
+export outcome's `status`:
+
+| Export outcome | `category` | Exit |
+| --- | --- | --- |
+| `assembled` | success | `0` |
+| `refused` by admission (a malformed member, an unknown profile or limit, a family mismatch, a duplicate obligation, an existing output path, a doubled destination) | refusal | `20` |
+| `refused` with `below-fidelity-floor` | unsupported | `21` |
+| `incomplete` (an `export.*` limit) | incomplete | `22` |
+| a mapper failure | internal-failure | `30` |
+
+Its `result` is `{"kind": "exported", "export": E}`, `E` the FSpec FR-817
+`filament.export-outcome/v1` document exactly as the run outcome's `export`
+member carries it, for every status the mapper reports. A refusal before the
+mapper runs carries `result` `null` and its diagnostic, as every other
+refused operation does. `last_stage` is the greatest compile stage the
+export's program reached (S4 for an export of a checked package), or `null`
+for a refusal of the request itself, an existing output path included.
+`items` is empty and `artifacts` is `[]`: the target file is the caller's
+named output, never an artifact identity.
+
+An evidence intake through the same verb (`fsl export --evidence`, FR-1022)
+writes a document with `operation` `export`, one item per named obligation
+carrying its FSpec FR-331 terminal record in the item spelling `prove`
+writes, the category the items rank to, and `result` `null`.
+
 ## Inputs
 
 A lifecycle operation's outcome value.
 
 For a refusal before source admission, the driver uses
-`OutcomeDiagnostic::from_source_diagnostic(&qsl_cst::diagnostic::CompleteDiagnostic)`.
+`OutcomeDiagnostic::from_source_diagnostic(&fsl_cst::diagnostic::CompleteDiagnostic)`.
 This public producer-owned projection SHALL preserve the diagnostic's
 catalog code, typed cause tag, optional source region and human message.
 The projection SHALL obtain the `blank-label` payload from the source
@@ -230,13 +298,13 @@ The outcome document's bytes.
 - The serialization shall write the label `undefined` on an item exactly when
   the item's category is undefined, so on no `prove` or `analyze` item and on
   a `monitor` item only for FR-283's `InsufficientData`.
-- The serialization shall write each item's label and cause in QSpec
+- The serialization shall write each item's label and cause in FSpec
   FR-331's wire spelling.
 - The serialization shall write `last_stage` `null` for a cancelled outcome
   that reached no stage and for a fault outcome.
 - The serialization shall write the `items` member on every document, as an
   empty array when the outcome has no items.
-- `OutcomeDocument::from_run` shall serialize `qsl_replay::spine::run`'s
+- `OutcomeDocument::from_run` shall serialize `fsl_replay::spine::run`'s
   result as one `execute` document: a call that ran is `from_call`'s
   document with `artifacts` an empty array; a
   compile refusal carries the stage it reached, the refusal's category and its
@@ -248,14 +316,14 @@ The outcome document's bytes.
   `OutcomeDocument::new(operation, None, category)` with one diagnostic. An
   engine the request names that the driver has not built (AOT or JIT, where
   only the interpreter exists) is valid meaning the selected producer does
-  not implement, so its diagnostic code is QSpec FR-271's
+  not implement, so its diagnostic code is FSpec FR-271's
   `unimplemented_capability`, never `unsupported_construct` (a source form
-  the selected profile prohibits), with QSpec FR-272's cause
+  the selected profile prohibits), with FSpec FR-272's cause
   `backend-not-supplied` and `backend` the engine's name (`aot` or `jit`), in
   category unsupported (FR-285, exit 21).
 - `OutcomeItem::from_clause_run` shall give each item the members the
-  "Monitor documents from clause runs" member table lists for its verdict and
-  no other, reading `counterexample` from `ClauseRunReport::counterexample`
+  "Monitor documents from clause runs" member table lists for its verdict,
+  a `select` refusal's `diagnostic` included, and no other, reading `counterexample` from `ClauseRunReport::counterexample`
   (FR-330 Outputs; the same record FR-267 writes in its `temporal` member).
 - `OutcomeItem::from_clause_run` shall write `decisive`, a sibling of `counterexample`, from `ClauseRunReport::decisive` (FR-330 Outputs) on a temporal `Violated` item whose report holds one, and no `decisive` on any other item.
 - `OutcomeItem::from_clause_run` shall write `witness` exactly when
@@ -277,25 +345,83 @@ The outcome document's bytes.
   undefined reason or exhausted limit as the `result` member, and `result`
   `null` on every other document.
 
+### Diagnostic details
+
+Every diagnostic SHALL carry `details`: `null`, or one closed object that
+locates the refusal inside the request and the call, so a consumer of the
+outcome document reads the same facts a consumer of FR-100's command-error
+envelope reads, and the driver can show them.
+
+- An `execute` diagnostic from a refusal FR-100 writes at stage `call`
+  (FR-100 "Refusals before S6a", FR-650's argument table and FR-650-AC-6's
+  unsupported parameter and result types), and from the runtime-invariant
+  fault at stage `call`, SHALL carry exactly the `details` object FR-100's
+  command-error envelope carries for the same request, member for member and
+  value for value.
+- An `execute` diagnostic from a request-stage refusal of an argument
+  `value` (FR-650 "Arguments") SHALL carry `{"path":
+  "/call/arguments/<index>/value"}`, the pointer the envelope names.
+- Every other diagnostic, a source, profile or compile-stage diagnostic
+  included, SHALL carry `details` `null`: its `locus`, `cause` and payload
+  members already locate it.
+
+The object's members come from one closed vocabulary, each with one
+meaning and one JSON kind, and no other member is written:
+
+| Member | Kind | Meaning |
+| --- | --- | --- |
+| `function` | string | the request's `function` string, exactly as supplied |
+| `position` | integer | the zero-based position of the declared parameter |
+| `path` | string | an RFC 6901 JSON pointer: inside the argument's `value` for a call-stage defect (the empty pointer for the value itself), or to the request's `value` member for a request-stage one |
+| `parameter` | string | the parameter name an argument names or lacks |
+| `model_identity` | string | the offered document's model identity |
+| `population` | object | the offered population's DeclarationKey `{"package", "node"}` |
+| `expected` | object | the required DomainPackageRef `{"identity", "version"}` |
+| `member` | string | the uncovered member of a foreign type |
+| `type` | object | the uncovered type's DeclarationKey |
+| `required` | object | the required universe, as FR-650 "Identity spellings" writes a universe |
+| `supplied` | object | the supplied universe, spelled the same way |
+| `stage` | string | the fault's stage identifier |
+| `invariant` | string | the fault's invariant identifier |
+
+Each FR-100 row fixes which members its object holds; the members are
+written in RFC 8785 order with the document. A `details` object is never
+empty, and a refusal whose row has no `details` writes `null`.
+
+### Analyze item members
+
+An `analyze` document also carries FR-621's `aggregate` member and FR-635's
+`registry` member, and each `analyze` item carries the members FR-621 lists
+(`request_index`, `claim_name`, `request`, `record`, `certificate`,
+`counterexample`, `replay`, `accounting`, `axes`) or, for a simulation item,
+FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-286-AC-1 | The `check` outcome over `tests/fixtures/spine-compile.native` serializes to a document whose `format` is `quire-outcome/1`, `operation` `check`, `last_stage` S4, `category` success, `items`, `diagnostics` and `artifacts` each an empty array, and `result` `null`. The `package` outcome over that `check` outcome serializes with `operation` `package`, `last_stage` S4, `category` success and `artifacts` an empty array `[]`. | Test (TC-770) |
+| FR-286-AC-1 | The `check` outcome over `tests/fixtures/spine-compile.native` serializes to a document whose `format` is `filament-outcome/1`, `operation` `check`, `last_stage` S4, `category` success, `items`, `diagnostics` and `artifacts` each an empty array, and `result` `null`. The `package` outcome over that `check` outcome serializes with `operation` `package`, `last_stage` S4, `category` success and `artifacts` an empty array `[]`. | Test (TC-770) |
 | FR-286-AC-2 | The `check` outcome of FR-100-AC-5's `inv` source serializes with `category` refusal and one diagnostic whose cause, catalog code `ill_typed`, `Locus` and message equal the `StageFailure`'s. | Test (TC-770) |
 | FR-286-AC-3 | An `analyze` outcome of three items serializes with three `items` entries in request order, each holding its terminal record and category. Serializing any outcome twice gives equal bytes. | Test (TC-770) |
 | FR-286-AC-4 | FR-281-AC-7's `analyze` outcome serializes its item with category violation and cause `undefined-evaluation`, and the document holds no `undefined` label; FR-283-AC-5's `monitor` outcome serializes the same way; FR-100-AC-10's `execute` outcome serializes with category undefined and the label `undefined`. | Test (TC-770) |
-| FR-286-AC-5 | The `execute` outcome of FR-100-AC-1's `seven` serializes with `category` success and `result` `{"kind": "completed", "value": {"kind": "integer", "decimal": "7"}}`; FR-100-AC-10's empty `sum` with `category` undefined and `result` `{"kind": "undefined", "reason": "sum-out-of-domain"}`; FR-100-AC-6's `seven` with `call.accounting` `{"work_units": 0}` with `category` incomplete and `result` `{"kind": "incomplete", "limit": {"kind": "work_units", "bound": "0", "counter": "1", "field": "work_units", "setting": "accounting.work_units"}}`. A `check` called with a `Cancel` already cancelled serializes with `category` incomplete, `last_stage` `null`, `items` `[]` and `result` `null`. | Test (TC-770) |
+| FR-286-AC-5 | The `execute` outcome of FR-100-AC-1's `seven` serializes with `category` success and `result` `{"kind": "completed", "value": {"integer": "7"}}`; FR-100-AC-10's empty `sum` with `category` undefined and `result` `{"kind": "undefined", "reason": "sum-out-of-domain"}`; FR-100-AC-6's `seven` with `call.accounting` `{"work_units": 0}` with `category` incomplete and `result` `{"kind": "incomplete", "limit": {"kind": "work_units", "bound": "0", "counter": "1", "field": "work_units", "setting": "accounting.work_units"}}`. A `check` called with a `Cancel` already cancelled serializes with `category` incomplete, `last_stage` `null`, `items` `[]` and `result` `null`. | Test (TC-770) |
 | FR-286-AC-6 | `OutcomeDocument::from_run` over a completed run holds the call's document and `artifacts` an empty array; over `run` refusing `ill_typed` source, `category` refusal, `last_stage` S3 and one `ill_typed` diagnostic; over an unknown function, `category` refusal at S6a with `missing_declaration`; over `run` with a cancelled handle, `category` incomplete, `last_stage` null and one `cancelled` diagnostic with cause `requested`; over an internal fault, internal failure with its catalog code; and a driver's `OutcomeDocument::new(Execute, None, Unsupported)` for an unbuilt engine holds one diagnostic whose code serializes as `unimplemented_capability` with cause `backend-not-supplied` and `backend` naming the engine, with `category` unsupported, `last_stage` `null`, and exits 21. | Test (TC-770) |
-| FR-286-AC-7 | TC-792's present lookup through the public spine run entry serializes through `OutcomeDocument::from_run` as one `quire-outcome/1` document with `operation` `execute`, category success, `artifacts` an empty array `[]` (as FR-286-AC-6 states for every completed run) and `result` `{"kind":"completed","value":{"kind":"reference","universe":U,"type":T,"object_identity":O}}`. All three components equal the actual returned shared Reference. A second source-compiled Reference-valued function returning a different admitted reference from its input serializes the returned reference, not the input. The existing Boolean/Integer completions remain unchanged; no Reference completion is emitted as a `/2` clause truth or a Population payload. The one compiled package artifact of the source the run compiles belongs to the compile outcome, whose package artifact is the `quire.checked-package/v2` bytes (FR-027 Outputs, FR-027-AC-5), and never to this execute document. | Test (TC-792) |
+| FR-286-AC-7 | TC-792's present lookup through the public spine run entry serializes through `OutcomeDocument::from_run` as one `filament-outcome/1` document with `operation` `execute`, category success, `artifacts` an empty array `[]` (as FR-286-AC-6 states for every completed run) and `result` `{"kind":"completed","value":{"reference":{"universe":U,"type":T,"object_identity":O}}}`. All three components equal the actual returned shared Reference. A second source-compiled Reference-valued function returning a different admitted reference from its input serializes the returned reference, not the input. The existing Boolean/Integer completions remain unchanged; no Reference completion is emitted as a `/2` clause truth or a Population payload. The one compiled package artifact of the source the run compiles belongs to the compile outcome, whose package artifact is the `filament.checked-package/v2` bytes (FR-027 Outputs, FR-027-AC-5), and never to this execute document. | Test (TC-792) |
 | FR-286-AC-8 | `OutcomeDocument::from_clause_runs` over one clause run of `always p` over a finite supplied trace that ends pending serializes to a document with operation `monitor`, `category` pending, exactly one item with `result` `pending`, `category` pending and `clause` naming the clause, `cause` null, no terminal record and no `undefined` label, and FR-285 maps the document to exit 0. | Test (TC-770) |
 | FR-286-AC-9 | `OutcomeDocument::from_clause_runs` over FR-501-AC-4's `Indeterminate` run serializes one item with `result` `indeterminate`, category indeterminate and FR-501's reason, and the document exits 11; over that run and a pending run it is category indeterminate; over those two and a `Completed(false)` run (item `refuted`, category violation) it is category violation, exit 10; over a `Completed(true)` run it holds the item `tested`, category success. Every item's category equals `ClauseRunReport::category()` and equals the label and exit FR-285-AC-10 reads. | Test (TC-770) |
-| FR-286-AC-10 | Over FR-283-AC-1's clause run `always p` violated at position 0, `from_clause_run` gives an item with `result` `refuted`, category violation, `clause`, `position` 0, a `counterexample` with a `prefix` of three identities, an empty `loop` (`[]`, the finite spelling of FR-330 and QSpec FR-364), `trace_position` 0, a `decisive` beside the counterexample with `position` 2, no `quantifier` and no `index`, `element` `false` and the empty `value_path`, `cause` null and a `witness` member exactly when the run's `ClauseRunReport::witness` holds a record (FR-266 gives this temporal run the basis `closed-scope` and no witness, so the item carries none). | Test (TC-770) |
+| FR-286-AC-10 | Over FR-283-AC-1's clause run `always p` violated at position 0, `from_clause_run` gives an item with `result` `refuted`, category violation, `clause`, `position` 0, a `counterexample` with a `prefix` of three identities, an empty `loop` (`[]`, the finite spelling of FR-330 and FSpec FR-364), `trace_position` 0, a `decisive` beside the counterexample with `position` 2, no `quantifier` and no `index`, `element` `false` and the empty `value_path`, `cause` null and a `witness` member exactly when the run's `ClauseRunReport::witness` holds a record (FR-266 gives this temporal run the basis `closed-scope` and no witness, so the item carries none). | Test (TC-770) |
 | FR-286-AC-11 | Over FR-283-AC-5's clause run, `from_clause_run` gives an item with `result` `refuted`, category violation, `position` 1, a `counterexample` with `trace_position` 1, cause `undefined-evaluation{where, cause}` with `cause` `division-by-zero`, no `witness` and no `undefined` label. | Test (TC-770) |
 | FR-286-AC-12 | Over FR-283-AC-11's clause run, `from_clause_run` gives an item with `result` `undefined`, category undefined, cause `insufficient-data`, `position` 0, `count` 1 and `min_count` 2, and neither `counterexample` nor `witness`; its document exits 10. | Test (TC-770) |
 | FR-286-AC-13 | Each `MonitorRecord` the FR-283 `monitor` operation returns for the clause runs of AC-8 to AC-12 (the pending run, FR-501-AC-4's indeterminate run, and the violated, undefined-evaluation and insufficient-data runs of FR-283-AC-1, AC-5 and AC-11) renders through `OutcomeItem::from_clause_run`, and the document built from the records equals `from_clause_runs`'s document for the same runs, byte for byte. | Test (TC-770) |
 | FR-286-AC-14 | Over FR-281-AC-2's record and `ItemCounterexample`, `from_analyze` gives an item with `result` `refuted`, category violation, naming `en-1`, a `counterexample` of kind `formula` with a non-empty `prefix`, a `loop`, an `initial_state` and a `trace_position`, and no `position`, `decisive` or `witness`; the same record with no counterexample returns `Err(OutcomeItemError::MissingCounterexample)`, and FR-281-AC-1's `proved` record gives an item with no `counterexample`. For each other `Counterexample` variant, a `refuted` record with that variant gives an item whose `counterexample` has the variant's spelling in the table, and a `time-lock` `Temporal` one carries its `final_delay`. The item `provider::run` gives for the same two records serializes to equal bytes. | Test (TC-770) |
 | FR-286-AC-15 | An external caller projects a pre-admission blank-label source diagnostic through `from_source_diagnostic` and serializes a document: its code is `invalid_source_identity`, cause `blank-label`, `label` the exact typed `authority` or `identity`, `locus` null and message unchanged. Empty-path, byte-budget and located invalid-UTF-8 source diagnostics retain their exact cause, code, optional region and message while omitting `label`; the located case retains its original source reference and endpoints. Projecting the same source diagnostic through a compile refusal, a parse refusal or a format refusal gives the same diagnostic members, without a consumer-written JSON field. | Test |
+| FR-286-AC-16 | `OutcomeDocument::from_format` over a completed format of `tests/fixtures/spine-compile.native` has `result` `{"kind": "formatted", "text": T}` with `T` byte-identical to the string `fsl_cst::format` returns, category `success`, exit 0; over the format of `T` itself the `text` is again `T`; over a refused format `result` is `null` and the refusal is a diagnostic. | Test (TC-2178) |
+| FR-286-AC-17 | Over FR-650's identity fixture, the `execute` outcome document of `id_rec` called with `fields` lacking `y` holds one diagnostic with `code` `invalid_runtime_input`, `cause` `missing-member` and `details` `{"path": "/record/fields", "position": 0}`, equal to the command-error envelope's `details` for the same request; of `id_set` with a repeated element, `details` `{"path": "/set/1", "position": 0}`. | Test (TC-2377) |
+| FR-286-AC-18 | The `execute` outcome document of a call of `function` `nope` holds a diagnostic with `details` `{"function": "nope"}`; of `id_rec` called with an argument naming the parameter `zz` instead of `a`, `details` `{"parameter": "zz"}`; and of `id_big` called with `"7"`, stage `request`, `details` `{"path": "/call/arguments/0/value"}`. | Test (TC-2378) |
+| FR-286-AC-19 | The `execute` outcome document of a run whose unit S3 refuses `ill_typed` (`function bad using v(): Int[0, 9] pure { true }`) and the `parse` outcome document of FR-763-AC-2's unit each hold diagnostics whose `details` is `null`; no diagnostic of any document holds a `details` member outside the closed vocabulary or an empty `details` object. | Test (TC-2379) |
+| FR-286-AC-20 | A `monitor` document of settled clause runs (`MonitorOutcome::document`, here with no records) has `last_stage` `S6a`; the whole-request refusal document of `MonitorRefusal::UnknownClause` has `S4` and of `MonitorRefusal::Observation` `S6a`, each with its refusal category. | Test (TC-2383) |
+| FR-286-AC-21 | The `replay` outcome of FR-862-AC-2's replay of `entry` serializes with `result` `{"kind": "replayed", "results": [R]}`, `R` equal to the one row of the `results` document `command::run` returns (`arm` `input`, `settlement` `reproduced-without-witness`); FR-862-AC-1's refused request serializes with `result` `null`. | Test (TC-2963) |
+| FR-286-AC-22 | The `export` outcome of FR-756-AC-1's counter serializes with `operation` `export`, `category` success, `last_stage` S4, `items` `[]`, `artifacts` `[]` and `result` `{"kind": "exported", "export": E}` with `E` equal to the run outcome's `export` member; the below-floor export of FR-1015-AC-1 serializes with category unsupported and the same `result` kind, the export under `export.output_bytes` 1 with category incomplete, and the export naming an existing output path with category refusal, `last_stage` `null` and `result` `null`. | Test (TC-2994) |
 
 ## Status
 
@@ -319,9 +445,9 @@ outcomes.
 - [FR-095](FR-095-occurrence-keyed-source-map-and-locus.md): `Locus`.
 - [FR-275](FR-275-take-a-typed-request-limits-and-cancel-on-every-lifecycle-operation.md): the operations.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md): the exit code.
-- QSpec FR-300-AC-3, FR-301-AC-1: library and CLI agree.
-- QSpec FR-331: the terminal record and its wire spellings.
-- QSpec FR-271: the diagnostic code catalog, `unimplemented_capability` among
+- FSpec FR-300-AC-3, FR-301-AC-1: library and CLI agree.
+- FSpec FR-331: the terminal record and its wire spellings.
+- FSpec FR-271: the diagnostic code catalog, `unimplemented_capability` among
   it.
 - [FR-100](FR-100-run-a-named-function-through-the-spine.md): the value,
   undefined reason and limit spellings of `result`.
@@ -331,12 +457,12 @@ outcomes.
 ## Overlap
 
 The driver repository specifies and tests that `quire --format json` writes
-this document to stdout with no member added or removed, by QSpec
-FR-300-AC-3 and FR-301-AC-1. QSL's part is the document and its
+this document to stdout with no member added or removed, by FSpec
+FR-300-AC-3 and FR-301-AC-1. FSL's part is the document and its
 serialization.
 
 ## References
 
 - QSL-390 (ARCH-50): the team-leader decision ADR-029's References records,
   which keeps the `undefined` label off proof items (QSL-366 ruling).
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

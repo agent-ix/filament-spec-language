@@ -3,7 +3,7 @@ id: TC-124
 title: "Bound temporal evaluation work and required retained state"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-008
+  - target: ix://agent-ix/filament-spec-language/NFR-008
     type: verifies
 ---
 # TC-124: Bound temporal evaluation work and required retained state
@@ -15,17 +15,17 @@ Public Rust API controls for
 derives its expected charges from the authored declaration, the supplied trace
 shape and the counter definitions published in
 [the temporal evaluation contract](../../docs/native-temporal-evaluation.md)
-under accounting label `quire.native.temporal-work/1`, never from the run's own
+under accounting label `filament.native.temporal-work/1`, never from the run's own
 reported usage. Each numbered group corresponds to the matching acceptance
 criterion.
 
-The controls, `tests/composed_temporal_limits.rs`, were retired by QSL-858 PR 1 with the v1 evaluator; the successor tests are the ones FR-525 names for each criterion (qsl-eval `temporal_evidence`, `temporal_rulings`). Groups 1 and 5 enumerate
+The controls, `tests/composed_temporal_limits.rs`, were retired by QSL-858 PR 1 with the v1 evaluator; the successor tests are the ones FR-525 names for each criterion (fsl-eval `temporal_evidence`, `temporal_rulings`). Groups 1 and 5 enumerate
 bounded formula, interval and ceiling families deterministically over a declared
 finite population; group 3 generates obligation and eviction schedules from a
 declared finite model. No randomized campaign, fuzzing result or mutation-adequacy
 score is claimed.
 
-The checked-package successor controls for the temporal counters are the temporal evidence counter tests in `qsl-eval/tests/it/`; the legacy controls above remain until the legacy temporal module is removed.
+The checked-package successor controls for the temporal counters are the temporal evidence counter tests in `fsl-eval/tests/it/`; the legacy controls above remain until the legacy temporal module is removed.
 
 ## Test Procedure
 
@@ -93,7 +93,7 @@ declared clock parameter reuses a prior result.
 Mutation-adequacy measurement of this suite — whether it would detect a Boolean
 returned from each forced stop — is not performed here and is recorded as
 outstanding assurance work on compiler
-[#38](https://github.com/agent-ix/quire-spec-language/issues/38). Agent F's
+[#38](https://github.com/agent-ix/filament-spec-language/issues/38). Agent F's
 observation storage, replay and lateness mechanisms are outside this case; every
 eviction above is injected through the trace's own eviction list against the
 evaluator's own retained-state table. Catalog

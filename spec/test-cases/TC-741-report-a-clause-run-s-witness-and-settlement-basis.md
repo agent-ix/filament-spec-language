@@ -3,7 +3,7 @@ id: TC-741
 title: "Clause run reports carry a settlement basis on every disposition and a witness only when decisive"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-266
+  - target: ix://agent-ix/filament-spec-language/FR-266
     type: verifies
 ---
 # TC-741: Clause run reports carry a settlement basis on every disposition and a witness only when decisive
@@ -18,7 +18,7 @@ Scope: FR-266-AC-1 to FR-266-AC-3.
 
 ## Test Procedure
 
-Build `ClauseRunRequest`s through `qsl_replay::spine::run_clause`.
+Build `ClauseRunRequest`s through `fsl_replay::spine::run_clause`.
 
 1. FR-265's `witness` unit: `Clause` `AllBelow` over `high`, `SomeAtLeast`
    over `high`, `AllBelow` over `low`; the `AllBelow` over `high` request a
@@ -39,8 +39,11 @@ Tag the tests `#[trace("TC-741", "FR-266-AC-n")]`.
   record; `success`, exit 0, `decisive-witness`, FR-265-AC-2's record;
   `success`, `closed-scope`, no `witness`; the repeated request's report
   equals the first.
-- Step 2: the FR-109 dispositions and exit codes unchanged; `closed-scope`
-  with no `witness` for the three evaluated requests; `unavailable` with no
+- Step 2: the FR-109 dispositions and exit codes unchanged;
+  `decisive-witness` for healthy-parent and `decisive-counterexample` for
+  violating-parent and changed-version, each with FR-266-AC-2's comparison
+  record;
+  `unavailable` with no
   `witness` for the four others; `closed-scope` with no `witness` for the
   `sameIdentity` violation; `unavailable` for the `ghost` admission
   refusal.

@@ -3,14 +3,14 @@ id: TC-910
 title: "Wide integer ranges produce structural type nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: verifies
 ---
 # TC-910: Wide integer ranges produce structural type nodes
 
 ## Description
 
-Verify FR-092-AC-14's exact wide integer bounds and QSpec FR-322
+Verify FR-092-AC-14's exact wide integer bounds and FSpec FR-322
 structural ids. FR-092-AC-15 is withdrawn because the preimage-counter
 spelling it tested no longer exists.
 

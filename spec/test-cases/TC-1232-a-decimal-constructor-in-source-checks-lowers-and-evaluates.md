@@ -3,9 +3,9 @@ id: TC-1232
 title: "A decimal constructor in source checks, lowers and evaluates"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-1232: A decimal constructor in source checks, lowers and evaluates
@@ -27,8 +27,8 @@ FR-091-AC-58 and FR-093-AC-38 to FR-093-AC-42, FR-093-AC-45 and FR-093-AC-52 to 
 2. Parse each malformed constructor of FR-091-AC-58 and the function named
    `decimal`.
 3. Compile `c1` to `c6`, `n` and `add` of FR-093-AC-39 through
-   `compile_admitted`; read the literal nodes, the `quire.op.decimal.negate`
-   node and the `quire.op.decimal.add` node; run `c1` with no arguments and
+   `compile_admitted`; read the literal nodes, the `filament.op.decimal.negate`
+   node and the `filament.op.decimal.add` node; run `c1` with no arguments and
    `add` with a parameter holding coefficient 100 and scale 2.
 4. Check each ambiguous, mismatched and non-member constructor of
    FR-093-AC-40, and the constructors that are members by value although their
@@ -55,7 +55,7 @@ FR-091-AC-58 and FR-093-AC-38 to FR-093-AC-42, FR-093-AC-45 and FR-093-AC-52 to 
 4. Each ambiguous, mismatched and non-member constructor refuses as
    FR-093-AC-40 lists; each member by value checks and its literal node keeps
    the value as written.
-5. `x / decimal(4, 0)` is one `quire.op.decimal.div` node and evaluates to
+5. `x / decimal(4, 0)` is one `filament.op.decimal.div` node and evaluates to
    coefficient 150 and scale 2; the zero constructors, the parameter divisor,
    the conditional divisor and the negated literal divisor refuse
    `undefined_expression`/`unproved-nonzero`.

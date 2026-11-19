@@ -3,7 +3,7 @@ id: TC-735
 title: "Deep values and value types evaluate, key, compare, clone and drop"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: verifies
 ---
 # TC-735: Deep values and value types evaluate, key, compare, clone and drop

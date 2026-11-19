@@ -3,27 +3,27 @@ id: FR-099
 title: "Compile a complete-V1 unit against supplied libraries"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-014
+  - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-005
+  - target: ix://agent-ix/filament-spec-language/US-005
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-087
+  - target: ix://agent-ix/filament-spec-language/FR-087
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-307
+  - target: ix://agent-ix/filament-specification/FR-307
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-146
+  - target: ix://agent-ix/filament-specification/FR-146
     type: depends_on
 ---
 # FR-099: Compile a complete-V1 unit against supplied libraries
@@ -36,7 +36,7 @@ input its caller supplies, compile each imported library from its source
 through S1 to S4, bind each import to the library's recompiled
 dependency selection (its identity), type every use of an imported name from the library's checked
 graph, and emit the importing package with the library closure and its
-cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
+cross-package references (ADR-015 D-1, D-2, D-3, D-5; FSpec FR-307, FR-322).
 
 ## Inputs
 
@@ -46,7 +46,7 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
   where `identity` is a non-empty library identity string and `source` a
   source unit with its two FR-001 labels (authority and identity), path and bytes. At most one
   library per identity.
-- The optional **refinement internals** input (QSpec FR-375, FR-432): one JSON
+- The optional **refinement internals** input (FSpec FR-375, FR-432): one JSON
   value for the unit, and one optional JSON value on each supplied library
   (`{identity, source, refinement_internals}`). Each value is the array of
   `{"refinement", "internal"}` objects that FR-147 describes, naming only
@@ -81,7 +81,7 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
 - The input builder SHALL NOT refuse a refinement internals value.
 - The compile SHALL refuse a defect in a supplied library's value for the
   whole compilation, the unit included, whether or not the unit imports the
-  library (QSpec FR-375, FR-375-AC-12; FR-147-AC-10). This holds for every
+  library (FSpec FR-375, FR-375-AC-12; FR-147-AC-10). This holds for every
   defect, including a `refinement` that names no refinement of the library.
 - The S4 source resolution owns the refusal for a library no import reaches.
   For each supplied library that no import reaches and for which a
@@ -96,24 +96,24 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
   with the library's `LibraryName` as the path, located by (that library's
   value, pointer). A library compiled for an import resolves its own value in
   its own S3, the same way.
-- The emitter SHALL write the package member `refinement_internals` that QSpec
+- The emitter SHALL write the package member `refinement_internals` that FSpec
   FR-322 defines (FR-322-AC-77) from the resolved list of the package being
   emitted alone, in FR-322's canonical order: the unit's package holds only the
   unit's own list, and each library's package holds that library's own list,
-  since entries are keyed by refinement name and QSpec FR-323 and FR-307 give
+  since entries are keyed by refinement name and FSpec FR-323 and FR-307 give
   each package its own value. The emitter SHALL omit
   the member when every list is empty, never writing `[]` or `null`. The replay
-  request copies the member from the package (QSpec FR-323).
+  request copies the member from the package (FSpec FR-323).
 - Each library's value SHALL be the value of that library's own refinements
   only; the unit's value SHALL NOT be applied to a library's refinements nor
   a library's to the unit's.
 - A replay SHALL build the same input from the request's package reference:
   the value at `/package/lock/refinement_internals` for the proved package and at
   `/dependencies/<n>/refinement_internals` for the `n`th dependency
-  entry (zero-based), as QSpec FR-375 locates them. A replay request that
+  entry (zero-based), as FSpec FR-375 locates them. A replay request that
   omits a non-empty value recompiles with the empty list and so fails the
   package identity check, because the list is part of the refinement node
-  (QSpec FR-375).
+  (FSpec FR-375).
 - The S4 source resolution, which runs between S2 and E3, SHALL report its
   own refusals at stage `intake`.
 - The resolution SHALL apply ADR-015 D-1's steps to each import, depth
@@ -168,7 +168,7 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
   the transitive closure of its signature type nodes' `dependencies`
   carries an FR-322 `declaration` or a `ModelOwner`.
 - E3 SHALL check each argument of an imported call `l::f(x)` against `f`'s
-  checked parameter type with the conversions and QSpec FR-146 obligations
+  checked parameter type with the conversions and FSpec FR-146 obligations
   of a call of a local function with `f`'s signature, and SHALL discharge
   each obligation from the importing unit's own facts. E3 SHALL NOT re-check
   `f`'s body obligations, which the library's own compile discharged
@@ -189,11 +189,11 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-099-AC-1 | A unit declaring `import "test/geometry" as g;`, and referencing nothing of it, compiled with `test/geometry` supplied from source, emits a package that holds the one `DependencySelection` naming `test/geometry`, and QSL's I2 read admits it. The same unit with `test/geometry` and an unimported `test/other` supplied emits identical bytes. | Test (TC-446) |
+| FR-099-AC-1 | A unit declaring `import "test/geometry" as g;`, and referencing nothing of it, compiled with `test/geometry` supplied from source, emits a package that holds the one `DependencySelection` naming `test/geometry`, and FSL's I2 read admits it. The same unit with `test/geometry` and an unimported `test/other` supplied emits identical bytes. | Test (TC-446) |
 | FR-099-AC-2 | `import "test/geometry" as g;` and `import "test/geometry";` each admit and name `test/geometry` by identity alone. An import with `version "1"` after the identity string refuses at S1 as a syntax error and records no selection. The same import compiled against `test/geometry` supplied from a source whose one declaration is changed compiles, and the package's selection names `test/geometry`. | Test (TC-446) |
 | FR-099-AC-3 | With no library supplied as `test/geometry` the import refuses `missing_import`/`missing-selection` at the import's identity string, stage `intake`; with two libraries supplied as `test/geometry`, or a library whose source has the unit's authority and identity, the dependency input refuses `invalid_package`/`conflicting-definition` naming both; with an empty identity it refuses `invalid_identifier`; with `test/a` and `test/b` supplied, each importing the other, the compile refuses `invalid_package`/`definition-cycle`, unwrapped, naming both identities, at `test/b`'s import of `test/a`; with `test/a` importing a `test/missing` no library supplies, the compile refuses `CompileRefusal::Dependency` with path `[test/a]` carrying `missing_import`/`missing-selection` in `test/a`'s source. None yields a package. | Test (TC-446) |
 | FR-099-AC-4 | `LibraryName` admits `test/geometry`, `a.b` and `L` and refuses only the empty string; two supplied libraries `test/b` and `test/a` import in either order into a closure listed `test/a` then `test/b`. | Test (TC-446) |
-| FR-099-AC-5 | With `test/geometry` exporting `function f using v(x: Int[0, 9]): Boolean pure { x < 5 }`, a unit importing it `as g` checks `function p using v(y: Int[0, 9]): Boolean pure { g::f(y) }`, and `g::f(true)` refuses `ill_typed` at the argument. The emitted `p` body is a `quire.op.function.call` application whose callee is `{term: "dependency_reference", package: <test/geometry's package reference>, node: <f's node id>}`, whose `result_type` is the Boolean type node, and whose node `dependencies` do not list `f`; `g::f(3)` emits the `Int[0, 9]` type node typing the conversion of `3` to `f`'s parameter, as a call of a local function does. With `test/geometry` also declaring a record `R`, a call `g::mk(y)` of a function returning `R`, a call of a function over `Set<R>`, a call of a function over a tuple holding `R`, a call of a function over `Reference<M::T>` for a model type `M::T`, and a use `g::R`, each refuses `ill_typed`/`operator-ineligible` at the use. | Test (TC-446) |
+| FR-099-AC-5 | With `test/geometry` exporting `function f using v(x: Int[0, 9]): Boolean pure { x < 5 }`, a unit importing it `as g` checks `function p using v(y: Int[0, 9]): Boolean pure { g::f(y) }`, and `g::f(true)` refuses `ill_typed` at the argument. The emitted `p` body is a `filament.op.function.call` application whose callee is `{term: "dependency_reference", package: <test/geometry's package reference>, node: <f's node id>}`, whose `result_type` is the Boolean type node, and whose node `dependencies` do not list `f`; `g::f(3)` emits the `Int[0, 9]` type node typing the conversion of `3` to `f`'s parameter, as a call of a local function does. With `test/geometry` also declaring a record `R`, a call `g::mk(y)` of a function returning `R`, a call of a function over `Set<R>`, a call of a function over a tuple holding `R`, a call of a function over `Reference<M::T>` for a model type `M::T`, and a use `g::R`, each refuses `ill_typed`/`operator-ineligible` at the use. | Test (TC-446) |
 | FR-099-AC-6 | **RETIRED (no content-addressed ids).** Node ids and the package reference are structural (owner, declaration path, role, ordinal), so a body change to a supplied library does not change them. | Test (TC-446), retired |
 
 | FR-099-AC-7 | A unit importing `test/a`, which imports `test/b`, which imports `test/c`, compiled with `dependency.libraries` at 2, refuses `stage_limit_exceeded` at stage `intake` at `test/b`'s import of `test/c`, with limit kind node count, bound 2, actual 3 and setting `dependency.libraries`, and no package; with `dependency.libraries` at 3 it compiles. The same unit with `dependency.import_edges` at 2 refuses naming edge count, bound 2, actual 3 and setting `dependency.import_edges`; with `dependency.source_bytes` one byte below the three libraries' summed source bytes it refuses naming input bytes and setting `dependency.source_bytes`. A chain of 200 libraries, each importing the next, compiles at the default limits. | Test (TC-446) |
@@ -209,7 +209,7 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; QSpec FR-307, FR-322).
   with dependencies (AC-14).
 - [FR-027](FR-027-export-compiled-native-package.md): the CLI supplies the
   dependency input in native-compile/1's `libraries`.
-- QSpec FR-307 (import binding, supplied libraries, diamond and cycle
+- FSpec FR-307 (import binding, supplied libraries, diamond and cycle
   rules), FR-322 (`dependency_selections`, `dependency_reference`,
   FR-322-AC-36).
 - [FR-255](FR-255-name-the-setting-that-raises-a-reached-limit.md): the

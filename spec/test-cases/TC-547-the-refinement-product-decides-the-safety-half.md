@@ -3,7 +3,7 @@ id: TC-547
 title: "The refinement product proves, refutes, leaves undetermined and stops the safety half"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: verifies
 ---
 # TC-547: The refinement product proves, refutes, leaves undetermined and stops the safety half

@@ -3,19 +3,19 @@ id: FR-504
 title: "Carry a watermark, completeness and scope closure on event-position and fixed-sample traces, and settle silent deadlines from them"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-501
+  - target: ix://agent-ix/filament-spec-language/FR-501
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-502
+  - target: ix://agent-ix/filament-spec-language/FR-502
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-094
+  - target: ix://agent-ix/filament-specification/FR-094
     type: depends_on
 ---
 # FR-504: Carry a watermark, completeness and scope closure on event-position and fixed-sample traces, and settle silent deadlines from them
@@ -23,8 +23,8 @@ relationships:
 ## Description
 
 `run_clause` (FR-330) SHALL accept, for a clause under
-`quire.temporal.event-position.false-extension/v1` or
-`quire.temporal.fixed-sample.false-extension/v1`, a finite trace together with a
+`filament.temporal.event-position.false-extension/v1` or
+`filament.temporal.fixed-sample.false-extension/v1`, a finite trace together with a
 progress assertion, and SHALL evaluate it with the progress rules of FR-043
 "Progress, closure and settlement" (FR-043-AC-7, AC-8, AC-11): a fixed-sample
 watermark advances the clock through a deadline with no business event, and an
@@ -70,14 +70,21 @@ origin.
 
 FR-501's outcomes and result report (`Completed`, `Pending`, `Indeterminate`,
 basis, decision support, premises, result identity), with `Pending.deadline`
-defined below.
+defined below. The result report is the clause run's finite-window report,
+`ClauseRunReport::finite_window` (FR-330), and its `basis` is the basis this
+requirement names: for an open-scope verdict settled through silent samples
+it is `decisive-counterexample` or `decisive-witness`, because the verdict
+holds for every continuation. The clause run report's top-level `basis`
+stays FR-266's Temporal row, which describes the run as decided over the
+supplied trace; the two members answer different questions and neither
+replaces the other.
 
 ## Behavior
 
 - **Seen horizon.** The **seen horizon** `S` SHALL be, under fixed-sample,
   `min(W, through)` when `completeness` is `Complete { through }` and `S = n - 1`
   (the last position) when it is `Incomplete`; under event-position, `S = n - 1`
-  always, because the watermark does not advance the clock in silence (QSpec
+  always, because the watermark does not advance the clock in silence (FSpec
   FR-094) and is only retained as a premise.
 - **Silent samples (fixed-sample only).** The evaluator SHALL read samples `n` to
   `S` with no observation with every `holds` atom false and every constant unchanged, because a
@@ -136,7 +143,7 @@ defined below.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-504-AC-1 | Fixed-sample clause `eventually[0,3] holds(p)` `on origin` over one position with `p` false: scope `Open`, `W` 0, `Complete { through: 0 }` is `Pending { where: 0, deadline: 3 }`; `W` 3, `Complete { through: 3 }` is `Completed(false)` with no new observation, basis `decisive-counterexample`; scope `Closed` gives basis `closed-scope`. | Test (TC-1299) |
+| FR-504-AC-1 | Fixed-sample clause `eventually[0,3] holds(p)` `on origin` over one position with `p` false: scope `Open`, `W` 0, `Complete { through: 0 }` is `Pending { where: 0, deadline: 3 }`; `W` 3, `Complete { through: 3 }` is `Completed(false)` with no new observation, and the report's finite-window report (`ClauseRunReport::finite_window`, FR-501's result report) has basis `decisive-counterexample`; scope `Closed` gives that report basis `closed-scope`. In both cases the report's own top-level `basis` is FR-266's `closed-scope`. | Test (TC-1299) |
 | FR-504-AC-2 | The same clause and trace under event-position, scope `Open`, `W` 3, `Complete { through: 3 }` is `Pending { deadline: NextEvent }`, and the premises list `W` 3; with scope `Closed` and `Complete { through: 0 }` it is `Completed(false)` by FR-327's false extension. | Test (TC-1299) |
 | FR-504-AC-3 | Fixed-sample, four positions with `p` true only at index 3, `eventually[0,3] holds(p)`, scope `Open`, `W` 3, `Complete { through: 3 }` is `Completed(true)`; with `p` true only at a fifth position (index 4) and `W` 4 it is `Completed(false)`. | Test (TC-1299) |
 | FR-504-AC-4 | Fixed-sample, one position `p` true, scope `Closed`, `W` 5, `Incomplete`: `always[0,3] holds(p)` is `Indeterminate { IncompleteInput }` and not `Completed(true)`; the same with `Complete { through: 5 }` is `Completed(false)` (the silent samples read `p` false). | Test (TC-1299) |
@@ -151,5 +158,5 @@ defined below.
 - FR-043-AC-7, AC-8, AC-11 (the legacy behavior), FR-327 (the closed-trace
   evaluator), FR-330 (the entry), FR-501 (verdict classes and report), FR-502
   (contradiction).
-- QSpec FR-094 (a fixed-sample progress assertion advances sample ticks;
+- FSpec FR-094 (a fixed-sample progress assertion advances sample ticks;
   event-position time does not advance in silence).

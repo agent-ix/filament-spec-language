@@ -3,48 +3,50 @@ id: FR-045
 title: "Classify native-to-TL temporal mapping support"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-004, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-043, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-095, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-048, type: references }
-  - { target: ix://agent-ix/quire-spec-language/ADR-011, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/US-004, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-043, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-095, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-048, type: references }
+  - { target: ix://agent-ix/filament-spec-language/ADR-011, type: depends_on }
   - { target: ix://agent-ix/tl-syntax/FR-011, type: depends_on }
   - { target: ix://agent-ix/tl-syntax/FR-013, type: depends_on }
   - { target: ix://agent-ix/tl-syntax/FR-014, type: depends_on }
   - { target: ix://agent-ix/tl-mltl/FR-018, type: depends_on }
-  - { target: ix://agent-ix/quire-mltl/FR-001, type: depends_on }
-  - { target: ix://agent-ix/quire-mltl/FR-003, type: depends_on }
-  - { target: ix://agent-ix/quire-contract-ir/FR-350, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-092, type: depends_on }
+  - { target: ix://agent-ix/tl-mltl/FR-031, type: depends_on }
+  - { target: ix://agent-ix/filament-mltl/FR-001, type: depends_on }
+  - { target: ix://agent-ix/filament-mltl/FR-003, type: depends_on }
+  - { target: ix://agent-ix/filament-contract-ir/FR-350, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-092, type: depends_on }
 ---
 # FR-045: Classify native-to-TL temporal mapping support
 
 ## Description
 
 When a caller requests a native-to-TL mapping for an admitted temporal
-declaration, the QSL compiler SHALL classify the request against the reviewed
+declaration, the FSL compiler SHALL classify the request against the reviewed
 support table and return either a supported classification with its outstanding
 bridge premises or an unsupported classification naming every unmatched
 semantic dimension and retaining the native subject. For a strict
-`quire.compiled-protocol/2` package, the classification SHALL retain the
-selection authenticated through QSL FR-050. Contract IR FR-350 consumes this
+`filament.compiled-protocol/2` package, the classification SHALL retain the
+selection authenticated through FSL FR-050. Contract IR FR-350 consumes this
 classification to construct and validate the TL correspondence.
 
 ## Semantic authority and boundary
 
-QSpec FR-095 owns the correspondence contract and directs QSL FR-045 to
-classify its support table. This QSL requirement owns the table's classification
+FSpec FR-095 owns the correspondence contract and directs FSL FR-045 to
+classify its support table. This FSL requirement owns the table's classification
 and target mapping, `mapping_support` over the checked clause (FR-527), and the
 authenticated native classification that Contract IR FR-350 consumes. The
 legacy `temporal::mapping_support_v2` is retired (QSL-858 PR 2). A supported classification
 names outstanding premises; it does not claim that a formula, valuation request
 or correspondence record has been emitted. Contract IR owns that construction
-and the result join. Neither QSL nor Contract IR owns the TL or native evaluator.
+and the result join. Neither FSL nor Contract IR owns the TL or native evaluator.
 
 The disposition SHALL be a total function of three inputs and nothing else:
-the declaration's selected profile, the operator kinds reachable from its root,
+the declaration's selected profile, the operator kinds reachable from its root with the shape of each interval
+(closed, `[a,*]` or interval-less),
 and the surrounding-execution closure named in the request. The first two come
 from the admitted declaration; the third comes from the request, because the
 support table keys on it. It SHALL NOT consult a backend capability report, an
@@ -57,7 +59,7 @@ whatever TL release or bridge is installed.
 FR-095's support table uses two axis vocabularies in adjacent rows: its first row
 keys on "complete execution" and its second on "open prefix". The IR/TL owner
 ruled on this in
-[`quire-contract-ir#64`](https://github.com/agent-ix/quire-contract-ir/issues/64#issuecomment-5649214124):
+[`filament-contract-ir#64`](https://github.com/agent-ix/filament-contract-ir/issues/64#issuecomment-5649214124):
 surrounding-execution closure, complete execution against open prefix, selects
 the TL row, and decision-scope closure is not the selector. Both FR-095 rows
 therefore key on surrounding-execution closure. The native result model keeps
@@ -69,7 +71,7 @@ substituting one axis for the other.
 
 A compiled-protocol `/1` package carries no authenticated temporal definition
 selection, so a classification made through it retains none. Through a strict
-`quire.compiled-protocol/2` package under
+`filament.compiled-protocol/2` package under
 [FR-050](./FR-050-publish-authenticated-temporal-artifacts.md), the classifier
 SHALL resolve the selection through the declaration's admitted temporal binding,
 SHALL refuse a declaration with no binding or whose binding selects a definition
@@ -90,9 +92,9 @@ through either version.
 ## Inputs
 
 An admitted temporal declaration with its selected profile identity and
-reachable temporal operator kinds; the requested surrounding-execution closure;
+reachable temporal operator kinds and interval shapes; the requested surrounding-execution closure;
 and, for a strict `/2` package, the package's authenticated temporal binding.
-Decision-scope closure remains a separate axis under QSL FR-043-AC-10 and SHALL
+Decision-scope closure remains a separate axis under FSL FR-043-AC-10 and SHALL
 NOT be substituted for surrounding-execution closure.
 
 ## Outputs
@@ -107,23 +109,24 @@ claim that the Contract IR bridge has emitted or joined an artifact.
 
 ## Behavior
 
-The classifier SHALL use exactly this QSL-owned table to map each admitted
+The classifier SHALL use exactly this FSL-owned table to map each admitted
 request to its target and disposition under the correspondence contract in
-QSpec FR-095. The admitted temporal profiles are
-`quire.temporal.event-position.false-extension/v1`,
-`quire.temporal.fixed-sample.false-extension/v1`,
-`quire.temporal.timestamped-event.finite-window/v1` and
-`quire.temporal.infinite-trace/v1`. The rows are evaluated in order, and the
-first three are mutually exclusive with the last five, so the table is total
-over those four profiles. The timed profile `quire.temporal.timed/v1`, which
-QSL FR-234 admits at check, has no row: a declaration under it is `Unsupported`
-naming a timed-profile dimension, and QSL FR-527 states that classification:
+FSpec FR-095. The admitted temporal profiles are
+`filament.temporal.event-position.false-extension/v1`,
+`filament.temporal.fixed-sample.false-extension/v1`,
+`filament.temporal.timestamped-event.finite-window/v1` and
+`filament.temporal.infinite-trace/v1`. The rows are evaluated in order, and the
+first three are mutually exclusive with the last six, so the table is total
+over those four profiles. The timed profile `filament.temporal.timed/v1`, which
+FSL FR-234 admits at check, has no row: a declaration under it is `Unsupported`
+naming a timed-profile dimension, and FSL FR-527 states that classification:
 
 | Native request | TL target | Disposition |
 | --- | --- | --- |
-| `quire.temporal.infinite-trace/v1` | none | Unsupported on the infinite-trace dimension; there is no bounded TL formula to generate, and QSpec FR-161 analyzes the request natively |
+| `filament.temporal.infinite-trace/v1`, other than the infinite-trace bounded-past row below | none | Unsupported on the infinite-trace dimension; there is no TL formula of that shape to generate, and FSpec FR-161 analyzes the request natively |
 | Timestamped-event finite window | none | Unsupported on the finite-window dimension; no index conversion is inferred, and this subsumes the source table's separate finite-window-against-index-profile row |
 | Both a bounded past and a bounded future operator reachable from the root | none | Unsupported on the mixed-direction dimension; no TL profile evaluates both directions in one formula |
+| `filament.temporal.infinite-trace/v1`, at least one past operator reachable, every reachable temporal operator a past operator (`once`, `historically`, `since`, `triggered`) with a closed interval `[a, b]`, and no future operator | `mltl.infinite-trace/v1`, with formula `tl-syntax.formula-unbounded/v1` and trace `tl-syntax.lasso-trace/v1` | Supported over a lasso trace, subject to every bridge premise; the surrounding-execution closure does not select the row, because an infinite trace never closes (FSpec FR-090) |
 | Event-position or fixed-sample false-extension, at least one bounded past operator reachable and no future operator | `mltl.origin-complete-history/v1`, with formula `tl-syntax.formula/v2` and catalog `tl-syntax.past-operators/v1` | Supported, subject to every bridge premise, an origin-complete history among them |
 | Event-position false-extension, at least one bounded future operator reachable and no past operator, complete surrounding execution | `mltl.closed-trace/v1` | Supported, subject to every outstanding bridge premise |
 | Event-position false-extension, at least one bounded future operator reachable and no past operator, open surrounding execution | `mltl.online-prefix/v1` | Supported, subject to every outstanding bridge premise |
@@ -131,13 +134,28 @@ naming a timed-profile dimension, and QSL FR-527 states that classification:
 | Either false-extension profile, no bounded temporal operator reachable at all | the same two targets, selected by surrounding-execution closure | Supported; a formula with no bounded operator imposes no additional TL obligation |
 
 The first three rows accumulate: a declaration matching more than one SHALL
-return every matched dimension. The last five are mutually exclusive, so every declaration under the four
+return every matched dimension. The last six are mutually exclusive, so every declaration under the four
 profiles matches exactly one row and each row is reachable by some declaration.
 
-The bounded-past operator set is exactly the one defined by QSpec FR-092. The
-past-only row covers each member of that set; QSpec FR-092 defines strong
+The bounded-past operator set is exactly the one defined by FSpec FR-092. The
+past-only row covers each member of that set; FSpec FR-092 defines strong
 previous as `once[1,1]`. A request reaching any bounded past operator and any
 bounded future operator matches the mixed-direction row.
+
+The infinite-trace bounded-past row covers every closed-interval past operator
+of FSpec FR-092 under `filament.temporal.infinite-trace/v1`. Its target is
+`tl-mltl`'s infinite-trace evaluator, which evaluates an unbounded-edition
+formula over an exact lasso and reads a closed past interval whose offset
+reaches before position 0 as FSpec FR-092 "Positions before the origin"
+requires: every atom false there, constants unchanged, the offset never
+skipped. The row relies on that reading, which `tl-mltl` adopted in tl-mltl
+#186; an infinite-trace evaluator that clips the window at the origin is not
+this target. An infinite-trace clause that reaches a future operator, an
+interval-less or `[a,*]` past operator, or no temporal operator at all matches
+the first row and stays unsupported on the infinite-trace dimension (with the
+mixed-direction dimension too when it also reaches a past and a future
+operator), because the row's correspondence is stated only for the closed
+past fragment and FSpec FR-161 analyzes the rest natively.
 
 The classifier SHALL name every unmatched dimension on an unsupported result,
 rather than a single summary cause.
@@ -165,20 +183,21 @@ encode. Naming them is not discharging them.
 | ID | Criteria | Verification |
 |---|---|---|
 | FR-045-AC-1 | Every row of the support table is reachable and is exercised by an admitted declaration that matches it and no other, returning that row's disposition and TL target; classification consults only the selected profile, reachable operator kinds and requested surrounding-execution closure. | Test (TC-125, TC-1279); Inspection |
-| FR-045-AC-2 | Timestamped-event and mixed-direction requests return unsupported with every unmatched dimension; each bounded past operator defined by QSpec FR-092, alone under both false-extension profiles, is supported only with the `mltl.origin-complete-history/v1` target. | Test (TC-125, TC-1279) |
+| FR-045-AC-2 | Timestamped-event and mixed-direction requests return unsupported with every unmatched dimension; each bounded past operator defined by FSpec FR-092, alone under both false-extension profiles, is supported only with the `mltl.origin-complete-history/v1` target. | Test (TC-125, TC-1279) |
 | FR-045-AC-3 | An unsupported result retains the native declaration subject, selected profile identity and activation record; a source-valid declaration is unchanged by classification. | Test (TC-125, TC-1279) |
 | FR-045-AC-4 | An unsupported result names every unmatched dimension rather than one summary cause, including a declaration unmatched on two dimensions. | Test (TC-125, TC-1279) |
 | FR-045-AC-5 | A supported classification names its exact TL target and every outstanding bridge premise, and does not claim correspondence; equal formula bytes under different selected profiles do not receive the same classification. | Test (TC-125, TC-1279) |
 | FR-045-AC-6 | A strict `/2` classification equals the `/1` disposition and retained native subject under both surrounding-execution closures, and additionally retains the authenticated package identity, declaration, definition identity, namespaced revision and exact definition-artifact identity; a `/1` classification retains no authenticated selection; a `/2` request for an out-of-package or non-temporal declaration, a temporal declaration without a binding, or a binding that selects another definition is refused (the latter strict-reader defects are inspected as unreachable re-checks). | Test (TC-125, TC-1279); Inspection |
+| FR-045-AC-7 | Under `filament.temporal.infinite-trace/v1`, each of `once[1,1]`, `historically[0,2]`, `since[0,2]` and `triggered[1,2]` alone, and `once[0,2] holds(p) and historically[1,1] not holds(q)`, returns `Supported` with target `mltl.infinite-trace/v1` under both surrounding-execution closures; `once holds(p)`, `once[1,*] holds(p)`, `eventually[0,2] holds(p)`, `holds(p)` and `once[0,1] eventually[0,1] holds(p)` each return `Unsupported` naming the infinite-trace dimension, the last also naming the mixed-direction dimension; `once[1,1] holds(p)` under the event-position false-extension profile still returns `mltl.origin-complete-history/v1`. | Test (TC-3022) |
 
 ## Dependencies
 
-- QSpec FR-095 owns the correspondence support meaning; QSpec FR-092 defines
+- FSpec FR-095 owns the correspondence support meaning; FSpec FR-092 defines
   the complete bounded-past operator set and history semantics.
-- QSL FR-050 supplies the strict `/2` package and authenticated temporal
-  binding; QSL FR-043 supplies the native `temporal::evaluate_v2` report consumed by the
+- FSL FR-050 supplies the strict `/2` package and authenticated temporal
+  binding; FSL FR-043 supplies the native `temporal::evaluate_v2` report consumed by the
   bridge.
 - Contract IR FR-350 consumes this classification and owns the TL projection,
   owner-reader validation, correspondence record and result join.
 - TL owners supply formula, history/trace, request and mapped-result contracts
-  to Contract IR; QSL classifies without consulting their installed versions.
+  to Contract IR; FSL classifies without consulting their installed versions.

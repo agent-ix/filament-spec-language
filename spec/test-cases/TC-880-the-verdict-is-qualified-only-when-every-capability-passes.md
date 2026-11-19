@@ -3,7 +3,7 @@ id: TC-880
 title: "The verdict is complete-V1 qualified only when every in-scope capability passes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-353
+  - target: ix://agent-ix/filament-spec-language/FR-353
     type: verifies
 ---
 # TC-880: The verdict is complete-V1 qualified only when every in-scope capability passes

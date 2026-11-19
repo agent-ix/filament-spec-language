@@ -3,9 +3,9 @@ id: TC-459
 title: "S3 checks the ConfigVersion state clauses and types self, result and pre"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-104-AC-9
+  - target: ix://agent-ix/filament-spec-language/FR-104-AC-9
     type: verifies
 ---
 # TC-459: S3 checks the ConfigVersion state clauses and types self, result and pre
@@ -43,7 +43,7 @@ FR-108's unit.
    b. the precondition `deref(target).versionNumber = 1`;
    c. the postcondition `pre(deref(target).versionNumber) = 1`;
    d. the postcondition `pre(target) = target`.
-6. Under the selected `quire.model.complete/v1` definition, extend the
+6. Under the selected `filament.model.complete/v1` definition, extend the
    ConfigVersion fixture with `ArchivedConfigVersion` conforming to
    `ConfigVersion`. Let it inherit `parent: Option<Reference<ConfigVersion>>`
    and declare `probe(target: ConfigVersion)`. Check a precondition on
@@ -79,15 +79,15 @@ Tag the tests `#[trace("TC-459", "FR-104-AC-n")]`.
   `pre`.
 - Step 5: (a) checks, its read through `target` `post`; (b) checks, its read
   `pre`; (c) checks, its read `pre`; (d) `wrong_snapshot`/
-  `forbidden-pre-read` at the `pre` (QSpec: "A pre selector cannot retag a
+  `forbidden-pre-read` at the `pre` (FSpec: "A pre selector cannot retag a
   post-qualified parameter reference").
 - Step 6: the clause checks. `self` retains
   `Reference<ArchivedConfigVersion>`, `target` is
   `Reference<ConfigVersion>`, and `parent` resolves to
   the inherited field owned by `ConfigVersion`; no implicit change to either
   reference identity is recorded to make the edge type match. Evaluation
-  retains each object's most-specific identity under QSpec FR-043/FR-010.
+  retains each object's most-specific identity under FSpec FR-043/FR-010.
 - Step 7: each checks. `self` is `Reference<Config::Flow>` and `self.n` an
   `Attribute` of type `Integer`; `P`'s read of `n` is `pre`, `Q`'s reads are
   `post` and `pre`, and `I`'s read is `current`. (Evaluation of such clauses
-  per run, with `self` the run, is QSpec TC-235 M16's reference test.)
+  per run, with `self` the run, is FSpec TC-235 M16's reference test.)

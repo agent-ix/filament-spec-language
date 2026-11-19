@@ -1,0 +1,844 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! Prepared command inputs and typed outcome projection at the public seam.
+
+use std::path::Path;
+
+use filament_exact::Cancel;
+use fsl_command::command::{self, PreparedRun, RunLimits};
+use fsl_foundation::SourceIdentity;
+use fsl_foundation::source::Source;
+use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
+use fsl_replay::{Operation, OutcomeDocument};
+use ix_trace_rs::trace;
+use serde_json::{Value, json};
+
+const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
+const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
+const HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+
+fn source() -> Value {
+    json!({"file":"program.native", "authority":"offered issuer", "identity":"offered:unit",
+        "document":"PreparedCommand", "formal_revision":1})
+}
+
+fn write_request(directory: &Path, filename: &str, request: Value) -> std::path::PathBuf {
+    let path = directory.join(filename);
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    path
+}
+
+fn compile_request(directory: &Path, bytes: &[u8]) -> std::path::PathBuf {
+    std::fs::write(directory.join("program.native"), bytes).unwrap();
+    write_request(
+        directory,
+        "compile.json",
+        json!({"format":"native-compile/1", "request":{
+        "models":[], "program":{"source":source()}}}),
+    )
+}
+
+fn run_request(directory: &Path, work_units: u64) -> std::path::PathBuf {
+    std::fs::write(directory.join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.join("library.native"), PROGRAM).unwrap();
+    std::fs::write(directory.join("model.json"), DOMAIN).unwrap();
+    write_request(
+        directory,
+        "run.json",
+        json!({"format":"native-run/1", "request":{
+        "models":[{"format":"semantic-ir/2.0.0","source":{
+            "file":"model.json","authority":"model issuer","identity":"model:source",
+            "document":"DomainModel","formal_revision":1}}],
+        "libraries":[{"identity":"fixture:library","source":{
+            "file":"library.native","authority":"library issuer","identity":"library:source",
+            "document":"LibrarySource","formal_revision":1}}],
+        "program":{"source":source()}, "call":{
+            "function":"lt", "arguments":[{"parameter":"a","value":2},{"parameter":"b","value":5}],
+            "accounting":{"work_units":work_units}}}}),
+    )
+}
+
+fn document(document: &OutcomeDocument) -> Value {
+    serde_json::from_slice(&document.to_bytes().unwrap()).unwrap()
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-10")]
+fn compilation_retains_the_actual_core_document_and_the_existing_artifact() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = compile_request(directory.path(), PROGRAM);
+    let actual = command::compile_outcome(&path).unwrap();
+    assert_eq!(actual.package_bytes(), command::compile(&path).unwrap());
+
+    let identity = SourceIdentity::new("offered issuer", "offered:unit");
+    let limits = SpineLimits::default();
+    let cancel = Cancel::new();
+    let parsed = spine::parse(
+        &ParseRequest {
+            source: &identity,
+            path: "program.native",
+            bytes: PROGRAM,
+        },
+        limits.source,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let selected = spine::select(&parsed, &Default::default(), limits.model, &cancel)
+        .unwrap()
+        .into_value();
+    let checked = spine::check(
+        &parsed,
+        "offered:unit".into(),
+        &selected,
+        &DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .unwrap()
+    .into_value();
+    let packaged = spine::package(&checked, limits.package, &cancel);
+    let expected = OutcomeDocument::from_package(&packaged);
+    assert_eq!(
+        actual.document().to_bytes().unwrap(),
+        expected.to_bytes().unwrap()
+    );
+    assert_eq!(
+        actual.package_bytes(),
+        packaged.unwrap().into_value().package().bytes()
+    );
+    assert_eq!(document(actual.document())["last_stage"], "S4");
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-10")]
+fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
+    for (work_units, expected_category, expected_kind) in [
+        (100_000, "success", "completed"),
+        (0, "incomplete", "incomplete"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = run_request(directory.path(), work_units);
+        let native = command::run(&path, &crate::negotiation::Fr290).unwrap();
+        assert_eq!(native.sources().len(), 3);
+        assert!(
+            native
+                .sources()
+                .as_slice()
+                .iter()
+                .any(|source| source.path() == "program.native"
+                    && source.text().as_bytes() == PROGRAM)
+        );
+        let PreparedRun::Function(prepared) =
+            command::prepare_run(&path, RunLimits::default()).unwrap()
+        else {
+            panic!("a function selection remains a function");
+        };
+        let input = prepared.into_input();
+        assert_eq!(
+            input.source.identity(),
+            &SourceIdentity::new("offered issuer", "offered:unit")
+        );
+        assert_eq!(input.source.path(), "program.native");
+        assert_eq!(input.source.text().as_bytes(), PROGRAM);
+        assert_eq!(input.package_name, "offered:unit");
+        assert_eq!(
+            input.packages,
+            fsl_semantics::model::intake::package_input([DOMAIN]).unwrap()
+        );
+        assert_eq!(
+            input.dependencies,
+            DependencyInput::new([spine::SuppliedLibrary {
+                identity: "fixture:library".into(),
+                source: SourceIdentity::new("library issuer", "library:source"),
+                path: "library.native".into(),
+                bytes: PROGRAM.to_vec(),
+            }])
+            .unwrap()
+        );
+        assert_eq!(input.call.function, "lt");
+        assert_eq!(input.call.accounting.work_units, work_units);
+        // FR-650: the request's arguments are read against the parameters'
+        // declared types once the program is checked.
+        assert_eq!(input.call.wire_arguments.len(), 2);
+        assert_eq!(input.call.wire_arguments[0].parameter, "a");
+        assert_eq!(input.call.wire_arguments[0].value, json!(2));
+        for file in ["program.native", "library.native", "model.json", "run.json"] {
+            std::fs::remove_file(directory.path().join(file)).unwrap();
+        }
+        let result = spine::run(
+            input.source.identity().clone(),
+            input.package_name,
+            input.source.path(),
+            input.source.text().as_bytes(),
+            &input.packages,
+            &input.dependencies,
+            SpineLimits::default(),
+            &input.call,
+            &Default::default(),
+            &Cancel::new(),
+        );
+        let outcome = OutcomeDocument::from_run(&result);
+        assert_eq!(outcome.category().exit_code(), native.exit_code);
+        let machine = document(&outcome);
+        assert_eq!(machine["category"], expected_category);
+        assert_eq!(native.value.as_value()["outcome"]["kind"], expected_kind);
+        if expected_kind == "completed" {
+            assert_eq!(
+                machine["result"]["value"],
+                native.value.as_value()["outcome"]["value"]
+            );
+            assert_eq!(machine["result"]["value"], json!({"boolean":true}));
+        } else {
+            assert_eq!(machine["result"]["kind"], "incomplete");
+            assert_eq!(machine["result"]["limit"]["counter"], "1");
+            assert_eq!(
+                machine["result"]["limit"]["setting"],
+                "accounting.work_units"
+            );
+        }
+    }
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-11")]
+fn intake_failures_have_their_original_codes_and_no_invented_stage() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = command::compile_outcome(&directory.path().join("missing.json"))
+        .err()
+        .expect("a missing request refuses");
+    let missing = document(&missing.outcome_document(Operation::Package));
+    assert_eq!(missing["last_stage"], Value::Null);
+    assert_eq!(missing["diagnostics"][0]["code"], "io-error");
+    assert_eq!(missing["category"], "refusal");
+
+    let path = directory.path().join("invalid.json");
+    std::fs::write(&path, b"{not-json").unwrap();
+    let malformed = command::prepare_run(&path, RunLimits::default())
+        .err()
+        .expect("malformed JSON refuses");
+    let malformed = document(&malformed.outcome_document(Operation::Execute));
+    assert_eq!(malformed["last_stage"], Value::Null);
+    assert_eq!(malformed["diagnostics"][0]["code"], "invalid-request");
+    assert_eq!(malformed["category"], "refusal");
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-11")]
+fn stage_refusals_preserve_the_reached_stage_and_available_location() {
+    for (body, stage, code, located) in [
+        (
+            "function f using v(): Int[0, 9] pure { 7\n",
+            "S1",
+            "invalid_syntax",
+            true,
+        ),
+        (
+            "function f using v(): Int[0, 9] pure { true }\n",
+            "S3",
+            "ill_typed",
+            true,
+        ),
+        (
+            "type Digit = Int[0, 9];\n",
+            "S4",
+            "unsupported_projection",
+            false,
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = compile_request(directory.path(), format!("{HEADER}{body}").as_bytes());
+        let error = command::compile_outcome(&path)
+            .err()
+            .expect("the stage refuses");
+        let native = error.artifact_value().unwrap();
+        let outcome = document(&error.outcome_document(Operation::Package));
+        assert_eq!(outcome["last_stage"], stage, "{outcome}");
+        assert_eq!(outcome["diagnostics"][0]["code"], code, "{outcome}");
+        assert_eq!(
+            outcome["diagnostics"][0]["locus"].is_object(),
+            located,
+            "{outcome}"
+        );
+        assert_eq!(
+            outcome["category"],
+            if code == "unsupported_projection" {
+                "unsupported"
+            } else {
+                "refusal"
+            }
+        );
+        assert_eq!(native["code"], code);
+    }
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-11", "TC-424", "FR-001-AC-16")]
+fn source_intake_retains_both_native_and_canonical_projections_of_one_failure() {
+    for (authority, identity, bytes, code, cause, label, region) in [
+        (
+            " ",
+            "unit",
+            b"ok".as_slice(),
+            "invalid_source_identity",
+            "blank-label",
+            Some("authority"),
+            None,
+        ),
+        (
+            "issuer",
+            "\u{3000}",
+            b"ok".as_slice(),
+            "invalid_source_identity",
+            "blank-label",
+            Some("identity"),
+            None,
+        ),
+        (
+            "issuer",
+            "unit",
+            b"a\xffb".as_slice(),
+            "invalid_utf8",
+            "invalid_utf8",
+            None,
+            Some((1, 1)),
+        ),
+        (
+            "issuer",
+            "unit",
+            b"\xef\xbb\xbftext".as_slice(),
+            "invalid_syntax",
+            "invalid-token",
+            None,
+            Some((0, 3)),
+        ),
+        (
+            "issuer",
+            "unit",
+            b"ab\0c".as_slice(),
+            "invalid_syntax",
+            "invalid-token",
+            None,
+            Some((2, 3)),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = compile_request(directory.path(), bytes);
+        let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        request["request"]["program"]["source"]["authority"] = json!(authority);
+        request["request"]["program"]["source"]["identity"] = json!(identity);
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let error = command::compile_outcome(&path)
+            .err()
+            .expect("source intake refuses");
+        let outcome = document(&error.outcome_document(Operation::Package));
+        assert_eq!(outcome["last_stage"], Value::Null);
+        assert_eq!(outcome["diagnostics"][0]["code"], code);
+        assert_eq!(outcome["diagnostics"][0]["cause"], cause);
+        assert_eq!(
+            outcome["diagnostics"][0]
+                .get("label")
+                .and_then(Value::as_str),
+            label
+        );
+        let locus = &outcome["diagnostics"][0]["locus"];
+        if let Some((start, end)) = region {
+            assert_eq!(locus["kind"], "region");
+            assert_eq!(locus["start"], start);
+            assert_eq!(locus["end"], end);
+        } else {
+            assert_eq!(locus, &Value::Null);
+        }
+        let original = fsl_foundation::Source::read(
+            SourceIdentity::new(authority, identity),
+            "program.native",
+            bytes,
+            8_388_608,
+        )
+        .unwrap_err();
+        let native = error.value().unwrap();
+        assert_eq!(native["stage"], "source");
+        assert_eq!(native["code"], original.code.as_str());
+        assert_eq!(native["message"], original.to_string());
+        assert_eq!(native["details"]["message"], original.message);
+        assert_eq!(
+            native["details"]["span"],
+            serde_json::to_value(original.span).unwrap()
+        );
+        assert_eq!(
+            native["details"]["source"],
+            serde_json::to_value(original.source).unwrap()
+        );
+    }
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-10")]
+fn preparation_does_not_compile_the_source_and_retains_caller_byte_limits() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = run_request(directory.path(), 1_000);
+    std::fs::write(
+        directory.path().join("program.native"),
+        b"not a native program",
+    )
+    .unwrap();
+    let PreparedRun::Function(prepared) =
+        command::prepare_run(&path, RunLimits::default()).unwrap()
+    else {
+        panic!("the request still selects a function");
+    };
+    assert_eq!(prepared.into_input().source.text(), "not a native program");
+    let request_bytes = std::fs::read(&path).unwrap().len();
+    let error = command::prepare_run(
+        &path,
+        RunLimits {
+            request_bytes: request_bytes - 1,
+            ..RunLimits::default()
+        },
+    )
+    .err()
+    .expect("the caller's request ceiling is used");
+    assert!(
+        matches!(error.cause, command::RunCause::Limit(command::LimitKind::RequestBytes { maximum })
+        if maximum == request_bytes - 1)
+    );
+    let error = command::prepare_run(
+        &path,
+        RunLimits {
+            dependent_bytes: 2,
+            ..RunLimits::default()
+        },
+    )
+    .err()
+    .expect("the caller's dependent ceiling is used");
+    assert!(matches!(
+        error.cause,
+        command::RunCause::Limit(command::LimitKind::DependentBytes { maximum: 2 })
+    ));
+}
+
+#[test]
+#[trace("TC-771", "FR-287-AC-11")]
+fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories() {
+    for (cause, spelling) in [
+        (filament_exact::CancelCause::Requested, "requested"),
+        (filament_exact::CancelCause::Deadline, "deadline"),
+    ] {
+        let error = command::RunError {
+            cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Cancelled(cause))),
+            sources: fsl_command::Sources::default(),
+        };
+        for (operation, spelling_operation) in [
+            (Operation::Execute, "execute"),
+            (Operation::Package, "package"),
+        ] {
+            let outcome = document(&error.outcome_document(operation));
+            assert_eq!(outcome["operation"], spelling_operation);
+            assert_eq!(outcome["last_stage"], Value::Null);
+            assert_eq!(outcome["category"], "incomplete");
+            assert_eq!(outcome["diagnostics"][0]["code"], "cancelled");
+            assert_eq!(outcome["diagnostics"][0]["cause"], spelling);
+        }
+    }
+    let error = command::RunError {
+        cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new("S6a", "test-invariant"),
+        ))),
+        sources: fsl_command::Sources::default(),
+    };
+    let outcome = document(&error.outcome_document(Operation::Execute));
+    assert_eq!(outcome["last_stage"], Value::Null);
+    assert_eq!(outcome["category"], "internal-failure");
+    assert_eq!(outcome["diagnostics"][0]["code"], "runtime_invariant");
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"],
+        "established-invariant-broken"
+    );
+}
+
+#[test]
+#[trace("TC-2455", "FR-865-AC-5")]
+fn clause_preparation_failure_retains_all_admitted_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.path().join("model.semantic-ir.json"), DOMAIN).unwrap();
+    std::fs::write(directory.path().join("library.native"), PROGRAM).unwrap();
+
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{
+                "format": "semantic-ir/2.0.0",
+                "source": {
+                    "file": "model.semantic-ir.json",
+                    "authority": "tests",
+                    "identity": "test:prepared-model",
+                    "document": "PreparedModel",
+                    "formal_revision": 1
+                }
+            }],
+            "libraries": [{
+                "identity": "test/library",
+                "source": {
+                    "file": "library.native",
+                    "authority": "tests",
+                    "identity": "test:prepared-library",
+                    "document": "PreparedLibrary",
+                    "formal_revision": 1
+                }
+            }],
+            "program": {"source": source()},
+            "clocks": {},
+            "clause": {
+                "selection": {
+                    "temporal": {
+                        "name": "Reaches",
+                        "trace": {"lasso": {"prefix": [], "loop": []}}
+                    }
+                },
+                "observations": {"missing": "missing-observation.json"}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "clause.json", request);
+    let error = command::prepare_run(&path, RunLimits::default())
+        .err()
+        .expect("the missing observation refuses after source admission");
+    let paths = error
+        .sources()
+        .as_slice()
+        .iter()
+        .map(fsl_foundation::Source::path)
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"program.native"), "{paths:?}");
+    assert!(paths.contains(&"model.semantic-ir.json"), "{paths:?}");
+    assert!(paths.contains(&"library.native"), "{paths:?}");
+}
+
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.path().join("model.semantic-ir.json"), DOMAIN).unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "model.semantic-ir.json", "authority": "tests",
+                "identity": "test:prepared-model", "document": "PreparedModel",
+                "formal_revision": 1
+            }}],
+            "program": {"source": source()},
+            "clause": {
+                "selection": {"temporal": {"name": "Reaches",
+                    "trace": {"lasso": {"prefix": [], "loop": []}}}},
+                "observations": {"missing": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "clause.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::prepare_run_with_overrides(
+        &path,
+        RunLimits::default(),
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+    )
+    .err()
+    .expect("the duplicate setting refuses before reading the missing observation");
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
+}
+
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_matches_the_in_request_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let bytes = std::fs::read(directory.path().join("spine-snapshot.json")).unwrap();
+    let maximum = (bytes.len() - 1) as u64;
+    let request = |with_limit| {
+        let mut clause = json!({
+            "selection": {"clause": {
+                "name": "ParentOrder",
+                "observation": "current",
+                "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                "anchor": {"kind": "handler", "name": "validate"}
+            }},
+            "observations": {"current": "spine-snapshot.json"}
+        });
+        if with_limit {
+            clause["observation_limits"] = json!({"document_bytes": maximum});
+        }
+        json!({
+            "format": "native-run/1",
+            "request": {
+                "models": [{"format": "semantic-ir/2.0.0", "source": {
+                    "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                    "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                    "formal_revision": 1
+                }}],
+                "program": {"source": {
+                    "file": "spine-unit.native", "authority": "agent-ix",
+                    "identity": "example:spine-unit.native", "document": "SpineUnit",
+                    "formal_revision": 1
+                }},
+                "clause": clause
+            }
+        })
+    };
+    let member = write_request(directory.path(), "member.json", request(true));
+    let bare = write_request(directory.path(), "bare.json", request(false));
+    let expected = command::run(&member, &crate::negotiation::Fr290).unwrap();
+    let limits = fsl_semantics::model::observation::ObservationLimits::default()
+        .with_document_bytes(maximum);
+    let actual = command::run_with_overrides(
+        &bare,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap();
+    assert_eq!(actual.value.as_value(), expected.value.as_value());
+    assert_eq!(actual.exit_code, expected.exit_code);
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn extracted_clause_observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let body = crate::config_version_spine::spine::unit_text();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        format!("# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{body}```\n"),
+    )
+    .unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                "formal_revision": 1
+            }}],
+            "program": {
+                "source": {"file": "spec.md", "authority": "agent-ix",
+                    "identity": "ix://agent-ix/spec", "document": "Doc", "formal_revision": 1},
+                "extraction": {"body": {"authority": "agent-ix", "identity": "body", "document": "Body"}},
+                "clauses": [{"clause": "ParentOrder", "package": "example/config-version"}]
+            },
+            "clause": {
+                "selection": {"clause": {
+                    "name": "ParentOrder", "observation": "current",
+                    "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                    "anchor": {"kind": "handler", "name": "validate"}
+                }},
+                "observations": {"current": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "extracted.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::run_with_overrides(
+        &path,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap_err();
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
+}
+
+#[test]
+#[trace("TC-2455", "FR-865-AC-5")]
+fn run_error_exposes_admitted_sources_for_text_rendering() {
+    let source = Source::read_typed(
+        SourceIdentity::new("tests", "run-error"),
+        "src/run-error.fsl",
+        b"rule value = true;\n",
+        128,
+    )
+    .unwrap_or_else(|_| panic!("fixture source is admitted"));
+    let error = command::RunError {
+        cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Cancelled(
+            filament_exact::CancelCause::Requested,
+        ))),
+        sources: fsl_command::Sources::from_sources([source]),
+    };
+
+    assert_eq!(error.sources().len(), 1);
+    assert_eq!(error.sources().as_slice()[0].path(), "src/run-error.fsl");
+    let _render_sources = fsl_command::render_sources(error.sources());
+}
+
+/// FR-622-AC-2 and FR-100-AC-21 (TC-1582): a function run's
+/// `spine-run-result/1` carries no `axes` member, because a function call has
+/// no obligation that activates.
+#[test]
+#[trace("TC-1582", "FR-622-AC-2")]
+#[trace("TC-1582", "FR-100-AC-21")]
+fn a_function_run_document_carries_no_axes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = run_request(directory.path(), 100_000);
+    let native = command::run(&path, &crate::negotiation::Fr290).unwrap();
+    let document = native.value.as_value();
+    assert_eq!(document["format"], "spine-run-result/1", "{document}");
+    assert!(document.get("axes").is_none(), "{document}");
+}
+
+/// The lifecycle document of a run request `member`, `fsl_replay::spine::run`
+/// over it as the driver calls it.
+fn run_document(function: &str, arguments: Value) -> OutcomeDocument {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    let path = write_request(
+        directory.path(),
+        "run.json",
+        json!({"format":"native-run/1", "request":{
+        "models":[], "program":{"source":source()},
+        "call":{"function":function, "arguments":arguments}}}),
+    );
+    let PreparedRun::Function(prepared) =
+        command::prepare_run(&path, RunLimits::default()).unwrap()
+    else {
+        panic!("a function selection remains a function");
+    };
+    let input = prepared.into_input();
+    let result = spine::run(
+        input.source.identity().clone(),
+        input.package_name,
+        input.source.path(),
+        input.source.text().as_bytes(),
+        &input.packages,
+        &input.dependencies,
+        SpineLimits::default(),
+        &input.call,
+        &Default::default(),
+        &Cancel::new(),
+    );
+    OutcomeDocument::from_run(&result)
+}
+
+/// FR-286-AC-1, FR-286-AC-5, FR-286-AC-6, TC-770: every lifecycle outcome
+/// document carries `category` and `last_stage`: a successful run, a
+/// violation, a refusal and an unsupported result, each with its category
+/// and the stage it reached (`null` where FR-286 defines none).
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn command_outcome_documents_include_category_and_last_stage() {
+    // A successful run reached S6a.
+    let success = document(&run_document(
+        "lt",
+        json!([{"parameter":"a","value":2},{"parameter":"b","value":5}]),
+    ));
+    assert_members(&success, "success", json!("S6a"));
+
+    // A violation: ConfigVersion's `ParentOrder` over the violating snapshot.
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Violating,
+    )
+    .unwrap();
+    let request = crate::config_version_spine::spine::request(
+        directory.path(),
+        crate::config_version_spine::Case::Violating,
+    )
+    .unwrap();
+    let report = spine::run_clause(request).unwrap();
+    let violation = document(
+        &OutcomeDocument::from_clause_runs(
+            Some(fsl_replay::OutcomeStage::S6a),
+            [("ParentOrder", &report)],
+        )
+        .unwrap(),
+    );
+    assert_members(&violation, "violation", json!("S6a"));
+
+    // A refusal: an unknown function stops at the call stage; an ill-typed
+    // source at the check stage.
+    let refusal = document(&run_document("nope", json!([])));
+    assert_members(&refusal, "refusal", json!("S6a"));
+    let directory = tempfile::tempdir().unwrap();
+    let path = compile_request(
+        directory.path(),
+        format!("{HEADER}function f using v(): Int[0, 9] pure {{ true }}\n").as_bytes(),
+    );
+    let error = command::compile_outcome(&path)
+        .err()
+        .expect("the stage refuses");
+    assert_members(
+        &document(&error.outcome_document(Operation::Package)),
+        "refusal",
+        json!("S3"),
+    );
+
+    // An unsupported result: a source the package stage cannot project.
+    let directory = tempfile::tempdir().unwrap();
+    let path = compile_request(
+        directory.path(),
+        format!("{HEADER}type Digit = Int[0, 9];\n").as_bytes(),
+    );
+    let error = command::compile_outcome(&path)
+        .err()
+        .expect("the stage refuses");
+    assert_members(
+        &document(&error.outcome_document(Operation::Package)),
+        "unsupported",
+        json!("S4"),
+    );
+}
+
+fn assert_members(document: &Value, category: &str, last_stage: Value) {
+    let members = document.as_object().unwrap();
+    assert!(members.contains_key("category"), "{document}");
+    assert!(members.contains_key("last_stage"), "{document}");
+    assert_eq!(document["category"], category, "{document}");
+    assert_eq!(document["last_stage"], last_stage, "{document}");
+}
+
+/// Negative: a result without either member fails the check above.
+#[test]
+#[should_panic(expected = "filament-outcome/1")]
+#[trace("TC-770", "FR-286-AC-1")]
+fn a_result_without_category_and_last_stage_fails_the_lifecycle_check() {
+    assert_members(
+        &json!({"format": "filament-outcome/1", "operation": "execute"}),
+        "success",
+        json!("S6a"),
+    );
+}

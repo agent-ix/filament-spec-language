@@ -3,45 +3,45 @@ id: US-018
 title: "Prove that a detailed model implements an abstract one"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-136
+  - target: ix://agent-ix/filament-spec-language/FR-136
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-137
+  - target: ix://agent-ix/filament-spec-language/FR-137
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-138
+  - target: ix://agent-ix/filament-spec-language/FR-138
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-143
+  - target: ix://agent-ix/filament-spec-language/FR-143
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-145
+  - target: ix://agent-ix/filament-spec-language/FR-145
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-146
+  - target: ix://agent-ix/filament-spec-language/FR-146
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-147
+  - target: ix://agent-ix/filament-spec-language/FR-147
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-148
+  - target: ix://agent-ix/filament-spec-language/FR-148
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-018: Prove that a detailed model implements an abstract one
 
 ## Story
 
-**As a** specification author who has a small abstract QSL model and a more
-detailed QSL model of the same system
+**As a** specification author who has a small abstract FSL model and a more
+detailed FSL model of the same system
 **I want** to write one refinement declaration that maps the detailed
-model's state and steps onto the abstract model's, and have QSL check that
+model's state and steps onto the abstract model's, and have FSL check that
 every behaviour of the detailed model is a behaviour of the abstract one up
 to stuttering, with the abstract model's fairness where I ask for it
 **So that** I verify the design in layers, I get a counterexample that
@@ -111,7 +111,7 @@ protocol subject.
 ## Priority and Risk (Informative)
 
 Priority: High. Layered refinement is how TLA+ users verify designs, and
-step labels let QSL refute bugs that a state-only mapping reads as
+step labels let FSL refute bugs that a state-only mapping reads as
 stuttering.
 
 ## Traceability (Informative)

@@ -3,7 +3,7 @@ id: TC-548
 title: "The liveness half reads abstract fairness through the mapping under concrete fairness"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-143
+  - target: ix://agent-ix/filament-spec-language/FR-143
     type: verifies
 ---
 # TC-548: The liveness half reads abstract fairness through the mapping under concrete fairness

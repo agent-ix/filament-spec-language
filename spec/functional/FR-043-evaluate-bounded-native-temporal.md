@@ -3,23 +3,23 @@ id: FR-043
 title: "Evaluate bounded native temporal obligations under one selected profile"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-003, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-045, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: references }
-  - { target: ix://agent-ix/quire-specification/FR-090, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-091, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-092, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-094, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-048, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-003, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-045, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: references }
+  - { target: ix://agent-ix/filament-specification/FR-090, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-091, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-092, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-094, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-048, type: references }
 ---
 # FR-043: Evaluate bounded native temporal obligations under one selected profile
 
 ## Description
 
-When a caller supplies an admitted `quire.compiled-protocol/1` temporal body or
-a strict `quire.compiled-protocol/2` package (FR-050), its
+When a caller supplies an admitted `filament.compiled-protocol/1` temporal body or
+a strict `filament.compiled-protocol/2` package (FR-050), its
 exactly one selected temporal profile and an independently supplied observation
 trace, the evaluator SHALL return the obligation's truth, settlement basis, exact
 decision support and retained premises, or a located incomplete or refused result
@@ -28,7 +28,7 @@ that names the affected dimension.
 ## Semantic authority and boundary
 
 Agent E owns native temporal meaning through
-`ix://agent-ix/quire-specification/FR-090`, `FR-091`, `FR-092` and `FR-094`.
+`ix://agent-ix/filament-specification/FR-090`, `FR-091`, `FR-092` and `FR-094`.
 This requirement SHALL NOT define a native temporal interpretation of its own: it
 specifies the compiler's evaluation of the artifact it emits. Each Behavior
 subsection below names the owned rule it restates, and where an owned rule and
@@ -36,10 +36,10 @@ this evaluator diverge, the owned rule governs and this requirement is defective
 
 | Behavior subsection | Owned source |
 | --- | --- |
-| Profile and clock selection | `ix://agent-ix/quire-specification/FR-090` Behavior; the three profile definition artifacts |
+| Profile and clock selection | `ix://agent-ix/filament-specification/FR-090` Behavior; the three profile definition artifacts |
 | Operators — the eight bounded operators, inclusive intervals, `once[1,1]` | temporal-common.md "Temporal forms and obligations"; FR-091, FR-092 |
 | Operators — lower-bound convention and the release/triggered duals | FR-091-AC-3, FR-092-AC-3; temporal-common.md until/since rule |
-| Operators — order-sensitive refusal on equal coordinates | `ix://agent-ix/quire-specification/FR-090`-AC-4; temporal-timestamped-window.md |
+| Operators — order-sensitive refusal on equal coordinates | `ix://agent-ix/filament-specification/FR-090`-AC-4; temporal-timestamped-window.md |
 | Atoms, constants and boundaries | FR-091-AC-2, FR-092-AC-2; the three profile definition artifacts |
 | Progress, closure and settlement | FR-094 Behavior and FR-094-AC-1..AC-8; FR-091-AC-4 |
 
@@ -55,7 +55,7 @@ independence of the four axes by Test.
 ### Ratified semantic rulings
 
 The merged native-temporal architecture and semantic amendment in
-`quire-specification` PR #23 ratifies pointwise `not`, `and`, `or` and
+`filament-specification` PR #23 ratifies pointwise `not`, `and`, `or` and
 `implies` at every offset the enclosing operator ranges over. It also ratifies
 that a resource ceiling affects only the obligation whose required work could
 not be completed: an already-settled sibling retains its truth, basis and exact
@@ -122,12 +122,12 @@ map is not an input of this route. The result is read from the request's
 values alone; an atom the formula needs that the request does not value at a
 position is missing-valuation incompleteness, never `false` (FR-516-AC-43).
 
-QSL checks the request only against values QSL itself holds: the selected
+FSL checks the request only against values FSL itself holds: the selected
 occurrence SHALL be an occurrence of the clause node (`occurrence-unknown`,
 FR-516), and every valuation key SHALL be an atom of the clause's formula
 (`valuation-atom-unknown`, FR-516). A failing request returns
 `Err(CallFailure::Admission)` with that cause, an empty charge log and no
-result. QSL does not authenticate observation evidence (FR-516): the
+result. FSL does not authenticate observation evidence (FR-516): the
 `observation` references are opaque, compared with nothing and echoed byte
 for byte. The retired native route's per-row `Refusal::Valuation` and its
 causes are ruled under "Retired and moved criteria" below.
@@ -169,13 +169,13 @@ The evaluator SHALL retain the declared clock parameters in the result premises,
 so that a changed period, epoch, unit or sequence authority yields a distinct
 result identity and refuses reuse of an earlier result.
 
-A `quire.compiled-protocol/1` body carries a clock binding name and the selected
+A `filament.compiled-protocol/1` body carries a clock binding name and the selected
 definition entry's identity and revision, and no declared period, epoch, unit or
 sequence authority. The `/1` entry points (`temporal::evaluate`,
 `evaluate_with_progress`) that retained those trace values as unauthenticated
 premises are retired (QSL-858 PR 1).
 
-A strict `quire.compiled-protocol/2` package (FR-050) carries each temporal
+A strict `filament.compiled-protocol/2` package (FR-050) carries each temporal
 declaration's binding: its definition identity and revision, and one typed clock
 configuration. The evaluator SHALL authenticate the trace against that binding
 before it visits any position (the `/2` entry points `evaluate_artifact_v2` and
@@ -202,14 +202,14 @@ its report: the admitted package identity and version, the declaration, the defi
 identity and revision, the clock binding name and the exact parameter map. The
 definition identity and revision are authenticated by the strict `/2` reader
 against the supplied definition entry (FR-050), so a `/2` result
-satisfies `ix://agent-ix/quire-specification/FR-090`-AC-2 for every clock
+satisfies `ix://agent-ix/filament-specification/FR-090`-AC-2 for every clock
 parameter and the definition identity.
 
 The evaluator SHALL interpret one interval tick as one admitted semantic-event
-position under `quire.temporal.event-position.false-extension/v1`, one declared
-sample under `quire.temporal.fixed-sample.false-extension/v1`, and one tick of
+position under `filament.temporal.event-position.false-extension/v1`, one declared
+sample under `filament.temporal.fixed-sample.false-extension/v1`, and one tick of
 the declared timestamp unit under
-`quire.temporal.timestamped-event.finite-window/v1`.
+`filament.temporal.timestamped-event.finite-window/v1`.
 
 ### Operators
 
@@ -359,7 +359,7 @@ request of FR-516, and each part of the old text is ruled here.
   own `captures`, refused as FR-524's `surplus-capture` when it carries a fact
   the clause does not capture.
 - **AC-16 `RevisionMismatch`:** retired. The request carries no per-value
-  revision: each position carries an opaque `observation` reference that QSL
+  revision: each position carries an opaque `observation` reference that FSL
   echoes and does not authenticate (FR-516-AC-9). For a caller that carries
   the evidence and progress ledgers, a replayed correction is refused by
   FR-526's `unchanged-input` and predecessor rules and a regressing progress
@@ -385,7 +385,7 @@ request of FR-516, and each part of the old text is ruled here.
 - **Constrained by**:
   [NFR-008](../non-functional/NFR-008-bound-temporal-evaluation.md).
 - **Upstream**: [FR-050](./FR-050-publish-authenticated-temporal-artifacts.md)
-  emits and strictly reads the `quire.compiled-protocol/2` package whose
+  emits and strictly reads the `filament.compiled-protocol/2` package whose
   temporal bindings carry the definition identity and revision and clock configuration the `/2`
   entry points authenticate (FR-050-AC-6). A `/1` result retains its clock
   parameters as unauthenticated premises, and no temporal-to-TL correspondence

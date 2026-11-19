@@ -3,7 +3,7 @@ id: TC-252
 title: "Checked type node to kernel ValueType is total, tested per type-node form including a sum"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-252: Checked type node to kernel ValueType is total, tested per type-node form including a sum
@@ -43,7 +43,7 @@ preservation rule. Scope: FR-088-AC-9, FR-088-AC-10.
    the enum's node id and every variant's `VariantId` are unchanged; reorder
    the declared variants of an ordered enum and confirm the enum's node id
    and every variant's `VariantId` change, because the ordered member list
-   is part of the enum's declaration identity (QSpec FR-141).
+   is part of the enum's declaration identity (FSpec FR-141).
 7. Add a checked type-node form to the checker's admitted set (a test-only
    addition) with no corresponding C-26 match arm, and confirm the crate
    fails to compile (`clippy::wildcard_enum_match_arm` or an equivalent

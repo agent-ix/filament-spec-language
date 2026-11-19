@@ -3,11 +3,11 @@ id: FR-032
 title: "Run the named ConfigVersion workflow"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-025
+  - target: ix://agent-ix/filament-spec-language/FR-025
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-031
+  - target: ix://agent-ix/filament-spec-language/FR-031
     type: references
 ---
 ## Description

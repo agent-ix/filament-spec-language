@@ -3,7 +3,7 @@ id: TC-453
 title: "Exploration orders successors canonically and keys states by their JCS bytes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: verifies
 ---
 # TC-453: Exploration orders successors canonically and keys states by their JCS bytes
@@ -20,7 +20,7 @@ frontier.
 
 ## Test Procedure
 
-Every step is an integration test in `qsl-eval/tests/it/` through the
+Every step is an integration test in `fsl-eval/tests/it/` through the
 public entries; `explore` is `pub(crate)` (FR-101).
 
 1. Call `explore_request` with an empty `domains` set, `max_depth` 1, on a system whose state 0 lists transitions

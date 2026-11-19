@@ -3,7 +3,7 @@ id: TC-584
 title: "Reduced proofs, reduction causes, depth and refutations settle through the one map"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-160
+  - target: ix://agent-ix/filament-spec-language/FR-160
     type: verifies
 ---
 # TC-584: Reduced proofs, reduction causes, depth and refutations settle through the one map

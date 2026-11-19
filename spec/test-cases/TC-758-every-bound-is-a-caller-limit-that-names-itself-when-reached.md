@@ -3,7 +3,7 @@ id: TC-758
 title: "Every bound is a caller limit that names itself when reached"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: verifies
 ---
 # TC-758: Every bound is a caller limit that names itself when reached

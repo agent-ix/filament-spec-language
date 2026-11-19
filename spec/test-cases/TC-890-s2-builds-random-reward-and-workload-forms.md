@@ -3,7 +3,7 @@ id: TC-890
 title: "S2 builds random, reward and workload declaration forms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-311
+  - target: ix://agent-ix/filament-spec-language/FR-311
     type: verifies
 ---
 # TC-890: S2 builds random, reward and workload declaration forms

@@ -3,36 +3,40 @@ id: FR-312
 title: "Read a clause-run request and run it through run_clause"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-014
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/US-014
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-267
+  - target: ix://agent-ix/filament-spec-language/FR-267
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-031
+  - target: ix://agent-ix/filament-spec-language/FR-031
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-641
     type: references
 ---
 # FR-312: Read a clause-run request and run it through run_clause
 
 ## Description
 
-QSL SHALL provide `qsl_replay::spine::read_clause_run_request`, which reads a
+FSL SHALL provide `fsl_replay::spine::read_clause_run_request`, which reads a
 clause-run request file and the files it names into FR-109's
-`ClauseRunRequest`. The request shape is QSL's. The `run` command
+`ClauseRunRequest`. The request shape is FSL's. The `run` command
 ([FR-100](FR-100-run-a-named-function-through-the-spine.md)) and the
-orchestrating driver (agent-ix/quire-driver, ADR-011 T-13) expose it: each
+orchestrating driver (agent-ix/filament-driver, ADR-011 T-13) expose it: each
 passes the request file to this reader, calls
-`qsl_replay::spine::run_clause` (FR-109) with the result, and writes the
+`fsl_replay::spine::run_clause` (FR-109) with the result, and writes the
 report as FR-267's `native-run-result/2` clause-run document. Neither forms
 a `ClauseRunRequest` any other way.
 
@@ -61,23 +65,32 @@ place of `call`. `clause` is a closed object:
     parameter map (including `{}` when empty). An invocation document
     carries its own `self` and call context;
   - `{"frame": {"operation": Op, "invocation": K}}`, FR-115's frame
-    selection;
+    selection, which also evaluates the operation's own `requires` and
+    `ensures` (FR-702);
   - `{"function": {"name": N, "arguments": A, "snapshot": K}}`, FR-109's
-    `Function` selection, with `A` as FR-109 states;
-  - `{"temporal": {"name": N, "trace": T, "over": R}}`, FR-330's
-    `Temporal` selection. `T` is exactly one of `{"finite": [K, ...]}`
-    (`TraceInput::Finite`) and `{"lasso": {"prefix": [K, ...], "loop":
-    [K, ...]}}` (`TraceInput::Lasso`), each `K` an `observations` key, in
-    position order. `R` is FR-330's `{"reference": {"population": P,
+    `Function` selection, with `A` as FR-109 states and each argument
+    `value` in FR-650's run value form;
+  - `{"context": {...}}`, FR-652's state-machine context selection
+    (FR-106 `Context`);
+  - `{"temporal": {"name": N, "trace": T, "over": R, ...}}`, FR-330's
+    `Temporal` selection. `T` is exactly one of FR-641's trace kinds:
+    `{"finite": [K, ...]}` (`TraceInput::Finite`), `{"lasso": {"prefix": [K,
+    ...], "loop": [K, ...]}}` (`TraceInput::Lasso`), `model`, `progressed`,
+    `timestamped` and `timed` ([FR-641](FR-641-carry-every-temporal-trace-kind-and-the-progress-ledger-on-the-run-request.md),
+    [FR-642](FR-642-run-a-timed-clause-over-a-recorded-timed-trace.md)), each
+    position `K` an `observations` key or an FR-641 record sample, in
+    position order. The selection may also carry FR-641's `ledger` and FR-985's correction members `relation`, `evidence_ledger` and `admit_late`. `R` is FR-330's `{"reference": {"population": P,
     "key": K}}`, with `P` the population's declaration identity text and
     `K` the object's key. The permitted member sets are exactly
-    `{name, trace, over}`, `{finite}` or `{lasso}` for `trace`, and
-    `{prefix, loop}` for `lasso`;
+    `{name, trace, over, ledger, relation, evidence_ledger, admit_late}`
+    (`over` as FR-641 requires it, the others optional, the last three on a
+    `timestamped` trace only, FR-985), one FR-641 member for `trace`, and `{prefix, loop}` for
+    `lasso`;
 - `observations`: an object mapping each key to the file of a
-  `quire.state.snapshot/v1` or `quire.state.invocation/v1` document
+  `filament.state.snapshot/v1` or `filament.state.invocation/v1` document
   (FR-106);
 - `accounting`: optional, a closed object whose members are any subset of
-  the ten `quire.value.accounting/v1` counter names, each a JSON integer
+  the ten `filament.value.accounting/v1` counter names, each a JSON integer
   from 0 to `u64::MAX`, with the same defaults as FR-100's
   `call.accounting`; a counter supplied here overrides only that counter's
   default. A direct `work_units` member of `clause` is not accepted;
@@ -92,31 +105,35 @@ package and dependency inputs.
   ClauseRunRequestRefusal>`.
 - `command`'s `run` returns the report as one `native-run-result/2`
   clause-run result document (FR-267), with FR-285's exit code of the
-  disposition's category (FR-109, QSpec FR-301), and writes nothing to the
+  disposition's category (FR-109, FSpec FR-301), and writes nothing to the
   process streams; the driver writes that document to stdout (FR-287,
   Overlap).
 
 ## Behavior
 
-- The clause request reader SHALL retain the three existing selection
-  shapes and FR-109's Boolean `function` claim semantics. FR-100's shared
-  Value carriers are in-process carriers, not additional JSON argument
-  variants of this reader. A Reference-result function belongs to the
-  existing public Value `run` boundary; this reader SHALL NOT select it as
-  a Boolean claim, invent a Population wire payload, or form a default
-  model context to stand in for admission. The driver's TC-792 typed call
-  requires actual consumer integration with that reviewed Rust boundary.
+- The clause request reader SHALL retain the existing selection shapes and
+  FR-109's Boolean `function` claim semantics. A `function` selection's
+  arguments are read in FR-650's run value form, so every argument kind a
+  value call admits is admitted here, resolved in the selection's snapshot.
+  A Reference-result function belongs to the value `run` boundary; this
+  reader SHALL NOT select it as a Boolean claim or form a default model
+  context to stand in for admission.
+- The reader SHALL accept FR-652's `context` selection as a `selection`.
+  FR-652's `value_invariants` selection and FR-651's population selector
+  produce several items and are carried by an FR-651 `items` request; in a
+  `clause` request they refuse `invalid-request` naming the member.
 - The reader SHALL decode `clause` under FR-100's closed-envelope rules:
   unknown and duplicate members and positional record arrays refuse
   `invalid-request` at stage `request`, naming the member.
-- If a `1-draft` request carries both `call` and `clause`, or neither, then
-  the reader SHALL refuse `invalid-request` at stage `request`.
-- When `qsl-replay` is built with `quire-extraction` and the request's
+- If a `1-draft` request carries more than one of `call`, `clause` and
+  `items` (FR-651), or none, then the reader SHALL refuse `invalid-request`
+  at stage `request`.
+- When `fsl-replay` is built with `quire-extraction` and the request's
   `program` carries `extraction`, the reader SHALL decode `extraction` and
   `clauses`, check the request's mode, build and validate the clause-only
   Quire context, extract the body through FR-030 and put the extracted
   source in the `ClauseRunRequest` as its unit, as FR-031 states. Its mode,
-  context and extraction refusals are FR-031's. When `qsl-replay` is built
+  context and extraction refusals are FR-031's. When `fsl-replay` is built
   without that feature, the reader SHALL refuse `extraction` as an unknown
   member.
 - If `selection` holds no variant, more than one, or a variant whose
@@ -141,14 +158,12 @@ package and dependency inputs.
   `Temporal{name, trace, over}` with one FR-106 `DocumentRef` per trace
   key, in the order the request lists the keys; a key listed twice names
   the same document at both positions. Each key SHALL name a
-  `quire.state.snapshot/v1` document whose observation role is `current`;
+  `filament.state.snapshot/v1` document whose observation role is `current`;
   an invocation document or another role refuses `invalid-request` at
-  stage `request`, naming `trace`. A `trace` variant other than `finite`
-  and `lasso` (a model trace, FR-330's `TraceInput::Model`, and a timestamped
-  trace, FR-330's `TraceInput::Timestamped`, are built in process only: the
-  request file has no member for a stamp, an order key, a progress assertion or
-  a cover) refuses `invalid-request` at stage `request`, naming
-  `trace`. The reader checks no trace length: an empty `finite` array or
+  stage `request`, naming `trace`. Every other trace kind, its record
+  samples and the `ledger` file SHALL be read as FR-641 states; a `trace`
+  member that is not one of FR-641's kinds, or a kind missing a required
+  member, refuses `invalid-request` at stage `request`, naming the member. The reader checks no trace length: an empty `finite` array or
   an empty `loop` reaches FR-330, which refuses it at stage `evaluate`.
 - The reader SHALL read each observation file once, under FR-100's
   `dependent_bytes` limit and relative to the request file's directory.
@@ -163,6 +178,40 @@ package and dependency inputs.
   outcome carrying FR-267's command-error envelope as its refusal envelope
   and no result document, with the refusal code's exit code.
 
+### The observation size limit has one name and one result shape
+
+FR-255 names the observation document byte ceiling `observation.input_bytes`
+(`ObservationLimits::document_bytes`). A caller sets it in two places, and
+both are the same setting:
+
+- the request member `clause.observation_limits.document_bytes`;
+- the run command's caller limits: the `observation` member of the
+  `CallerLimits` that FR-255's settings operation returns for the driver's
+  `fsl run --limit observation.input_bytes=<n>` operand, passed to the run
+  entry as `RequestOverrides::observation` beside the request file, as
+  `clocks` and `limits` are (FR-640, FR-869).
+
+The two SHALL give the same run. A run in which either sets the ceiling to
+`B` SHALL produce the same outcome document, byte for byte, as the run in
+which the other sets it to `B`. A request that sets
+`clause.observation_limits.document_bytes` while the caller also supplies
+`RequestOverrides::observation` SHALL refuse `invalid-request` at stage
+`request` naming `observation_limits`, as `clocks` given twice is refused, so
+no run depends on which of two bounds wins.
+
+An observation file longer than the ceiling SHALL settle the clause item
+`incomplete` with FR-255 Behavior 1's `stage_limit_exceeded` record: `kind`
+`input bytes`, `bound` the configured ceiling, `actual` the file's byte count,
+and `setting` `observation.input_bytes`, exit 22. The file is not read past
+the ceiling. This is the one shape of the limit at every entry point: the
+request member, the caller limits and the default ceiling all produce it,
+and none produces a top-level `resource_exhausted` diagnostic or a refusal
+envelope instead. The rendered hint SHALL name the setting the `--limit`
+option accepts, `--limit observation.input_bytes=<n>`, and the request
+member `clause.observation_limits.document_bytes`, and SHALL never name
+`observation.document_bytes`, which is no setting name and which the
+settings operation refuses as an unknown setting.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -174,7 +223,9 @@ package and dependency inputs.
 | FR-312-AC-5 | A current clause request with `self` and `anchor` constructs FR-106 `Current` and checks the supplied anchor against the snapshot; a pre clause request with `parameters` and, for an object receiver, `self` constructs `PreCall`; a current or pre request without `self` constructs the selection with no `self`, and admission refuses it as `wrong-observation` at stage `admit` when the receiver is an object; a pre request without `self` for a state machine's precondition admits, and a state machine's invariant selected by `Current` is refused by FR-106-AC-46 (it is selected by `Context`); an invocation clause request constructs `Invocation` and reads `self` from that document. Omitting `anchor` from a current request or `parameters` from a pre request, or adding a role-forbidden member, refuses `invalid-request` at stage `request`, naming that member, before `run_clause`. Selecting a post snapshot or a document with an unrecognized format or observation role refuses `invalid-request` at stage `request`, naming `observation`. | Test |
 | FR-312-AC-6 | A clause request's `accounting` object accepts all ten counter names and passes their values unchanged to `ClauseRunRequest.accounting`; omitted `accounting` uses the FR-100 defaults. A direct `work_units` member of `clause` refuses `invalid-request` at stage `request`, exit 20, no result document. | Test (TC-891) |
 | FR-312-AC-7 | Through `run`, a request selecting `{"temporal": {"name": "Reaches", "trace": {"lasso": {"prefix": [], "loop": ["s0", "s1"]}}, "over": {"reference": {"population": P, "key": "c1"}}}}` over FR-330-AC-2's `Counter` snapshots `s0` (`c.value` 0), `s1` (1) and `s2` (2) returns the `/2` document FR-267-AC-13 states, exit 10; with loop `["s0", "s1", "s2"]` it returns `success`, exit 0, byte-identical to the report of the same `ClauseRunRequest` built in process. A trace key naming an invocation document or a pre snapshot, a `trace` of `{"model": {}}`, a `trace` holding both `finite` and `lasso`, and an unknown member in `temporal` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `trace` or the member. A `finite` array of zero keys reaches FR-330 and reports stage `evaluate`, `refusal`, `invalid_runtime_input`/`invalid-value`. | Test (TC-1160) |
-| FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming `trace`, and no result document is written. | Test (TC-1160) |
+| FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming the missing `observations` member of `trace.timestamped`, and no result document is written; a complete `timestamped` trace is read as FR-641 states (FR-641-AC-1). | Test (TC-1160) |
+| FR-312-AC-9 | Through `run`, FR-108's healthy-parent clause-run request whose snapshot file is `n` bytes, with `clause.observation_limits.document_bytes` `n - 1` and a `dependent_bytes` above `n`, exits 22 with one clause item settled `incomplete` whose cause is `stage_limit_exceeded` with `kind` `input bytes`, `bound` `n - 1`, `actual` `n` and `setting` `observation.input_bytes`; the document carries no `resource_exhausted` diagnostic and no refusal envelope; the rendered hint contains `--limit observation.input_bytes=` and not `observation.document_bytes`; at `document_bytes` `n` the clause runs and exits 0. | Test (TC-2982) |
+| FR-312-AC-10 | The AC-9 request without `observation_limits`, run with `RequestOverrides::observation` carrying `document_bytes` `n - 1` (the `observation` member of `CallerLimits::from_operands(["observation.input_bytes=<n - 1>"])`), gives an outcome document byte-equal to AC-9's; the AC-9 request run with that override as well refuses `invalid-request` at stage `request` naming `observation_limits`, exit 20, before any observation file is read. | Test (TC-2982) |
 
 The existing AC-1 through AC-5 test-case association remains TC-891;
 method-only Verification cells do not replace the existing trace tags.
@@ -192,7 +243,7 @@ method-only Verification cells do not replace the existing trace tags.
   `Temporal` selection, its trace input and `over` binding.
 - [FR-267](FR-267-write-run-results-as-native-run-result-2.md): the `/2`
   clause-run document and the command-error envelope.
-- QSpec FR-301 (exit codes).
+- FSpec FR-301 (exit codes).
 
 ## Status
 

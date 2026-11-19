@@ -3,7 +3,7 @@ id: TC-1008
 title: "Equality of variant values is by case, never a fault, and reaches nested values"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-360
+  - target: ix://agent-ix/filament-spec-language/FR-360
     type: verifies
 ---
 # TC-1008: Equality of variant values is by case, never a fault, and reaches nested values

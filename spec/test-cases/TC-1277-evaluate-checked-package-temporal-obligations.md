@@ -3,9 +3,9 @@ id: TC-1277
 title: "Evaluate temporal obligations through checked-package admission"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-043
+  - target: ix://agent-ix/filament-spec-language/FR-043
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-044
+  - target: ix://agent-ix/filament-spec-language/FR-044
     type: verifies
 ---
 # TC-1277: Evaluate temporal obligations through checked-package admission
@@ -19,7 +19,7 @@ those checked nodes directly with independently constructed traces. TC-122 and
 TC-123 remain the legacy emitted-artifact controls. The checked route does not
 relabel their procedures or replace their evidence.
 
-The controls of the v1 checked evaluator, `tests/it/checked_temporal_successors.rs`, and its strict version-2 authentication control were retired by QSL-858 PR 1; the procedures below are carried by the qsl-eval successor tests FR-525 names, and the classification controls are `tests/it/mapping_support.rs` and the `qsl-package` mapping tests. Each checked formula test derives its
+The controls of the v1 checked evaluator, `tests/it/checked_temporal_successors.rs`, and its strict version-2 authentication control were retired by QSL-858 PR 1; the procedures below are carried by the fsl-eval successor tests FR-525 names, and the classification controls are `tests/it/mapping_support.rs` and the `fsl-package` mapping tests. Each checked formula test derives its
 valuation handles from the checked graph and supplies its expected result
 independently of the evaluator's output.
 

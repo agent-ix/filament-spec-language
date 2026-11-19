@@ -3,7 +3,7 @@ id: TC-622
 title: "ModelSystem gives actions, step probabilities and rewards, and reports NotMarkov"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-187
+  - target: ix://agent-ix/filament-spec-language/FR-187
     type: verifies
 ---
 # TC-622: ModelSystem gives actions, step probabilities and rewards, and reports NotMarkov

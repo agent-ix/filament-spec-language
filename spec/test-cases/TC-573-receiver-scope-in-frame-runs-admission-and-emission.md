@@ -3,7 +3,7 @@ id: TC-573
 title: "The receiver scope holds in the Frame run and admission, and in the emitted frame node"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-154
+  - target: ix://agent-ix/filament-spec-language/FR-154
     type: verifies
 ---
 # TC-573: The receiver scope holds in the Frame run and admission, and in the emitted frame node

@@ -3,35 +3,35 @@ id: FR-170
 title: "Replay state-graph evidence through ModelSystem"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-020
+  - target: ix://agent-ix/filament-spec-language/US-020
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-022
+  - target: ix://agent-ix/filament-spec-language/ADR-022
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-072
+  - target: ix://agent-ix/filament-spec-language/FR-072
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
 ---
 # FR-170: Replay state-graph evidence through ModelSystem
 
 ## Description
 
-QSL SHALL replay state-graph evidence through `qsl-replay`'s replay facade
-(FR-098, ADR-029 CB-2) at ADR-011 E9: `qsl_replay::replay_model_graph` takes FR-098's
+FSL SHALL replay state-graph evidence through `fsl-replay`'s replay facade
+(FR-098, ADR-029 CB-2) at ADR-011 E9: `fsl_replay::replay_model_graph` takes FR-098's
 request with the subject's inputs and a `GraphEvidenceEnvelope` carried by
 `ReplaySource::ModelGraph` (ADR-022 GX-1). The envelope's checked claim
 occurrence and obligation identity select the claim; the request has no
@@ -109,7 +109,7 @@ pub enum GraphEvidence {
 - For a trap, the replay result also carries the closure exploration's
   node count and, when the closure holds a target node, the first such
   node in FR-101 canonical breadth-first order of that exploration, as its
-  `quire.simulation.state-key/v1` state key.
+  `filament.simulation.state-key/v1` state key.
 
 ## Behavior
 
@@ -167,7 +167,7 @@ pub enum GraphEvidence {
   closure check: a trap carries no certificate, and no certificate
   checker's rule settles it (FR-282). A node of the closure where the target
   evaluates `Undefined` SHALL settle `inconclusive`, `Verdicts`: the engine
-  would have reported it as `Undefined` evidence (QSpec FR-391), not as a
+  would have reported it as `Undefined` evidence (FSpec FR-391), not as a
   trap. Exploration a limit stops SHALL return the replay result stopped, naming
   the limit, its value and its setting, which FR-169 settles V-7
   `incomplete`, `LimitReached` (ADR-018 V-7).
@@ -233,15 +233,15 @@ pub enum GraphEvidence {
 - [FR-098](FR-098-execute-a-replay-request.md),
   [FR-070](FR-070-implement-typed-counterexample-witness-envelope.md),
   [FR-072](FR-072-implement-typed-replay-result.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (`replay`, `explore_request`),
   [FR-120](FR-120-simulate-a-checked-package-s-state-family.md),
   [FR-128](FR-128-replay-a-model-counterexample.md) (shared refusals and
   `ModelStep`).
-- QSpec owns the `GraphEvidence` wire and its replay rules, and exhaustive
+- FSpec owns the `GraphEvidence` wire and its replay rules, and exhaustive
   exploration from a recorded state (ADR-022 QS-5, QS-6).
 
 ## References
 
-- ADR-022. QSpec half: QSpec FR-393 and FR-394 (Linear STD-135; ADR-022
+- ADR-022. FSpec half: FSpec FR-393 and FR-394 (Linear STD-135; ADR-022
   QS-5, QS-6).

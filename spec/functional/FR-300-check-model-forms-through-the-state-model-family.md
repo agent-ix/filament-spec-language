@@ -3,25 +3,25 @@ id: FR-300
 title: "Check model expression forms through the StateModel family"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/US-006
+  - target: ix://agent-ix/filament-spec-language/US-006
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-063
+  - target: ix://agent-ix/filament-spec-language/FR-063
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-151
+  - target: ix://agent-ix/filament-specification/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-153
+  - target: ix://agent-ix/filament-specification/FR-153
     type: depends_on
 ---
 # FR-300: Check model expression forms through the StateModel family
@@ -42,8 +42,8 @@ at S3, the checker SHALL report that refusal with a `StateModel`-owned cause.
   navigation `r.name`, `NodeKind::Navigate`, [FR-363](FR-363-type-navigation-over-a-relationship-end.md)),
   `allInstances<T>(p)`, `lookup<T>(p, r) absent m`, `reaches` inside a clause, or a
   dispatched call
-  `receiver.member(args)` (QSpec FR-151 rule
-  `quire.model.dispatch.single/v1`).
+  `receiver.member(args)` (FSpec FR-151 rule
+  `filament.model.dispatch.single/v1`).
 - The shared `CheckContext` the enclosing family's typer holds, including the
   unit's admitted model effective view and its `TypeEnvironment`
   ([FR-082](FR-082-resolve-conformance-subsetting-and-redefinition.md)).
@@ -73,8 +73,8 @@ population, snapshot or universe.
 
 Every refusal the hook raises SHALL carry `FamilyKind::StateModel`. Its
 catalog code SHALL render with the `state-model` family prefix (the
-`FamilyKind::StateModel` arm of `catalog_code()`), and its QSpec code and
-cause SHALL be the ones QSpec FR-151 and FR-153 fix for that question. An
+`FamilyKind::StateModel` arm of `catalog_code()`), and its FSpec code and
+cause SHALL be the ones FSpec FR-151 and FR-153 fix for that question. An
 absent declaration or state-clause anchor uses `missing_declaration`/
 `missing-name`; a field absent from the effective static type of a
 dereferenced object uses `ill_typed`/`type-mismatch` (FR-056-AC-9), as does a
@@ -98,8 +98,8 @@ part in no S6a seam (ADR-016 FP-3).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-300-AC-1 | For each of the five model forms, a unit whose form is well-typed compiles, and the form's checked node and static type are the ones QSpec FR-151 and FR-153 fix (`deref` typed by its declared field type, `allInstances<T>(p)` as `Set<Reference<T>>[0,N]` for `p: Population<T>[N]` or unbounded `Set<Reference<T>>` for `p: Population<T>`, `lookup<T>(p, r) absent m` as `Reference<T>` for `undefined` or `refused` and `Option<Reference<T>>` for `empty`). | Test |
-| FR-300-AC-2 | For each of the five model forms, an ill-formed instance (a read of a member the static type does not declare, a `lookup` key whose static type does not conform, a dispatched call to an undeclared operation) refuses at S3 with a cause whose family is `FamilyKind::StateModel`, whose catalog code carries the `state-model` prefix, and whose QSpec code and cause are the ones QSpec FR-151 or FR-153 fix. | Test |
+| FR-300-AC-1 | For each of the five model forms, a unit whose form is well-typed compiles, and the form's checked node and static type are the ones FSpec FR-151 and FR-153 fix (`deref` typed by its declared field type, `allInstances<T>(p)` as `Set<Reference<T>>[0,N]` for `p: Population<T>[N]` or unbounded `Set<Reference<T>>` for `p: Population<T>`, `lookup<T>(p, r) absent m` as `Reference<T>` for `undefined` or `refused` and `Option<Reference<T>>` for `empty`). | Test |
+| FR-300-AC-2 | For each of the five model forms, an ill-formed instance (a read of a member the static type does not declare, a `lookup` key whose static type does not conform, a dispatched call to an undeclared operation) refuses at S3 with a cause whose family is `FamilyKind::StateModel`, whose catalog code carries the `state-model` prefix, and whose FSpec code and cause are the ones FSpec FR-151 or FR-153 fix. | Test |
 | FR-300-AC-3 | `xtask seam-probe` reports the `StateModel` arm of the S1 `catalog_code()` prefix match and of the S3 hook match as seam locations and fails when either is absent from its report; it reports the S2 declaration dispatch as having exactly the one `StateModel` arm `Bound => state_model::population_bound`, and fails when that arm is absent or any other `state_model::` arm appears there. | Test |
 
 ## Dependencies
@@ -107,7 +107,7 @@ part in no S6a seam (ADR-016 FP-3).
 - **Upstream:** ADR-012 §1, §3 and §5.1 define the family contract and the
   seams; ADR-016 FP-1 to FP-3 place the model forms in `StateModel` and give
   it no S6a hook; [FR-063](FR-063-exhaustive-family-extension-seam-probe.md)
-  supplies the seam probe; QSpec FR-151 and FR-153 own the model semantics
+  supplies the seam probe; FSpec FR-151 and FR-153 own the model semantics
   and their catalog codes.
 - **Downstream:** [FR-363](FR-363-type-navigation-over-a-relationship-end.md)
   types the relationship-end half of the field-read form;

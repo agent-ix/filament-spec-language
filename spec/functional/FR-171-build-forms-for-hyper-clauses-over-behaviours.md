@@ -3,13 +3,13 @@ id: FR-171
 title: "Build S2 forms for hyper clauses over behaviours and relations over model executions"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: depends_on
 ---
 # FR-171: Build S2 forms for hyper clauses over behaviours and relations over model executions
@@ -22,7 +22,7 @@ name model operations (ADR-023 HS-1 to HS-9), and SHALL NOT refuse either with
 `UnrepresentedConstruct`. The forms carry the
 syntax only; S3 (FR-172) resolves names and checks them. A `hyper` clause
 over a declared finite trace domain and a `relation` over other qualified
-names keep the forms QSpec FR-191's finite reading gives them.
+names keep the forms FSpec FR-191's finite reading gives them.
 
 ## Use case
 
@@ -98,9 +98,9 @@ pub struct ModelRelationForm {
   amended by ADR-023).
 - [FR-091](FR-091-produce-value-forms-and-assemble-package-declarations.md)
   (the S2 builder, its bounds and its refusal causes).
-- QSpec owns the surface syntax (ADR-023 QS-1); the spellings here follow
+- FSpec owns the surface syntax (ADR-023 QS-1); the spellings here follow
   ADR-023 §1 and §13.
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-395 and FR-402 (Linear STD-136; ADR-023 QS-1).
+- ADR-023. FSpec half: FSpec FR-395 and FR-402 (Linear STD-136; ADR-023 QS-1).

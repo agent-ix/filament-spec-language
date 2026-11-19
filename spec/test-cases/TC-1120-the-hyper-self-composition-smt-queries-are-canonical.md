@@ -3,7 +3,7 @@ id: TC-1120
 title: "The HP-2 self-composition SMT queries are canonical and refuse what they cannot encode"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: verifies
 ---
 # TC-1120: The HP-2 self-composition SMT queries are canonical and refuse what they cannot encode

@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! `deref(r).f` through an inherited or redefined field, run
+//! through the real checker and evaluator (`CheckedPackage::check_expression`
+//! and `CheckedPackage::evaluate`).
+//!
+//! `f` resolves at check time in `r`'s static type's flattened attribute
+//! set; at evaluation the referenced object's own type, which conforms to
+//! that static type, has exactly one slot standing for the resolved field.
+//! A parameter admits only an object of its own declared type, so the
+//! supertype view of a subtype object, `deref(lookup<M::A>(p, rb)).f`, is
+//! in `model_reference_queries.rs`, where `lookup` produces it.
+
+use filament_eval::CallFailure;
+use filament_eval::Evaluation;
+use filament_eval::FamilyOutcome;
+use filament_exact::{
+    EffectiveId, FieldValue, IllTypedCause, Integer, Meter, ObjectId, ObjectReference, Outcome,
+    Presence, ScalarLimits, Value, ValueType,
+};
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::declaration::{
+    FieldDeclaration, FieldRef, ObjectTypeDeclaration, TypeEnvironment,
+};
+use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_eval::value::CheckedPackageEvaluation;
+use fsl_forms::Expression;
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedExpression, PackageDeclarations};
+use fsl_semantics::family::FamilyKind;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::trace;
+
+const UNLIMITED: ScalarLimits = ScalarLimits {
+    integer_bits: u64::MAX,
+    decimal_digits: u64::MAX,
+    scale_expansion: u64::MAX,
+    text_input_bytes: u64::MAX,
+    text_scalars: u64::MAX,
+    normalized_scalars: u64::MAX,
+    unit_edges: u64::MAX,
+    value_occurrences: u64::MAX,
+    work_units: u64::MAX,
+    result_units: u64::MAX,
+};
+
+fn effective(label: &str) -> EffectiveId {
+    crate::support::ids::effective_id(label.as_bytes())
+}
+
+fn integer_field(name: &str) -> FieldDeclaration {
+    FieldDeclaration::new(name, ValueType::Integer, Presence::Required)
+}
+
+fn redefining(name: &str, owner: &str, target: &str) -> FieldDeclaration {
+    integer_field(name).with_redefines(FieldRef::new(effective(owner), target))
+}
+
+fn object(
+    label: &str,
+    fields: Vec<FieldDeclaration>,
+    supertypes: &[&str],
+) -> ObjectTypeDeclaration {
+    ObjectTypeDeclaration::new(effective(label), label, fields).with_supertypes(
+        supertypes
+            .iter()
+            .map(|general| effective(general))
+            .collect(),
+    )
+}
+
+fn package(object_types: Vec<ObjectTypeDeclaration>) -> (CheckedPackage, TypeEnvironment) {
+    let types = TypeEnvironment::new([], object_types).unwrap();
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types.clone();
+        declarations
+    }
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap();
+    (CheckedPackage::link(graph), types)
+}
+
+fn reference(label: &str, object: &str) -> ObjectReference {
+    ObjectReference::new(
+        crate::support::ids::universe_id([0x42]),
+        effective(label),
+        ObjectId::new(object).unwrap(),
+    )
+}
+
+fn int(value: i64) -> FieldValue {
+    FieldValue::Present(Value::Integer(Integer::from(value)))
+}
+
+/// `deref(r).field`.
+fn attribute(field: &str) -> Expression {
+    Expression::field(
+        Expression::deref(Expression::name("r".to_owned())),
+        field.to_owned(),
+    )
+}
+
+fn check(
+    package: &CheckedPackage,
+    static_type: &str,
+    field: &str,
+) -> Result<CheckedExpression, CheckRefusal> {
+    package.graph().check_expression(
+        vec![("r".to_owned(), ValueType::Reference(effective(static_type)))],
+        &attribute(field),
+        None,
+        CheckMode::Kernel,
+        CheckingLimits::default(),
+    )
+}
+
+/// `deref(r).field` for `r: Reference<static_type>` holding `object`.
+fn read(
+    package: &CheckedPackage,
+    objects: &ObjectEnvironment,
+    static_type: &str,
+    field: &str,
+    object: &ObjectReference,
+) -> Integer {
+    let checked = check(package, static_type, field).unwrap();
+    assert_eq!(*checked.value_type(), ValueType::Integer);
+    let evaluation: Evaluation = package
+        .evaluate(
+            &checked,
+            vec![Value::Reference(object.clone())],
+            objects,
+            &mut Meter::new(UNLIMITED),
+        )
+        .unwrap();
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => value,
+        other => panic!("expected a completed integer, got {other:?}"),
+    }
+}
+
+fn refused_at_check(package: &CheckedPackage, static_type: &str, field: &str) -> CheckCause {
+    match check(package, static_type, field) {
+        Err(refusal) => refusal.cause,
+        Ok(checked) => panic!("expected a check refusal, got {:?}", checked.value_type()),
+    }
+}
+
+fn assert_missing_field_at_check(package: &CheckedPackage, static_type: &str, field: &str) {
+    let cause = refused_at_check(package, static_type, field);
+    let CheckCause::StateModel(owner) = cause else {
+        panic!("StateModel ownership for missing {field}: {cause:?}");
+    };
+    assert_eq!(owner.family(), FamilyKind::StateModel);
+    assert_eq!(
+        owner.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
+}
+
+/// FR-090-AC-22: an object reference retained after the current state drops
+/// that object produces the evaluator's attributed internal fault.
+#[trace("TC-917", "FR-090-AC-17", "FR-090-AC-22")]
+#[test]
+fn an_attribute_read_of_an_object_absent_from_the_current_state_is_a_fault() {
+    let peer = FieldDeclaration::new(
+        "peer",
+        ValueType::Reference(effective("M::A")),
+        Presence::Required,
+    );
+    let (package, types) = package(vec![object("M::A", vec![integer_field("x"), peer], &[])]);
+    let root = reference("M::A", "root");
+    let removed = reference("M::A", "removed");
+    let root_attributes = vec![
+        ("x", int(1)),
+        (
+            "peer",
+            FieldValue::Present(Value::Reference(removed.clone())),
+        ),
+    ];
+    let previous_state = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types,
+            [
+                (root.clone(), root_attributes.clone()),
+                (
+                    removed.clone(),
+                    vec![
+                        ("x", int(2)),
+                        (
+                            "peer",
+                            FieldValue::Present(Value::Reference(removed.clone())),
+                        ),
+                    ],
+                ),
+            ],
+            &[],
+        )
+        .unwrap(),
+    );
+    assert!(previous_state.objects().contains(&removed));
+    let current_state = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types,
+            [(root.clone(), root_attributes)],
+            std::slice::from_ref(&removed),
+        )
+        .expect("the incomplete current population may retain this dangling reference"),
+    );
+    assert!(!current_state.objects().contains(&removed));
+    let checked = package
+        .graph()
+        .check_expression(
+            vec![("r".to_owned(), ValueType::Reference(effective("M::A")))],
+            &Expression::field(
+                Expression::deref(Expression::field(
+                    Expression::deref(Expression::name("r".to_owned())),
+                    "peer".to_owned(),
+                )),
+                "x".to_owned(),
+            ),
+            None,
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+        )
+        .expect("the nested attribute access is admitted");
+    let failure = package.evaluate(
+        &checked,
+        vec![Value::Reference(root)],
+        &current_state,
+        &mut Meter::new(UNLIMITED),
+    );
+    let Err(CallFailure::Fault(fault)) = failure else {
+        panic!("an absent-state attribute read faults, got {failure:?}");
+    };
+    assert_eq!(fault.stage(), "S6a");
+    assert_eq!(fault.invariant(), "attribute-slot-unresolved");
+    assert_eq!(
+        fault.category(),
+        filament_semantic_value::catalog::Category::InternalFailure
+    );
+}
+
+/// `A.x` is inherited by `B`: `deref(r).x` resolves for `r: Reference<B>`
+/// and reads the `B` object's inherited slot, beside its own `y`. `A`'s
+/// view does not see `B`'s own `y`.
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[test]
+fn deref_reads_an_inherited_field_through_the_subtype() {
+    let (package, types) = package(vec![
+        object("M::A", vec![integer_field("x")], &[]),
+        object("M::B", vec![integer_field("y")], &["M::A"]),
+    ]);
+    let b1 = reference("M::B", "b1");
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types,
+            [(b1.clone(), vec![("x", int(7)), ("y", int(8))])],
+            &[],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        read(&package, &objects, "M::B", "x", &b1),
+        Integer::from(7_i64)
+    );
+    assert_eq!(
+        read(&package, &objects, "M::B", "y", &b1),
+        Integer::from(8_i64)
+    );
+    assert_missing_field_at_check(&package, "M::A", "y");
+}
+
+/// FR-151 hide: `B.x` redefines `A.x`. An `A` object's `x` is `A.x`; a `B`
+/// object's `x` is `B.x`'s one slot.
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
+#[test]
+fn deref_through_a_redefined_field_reads_the_redefiner() {
+    let (package, types) = package(vec![
+        object("M::A", vec![integer_field("x")], &[]),
+        object("M::B", vec![redefining("x", "M::A", "x")], &["M::A"]),
+    ]);
+    let (a1, b1) = (reference("M::A", "a1"), reference("M::B", "b1"));
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            &types,
+            [
+                (a1.clone(), vec![("x", int(1))]),
+                (b1.clone(), vec![("x", int(2))]),
+            ],
+            &[],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        read(&package, &objects, "M::A", "x", &a1),
+        Integer::from(1_i64)
+    );
+    assert_eq!(
+        read(&package, &objects, "M::B", "x", &b1),
+        Integer::from(2_i64)
+    );
+}
+
+/// FR-151 most derived wins: `B.x` and `C.x` both redefine `A.x`, `C -> B`.
+/// `C`'s one `x` is `C.x`, read through `Reference<C>`.
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
+#[test]
+fn deref_reads_the_most_derived_redefinition() {
+    let (package, types) = package(vec![
+        object("M::A", vec![integer_field("x")], &[]),
+        object("M::B", vec![redefining("x", "M::A", "x")], &["M::A"]),
+        object("M::C", vec![redefining("x", "M::A", "x")], &["M::B"]),
+    ]);
+    let c1 = reference("M::C", "c1");
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(&types, [(c1.clone(), vec![("x", int(9))])], &[]).unwrap(),
+    );
+    assert_eq!(
+        read(&package, &objects, "M::C", "x", &c1),
+        Integer::from(9_i64)
+    );
+}
+
+/// A renamed redefinition: `B.y` redefines `A.x`. Through `Reference<B>`
+/// the name is `y`, and `x` no longer resolves: refused at check time.
+#[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
+#[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
+#[test]
+fn deref_through_a_renamed_redefinition_reads_the_new_name() {
+    let (package, types) = package(vec![
+        object("M::A", vec![integer_field("x")], &[]),
+        object("M::B", vec![redefining("y", "M::A", "x")], &["M::A"]),
+    ]);
+    let b1 = reference("M::B", "b1");
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(&types, [(b1.clone(), vec![("y", int(4))])], &[]).unwrap(),
+    );
+    assert_eq!(
+        read(&package, &objects, "M::B", "y", &b1),
+        Integer::from(4_i64)
+    );
+    assert_missing_field_at_check(&package, "M::B", "x");
+}

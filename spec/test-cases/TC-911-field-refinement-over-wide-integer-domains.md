@@ -3,9 +3,9 @@ id: TC-911
 title: "Field refinement decides wide integer domains and literals exactly"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-082
+  - target: ix://agent-ix/filament-spec-language/FR-082
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-911: Field refinement decides wide integer domains and literals exactly

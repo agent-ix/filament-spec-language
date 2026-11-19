@@ -3,15 +3,15 @@ id: FR-400
 title: "Separate the checked terms the evaluator reads from the checker"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-060
+  - target: ix://agent-ix/filament-spec-language/FR-060
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-059
+  - target: ix://agent-ix/filament-spec-language/FR-059
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
 ---
 # FR-400: Separate the checked terms the evaluator reads from the checker
@@ -20,7 +20,7 @@ relationships:
 
 The S6a evaluator reads checked terms: checked expression bodies, the checked
 graph's functions, dispatch tables, clause records and the identities and
-locations they carry. Those types are defined in `qsl-semantics`' `check`
+locations they carry. Those types are defined in `fsl-semantics`' `check`
 module, beside the checker that builds them, so anything that evaluates a
 checked term has to depend on the checker. [FR-262](FR-262-evaluate-values-and-calls-at-any-depth.md)
 requires that separation to come before the no_std evaluator and to keep
@@ -28,33 +28,33 @@ checking authority, source locations, declaration identities, model
 correspondence and proof closure intact. This requirement states the
 boundary.
 
-The checked terms SHALL live in the crate `quire-checked`, in the repository
-`agent-ix/quire-eval`, at [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
-§6.1 layer C: a shared leaf above SV, K and W and below QSL layer 3, RT and
-CG. The checker (`qsl-semantics` `check`, with the definition admission for the integer division law)
+The checked terms SHALL live in the crate `filament-checked`, in the repository
+`agent-ix/filament-eval`, at [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
+§6.1 layer C: a shared leaf above SV, K and W and below FSL layer 3, RT and
+CG. The checker (`fsl-semantics` `check`, with the definition admission for the integer division law)
 SHALL be the only code that constructs a checked term. The evaluator SHALL read checked terms from
-`quire-checked` and SHALL NOT reach the checker to evaluate one. Everything
+`filament-checked` and SHALL NOT reach the checker to evaluate one. Everything
 the separation moves keeps its meaning, its identities and its locations: a
 checked package, an evaluation and a refusal record are the same before and
 after the move.
 
 ## Inputs
 
-- The checked-term types and accessors that `qsl-semantics` defines in
+- The checked-term types and accessors that `fsl-semantics` defines in
   `check`, `library`, `model` and `value` and that the evaluator and the
   simulation read, listed under Behavior.
-- The dependency tables and resolved graphs of the QSL workspace and the
-  backend repositories, and the QSL crates' `use` trees, read by the
+- The dependency tables and resolved graphs of the FSL workspace and the
+  backend repositories, and the FSL crates' `use` trees, read by the
   existing layering checks (TC-390's table check, `xtask`'s import graph,
   `tools/arch-lint`'s API-surface rules under FR-060, and FR-059's direction
   check).
 
 ## Outputs
 
-- The crate `quire-checked` holding the moved types, with a `construct`
+- The crate `filament-checked` holding the moved types, with a `construct`
   module behind its `construct` feature.
-- `qsl-semantics`, `qsl-package`, `qsl-eval`, `qsl-route`, `qsl-replay` and
-  every other caller repointed at `quire_checked::` paths in the same change
+- `fsl-semantics`, `fsl-package`, `fsl-eval`, `fsl-route`, `fsl-replay` and
+  every other caller repointed at `filament_checked::` paths in the same change
   that moves an item, with no re-export at the old path.
 - One added FR-060 API-surface rule, T12-G.
 
@@ -62,25 +62,25 @@ after the move.
 
 ### Crate and dependencies
 
-1. `quire-checked` SHALL be a crate of the repository `agent-ix/quire-eval`,
+1. `filament-checked` SHALL be a crate of the repository `agent-ix/filament-eval`,
    which depends only on repositories below it. Its `[dependencies]` SHALL
-   name only `quire-semantic-value` (SV), `quire-exact` (K), `quire-walk`
+   name only `filament-semantic-value` (SV), `filament-exact` (K), `filament-walk`
    (W), `quire-canonical`, `serde` and `thiserror`, each without `std`. It
-   SHALL NOT depend on any crate of the QSL repository, in any dependency
-   table, so QSL's dependency on it closes no repository cycle (FB-11).
-2. `quire-checked` SHALL be `#![no_std]` with `alloc`, with a `std` feature
+   SHALL NOT depend on any crate of the FSL repository, in any dependency
+   table, so FSL's dependency on it closes no repository cycle (FB-11).
+2. `filament-checked` SHALL be `#![no_std]` with `alloc`, with a `std` feature
    that is on by default, and SHALL forbid unsafe code.
 3. Its test-only fixtures (`CheckedBody::fixture`, `CheckedBody::from_nodes`,
    `DeclarationKey::fixture` and any other moved fixture) SHALL sit behind
    its own `test-support` feature, which only a `[dev-dependencies]` entry
    enables.
-4. QSL SHALL take it as a git dependency at `branch = "main"`, as it takes
-   `quire-walk`.
+4. FSL SHALL take it as a git dependency at `branch = "main"`, as it takes
+   `filament-walk`.
 
-### What moves into `quire-checked`
+### What moves into `filament-checked`
 
 A type moves when the evaluator or the simulation reads it from a checked
-package. The types below move from the `qsl-semantics` module named with
+package. The types below move from the `fsl-semantics` module named with
 each.
 
 - **Expression terms** (`check::ir`): `Node`, `NodeId`, `Slot`, `NodeKind`,
@@ -93,7 +93,7 @@ each.
 - **Roots**: `CheckedExpression`, `CheckedGraph` (its evaluation-visible
   content, below), `FunctionState`, `CallableFunction`, the
   evaluation-visible part of `Signatures`, and a scope view.
-- **Scope view**: what `qsl-eval` reads through `scope()`. That is the SV
+- **Scope view**: what `fsl-eval` reads through `scope()`. That is the SV
   type environment, the enum member index, the operation table, the
   dispatch operations (`check::DispatchOperation`, which
   `NodeKind::Dispatch` indexes), each imported library's checked graph keyed
@@ -102,7 +102,7 @@ each.
   (`AdmittedIeeeProfile`, which wraps a `value::definition::DefinitionReference`,
   and the declared-float
   selection) and `AdmittedImport` with its `ImportView` stay in the
-  checker's `Scope`, which `qsl-package`'s emitter reads.
+  checker's `Scope`, which `fsl-package`'s emitter reads.
 - **Admitted operations**: `model::operation`'s `OperationTable` and
   `OperationDeclaration` and `model::domain_package`'s `OperationEffect`,
   plain data over `DeclarationKey` and K types that the scope view
@@ -143,23 +143,23 @@ model correspondence, type nodes, the semantic-graph projection, effective
 limits, model selections (`DomainPackageRef`), every clause record above,
 operation frames, model objects, object types and nodes, population domains,
 keys and bounds, declaration keys and the identity limits. The rest stays in
-`qsl-semantics` in a checker-side record that holds the moved `CheckedGraph`:
+`fsl-semantics` in a checker-side record that holds the moved `CheckedGraph`:
 the source reference, the source-region tables, the `abstraction`
 declaration forms and model names it checks, the full `SemanticGraph`, the
-requirement records `qsl-route` reads (`RequirementRecord`), and any other
+requirement records `fsl-route` reads (`RequirementRecord`), and any other
 field that is read only by checking, routing, emission or rendering. A field
 read by both the checker and the evaluator moves.
 
 ### Closure of the moved values
 
-The values a moved type carries SHALL close within `quire-checked`, SV, K
+The values a moved type carries SHALL close within `filament-checked`, SV, K
 and W. Each moved record, not only `CheckedGraph`, SHALL follow three rules,
 applied recursively to the types its fields hold:
 
 1. **Source positions and forms stay with the checker.** A field holding an
-   F `Span`, a `qsl-forms` `DeclarationSpans` or `ExpressionSpans`, or a
-   `qsl-forms` syntax tree is not part of the moved record. It goes to a
-   checker-side table in `qsl-semantics`, keyed by the record's identity:
+   F `Span`, a `fsl-forms` `DeclarationSpans` or `ExpressionSpans`, or a
+   `fsl-forms` syntax tree is not part of the moved record. It goes to a
+   checker-side table in `fsl-semantics`, keyed by the record's identity:
    its node key, or its declaration index where it has no node key. A
    nested member with no node key of its own (a protocol's
    `CheckedChannel`, relationship or requirement, a fairness premise) is
@@ -172,7 +172,7 @@ applied recursively to the types its fields hold:
    `CheckedStateClause`'s `DeclarationSpans` and `CheckedHyperClause`'s
    `match_expression`. The moved record keeps its SV `ExpressionLocation`s.
 2. **Plain values from F or layer 2 move to SV.** A plain value type that a
-   moved record carries and that `qsl-foundation` or `qsl-forms` defines
+   moved record carries and that `fsl-foundation` or `fsl-forms` defines
    moves down into SV in the same change and leaves no copy or re-export
    behind. The known set is
    `AbsenceMode`, `WireNodeId`, `OccurrenceKey`,
@@ -182,11 +182,11 @@ applied recursively to the types its fields hold:
    `AccessOrdering`, `ChannelCapacity`, `ChannelDelivery`, `ChannelOverflow`,
    `LossSelector`, `ProtocolNodeKind`, `TemporalOperator`, `TemporalNodeId`,
    `FairnessKind` and `FairnessGranularity` from layer 2.
-   `qsl-foundation` keeps using the values it gives up, so it gains a normal
-   dependency on SV (ADR-011 F row, X-2); SV depends on no QSL crate, so the
+   `fsl-foundation` keeps using the values it gives up, so it gains a normal
+   dependency on SV (ADR-011 F row, X-2); SV depends on no FSL crate, so the
    edge closes no cycle.
 3. **Values from layer 3 move to C.** A type that a moved record carries
-   and that `qsl-semantics` defines moves into `quire-checked`, as the lists
+   and that `fsl-semantics` defines moves into `filament-checked`, as the lists
    above name. This includes `value::member::Member` (the
    structured checked member identity the `node_key` terms carry) and
    `value::definition::DefinitionReference` wherever a moved record carries
@@ -197,7 +197,7 @@ applied recursively to the types its fields hold:
 
 ### What stays with the checker
 
-These stay in `qsl-semantics` and are not checked terms:
+These stay in `fsl-semantics` and are not checked terms:
 `PackageDeclarations` and its `check`, `check_expression` and
 `check_with_cancel` entries; `AdmittedImport`, `ImportView`, `AdmittedModel`,
 `AdmittedIeeeProfile`, `CheckContext`, the family checker modules and
@@ -207,15 +207,15 @@ and the family marker types `ValueFunctionFamily` and
 in the trait's crate; the name-resolution index of `Scope`; the full
 `SemanticGraph`; and source-region resolution, which moves from
 `CheckedGraph::region` to the checker-side record. `SCALAR_LIMITS_UNLIMITED`
-stays a `qsl-semantics` test fixture. The S6a result vocabulary
+stays a `fsl-semantics` test fixture. The S6a result vocabulary
 (`FamilyOutcome`, `FamilyResult`, `EvalOutcome`) does not move in this
-slice; S0 moves it to `quire-eval`
-([FR-401](FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md)),
+slice; S0 moves it to `filament-eval`
+([FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md)),
 and `FamilyKind` stays in `family`. The
 runtime evaluation cause `WrongSnapshotCause` leaves `check` in whichever of
 S1 and S2 lands first: when the S1 slice has not moved it, X-13 moves it from
 `check::refusal` to SV's `call` module, where the checker's `CheckCause` and
-`qsl-eval`'s runtime snapshot cause both name it, and the S1 slice then
+`fsl-eval`'s runtime snapshot cause both name it, and the S1 slice then
 moves nothing for it.
 
 Two `check` modules are runtime analyses over checked terms and `model`
@@ -223,7 +223,7 @@ items, not checking: the footprint derivation (`check::footprint`, with its
 own `check::footprint::Operation`) and the observation walk
 (`Observations::of` in `check::observation`). The simulation calls the
 footprint derivation at run time. It SHALL move to layer-3 `model`, which
-may read `quire-checked`, so the evaluator reaches it without naming
+may read `filament-checked`, so the evaluator reaches it without naming
 `check`. The `Observations` type moves to C with `CheckedStateClause`, which
 carries it; the walk that builds it is a constructor in C's `construct`
 module, called from `check`.
@@ -242,7 +242,7 @@ preimage's `EffectiveId`, and
 `model::refusal::ModelRefusalCause`. The preimage form of a
 `DeclarationKey` that those preimages encode (`{package, node}`)
 is a `model` function over the moved `DeclarationKey`, not a
-`quire-checked` method.
+`filament-checked` method.
 
 ### Runtime model-admission dependencies
 
@@ -257,27 +257,27 @@ sit below `check` and do not call it: `model::object_environment`
 `value::{divide, modulo}`. This slice does not move them. A later slice
 moves a runtime admission function that needs only the meter and the object
 environment to the evaluation core; one that needs a checker type stays in
-`qsl-semantics`.
+`fsl-semantics`.
 
-After this separation, the shipped modules of `qsl-eval`'s `value`,
+After this separation, the shipped modules of `fsl-eval`'s `value`,
 `simulation`, `automaton`, `hyper`, `temporal`, `fairness` and
-`model_subject` SHALL name no `qsl_semantics::check` item except the two
+`model_subject` SHALL name no `fsl_semantics::check` item except the two
 family marker types `ValueFunctionFamily` and `ProtocolClauseFamily`, and
-SHALL name no `qsl_forms` item. `#[cfg(test)]` code may still build checked terms through
-`qsl-semantics`' checker.
+SHALL name no `fsl_forms` item. `#[cfg(test)]` code may still build checked terms through
+`fsl-semantics`' checker.
 
 ### Source locations
 
 A checked term SHALL carry its source position as the SV
-`quire_semantic_value::location::ExpressionLocation` it carries before the move;
+`filament_semantic_value::location::ExpressionLocation` it carries before the move;
 evaluation, losses, refusals and call-site locations use that value
 unchanged. Resolving a `Location` to a `SourceRegion` SHALL stay a
 checker-side step over the checker-side record, which keeps the spans and
 the `SourceMap` embedding. The method `Evaluation::refusal_record` SHALL
-become a free function in `qsl-eval` over the evaluation and a region
+become a free function in `fsl-eval` over the evaluation and a region
 resolver, a function from `Location` to an optional `SourceRegion`, and
-SHALL return the same FR-096 record; its callers (`qsl-replay`'s spine and
-the tests) pass the checker-side record's resolver, so `qsl-eval` names no
+SHALL return the same FR-096 record; its callers (`fsl-replay`'s spine and
+the tests) pass the checker-side record's resolver, so `fsl-eval` names no
 checker-side type. For every
 `Location`, the resolved `SourceRegion` is the one `CheckedGraph::region`
 returned before the move, so FR-096 refusal records and FR-262's location
@@ -285,7 +285,7 @@ and loss behaviour are unchanged.
 
 ### Canonical read projections
 
-`quire-checked` SHALL own one operation vocabulary for stored expression
+`filament-checked` SHALL own one operation vocabulary for stored expression
 nodes and borrowed reads: the existing `NodeKind` SHALL become
 `NodeKind<Child = NodeId, Literal = CheckedLiteral>`. Every `NodeId` operand
 position SHALL use `Child`, including positions nested in vectors, options,
@@ -300,9 +300,9 @@ The shared read result SHALL be the plain descriptor
 
 ```rust
 pub struct NodeRead<'a, Child> {
-    pub operation: NodeKind<Child, &'a quire_exact::Value>,
-    pub value_type: &'a quire_exact::ValueType,
-    pub location: &'a quire_semantic_value::location::Location,
+    pub operation: NodeKind<Child, &'a filament_exact::Value>,
+    pub value_type: &'a filament_exact::ValueType,
+    pub location: &'a filament_semantic_value::location::Location,
 }
 ```
 
@@ -330,7 +330,7 @@ witness-bound input contract of
 SHALL supply these reads to S6a. No read projection SHALL construct a checked
 term, call `construct`, validate an unchecked term or duplicate checking.
 The descriptor types SHALL require only `core`, `alloc` and the existing
-layer-C dependencies, and SHALL name no QSL or IR type.
+layer-C dependencies, and SHALL name no FSL or IR type.
 
 ### Checking authority
 
@@ -346,21 +346,21 @@ library binding admitted it: `Node`, `CheckedBody`, `CheckedExpression`,
 the visibility they have before the move. No code other than the checker
 SHALL construct a checked term:
 
-1. Every field of a checked term SHALL be private to `quire-checked`, so a
+1. Every field of a checked term SHALL be private to `filament-checked`, so a
    struct literal or a field write from another crate fails to compile, and
    no accessor SHALL return a mutable reference into one. A moved checked
    term whose fields are `pub` before the move (such as `CheckedProtocol`
-   and its member types, which `qsl-eval` reads field by field) SHALL expose
+   and its member types, which `fsl-eval` reads field by field) SHALL expose
    read accessors in their place.
 2. The only constructors of a checked term SHALL be the functions of
-   `quire-checked`'s `construct` module, compiled only under its
+   `filament-checked`'s `construct` module, compiled only under its
    `construct` feature.
-3. In QSL, only `qsl-semantics` SHALL enable `construct`. FR-060 rule T12-G
-   SHALL allow calls into the `construct` module only from `qsl-semantics`'
+3. In FSL, only `fsl-semantics` SHALL enable `construct`. FR-060 rule T12-G
+   SHALL allow calls into the `construct` module only from `fsl-semantics`'
    `check` and its descendant modules, and in addition from `value::definition` for `AdmittedIntegerDivision`,
    with no debt list.
 4. FR-059's direction check SHALL report, as an FB-05 violation, a resolved
-   IR, RT or CG dependency on `quire-checked` with its `construct` feature
+   IR, RT or CG dependency on `filament-checked` with its `construct` feature
    enabled. A backend reads checked terms and never builds one.
 5. Every `compile_fail` check that guards a moved type SHALL move with it
    and keep failing to compile, each with its `no_run` pair that compiles.
@@ -369,7 +369,7 @@ SHALL construct a checked term:
    (`check/state_clause.rs` and `check/mod.rs`'s `resolve_operation`), and
    and the `ImportView` checks in `library`.
 
-No item SHALL be re-exported from its old `qsl_semantics::` path. Each
+No item SHALL be re-exported from its old `fsl_semantics::` path. Each
 change that moves an item repoints every caller at once (ADR-011 §7.2). The
 move MAY land in steps, in this order: expression terms; clause records;
 `CheckedGraph`; each step leaves the workspace green.
@@ -378,30 +378,30 @@ move MAY land in steps, in this order: expression terms; clause records;
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-400-AC-1 | `quire-checked`'s manifest names only `quire-semantic-value`, `quire-exact`, `quire-walk`, `quire-canonical`, `serde` and `thiserror` as normal dependencies, each with default features off, and names no QSL crate in any table. In QSL, TC-390's table check asserts that `qsl-semantics` is the only crate that enables `quire-checked`'s `construct` feature; a fixture manifest in which `qsl-eval` enables it fails the check, naming the crate and the table. | Test |
-| FR-400-AC-2 | The import-direction check reports, in the shipped (non-`#[cfg(test)]`) modules of `qsl-eval`, no `qsl_forms` item and no `qsl_semantics::check` item other than `ValueFunctionFamily` and `ProtocolClauseFamily`; `qsl-eval` names `WrongSnapshotCause` at `quire_semantic_value::call`. A fixture shipped `qsl-eval` module that imports `qsl_semantics::check::PackageDeclarations` is reported with its file and line. | Test |
-| FR-400-AC-3 | Run on the QSL tree, rule T12-G reports `passing`. A fixture call to a `quire_checked::construct` function from `qsl-eval`, `qsl-package` or `qsl-semantics`' `model` reports `failing` with the call site's file, line and module, and so does an `AdmittedIntegerDivision` constructor call from `model`. FR-059's check reports an RT graph whose `quire-checked` dependency enables `construct` as one FB-05 violation, and the same graph without the feature as clean. | Test |
-| FR-400-AC-4 | In QSL, outside `quire-checked`, a struct literal of `CheckedGraph`, `CheckedBody`, `Node` or `OperationSelection` and a write to a `Node` field each fail to compile, and each paired `no_run` block naming the same type compiles. In `agent-ix/quire-eval`'s own gate, a doctest of `quire-checked` built with default features, where `construct` is off, shows that a call to a `construct` function fails to compile; QSL cannot run that clause, because feature unification turns `construct` on for its workspace. | Test |
-| FR-400-AC-5 | No `qsl_semantics::` path to a moved item resolves: `qsl_semantics::check::CheckedBody`, `qsl_semantics::check::CheckedGraph`, and `qsl_semantics::model::key::DeclarationKey` each fail to compile from another crate, and no F or layer-2 path names a value that moved to SV. | Test |
+| FR-400-AC-1 | `filament-checked`'s manifest names only `filament-semantic-value`, `filament-exact`, `filament-walk`, `quire-canonical`, `serde` and `thiserror` as normal dependencies, each with default features off, and names no FSL crate in any table. In FSL, TC-390's table check asserts that `fsl-semantics` is the only crate that enables `filament-checked`'s `construct` feature; a fixture manifest in which `fsl-eval` enables it fails the check, naming the crate and the table. | Test |
+| FR-400-AC-2 | The import-direction check reports, in the shipped (non-`#[cfg(test)]`) modules of `fsl-eval`, no `fsl_forms` item and no `fsl_semantics::check` item other than `ValueFunctionFamily` and `ProtocolClauseFamily`; `fsl-eval` names `WrongSnapshotCause` at `filament_semantic_value::call`. A fixture shipped `fsl-eval` module that imports `fsl_semantics::check::PackageDeclarations` is reported with its file and line. | Test |
+| FR-400-AC-3 | Run on the FSL tree, rule T12-G reports `passing`. A fixture call to a `filament_checked::construct` function from `fsl-eval`, `fsl-package` or `fsl-semantics`' `model` reports `failing` with the call site's file, line and module, and so does an `AdmittedIntegerDivision` constructor call from `model`. FR-059's check reports an RT graph whose `filament-checked` dependency enables `construct` as one FB-05 violation, and the same graph without the feature as clean. | Test |
+| FR-400-AC-4 | In FSL, outside `filament-checked`, a struct literal of `CheckedGraph`, `CheckedBody`, `Node` or `OperationSelection` and a write to a `Node` field each fail to compile, and each paired `no_run` block naming the same type compiles. In `agent-ix/filament-eval`'s own gate, a doctest of `filament-checked` built with default features, where `construct` is off, shows that a call to a `construct` function fails to compile; FSL cannot run that clause, because feature unification turns `construct` on for its workspace. | Test |
+| FR-400-AC-5 | No `fsl_semantics::` path to a moved item resolves: `fsl_semantics::check::CheckedBody`, `fsl_semantics::check::CheckedGraph`, and `fsl_semantics::model::key::DeclarationKey` each fail to compile from another crate, and no F or layer-2 path names a value that moved to SV. | Test |
 | FR-400-AC-6 | **RETIRED (kernel identities are structural keys, not minted by hashing; there is no minting constructor to forbid).** | Test, retired |
-| FR-400-AC-7 | After the move, `qsl-eval`'s suite, the FR-262 tests and QSL's checked-package conformance invocation `QSPEC_DIR=<QSpec repository> cargo test -p qsl-package --lib checked_v2` pass without edits to their expected values. | Test |
+| FR-400-AC-7 | After the move, `fsl-eval`'s suite, the FR-262 tests and FSL's checked-package conformance invocation `FSPEC_DIR=<FSpec repository> cargo test -p fsl-package --lib checked_v2` pass without edits to their expected values. | Test |
 | FR-400-AC-8 | Before the first move step, a test over a fixture unit with a function, a dispatch table, a `model` selection, a state clause and a protocol compares, for equality between `origin/main` and the working tree: every node's `Location`, every `NodeKey` and `DeclarationKey`, every model-correspondence entry, the `SourceRegion` each `Location` resolves to, and the code, cause and locus of the FR-096 refusal record of a refusing evaluation of that unit. After each move step, the same test passes. | Test |
-| FR-400-AC-9 | `quire-checked` builds for `thumbv7em-none-eabi` with default features off, and its manifest forbids unsafe code; no normal or build dependency in QSL enables its `test-support` feature. | Test |
-| FR-400-AC-10 | After the move, `qsl_semantics::model::key::EffectiveDeclarationPreimage::identity` and `qsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation` resolve from another crate. `identity` reproduces each published effective-declaration identity vector from QSpec FR-150-AC-6; `validate_derivation` rejects QSpec's `unsorted-derivation` mutation (TC-195) with `UnsortedDerivation` naming its position and ordinal, rejects a QSL test preimage whose first two facts have the same `rule` and equal `inputs` with `DuplicatePath{earlier: 0, later: 1}`, and accepts the unmutated vector. `quire_checked` exposes no `EffectiveDeclarationPreimage`, `Fact` or `RuleRef`, `quire-checked`'s `DeclarationKey` has no `identity` or `validate_derivation` method (a call to either fails to compile), and no `quire-checked` item names `ModelRefusalCause`. | Test |
-| FR-400-AC-11 | A stored `NodeKind` and its `NodeRead` projection match the same exhaustive generic enum: every variant, nested operand position, literal value, metadata/evidence identity, checked type and location are preserved. A probe variant makes both evaluator paths non-exhaustive. No parallel operation enum exists; the layer-C read descriptors compile without `std`, QSL or IR dependencies. | Test |
+| FR-400-AC-9 | `filament-checked` builds for `thumbv7em-none-eabi` with default features off, and its manifest forbids unsafe code; no normal or build dependency in FSL enables its `test-support` feature. | Test |
+| FR-400-AC-10 | After the move, `fsl_semantics::model::key::EffectiveDeclarationPreimage::identity` and `fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation` resolve from another crate. `identity` reproduces each published effective-declaration identity vector from FSpec FR-150-AC-6; `validate_derivation` rejects FSpec's `unsorted-derivation` mutation (TC-195) with `UnsortedDerivation` naming its position and ordinal, rejects an FSL test preimage whose first two facts have the same `rule` and equal `inputs` with `DuplicatePath{earlier: 0, later: 1}`, and accepts the unmutated vector. `filament_checked` exposes no `EffectiveDeclarationPreimage`, `Fact` or `RuleRef`, `filament-checked`'s `DeclarationKey` has no `identity` or `validate_derivation` method (a call to either fails to compile), and no `filament-checked` item names `ModelRefusalCause`. | Test |
+| FR-400-AC-11 | A stored `NodeKind` and its `NodeRead` projection match the same exhaustive generic enum: every variant, nested operand position, literal value, metadata/evidence identity, checked type and location are preserved. A probe variant makes both evaluator paths non-exhaustive. No parallel operation enum exists; the layer-C read descriptors compile without `std`, FSL or IR dependencies. | Test |
 | FR-400-AC-12 | Constructing a `NodeRead` or a parameterized operation descriptor cannot create a checked term or an admitted FR-390 view: passing a descriptor to the public evaluator as a checked input fails to compile. Existing checked-term constructor and mutation rejection checks remain failing, with their positive pairs compiling. | Test |
 
 ## Dependencies
 
 - [FR-262](FR-262-evaluate-values-and-calls-at-any-depth.md) Ownership and
   admission: the separation this requirement states.
-- [FR-060](FR-060-check-qsl-api-surface-boundary.md): the API-surface check
+- [FR-060](FR-060-check-fsl-api-surface-boundary.md): the API-surface check
   that evaluates T12-G.
 - [FR-059](FR-059-check-backend-dependency-direction.md): the backend
   direction check that refuses a backend enabling `construct`.
-- QSpec FR-322 defines the checked-package vectors used to verify QSL's
+- FSpec FR-322 defines the checked-package vectors used to verify FSL's
   emitted package; FR-150-AC-6 publishes the effective-declaration identity
-  vectors QSL compares against. TC-195 checks the unsorted-derivation
+  vectors FSL compares against. TC-195 checks the unsorted-derivation
   mutation.
 - [FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md):
   the refusal-record locus the checker-side record keeps.

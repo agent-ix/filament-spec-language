@@ -3,7 +3,7 @@ id: TC-406
 title: "Each S2 and assembler cause maps to its catalog code with an exhaustive match"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-406: Each S2 and assembler cause maps to its catalog code with an exhaustive match
@@ -49,7 +49,7 @@ Tag the test `#[trace("FR-091-AC-21", "TC-406")]`.
   name cause `missing_declaration`/`missing-name`, the zero-denominator
   cause `undefined_expression`/`unproved-nonzero`, and the decimal-scale
   limit `stage_limit_exceeded`/`work-budget-exceeded`. Each unit-graph
-  topology cause returns its QSpec FR-142 step, rule or row code:
+  topology cause returns its FSpec FR-142 step, rule or row code:
   `missing_declaration`/`missing-name` for an unknown term, an unresolved
   dimension-equivalence dimension or unit name, the base-dimension rule and row 2;
   `invalid_package`/`definition-cycle` for a dimension cycle, an equivalence

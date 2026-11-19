@@ -3,7 +3,7 @@ id: TC-551
 title: "Per-step simulation records are written for functional refinements and never settle refuted"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-146
+  - target: ix://agent-ix/filament-spec-language/FR-146
     type: verifies
 ---
 # TC-551: Per-step simulation records are written for functional refinements and never settle refuted

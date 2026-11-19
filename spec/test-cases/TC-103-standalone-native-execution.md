@@ -3,7 +3,7 @@ id: TC-103
 title: "A 0-draft request is refused before runtime execution"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: verifies
 ---
 ## Description

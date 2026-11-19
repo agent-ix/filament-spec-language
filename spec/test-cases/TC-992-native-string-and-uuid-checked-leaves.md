@@ -3,16 +3,16 @@ id: TC-992
 title: "Keep native String and UUID as distinct checked value leaves"
 type: TC
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-056"
+  - target: "ix://agent-ix/filament-spec-language/FR-056"
     type: verifies
 ---
 # TC-992: Keep native String and UUID as distinct checked value leaves
 
 ## Description
 
-Verify that the real QSL pipeline maps model-native `String` and `UUID` to
+Verify that the real FSL pipeline maps model-native `String` and `UUID` to
 distinct checked value leaves, preserves their value and equality semantics,
-and keeps profile-bounded `Text` separate. Exercise QSpec TC-235 K2's
+and keeps profile-bounded `Text` separate. Exercise FSpec TC-235 K2's
 `Money.currency`, `Order.order_id`, `OrderPlaced.order_id` and
 `Fulfilment.correlation_id` meanings without rewriting the selected source
 package. `OrderPlaced.order_id` is an ordinary event payload field; the
@@ -21,7 +21,7 @@ identity slots are `Order.order_id` and `Fulfilment.correlation_id`.
 ## Test Procedure
 
 1. Read and normalize the shared TC-235 K2 package through the actual FCD
-   reader and QSL intake. Use the original `String` and `UUID` native names.
+   reader and FSL intake. Use the original `String` and `UUID` native names.
    Assemble the checked model and inspect the checked type of
    `Money.currency`, the UUID identity semantics of `Order.order_id` and
    `Fulfilment.correlation_id`, and the ordinary UUID event field

@@ -1,0 +1,391 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-860 (TC-2440, TC-2441): a temporal clause whose `holds` conditions read
+//! a capture runs over a supplied trace to a verdict, each activation keeping
+//! the capture value it took at its own position, and a capture fault is
+//! reported at the capture, never as an internal fault (exit 30).
+
+use crate::command_harness::{run_file, Output};
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+
+const EVENTS: &str = "filament.temporal.event-position.false-extension/v1";
+const INFINITE: &str = "filament.temporal.infinite-trace/v1";
+
+fn unit() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"{EVENTS}\";\n\
+         profile i = \"{INFINITE}\";\n\
+         type Zero = Int[0, 0];\n\
+         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure {{ xs }}\n\
+         record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
+         temporal Fast using e over (r: Reading) clock \"events\" on origin \
+         {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
+         temporal FastNoCapture using e over (r: Reading) clock \"events\" on origin \
+         {{ eventually[0,3] holds(r.stopped or not (r.level > 3)) }}\n\
+         temporal Origin using i over (r: Reading) clock \"steps\" on origin \
+         {{ capture startFast: Boolean = r.level > 3; eventually[0,3] holds(r.stopped or not startFast) }}\n\
+         temporal OriginNoCapture using i over (r: Reading) clock \"steps\" on origin \
+         {{ eventually[0,3] holds(r.stopped or not (r.level > 3)) }}\n\
+         temporal Each using e over (r: Reading) clock \"events\" on each (q: Reading) \
+         {{ capture start: Int[0, 9] = q.level; always[0,0] holds(r.level = start) }}\n\
+         temporal EachLater using e over (r: Reading) clock \"events\" on each (q: Reading) \
+         {{ capture start: Int[0, 9] = q.level; eventually[0,2] holds(r.level > start) }}\n\
+         temporal EachLoop using i over (r: Reading) clock \"steps\" on each (q: Reading) \
+         {{ capture start: Int[0, 9] = q.level; eventually[0,1] holds(r.level > start) }}\n\
+         temporal Refused using e over (r: Reading) clock \"events\" on origin \
+         {{ capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }}\n"
+    )
+}
+
+fn clocks() -> Value {
+    json!({"events": {"kind": "event_position", "sequence_authority": "events"}})
+}
+
+fn program() -> Value {
+    json!({"source": {"file": "unit.native", "authority": "agent-ix",
+        "identity": "test:temporal-capture", "document": "TemporalCapture", "formal_revision": 1}})
+}
+
+fn sample(level: i64, stopped: bool) -> Value {
+    json!({"sample": {"level": {"integer": level.to_string()}, "stopped": {"boolean": stopped}}})
+}
+
+fn moving(levels: &[i64]) -> Vec<Value> {
+    levels.iter().map(|level| sample(*level, false)).collect()
+}
+
+fn run_request(temporal: Value) -> Value {
+    json!({"format": "native-run/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
+}
+
+/// FR-860-AC-4's clauses whose capture divides through the function `k`:
+/// Linked checking refuses `k`'s unproved `mod` (FR-495-AC-3), so they are
+/// kept out of the shared unit until the fixture is checked under
+/// `CheckMode::Kernel`.
+const DIVISION: &str = "function k using v(x: Integer): Integer pure { 3 mod x }\n\
+     temporal Div using e over (r: Reading) clock \"events\" on origin \
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n\
+     temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
+     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n";
+
+fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
+    write_with(directory, "", name, request)
+}
+
+/// [`write`] with `extra` declarations appended to the unit.
+fn write_with(directory: &Path, extra: &str, name: &str, request: &Value) -> PathBuf {
+    std::fs::write(directory.join("unit.native"), unit() + extra).unwrap();
+    let path = directory.join(name);
+    std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
+    path
+}
+
+fn run(directory: &Path, name: &str, trace: Value) -> Output {
+    run_with(directory, "", name, trace)
+}
+
+/// [`run`] over the unit with `extra` declarations appended.
+fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
+    let file = format!("{name}-{}.json", trace.to_string().len());
+    run_file(&write_with(
+        directory,
+        extra,
+        &file,
+        &run_request(json!({"name": name, "trace": trace})),
+    ))
+}
+
+/// The result document of a run that wrote one; a capture reading is never
+/// an internal fault (exit 30).
+fn result(output: &Output) -> Value {
+    assert_ne!(
+        output.status.code(),
+        Some(30),
+        "a capture run is not an internal failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "expected a result document, got {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("a result document")
+}
+
+fn temporal(document: &Value) -> &Value {
+    &document["disposition"]["temporal"]
+}
+
+/// FR-860-AC-1: `startFast` keeps the value it took at position 0, so `Fast`
+/// is violated where the capture-free formula holds.
+#[test]
+#[trace("TC-2440", "FR-860-AC-1")]
+fn a_capture_keeps_the_value_it_took_at_the_activation() {
+    let directory = tempfile::tempdir().unwrap();
+    let fast = result(&run(
+        directory.path(),
+        "Fast",
+        json!({"finite": moving(&[5, 1, 1, 1])}),
+    ));
+    assert_eq!(temporal(&fast)["kind"], "violated", "{fast}");
+    assert_eq!(temporal(&fast)["position"], 0, "{fast}");
+    let free = result(&run(
+        directory.path(),
+        "FastNoCapture",
+        json!({"finite": moving(&[5, 1, 1, 1])}),
+    ));
+    assert_eq!(temporal(&free)["kind"], "holds", "{free}");
+    let slow = result(&run(
+        directory.path(),
+        "Fast",
+        json!({"finite": moving(&[1, 5, 5, 5])}),
+    ));
+    assert_eq!(temporal(&slow)["kind"], "holds", "{slow}");
+}
+
+/// FR-860-AC-2: the infinite-trace rule over a lasso reads the capture of
+/// its one origin activation at every loop repetition.
+#[test]
+#[trace("TC-2440", "FR-860-AC-2")]
+fn an_infinite_trace_capture_is_fixed_over_a_lasso() {
+    let directory = tempfile::tempdir().unwrap();
+    let falling = json!({"lasso": {"prefix": [], "loop": [sample(5, false), sample(1, false)]}});
+    let captured = result(&run(directory.path(), "Origin", falling.clone()));
+    assert_eq!(temporal(&captured)["kind"], "violated", "{captured}");
+    assert_eq!(temporal(&captured)["position"], 0, "{captured}");
+    let free = result(&run(directory.path(), "OriginNoCapture", falling));
+    assert_eq!(temporal(&free)["kind"], "holds", "{free}");
+    let stopping = json!({"lasso": {"prefix": [], "loop": [sample(5, false), sample(5, true)]}});
+    let stopped = result(&run(directory.path(), "Origin", stopping));
+    assert_eq!(temporal(&stopped)["kind"], "holds", "{stopped}");
+}
+
+/// FR-860-AC-3: each `on each` activation reads its own capture.
+#[test]
+#[trace("TC-2440", "FR-860-AC-3")]
+fn each_activation_reads_its_own_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let each = result(&run(
+        directory.path(),
+        "Each",
+        json!({"finite": moving(&[0, 1, 2])}),
+    ));
+    assert_eq!(temporal(&each)["kind"], "holds", "{each}");
+}
+
+/// FR-860-AC-3, FR-860 "Fixing the captures": an `on each` activation reads
+/// its own capture at the later positions its window visits, not the capture
+/// another activation fixed there. Over levels 0, 1, 0 the activation at 0
+/// (`start` 0) is discharged by level 1 and the one at 1 (`start` 1) finds no
+/// greater level, so the violation is at 1; a reading of each position's
+/// atom with that position's own capture would report it at 0. The same
+/// holds over an infinite-trace lasso.
+#[test]
+#[trace("TC-2440", "FR-860-AC-3")]
+fn each_activation_reads_its_own_capture_at_later_positions() {
+    let directory = tempfile::tempdir().unwrap();
+    let later = result(&run(
+        directory.path(),
+        "EachLater",
+        json!({"finite": moving(&[0, 1, 0])}),
+    ));
+    assert_eq!(temporal(&later)["kind"], "violated", "{later}");
+    assert_eq!(temporal(&later)["position"], 1, "{later}");
+    let rising = result(&run(
+        directory.path(),
+        "EachLater",
+        json!({"finite": moving(&[0, 1, 2, 3])}),
+    ));
+    assert_eq!(temporal(&rising)["kind"], "violated", "{rising}");
+    assert_eq!(temporal(&rising)["position"], 3, "{rising}");
+    let looped = result(&run(
+        directory.path(),
+        "EachLoop",
+        json!({"lasso": {"prefix": [], "loop": [sample(0, false), sample(1, false)]}}),
+    ));
+    assert_eq!(temporal(&looped)["kind"], "violated", "{looped}");
+    assert_eq!(temporal(&looped)["position"], 1, "{looped}");
+}
+
+/// FR-860-AC-4 (negative): an undefined capture is an `undefined` violation
+/// at its activation, never an internal failure.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+#[ignore = "QSL-2001: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
+fn an_undefined_capture_is_reported_at_the_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = run_with(
+        directory.path(),
+        DIVISION,
+        "Div",
+        json!({"finite": moving(&[2, 0])}),
+    );
+    assert_eq!(output.status.code(), Some(10));
+    let undefined = result(&output);
+    assert_eq!(temporal(&undefined)["kind"], "undefined", "{undefined}");
+    assert_eq!(temporal(&undefined)["position"], 0, "{undefined}");
+    assert_eq!(
+        undefined["disposition"]["category"], "violation",
+        "{undefined}"
+    );
+    assert!(
+        undefined.to_string().contains("division-by-zero"),
+        "{undefined}"
+    );
+    let defined = result(&run_with(
+        directory.path(),
+        DIVISION,
+        "Div",
+        json!({"finite": moving(&[0, 2])}),
+    ));
+    assert_eq!(temporal(&defined)["kind"], "holds", "{defined}");
+    let each = result(&run_with(
+        directory.path(),
+        DIVISION,
+        "DivEach",
+        json!({"finite": moving(&[0, 2])}),
+    ));
+    assert_eq!(temporal(&each)["kind"], "undefined", "{each}");
+    assert_eq!(temporal(&each)["position"], 1, "{each}");
+}
+
+/// FR-860-AC-4 (negative): a refused capture is a stage `evaluate` refusal
+/// located at the capture, never an internal failure.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+fn a_refused_capture_is_reported_at_the_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let refused = run(directory.path(), "Refused", json!({"finite": moving(&[1])}));
+    assert_eq!(refused.status.code(), Some(20));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(text.contains("integer_out_of_domain"), "{text}");
+    assert!(!text.contains("runtime_invariant"), "{text}");
+}
+
+/// FR-860-AC-5: the stepping monitor fixes the capture at record 0, reports
+/// the batch run of each prefix, and settles `Fast` at record 3.
+#[test]
+#[trace("TC-2441", "FR-860-AC-5")]
+fn the_monitor_keeps_the_capture_of_its_activation() {
+    let directory = tempfile::tempdir().unwrap();
+    let levels = [5, 1, 1, 1];
+    let mut records: Vec<String> = levels
+        .iter()
+        .map(|level| json!({"observation": sample(*level, false)}).to_string())
+        .collect();
+    records.push(json!({"end": true}).to_string());
+    std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
+    let request = json!({"format": "native-monitor/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "clauses": [{"name": "Fast"}], "trace": {"kind": "finite"},
+        "records": "records.jsonl"}});
+    let monitored = run_file(&write(directory.path(), "monitor.json", &request));
+    assert_ne!(monitored.status.code(), Some(30));
+    let document: Value = serde_json::from_slice(&monitored.stdout).expect("a monitor run");
+    let events = document["events"].as_array().expect("events");
+    let mut status = Value::Null;
+    for record in 0..levels.len() {
+        if let Some(event) = events.iter().find(|event| event["record"] == record) {
+            status = event["disposition"].clone();
+            assert_eq!(event["settled"], record == 3, "record {record}: {event}");
+            if record == 3 {
+                assert_eq!(event["settlement"]["step"], "4", "{event}");
+                assert_eq!(event["settlement"]["trigger"], "decided", "{event}");
+            }
+        }
+        let batch = result(&run(
+            directory.path(),
+            "Fast",
+            json!({"finite": moving(&levels[..=record])}),
+        ));
+        assert_eq!(
+            status["category"], batch["disposition"]["category"],
+            "record {record}"
+        );
+    }
+    assert_eq!(status["temporal"]["kind"], "violated", "{status}");
+}
+
+/// FR-860 "Every trace kind and entry" (FR-860-AC-5's monitor over an `on
+/// each` clause and an infinite-trace one): after each record the monitor's
+/// disposition equals the batch run over the records so far, each
+/// activation reading its own capture; `EachLater` ends violated at 1.
+#[test]
+#[trace("TC-2441", "FR-860-AC-5")]
+fn the_monitor_reads_each_activations_own_capture() {
+    let directory = tempfile::tempdir().unwrap();
+    let origin = monitored(directory.path(), "Origin", &[5, 1, 1, 1]);
+    assert_ne!(origin["category"], Value::Null, "{origin}");
+    let each = monitored(directory.path(), "EachLater", &[0, 1, 0]);
+    assert_eq!(each["temporal"]["kind"], "violated", "{each}");
+    assert_eq!(each["temporal"]["position"], 1, "{each}");
+}
+
+/// The last disposition of the `native-monitor/1` run of `name` over records
+/// of `levels`, each record's disposition equal in category to the batch run
+/// over the records so far.
+fn monitored(directory: &Path, name: &str, levels: &[i64]) -> Value {
+    let mut records: Vec<String> = levels
+        .iter()
+        .map(|level| json!({"observation": sample(*level, false)}).to_string())
+        .collect();
+    records.push(json!({"end": true}).to_string());
+    std::fs::write(directory.join("records.jsonl"), records.join("\n")).unwrap();
+    let request = json!({"format": "native-monitor/1", "request": {
+        "models": [], "program": program(), "clocks": clocks(),
+        "clauses": [{"name": name}], "trace": {"kind": "finite"},
+        "records": "records.jsonl"}});
+    let monitored = run_file(&write(directory, &format!("monitor-{name}.json"), &request));
+    assert_ne!(monitored.status.code(), Some(30));
+    let document: Value = serde_json::from_slice(&monitored.stdout).expect("a monitor run");
+    let events = document["events"].as_array().expect("events");
+    let mut status = Value::Null;
+    for record in 0..levels.len() {
+        if let Some(event) = events.iter().find(|event| event["record"] == record) {
+            status = event["disposition"].clone();
+        }
+        let batch = result(&run(
+            directory,
+            name,
+            json!({"finite": moving(&levels[..=record])}),
+        ));
+        assert_eq!(
+            status["category"], batch["disposition"]["category"],
+            "{name} at record {record}: {status} vs {batch}"
+        );
+    }
+    status
+}
+
+/// FR-860-AC-4, FR-337 "Captures": a possibly-zero `mod` written in a
+/// capture's initializer is an `unproved-nonzero` obligation that S3 refuses
+/// under Linked (FR-495-AC-3), because a declared clause is always checked
+/// Linked; the run refuses at compile, exit 20, never at run time.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+fn a_possibly_zero_mod_in_a_capture_is_refused_at_check() {
+    let directory = tempfile::tempdir().unwrap();
+    let inline = "temporal DivInline using e over (r: Reading) clock \"events\" on origin \
+         { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n";
+    let refused = run_with(
+        directory.path(),
+        inline,
+        "DivInline",
+        json!({"finite": moving(&[0, 2])}),
+    );
+    assert_eq!(refused.status.code(), Some(20));
+    let document: Value = serde_json::from_slice(&refused.stdout).expect("a result document");
+    let refusal = &document["disposition"]["refusal"];
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    assert_eq!(refusal["code"], "undefined_expression", "{document}");
+    assert_eq!(refusal["cause"], "unproved-nonzero", "{document}");
+}

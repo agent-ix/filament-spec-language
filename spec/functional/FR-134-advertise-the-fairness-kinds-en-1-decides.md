@@ -3,21 +3,21 @@ id: FR-134
 title: "Advertise fairness kinds and filter candidates by them"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-016
+  - target: ix://agent-ix/filament-spec-language/US-016
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-368
+  - target: ix://agent-ix/filament-specification/FR-368
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-272
+  - target: ix://agent-ix/filament-specification/FR-272
     type: references
 ---
 # FR-134: Advertise fairness kinds and filter candidates by them
@@ -27,7 +27,7 @@ relationships:
 The EN-1 provider (FR-126) SHALL advertise, beside its (`temporal-
 satisfaction`, `bounded`) and (`temporal-satisfaction`, `unbounded`)
 capabilities, the fairness kinds it decides, `weak` and `strong` (ADR-019
-SV-1, BE-1). QSL's registry SHALL compute an item's candidate set (FR-075)
+SV-1, BE-1). FSL's registry SHALL compute an item's candidate set (FR-075)
 from only the backends that advertise every fairness kind the item's
 fairness set uses (ADR-019 DS-2).
 
@@ -41,9 +41,9 @@ weakened.
 
 ## Semantic authority and boundary
 
-QSpec owns the provider advertisement of fairness kinds, the rule that
+FSpec owns the provider advertisement of fairness kinds, the rule that
 negotiation never drops or weakens a fairness constraint, and the warning
-(ADR-019 QS-4; References). QSL's registry makes the candidate set, so it
+(ADR-019 QS-4; References). FSL's registry makes the candidate set, so it
 applies the fairness filter (ADR-019 DS-2). This requirement specifies what
 EN-1 advertises and how the registry filters.
 
@@ -80,10 +80,10 @@ EN-1 advertises and how the registry filters.
 
 ### Manifest `fairness_kinds` admission
 
-QSpec FR-368 defines `fairness_kinds` as a subset of {`weak`, `strong`} that a
+FSpec FR-368 defines `fairness_kinds` as a subset of {`weak`, `strong`} that a
 backend advertising `temporal-satisfaction` carries (FR-331), and refuses a
 defective one at registration with one cause, `invalid_capability`/
-`invalid-fairness-kinds`, keyed by backend identity (QSpec FR-272, FR-368-AC-8
+`invalid-fairness-kinds`, keyed by backend identity (FSpec FR-272, FR-368-AC-8
 to AC-10). The registry applies that rule:
 
 - If a backend advertises a `temporal-satisfaction` pair and its
@@ -103,7 +103,7 @@ to AC-10). The registry applies that rule:
   kind, so the backend is a candidate only for an item whose fairness set is
   empty.
 - The registry SHALL ignore, without validating, a `fairness_kinds` member of a
-  backend that advertises no `temporal-satisfaction` pair, as QSpec FR-368
+  backend that advertises no `temporal-satisfaction` pair, as FSpec FR-368
   states.
 
 The registry SHALL judge `fairness_kinds` after every advertised pair and
@@ -130,7 +130,7 @@ refusal carries a replacement kind.
 - ADR-019 §4 BE-1, §5 SV-1, AM-4.
 - [FR-057](FR-057-admit-shared-capability-kinds.md) (registration causes and
   their order, which the fairness causes follow),
-  QSpec FR-368 and FR-331 (the `fairness_kinds` member) and FR-272 (the closed
+  FSpec FR-368 and FR-331 (the `fairness_kinds` member) and FR-272 (the closed
   `invalid_capability` cause row).
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md) (the
   registry and candidate computation),
@@ -139,5 +139,5 @@ refusal carries a replacement kind.
 
 ## References
 
-- QSpec FR-368 (fairness kinds in negotiation): the QSpec half of ADR-019
+- FSpec FR-368 (fairness kinds in negotiation): the FSpec half of ADR-019
   QS-4 (Linear STD-132).

@@ -3,34 +3,34 @@ id: FR-279
 title: "Execute a checked function or clause as a library operation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-294
+  - target: ix://agent-ix/filament-spec-language/FR-294
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-296
+  - target: ix://agent-ix/filament-spec-language/FR-296
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: depends_on
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
 ---
 # FR-279: Execute a checked function or clause as a library operation
 
 ## Description
 
-QSL SHALL expose `execute`, which calls a checked function or evaluates a
+FSL SHALL expose `execute`, which calls a checked function or evaluates a
 checked clause through the execution-backend seam (FR-294, ADR-029 OP-1).
 
 FR-100's native-run/1 request for a `1-draft` program is the command encoding
@@ -43,7 +43,7 @@ FR-106 admitted for it: `execute` and `PreparedEntries::evaluate` take the
 clause's `QualifiedName` and that `AdmittedObservations` value, which are
 exactly the inputs of S6a's clause entry
 `CheckedPackageEvaluation::evaluate_clause` (FR-107). `execute` does not
-compile, select or admit. FR-109's `qsl_replay::spine::run_clause` is the
+compile, select or admit. FR-109's `fsl_replay::spine::run_clause` is the
 reference pipeline that does: it compiles the unit, resolves the clause by
 name, admits the request's observations by FR-106 and calls `evaluate_clause`
 directly, keeping the `ClauseEvaluation`'s decision trail for the separating
@@ -59,12 +59,12 @@ limits, which belong to a request, not to a prepared backend; and
 `run_clause` is a replay path, and replay runs only through S6a (ADR-029
 EB-3), so `run_clause` takes no chosen backend. EB-3 restricts replay
 only: a function call through the function run entries
-(`qsl_replay::spine::run`, and `qsl_replay::backends::run_with_backends`,
+(`fsl_replay::spine::run`, and `fsl_replay::backends::run_with_backends`,
 which takes the caller's `SuppliedBackends` and the `PrepareLimits` as an
 explicit parameter) is execution, not replay, and runs on the call's chosen
-backend as FR-296 states. The public surface of `qsl_replay::spine` names no
-`qsl_eval` type (FR-100-AC-8); the backend-taking entry lives in
-`qsl_replay::backends`.
+backend as FR-296 states. The public surface of `fsl_replay::spine` names no
+`fsl_eval` type (FR-100-AC-8); the backend-taking entry lives in
+`fsl_replay::backends`.
 
 ## Inputs
 
@@ -111,7 +111,7 @@ pub struct ExecuteLimits {
     the clause reads, so a clause selection has no `ObjectEnvironment`.
 - The execution backend the caller chose, `ExecutionBackendChoice`, and the
   backends the caller supplies, `SuppliedBackends` (FR-296).
-- The limits: the accounting limits (`quire_exact::ScalarLimits`), the
+- The limits: the accounting limits (`filament_exact::ScalarLimits`), the
   supplied-value limits (`SuppliedLimits`, FR-277) and the `PrepareLimits`
   (FR-294). `ScalarLimits` has every member required and no `Default`, so
   `ExecuteLimits` has no `Default` and the caller supplies `accounting`
@@ -130,7 +130,7 @@ chosen backend is not supplied or did not prepare the entry.
 
 ## Behavior
 
-- The `qsl_replay::backends::run_with_backends` entry shall hand its explicit
+- The `fsl_replay::backends::run_with_backends` entry shall hand its explicit
   `prepare: &PrepareLimits` parameter to the `prepare` of the call's chosen
   supplied backend, and shall run that backend and no other.
 - The `execute` operation shall prepare exactly the selected entry with the
@@ -171,9 +171,9 @@ chosen backend is not supplied or did not prepare the entry.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-279-AC-1 | `execute` with the interpreter backend over FR-100-AC-4's unit returns, for `lt(5, 3)`, `flag(1)` and `id(4)`, the `Evaluation` `CheckedPackage::call` returns for the same arguments, and for `id(12)` the same `CallFailure::Input`. | Test (TC-760) |
-| FR-279-AC-2 | Over FR-109's ConfigVersion unit, for the FR-109-AC-1 healthy-parent and violating-parent requests, `execute` with the interpreter and a clause selection naming `ParentOrder`, with the `AdmittedObservations` FR-106 admits for it from the request's snapshot, returns `Ok` with the `evaluation` member of `CheckedPackageEvaluation::evaluate_clause` for the same clause, observations and accounting limits; FR-100's outcome mapping of that `Evaluation` is `Completed(Boolean(true))` and `Completed(Boolean(false))` respectively, equal to the `Evaluate` disposition `qsl_replay::spine::run_clause` reports for the same request. | Test (TC-760) |
+| FR-279-AC-2 | Over FR-109's ConfigVersion unit, for the FR-109-AC-1 healthy-parent and violating-parent requests, `execute` with the interpreter and a clause selection naming `ParentOrder`, with the `AdmittedObservations` FR-106 admits for it from the request's snapshot, returns `Ok` with the `evaluation` member of `CheckedPackageEvaluation::evaluate_clause` for the same clause, observations and accounting limits; FR-100's outcome mapping of that `Evaluation` is `Completed(Boolean(true))` and `Completed(Boolean(false))` respectively, equal to the `Evaluate` disposition `fsl_replay::spine::run_clause` reports for the same request. | Test (TC-760) |
 | FR-279-AC-3 | For each FR-100-AC-1, AC-4 and AC-6 request, the `outcome` member of FR-100's `spine-run-result/1` document equals the rendering of `execute`'s result for the same source, function, arguments and accounting limits. | Test (TC-760) |
-| FR-279-AC-4 | `execute` choosing a supplied test backend standing in for `aot` whose `prepare` returns `PrepareFailure::Limit` naming `prepare.code_bytes` with configured value 1 and counter 2 returns `CallFailure::Limit(PrepareLimitReached { setting: PrepareSetting::CodeBytes, bound: 1, actual: 2 })`, whose `setting.name()` is `prepare.code_bytes`, whose category is incomplete (exit 22) and which is built at the path `quire_eval::PrepareLimitReached`; with one whose `prepare` returns `PrepareFailure::Fault`, `CallFailure::Fault` with the same `InternalFault`. Through `qsl_replay::backends::run_with_backends` with a `Call` choosing `jit` and a supplied test `jit`, a `prepare` parameter whose `code_bytes` is below the entry's generated size returns the incomplete outcome naming `prepare.code_bytes`, and the same call with a `prepare` parameter above it completes, so the parameter reaches the supplied backend. | Test (TC-760) |
+| FR-279-AC-4 | `execute` choosing a supplied test backend standing in for `aot` whose `prepare` returns `PrepareFailure::Limit` naming `prepare.code_bytes` with configured value 1 and counter 2 returns `CallFailure::Limit(PrepareLimitReached { setting: PrepareSetting::CodeBytes, bound: 1, actual: 2 })`, whose `setting.name()` is `prepare.code_bytes`, whose category is incomplete (exit 22) and which is built at the path `filament_eval::PrepareLimitReached`; with one whose `prepare` returns `PrepareFailure::Fault`, `CallFailure::Fault` with the same `InternalFault`. Through `fsl_replay::backends::run_with_backends` with a `Call` choosing `jit` and a supplied test `jit`, a `prepare` parameter whose `code_bytes` is below the entry's generated size returns the incomplete outcome naming `prepare.code_bytes`, and the same call with a `prepare` parameter above it completes, so the parameter reaches the supplied backend. | Test (TC-760) |
 | FR-279-AC-5 | A `compile_fail` doctest that builds `ExecuteLimits` with `..Default::default()` and no `accounting` fails to compile, and a control that states `accounting` explicitly with `SuppliedLimits::default()` and `PrepareLimits::default()` compiles. Over FR-100-AC-4's unit, `execute` with the interpreter for `id(4)` under `supplied.admission_work_units` 0 returns the same `CallFailure::Supplied` that `CheckedPackageEvaluation::call_supplied` returns under a supplied-value run with those `SuppliedLimits`, while the same request under `SuppliedLimits::default()` returns the `Evaluation` of AC-1. | Test (TC-760) |
 
 ## Dependencies
@@ -185,9 +185,9 @@ chosen backend is not supplied or did not prepare the entry.
 - [FR-100](FR-100-run-a-named-function-through-the-spine.md): the command encoding; [FR-109](FR-109-run-a-state-clause-through-the-spine.md): the reference clause pipeline.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md), [FR-107](FR-107-evaluate-state-clauses-at-s6a.md): the admitted clause input and S6a's clause entry.
 - [FR-277](FR-277-bound-every-lifecycle-operation-by-caller-limits.md): the supplied-value limits and explicit supply of the accounting limits.
-- QSpec FR-300: the `execute` operation.
+- FSpec FR-300: the `execute` operation.
 
 ## References
 
 - QSL-393 (V1-A06): typed library APIs.
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

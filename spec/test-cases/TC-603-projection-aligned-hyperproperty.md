@@ -3,7 +3,7 @@ id: TC-603
 title: "EN-1 checks a projection-aligned hyperproperty over the projected product"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-178
+  - target: ix://agent-ix/filament-spec-language/FR-178
     type: verifies
 ---
 # TC-603: EN-1 checks a projection-aligned hyperproperty over the projected product

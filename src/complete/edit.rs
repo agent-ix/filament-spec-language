@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use qsl_cst::{
+use fsl_cst::{
     parse, CompleteCause, CompleteCode, CompleteDiagnostic, HostCause, Limits, ParsedSource,
 };
-use qsl_foundation::selection::ProfileCatalog;
-use qsl_foundation::{Phase, SourceIdentity, Span, SyntaxLimit};
+use fsl_foundation::selection::ProfileCatalog;
+use fsl_foundation::{Phase, SourceIdentity, Span, SyntaxLimit};
 
 /// One UTF-8-boundary-preserving source replacement.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,7 +69,7 @@ fn apply_edits_selected(
         super::editor::validate_catalog_profiles(parsed, catalog)?;
     }
     let failure = |code, cause, span: Span, message| {
-        qsl_cst::diagnostic::error(
+        fsl_cst::diagnostic::error(
             source,
             code,
             cause,
@@ -82,7 +82,7 @@ fn apply_edits_selected(
     // An edit is made against the one `Source` it names and reparses under
     // that source's own two labels (FR-001-AC-12).
     if new_identity != *source.identity() {
-        return Err(qsl_cst::diagnostic::error_without_region(
+        return Err(fsl_cst::diagnostic::error_without_region(
             source,
             CompleteCode::InvalidSourceMap,
             CompleteCause::Host(HostCause::EditPredecessor),
@@ -123,7 +123,7 @@ fn apply_edits_selected(
         .and_then(|removed| source.text().len().checked_sub(removed))
         .and_then(|retained| replacement_bytes.and_then(|added| retained.checked_add(added)));
     let Some(output_len) = output_len else {
-        return Err(qsl_cst::diagnostic::resource_exhausted(
+        return Err(fsl_cst::diagnostic::resource_exhausted(
             source,
             Phase::SourceMap,
             Span { start: 0, end: 0 },
@@ -133,7 +133,7 @@ fn apply_edits_selected(
         ));
     };
     if output_len > limits.source_bytes {
-        return Err(qsl_cst::diagnostic::resource_exhausted(
+        return Err(fsl_cst::diagnostic::resource_exhausted(
             source,
             Phase::SourceMap,
             Span { start: 0, end: 0 },
@@ -152,7 +152,7 @@ fn apply_edits_selected(
     bytes.extend_from_slice(&source.text().as_bytes()[cursor..]);
     if edits.len() == 1
         && edits[0].range.start == edits[0].range.end
-        && qsl_cst::token::is_lexer_whitespace(&edits[0].replacement)
+        && fsl_cst::token::is_lexer_whitespace(&edits[0].replacement)
         && limits.source_bytes == Limits::default().source_bytes
         && limits.tokens == Limits::default().tokens
         && limits.nodes == Limits::default().nodes

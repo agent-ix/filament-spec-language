@@ -3,14 +3,14 @@ id: TC-1269
 title: "The clause run reports typed consequent source events"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: verifies
 ---
 # TC-1269: The clause run reports typed consequent source events
 
 ## Description
 
-Verify `qsl_replay::spine::run_clause`'s `consequent_source_events` over
+Verify `fsl_replay::spine::run_clause`'s `consequent_source_events` over
 nested Boolean clauses, quantified and called-function clauses, runs without
 a truth, and temporal runs.
 

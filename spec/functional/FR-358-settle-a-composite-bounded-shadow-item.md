@@ -3,37 +3,37 @@ id: FR-358
 title: "Settle a composite bounded_shadow equality-parity claim: replay a falsified one, and tell Proved from Tested for a verified one"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-357
+  - target: ix://agent-ix/filament-spec-language/FR-357
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-149
+  - target: ix://agent-ix/filament-specification/FR-149
     type: references
-  - target: ix://agent-ix/quire-specification/FR-322
+  - target: ix://agent-ix/filament-specification/FR-322
     type: references
-  - target: ix://agent-ix/quire-contract-codegen/FR-015
+  - target: ix://agent-ix/filament-contract-codegen/FR-015
     type: references
-  - target: ix://agent-ix/quire-contract-codegen/FR-028
+  - target: ix://agent-ix/filament-contract-codegen/FR-028
     type: references
-  - target: ix://agent-ix/quire-contract-codegen/FR-029
+  - target: ix://agent-ix/filament-contract-codegen/FR-029
     type: references
-  - target: ix://agent-ix/quire-contract-codegen/FR-033
+  - target: ix://agent-ix/filament-contract-codegen/FR-033
     type: references
 ---
 # FR-358: Settle a composite bounded_shadow equality-parity claim: replay a falsified one, and tell Proved from Tested for a verified one
@@ -44,47 +44,47 @@ A composite `bounded_shadow` item is a Kani obligation that CG proves over a
 bounded shadow model, with a refinement obligation, instead of over
 production code (CG FR-015-AC-69 to AC-76, CG FR-028, CG ADR-003 Q1). The
 item is a **parity claim**, not a source predicate. It says that CG's
-generated shadow computes the language's composite equality (QSpec FR-149)
+generated shadow computes the language's composite equality (FSpec FR-149)
 at the claimed node: the equality verdict under the claimed operator, and
 the occurrence-pair count. Like FR-357's operator-parity claim, it is a
 claim about generated code. Its counterexample is never a violation of a
 user property, so no result of this requirement settles `Refuted`.
 
-QSL owns the verdict (QSL-640; CG AD-002). This requirement adds no terminal
+FSL owns the verdict (QSL-640; CG AD-002). This requirement adds no terminal
 value. CG builds the claim as CG FR-033 describes, and its field names
 follow CG FR-033. The harness bounds are part of the claim's obligation
 identity (ADR-013 O-09, ADR-014 B-4). ADR-021 TX-3 states that a harness
 carries a tightened bound in its identity, and ADR-021 TX-2 names the
 bounded shadow path as the code-side evidence route CG ADR-003 Q1 selects.
 
-QSL SHALL provide two entries in the layer-6 replay facade, both taking the
+FSL SHALL provide two entries in the layer-6 replay facade, both taking the
 original proving context as an FR-071 replay request:
 
-- `qsl_replay::replay_composite_parity` for a falsified item. It evaluates
+- `fsl_replay::replay_composite_parity` for a falsified item. It evaluates
   the language's exact equality on the operands CG decoded from the
   falsifying draw and compares the result with the retained shadow result.
   A divergence settles `Failed`. An agreement settles
   `Inconclusive(ScalarAgrees)`, widened to parity claims (below). A native
   `Incomplete` or `ExecutionFault` settles `Failed` with no comparison, as
   in FR-357's operator arm.
-- `qsl_replay::settle_verified_shadow` for a verified item. It derives the
+- `fsl_replay::settle_verified_shadow` for a verified item. It derives the
   claim's declared bounds itself, checks CG's harness bounds against them,
   and settles `Failed`, `Incomplete`, the vacuous `Proved { Checks { 0 }, Certified }`,
   `Proved { Checks { n }, Certified }` or `Tested`. It takes no native observation.
 
-Both entries, like `qsl_replay::replay`, take a `ReplayLimits` (the
+Both entries, like `fsl_replay::replay`, take a `ReplayLimits` (the
 `replay.input_bytes` bound) as their last argument, so a caller can raise it;
-the FR-357 entries and `qsl_replay::compile_package` take it the same way.
+the FR-357 entries and `fsl_replay::compile_package` take it the same way.
 
 There is no predicate-replay route for these items. Neither entry selects a
-`Boolean` function to replay, and neither calls `qsl_replay::replay`.
+`Boolean` function to replay, and neither calls `fsl_replay::replay`.
 
 ## Inputs
 
 Both entries take an FR-071 replay request carrying the original proving
 context: the package reference, dependencies and byte
 provision; the enclosing function of the claimed node as the `function`
-replay target (QSpec FR-323), a request with another target refusing as
+replay target (FSpec FR-323), a request with another target refusing as
 FR-098 does; the R-6 `obligation_identity` CG minted (CG AD-002
 R-6); and the request's declared domains, the `DeclaredDomain`
 (`ProofBound`) values FR-071 carries, which are caller-substituted ADR-014
@@ -94,7 +94,7 @@ With the request, both entries take a `CompositeParityClaim`:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `node` | `WireNodeId` | The claimed equality node, by its QSpec FR-322 node identity in the original package |
+| `node` | `WireNodeId` | The claimed equality node, by its FSpec FR-322 node identity in the original package |
 | `occurrence` | `Origin` | The claimed occurrence of `node` in the selected function's body (its role and ordinal). A node shared by two occurrences, such as `(a = b) and (a = b)`, is two obligations, each with its own identity |
 | `operator` | `EqualityOperator` (`Equal` or `NotEqual`) | The claimed operation |
 | `obligation_kind` | text | The CG `ObligationKind` wire string in the O-09 preimage |
@@ -180,7 +180,7 @@ settlement row, including the vacuous row V-3.
    package, refusing an undeclared name `UnknownFunction`
    (`missing_declaration`/`missing-name`). Require `node` to be a node of
    the package, to lie in that function's body, to be an application of
-   `operator` (QSpec FR-149's `=` or `≠`), and `occurrence` to be an
+   `operator` (FSpec FR-149's `=` or `≠`), and `occurrence` to be an
    occurrence of `node` in that function's body (`ScalarIdentity::Occurrence`;
    an occurrence of another function, or one the node does not have, refuses
    it). Each mismatch SHALL refuse
@@ -267,12 +267,12 @@ claim, so it comes before every row, `Disagreed` included.
 | F-2 | `native` is `Incomplete` or `ExecutionFault` | `GeneratedFault { native }`, keeping the native outcome and its `NativeCause` | `Failed`, a generated-artifact fault; checked before admission, so a CG artifact fault is never hidden |
 | F-3 | an operand fails admission | `RefusedInput(OperandRefusal)`, naming its index (0 or 1) and its code | `Inconclusive(ReplayRefused(code))` |
 | F-4 | admitting an operand reaches one of the request's accounting limits | `Incomplete { stage: IncompleteStage::Admission(Incomplete) }`, naming the counter, its configured value and the count reached | `Incomplete(ResourceExhausted)` |
-| F-5 | QSL's exact evaluation reaches a limit before an outcome | `Incomplete { stage: IncompleteStage::ExactEvaluation(Incomplete) }`, naming QSL's counter, its configured value and the count reached | `Incomplete(ResourceExhausted)` |
+| F-5 | FSL's exact evaluation reaches a limit before an outcome | `Incomplete { stage: IncompleteStage::ExactEvaluation(Incomplete) }`, naming FSL's counter, its configured value and the count reached | `Incomplete(ResourceExhausted)` |
 | F-6 | `refinement` is `CeilingReached` | `Incomplete { stage: IncompleteStage::RefinementCeiling }` | `Incomplete(ResourceExhausted)` |
 | F-7 | otherwise: compare the exact outcome with `shadow` | `Diverged { exact, shadow, charges }` if the verdict or the pair count differs; `Agrees { agreement, charges }` if both agree | `Failed` for `Diverged`; `Inconclusive(ScalarAgrees)` for `Agrees` |
 
 - **Native fault (row F-2).** This is the rule FR-357's operator arm
-  applies, so one rule covers both parity arms, and QSL leaves no
+  applies, so one rule covers both parity arms, and FSL leaves no
   precedence to CG. No admission and no exact evaluation run, so a native
   fault is never hidden by an operand that fails admission or by an
   accounting limit.
@@ -290,14 +290,14 @@ claim, so it comes before every row, `Disagreed` included.
   under `limits`. The exact outcome is the verdict under `operator`
   (`NotEqual` negates `Equal`, with the same pair count) and the
   occurrence-pair count, counted with no early exit after an unequal pair
-  (QSpec FR-149). The exact evaluation runs before row F-6 is checked, so
-  a QSL limit is reported as QSL's stage even when the refinement also
+  (FSpec FR-149). The exact evaluation runs before row F-6 is checked, so
+  an FSL limit is reported as FSL's stage even when the refinement also
   reached its ceiling.
 - **Limit stages stay distinct.** A native stop (row F-2) is
   `GeneratedFault { native }`, settling `Failed`, with the driver's
   `NativeCause`. An accounting limit of the request (row F-4) is
-  `IncompleteStage::Admission`. A QSL exact-evaluation limit (row F-5) is
-  `IncompleteStage::ExactEvaluation`, carrying QSL's `Incomplete` record. A
+  `IncompleteStage::Admission`. An FSL exact-evaluation limit (row F-5) is
+  `IncompleteStage::ExactEvaluation`, carrying FSL's `Incomplete` record. A
   refinement ceiling (row F-6) is `IncompleteStage::RefinementCeiling`. Rows
   F-4, F-5 and F-6 share the terminal value `Incomplete(ResourceExhausted)`.
   The report keeps the stage in its result, so a reader tells them apart
@@ -373,8 +373,8 @@ request carries an `obligation_identity` that the replay carries unchanged.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-358-AC-1 | Falsified (row F-7), at `E`, with `refinement: Exhausted`, operands `Q { x: 1, s: [2] }` and `Q { x: 1, s: [3] }`, and `native` `Completed` or `Refused`: the exact outcome is `{ equal: false, pair_count }`, counting every pair. A retained shadow `{ equal: true }` with that count, and one with the right verdict but a count one lower, each settle `Diverged`, which is `Failed`, category internal failure. A shadow equal to the exact outcome settles `Agrees`, which is `Inconclusive(ScalarAgrees)` holding a `CompositeEquality` claim and an `Equality` outcome, category inconclusive. At `N`, the exact verdict is the negation of `Equal`'s with the same pair count, and an agreeing shadow settles `Agrees`. No case settles `Refuted`. | Test (TC-907) |
-| FR-358-AC-2 | Falsified, rows F-2 to F-6, each with an agreeing shadow: `native` `Incomplete` and `ExecutionFault` each settle `GeneratedFault` holding that observation and its `NativeCause`, which is `Failed`, with no admission and no exact evaluation, even with an operand that fails admission, with request accounting limits too small to admit the operands, under exact-evaluation limits too small, and with `refinement: CeilingReached` (F-2 before every later row). A right operand at `N` other than the package's literal, and a left operand at `E` with `x: 12`, each settle `RefusedInput` (indexes 1 and 0), which is `Inconclusive(ReplayRefused(invalid_runtime_input))`, with nothing evaluated, even with `refinement: CeilingReached` (F-3). Request accounting limits too small to admit the operands settle `Incomplete { stage: Admission }` naming the counter, never `ExactEvaluation`, even with `refinement: CeilingReached` (F-4). Limits too small for the exact evaluation settle `Incomplete { stage: ExactEvaluation }` naming QSL's counter, even with `refinement: CeilingReached` (F-5 before F-6). `refinement: CeilingReached` with admitted operands, a `Completed` native and enough limits settles `Incomplete { stage: RefinementCeiling }`. All three stages are `Incomplete(ResourceExhausted)`, and the report keeps them distinct. | Test (TC-907) |
-| FR-358-AC-3 | Both entries refuse, with the obligation identity carried, before any evaluation or settlement row: an undeclared `function` replay target (`UnknownFunction`, `missing-name`); a `node` the package does not hold, a `node` outside `f`'s body, and `operator` `NotEqual` at `E` (each `ScalarIdentity`, `invalid-request`, with its own cause); an `occurrence` the node does not have in `f`'s body, and one of another function (each `ScalarIdentity::Occurrence`). At `d(a: Q, b: Q): Boolean { (a = b) and (a = b) }`, one node with two occurrences, each occurrence settles under its own identity. Every outcome of both entries carries the full claim (`report.claim()`), and a changed observation member makes it differ from the claim sent. A raised `ReplayLimits.input_bytes` admits an S1 limit that the default refuses (`LimitAboveReader`). Neither entry calls `qsl_replay::replay` or selects a `Boolean` function to call. | Test (TC-907) |
+| FR-358-AC-2 | Falsified, rows F-2 to F-6, each with an agreeing shadow: `native` `Incomplete` and `ExecutionFault` each settle `GeneratedFault` holding that observation and its `NativeCause`, which is `Failed`, with no admission and no exact evaluation, even with an operand that fails admission, with request accounting limits too small to admit the operands, under exact-evaluation limits too small, and with `refinement: CeilingReached` (F-2 before every later row). A right operand at `N` other than the package's literal, and a left operand at `E` with `x: 12`, each settle `RefusedInput` (indexes 1 and 0), which is `Inconclusive(ReplayRefused(invalid_runtime_input))`, with nothing evaluated, even with `refinement: CeilingReached` (F-3). Request accounting limits too small to admit the operands settle `Incomplete { stage: Admission }` naming the counter, never `ExactEvaluation`, even with `refinement: CeilingReached` (F-4). Limits too small for the exact evaluation settle `Incomplete { stage: ExactEvaluation }` naming FSL's counter, even with `refinement: CeilingReached` (F-5 before F-6). `refinement: CeilingReached` with admitted operands, a `Completed` native and enough limits settles `Incomplete { stage: RefinementCeiling }`. All three stages are `Incomplete(ResourceExhausted)`, and the report keeps them distinct. | Test (TC-907) |
+| FR-358-AC-3 | Both entries refuse, with the obligation identity carried, before any evaluation or settlement row: an undeclared `function` replay target (`UnknownFunction`, `missing-name`); a `node` the package does not hold, a `node` outside `f`'s body, and `operator` `NotEqual` at `E` (each `ScalarIdentity`, `invalid-request`, with its own cause); an `occurrence` the node does not have in `f`'s body, and one of another function (each `ScalarIdentity::Occurrence`). At `d(a: Q, b: Q): Boolean { (a = b) and (a = b) }`, one node with two occurrences, each occurrence settles under its own identity. Every outcome of both entries carries the full claim (`report.claim()`), and a changed observation member makes it differ from the claim sent. A raised `ReplayLimits.input_bytes` admits an S1 limit that the default refuses (`LimitAboveReader`). Neither entry calls `fsl_replay::replay` or selects a `Boolean` function to call. | Test (TC-907) |
 | FR-358-AC-4 | Verified, at `E`, with `success_checks` 4, `refinement: Exhausted` and `B`: `Proved { basis: Checks { success_checks: 4 }, certification: Certified }`, category success (row V-4). The same holds with harness `[-1, 10]` on the first `x`. At `N`, the literal operand derives no position, and `B`'s left half covers. At `k`, with request `DeclaredDomain`s substituting cardinality 5 for each `s`, harness cardinality 5 and `[0, 9]` on each element give `Proved`. With `enum Color { Red, Green, Blue }` and `c(a: Color, b: Color): Boolean { a == b }`, harness bounds `Variants { Blue, Green, Red }` on each operand give `Proved { basis: Checks { success_checks: 4 }, certification: Certified }`. | Test (TC-907) |
 | FR-358-AC-5 | Verified, with `success_checks` 4, `Tested`, category success and never `Proved` (row V-5), for each of: `NotExhausted` (CG's `_sampled` and `_not_run`) with `B`; `Exhausted` at `c` with `Variants { Green, Red }` on `a` and every variant on `b` (a partial variant set); `Exhausted` with `B` over `t(a: R, b: R): Boolean { a == b }`, where `record R { x: Int[0, 9]; label: Text[0, 4]; }` and `B` covers each `x` (a text leaf's whole declared domain cannot be shown covered); `Exhausted` with cardinality 2 on one `s`; `[0, 8]` on one `x`; no harness bound on one `x`; an empty harness list at `E`; harness depth 3 at `h`, whose recursive position has no `DeclaredDomain`; and harness cardinality 5 at `k` with no `DeclaredDomain`. | Test (TC-907) |
 | FR-358-AC-6 | Verified: `refinement: Disagreed` (CG's `refinement_failed`) settles `Failed`, category internal failure, never `Refuted`, whatever `success_checks` and the bounds (row V-1). `CeilingReached` (CG's `_inconclusive`) settles `Incomplete(ResourceExhausted)` (row V-2), with 4 checks and with 0. With `success_checks` 0, `Exhausted` and `B`, it settles `Proved { basis: Checks { success_checks: 0 }, certification: Certified }`, category inconclusive, cause `kani_vacuous_proof` (row V-3). | Test (TC-907) |
@@ -402,7 +402,7 @@ function, because the grammar takes only `K<T>[min, max]`.
   admission.
 - [FR-106](FR-106-admit-snapshots-and-invocations.md): an input outside its
   declared domain is refused input.
-- QSpec FR-149 (composite equality and its pair count) and FR-322 (node
+- FSpec FR-149 (composite equality and its pair count) and FR-322 (node
   identity).
 - ADR-013 O-09 and §2; ADR-014 §1, B-4, §2, §4 and §8; ADR-021 TX-2 and
   TX-3.

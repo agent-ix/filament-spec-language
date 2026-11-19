@@ -3,7 +3,7 @@ id: TC-427
 title: "A stage limit names its kind, bound, actual counter and locus"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
 ---
 # TC-427: A stage limit names its kind, bound, actual counter and locus

@@ -3,9 +3,9 @@ id: TC-536
 title: "Exploration and model-check limits publish their defaults"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: verifies
 ---
 # TC-536: Exploration and model-check limits publish their defaults

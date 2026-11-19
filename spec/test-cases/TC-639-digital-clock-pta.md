@@ -3,7 +3,7 @@ id: TC-639
 title: "Closed probabilistic timed automata are decided exactly through digital clocks, with the workload resolving delays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: verifies
 ---
 # TC-639: Closed probabilistic timed automata are decided exactly through digital clocks, with the workload resolving delays
@@ -28,6 +28,6 @@ Tag the tests `#[trace("TC-639", "FR-204-AC-n")]`.
 ## Expected Results
 
 - Step 1: clock ranges 0 to 2 and 0 to 5; `ExactValue{99/100}`; `refuted` with probability `1/100`, replay checking the 4 ms horizon.
-- Step 2: `ExactValue{20/9 ms}`; `StrictClockConstraint` naming the guard.
-- Step 3: `ExactValue{159129/160000}`; `DelayDistribution` naming `send`; `DelayDistribution`.
-- Step 4: `ZeroDelayCycle` naming the cycle; `TimedFormShape`.
+- Step 2: `ExactValue{20/9 ms}`; with the strict guard, the region-MDP maximum `20/9 ms` and infimum `10/9 ms`, never `unsupported`.
+- Step 3: `ExactValue{159129/160000}`; under every scheduler the distribution applied, minimum and maximum `159129/160000`; with `exponential` and exact evidence `DelayDistribution` naming `send`.
+- Step 4: the zero-delay variant decided with minimum and maximum `1`; the `always` window decided as a complement with minimum `1/10000` and maximum `1/100`, settling `refuted`.

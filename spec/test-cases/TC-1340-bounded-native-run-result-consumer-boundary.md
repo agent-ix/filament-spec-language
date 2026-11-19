@@ -3,7 +3,7 @@ id: TC-1340
 title: "The bounded native-run-result/2 consumer boundary reads through the crate root"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-535
+  - target: ix://agent-ix/filament-spec-language/FR-535
     type: verifies
 ---
 # TC-1340: The bounded native-run-result/2 consumer boundary reads through the crate root
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify [FR-535](../functional/FR-535-expose-the-bounded-native-run-result-consumer-boundary.md)
-from an integration test that names only `qsl_replay` crate-root items.
+from an integration test that names only `fsl_replay` crate-root items.
 
 ## Test Procedure
 

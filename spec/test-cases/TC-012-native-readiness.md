@@ -3,9 +3,9 @@ id: TC-012
 title: "Located admitted native grammar"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: verifies
 ---
 
@@ -15,7 +15,7 @@ Located admitted native grammar. Type: Integration; priority P1. Traces: FR-002-
 
 ## Test Procedure
 
-Run the `tests/fixtures/spine-compile.native` fixture through the `parse` operation, and the precedence, chained-comparison, grouping/name locus, node-limit and joined 512 KiB stack cases through `qsl_cst::parse`. Serialize the operation's result for the fixture and for a unit holding `a < b < c` through `OutcomeDocument::from_parse`, and map each document's category through FR-285. In the no-default-features build `make ci-clean-build` makes, run the fixture case.
+Run the `tests/fixtures/spine-compile.native` fixture through the `parse` operation, and the precedence, chained-comparison, grouping/name locus, node-limit and joined 512 KiB stack cases through `fsl_cst::parse`. Serialize the operation's result for the fixture and for a unit holding `a < b < c` through `OutcomeDocument::from_parse`, and map each document's category through FR-285. In the no-default-features build `make ci-clean-build` makes, run the fixture case.
 
 ## Expected Results
 

@@ -3,49 +3,49 @@ id: FR-239
 title: "Check a timed claim by symbolic zone search (EN-6)"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-231
+  - target: ix://agent-ix/filament-spec-language/FR-231
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-238
+  - target: ix://agent-ix/filament-spec-language/FR-238
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: references
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-364
+  - target: ix://agent-ix/filament-specification/FR-364
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-415
+  - target: ix://agent-ix/filament-specification/FR-415
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-418
+  - target: ix://agent-ix/filament-specification/FR-418
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-419
+  - target: ix://agent-ix/filament-specification/FR-419
     type: depends_on
 ---
 # FR-239: Check a timed claim by symbolic zone search (EN-6)
 
 ## Description
 
-QSL's native zone engine EN-6, module `zone_check` in layer A, crate
-`qsl-analyze` (ADR-026 EZ-1), SHALL decide a timed
+FSL's native zone engine EN-6, module `zone_check` in layer A, crate
+`fsl-analyze` (ADR-026 EZ-1), SHALL decide a timed
 item over a timed subject by a passed/waiting search of symbolic states
 `(s, q, Z)` (discrete state, claim-automaton state, zone), with
 coverage by the aLU simulation, under caller-set budgets (ADR-026 EZ-1,
@@ -118,21 +118,21 @@ edges, automaton states and stored zone bytes.
 - Transition identities and their discrete successors SHALL come from
   FR-120's successor relation, in FR-101 canonical transition order.
 - **Task-automaton integration.** For `TaskAutomaton(subject)`, EN-6 SHALL
-  obtain the product and successor relation from FR-249. QSpec FR-419 and
-  FR-415 define the product and transition semantics. QSL SHALL preserve the
+  obtain the product and successor relation from FR-249. FSpec FR-419 and
+  FR-415 define the product and transition semantics. FSL SHALL preserve the
   checked product identity when constructing the search graph and shall not
   reinterpret task/job identity, demand, release, mode-change or
   bounded-subtraction rules.
 - **Exact and bounded task search.** For the exact task-product class
-  admitted by QSpec FR-418, EN-6 SHALL submit the complete refined product to
+  admitted by FSpec FR-418, EN-6 SHALL submit the complete refined product to
   the independent certificate checker and return `Holds` only if it accepts.
   Products outside that gate, including variable demand and mixed-criticality
   changes, remain admitted for sound bounded search. A concrete miss is a
-  candidate until FR-237 replays it and QSpec FR-364 accepts its required
+  candidate until FR-237 replays it and FSpec FR-364 accepts its required
   time-divergent continuation. Queue overflow alone SHALL never refute.
 - If a task search reaches an effective resource limit before a complete
-  proof or replayed refutation, EN-6 SHALL return `Stopped` with QSpec FR-331
-  `task_search` evidence. The QSpec FR-331 reader owns evidence validation;
+  proof or replayed refutation, EN-6 SHALL return `Stopped` with FSpec FR-331
+  `task_search` evidence. The FSpec FR-331 reader owns evidence validation;
   this requirement does not define a frontier record or allow bounded
   evidence to settle `Holds`.
 
@@ -146,8 +146,8 @@ edges, automaton states and stored zone bytes.
   whose aLU abstraction includes the new zone.
 - This aLU rule remains the ordinary model-subject abstraction. For task
   products, EN-6 SHALL use the refined-region method and gate specified by
-  QSpec FR-415 and FR-418; it SHALL NOT infer completeness for those products
-  from the ordinary diagonal-free aLU argument. The QSpec certificate reader
+  FSpec FR-415 and FR-418; it SHALL NOT infer completeness for those products
+  from the ordinary diagonal-free aLU argument. The FSpec certificate reader
   owns the independent coverage check.
 
 ### Search
@@ -210,13 +210,13 @@ edges, automaton states and stored zone bytes.
 | FR-239-AC-3 | A model whose clock `x` is compared only with 5 and grows without bound in a loop reaches a finite number of stored symbolic states, and the same model with the constant `10^12` reaches the same number. | Test (TC-694) |
 | FR-239-AC-4 | `Settles` over `Rpc` with `max_symbolic_states` 2 returns `Stopped(LimitReached, MaxSymbolicStates)` naming the value 2; with a cancelled `Cancel` handle, `Stopped(Cancelled, …)`; a subject with an unbounded population root refuses `RequiresBound` with no state explored. Two runs of each request give equal outcomes and byte-equal certificates and counterexamples. | Test (TC-694) |
 | FR-239-AC-5 | Over a `Ticker` model (`time dense`; object `t` with `n: Int[0, 2]` and clock `x`; operation `step` with precondition `self.n < 2`, guard `x >= 1`, reset `x` and postcondition `self.n = pre(self.n) + 1`; time invariant `when self.n < 2 { x <= 1 }`; initial `n = 0`) and `always holds(6 mod (2 - t.n) >= 0)` under `model-time`, the state with `n = 2` is quiescent and diverges by its idle tail, and the search returns `Violated` with the timed prefix `step` after delay 1, `step` after delay 1, and `kind: UndefinedEvaluation{where, cause: division-by-zero}`, `where` naming position 2, time stamp 2, the state with `n = 2`, `x = 0` and the locus of `6 mod (2 - t.n)`. With the unconditional invariant `x <= 1`, the `n = 2` state is a local time-lock: the search returns `Undecided(NoAdmittedBehaviour)` for the claim, since no behaviour diverges, and the time-lock-freedom item is refuted. | Test (TC-710) |
-| FR-239-AC-6 | EN-6 passes an exact fixed-work task product to the QSpec FR-418 reader and returns `Holds` only on its accepted complete certificate. For a product outside that exact gate, a limit stop returns `Stopped` with the QSpec FR-331 task-search record; FR-235 settles it incomplete. A candidate miss without the QSpec FR-364 checked continuation does not settle `Violated`. | Test (TC-704) |
+| FR-239-AC-6 | EN-6 passes an exact fixed-work task product to the FSpec FR-418 reader and returns `Holds` only on its accepted complete certificate. For a product outside that exact gate, a limit stop returns `Stopped` with the FSpec FR-331 task-search record; FR-235 settles it incomplete. A candidate miss without the FSpec FR-364 checked continuation does not settle `Violated`. | Test (TC-704) |
 
 ## Dependencies
 
 - ADR-026 §8 EZ-1, EZ-3 to EZ-5; ADR-018 EN-1, S6c and E10; ADR-014 B-5.
 - [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md),
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md),
   [FR-075](FR-075-compute-candidates-from-registered-backends.md) (the
   provider manifest registers through it),
   [FR-231](FR-231-read-a-timed-subject-s-behaviours-as-timed-traces.md),
@@ -226,7 +226,7 @@ edges, automaton states and stored zone bytes.
 
 ## References
 
-- Engine placement (layer A, `qsl-analyze`) relative to the qualified
+- Engine placement (layer A, `fsl-analyze`) relative to the qualified
   core: ADR-029 CB-2, CB-3 and RU-2, Linear QSL-390.
 - G. Behrmann, P. Bouyer, K. G. Larsen and R. Pelánek, 2006; F. Herbreteau,
   B. Srivathsan and I. Walukiewicz, 2012 (ADR-026 References).

@@ -3,7 +3,7 @@ id: TC-250
 title: "Clause-kind wire-string totality in both directions, with mutation coverage"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-250: Clause-kind wire-string totality in both directions, with mutation coverage
@@ -12,8 +12,8 @@ relationships:
 
 ADR-013 O-10's validation row requires "wire-string totality tests in both
 directions; mutation tests on each mapping." This test enumerates that
-requirement concretely for the QSL checked clause-kind enum's own v2
-mapping (the QSL → v2 direction; downstream layers own their own mappings
+requirement concretely for the FSL checked clause-kind enum's own v2
+mapping (the FSL → v2 direction; downstream layers own their own mappings
 and their own tests, ADR-013 O-10). Scope: FR-088-AC-4.
 
 ## Test Procedure
@@ -32,8 +32,8 @@ and their own tests, ADR-013 O-10). Scope: FR-088-AC-4.
    variants map to the same wire spelling (forward totality and
    injectivity).
 4. Enumerate every v2 wire spelling this enum's vocabulary defines
-   (`quire.op.temporal.clause`, `quire.op.claim.clause`,
-   `quire.op.protocol.control`, `quire.op.state.transition`, and the
+   (`filament.op.temporal.clause`, `filament.op.claim.clause`,
+   `filament.op.protocol.control`, `filament.op.state.transition`, and the
    `node_tag`/`semantic_form` strings each names).
 5. For each wire spelling, confirm it maps back (by the read/parse
    direction, or by inverting step 2's recorded map) to exactly one

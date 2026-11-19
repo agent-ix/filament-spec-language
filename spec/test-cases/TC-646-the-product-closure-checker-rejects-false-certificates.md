@@ -3,7 +3,7 @@ id: TC-646
 title: "The product-closure certificate checker rejects tampered and false certificates and stops at a limit"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-163
+  - target: ix://agent-ix/filament-spec-language/FR-163
     type: verifies
 ---
 # TC-646: The product-closure certificate checker rejects tampered and false certificates and stops at a limit

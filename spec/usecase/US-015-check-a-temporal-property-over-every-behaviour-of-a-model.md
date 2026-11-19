@@ -3,36 +3,36 @@ id: US-015
 title: "Check a temporal property over every behaviour of a model"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-337
+  - target: ix://agent-ix/filament-spec-language/FR-337
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-339
+  - target: ix://agent-ix/filament-spec-language/FR-339
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-314
+  - target: ix://agent-ix/filament-spec-language/FR-314
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-315
+  - target: ix://agent-ix/filament-spec-language/FR-315
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-015: Check a temporal property over every behaviour of a model
 
 ## Story
 
-**As a** verification operator with a QSL state model, a few initial
+**As a** verification operator with an FSL state model, a few initial
 snapshots and a finite key set for each population
 **I want** a temporal claim about that model, safety or liveness, bounded or
 unbounded, under the fairness I state, checked over every behaviour the
@@ -48,7 +48,7 @@ relation and FR-101's engine explores it, but exploration checks state
 invariants only, and a temporal clause is evaluated over one supplied trace.
 The explicit-state model checker (ADR-018 EN-1) explores the product of the
 model with the clause's property automaton and settles a negotiated item in
-QSpec FR-360's vocabulary.
+FSpec FR-360's vocabulary.
 
 ## Acceptance Examples (Illustrative)
 

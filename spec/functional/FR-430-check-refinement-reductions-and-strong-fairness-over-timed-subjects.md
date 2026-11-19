@@ -3,44 +3,44 @@ id: FR-430
 title: "Check refinement, reductions and strong fairness over timed subjects"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-019
+  - target: ix://agent-ix/filament-spec-language/ADR-019
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-020
+  - target: ix://agent-ix/filament-spec-language/ADR-020
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-142
+  - target: ix://agent-ix/filament-spec-language/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-151
+  - target: ix://agent-ix/filament-spec-language/FR-151
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-152
+  - target: ix://agent-ix/filament-spec-language/FR-152
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-149
+  - target: ix://agent-ix/filament-spec-language/FR-149
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-244
+  - target: ix://agent-ix/filament-spec-language/FR-244
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-240
+  - target: ix://agent-ix/filament-spec-language/FR-240
     type: depends_on
 ---
 # FR-430: Check refinement, reductions and strong fairness over timed subjects
 
 ## Description
 
-QSL SHALL check the three ADR-026 §15 interactions of dense time with its
+FSL SHALL check the three ADR-026 §15 interactions of dense time with its
 sibling records. A timed concrete model refines an untimed abstract model
 through its step map, a delay being a stutter step of the abstract model
 (ADR-020). EN-6 applies symmetry, permuting each object together with its
@@ -81,9 +81,9 @@ timed model treats an operation enabled only between positions as enabled.
 ### Timed refinement
 
 - S3 SHALL admit a refinement whose concrete model is timed and whose
-  abstract model is untimed. If the abstract model is timed, then S3 SHALL
-  refuse `unsupported_construct`/`declaration-form` at the refinement's
-  abstract model reference.
+  abstract model is untimed. A refinement whose abstract model is timed is
+  admitted and decided by FR-900, over a timed or an untimed concrete
+  model.
 - If the refinement's state mapping or a step row reads a clock field of
   the concrete model, then S3 SHALL refuse
   `unsupported_construct`/`expression-form` at the read, so the mapped
@@ -182,7 +182,7 @@ digital time (ADR-026 TS-6) and keeps FR-159 unchanged.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-430-AC-1 | An untimed abstract model `Req` (object `r` with `sent: Bool`, initial `sent = false`; operation `send`, postcondition `self.sent = true`) refined by a timed model `TReq` (`time dense`; object `r` with `sent: Bool` and clock `x`, initial `sent = false` and `x = 0`; operation `send` with guard `x >= 1`, postcondition `self.sent = true`; step map `send -> send`; mapping `sent -> sent`) returns `Holds` for the safety half, with no `check_step` call for a delay, and the request routes to EN-6. The variant whose mapping is `sent -> (x >= 1)` refuses `unsupported_construct`/`expression-form` at the read of `x`. A refinement whose abstract model is `TReq` and whose concrete model is a copy `TReq2` of `TReq` refuses `unsupported_construct`/`declaration-form` at the abstract model reference. | Test (TC-1170) |
+| FR-430-AC-1 | An untimed abstract model `Req` (object `r` with `sent: Bool`, initial `sent = false`; operation `send`, postcondition `self.sent = true`) refined by a timed model `TReq` (`time dense`; object `r` with `sent: Bool` and clock `x`, initial `sent = false` and `x = 0`; operation `send` with guard `x >= 1`, postcondition `self.sent = true`; step map `send -> send`; mapping `sent -> sent`) returns `Holds` for the safety half, with no `check_step` call for a delay, and the request routes to EN-6. The variant whose mapping is `sent -> (x >= 1)` refuses `unsupported_construct`/`expression-form` at the read of `x`. A refinement whose abstract model is `TReq` and whose concrete model is a copy `TReq2` of `TReq` checks and is decided by FR-900, with no refusal at the abstract model reference. | Test (TC-1170) |
 | FR-430-AC-2 | `TReq` extended with `trap: Bool` (initial `false`), `send` resetting `x`, an operation `enter` (precondition `self.sent`, guard `x >= 1`, reset `x`, postcondition `self.trap = true`) and an operation `undo` (precondition `self.trap and self.sent`, postcondition `self.sent = false`), with step map `send -> send`, `enter -> stutter`, `undo -> stutter`: the safety half returns `Violated` with the counterexample `send` after delay 1, `enter` after delay 1, `undo` after delay 0, `RefinementFailure` at position 3, replaying through FR-241. With the time invariant `when self.trap { x <= 0 }`, the post-state of `undo` (trap set, `sent` false, `x = 0`) has no time-divergent continuation (no delay is admissible and no operation is enabled), so the failing edge does not refute (ADR-026 TV-1, read at the step's post-state) and the half returns `Holds`, while the time-lock-freedom item of that model is refuted. | Test (TC-1170) |
 | FR-430-AC-3 | A `time dense` model with population `Timer` over universe `{t1, t2}` (each with `armed: Bool` and clock `x`; `arm` with precondition `not self.armed`, guard `x >= 1`, reset `x`; `disarm` with precondition `self.armed`, guard `x >= 1`, reset `x`): with symmetry `[[t1, t2]]`, the deadlock-freedom item returns `Holds` as with no reduction and stores fewer symbolic states, and `always holds(not (t1.armed and t2.armed))` returns `Violated` as with no reduction, its counterexample replaying. The symbolic state with `t1` armed, `t2` unarmed and zone `Z`, and its image with `t1` unarmed, `t2` armed and `Z` with the clocks of `t1` and `t2` swapped, canonicalise to equal states. The deadlock-freedom item selecting partial-order reduction, and the same item selecting a state constraint, each settle V-8 `unsupported-requested-capability` at negotiation, naming the reduction, with no state expanded; the same item selecting both partial-order reduction and a state constraint settles the same way, naming partial-order reduction only. | Test (TC-1170) |
 | FR-430-AC-4 | A `Blink` model (`time dense`; object `b` with `fired: Bool` and clock `x`; `tick` with guard `x >= 1` and reset `x`; `fire` with guard `x > 0 and x < 1` and postcondition `self.fired = true`; time invariant `when true { x <= 1 }`; initial `fired = false`, `x = 0`), in which `tick` fires exactly at `x = 1` and every delay between ticks is 1, and `eventually holds(b.fired)` under infinite-trace: under `fair { weak Blink::fire }` it returns `Violated` with a lasso of `tick` steps of loop delay 1, because `fire` is never continuously enabled; under `fair { strong Blink::fire }` it returns `Holds` with a certificate, because `fire` is enabled at instants inside every delay of that lasso, though at no position of it. | Test (TC-1170) |
@@ -204,8 +204,8 @@ digital time (ADR-026 TS-6) and keeps FR-159 unchanged.
   [FR-240](FR-240-decide-timed-liveness-and-time-lock-freedom-on-the-symbolic-graph.md),
   [FR-244](FR-244-emit-a-zone-certificate-with-every-proof.md),
   [FR-245](FR-245-check-a-zone-certificate-in-the-qualified-core.md).
-- QSpec owns the preservation table, the provider advertisement and the
-  refinement and fairness readings over timed subjects (QSpec FR-377,
+- FSpec owns the preservation table, the provider advertisement and the
+  refinement and fairness readings over timed subjects (FSpec FR-377,
   FR-382, FR-416).
 
 ## References

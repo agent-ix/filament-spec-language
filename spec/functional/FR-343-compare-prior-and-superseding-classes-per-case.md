@@ -3,13 +3,13 @@ id: FR-343
 title: "Compare a case's prior and superseding classes into one case result"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-034
+  - target: ix://agent-ix/filament-spec-language/US-034
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-342
+  - target: ix://agent-ix/filament-spec-language/FR-342
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-105
+  - target: ix://agent-ix/filament-spec-language/FR-105
     type: traces_to
 ---
 # FR-343: Compare a case's prior and superseding classes into one case result
@@ -36,7 +36,7 @@ the superseding disposition's codes.
 
 ## Behavior
 
-QSpec FR-452 owns the case results and when each applies.
+FSpec FR-452 owns the case results and when each applies.
 
 The comparison SHALL return the result of the first of these rows, in
 order, that matches, which is FR-452's result over FR-342's classes:
@@ -46,7 +46,7 @@ order, that matches, which is FR-452's result over FR-342's classes:
 | `tool failure` | any | `tool failure` |
 | any | `tool failure` | `tool failure` |
 | `incomplete`, at any stage | any | `unresolved (incomplete)` |
-| `unsupported`, at any stage | any | `unresolved (unsupported)` (a QSL implementation gap, QSpec FR-452) |
+| `unsupported`, at any stage | any | `unresolved (unsupported)` (an FSL implementation gap, FSpec FR-452) |
 | any other class, at stage `compile` or `select` | any | `tool failure` (the prior revision must compile and select; the case is malformed) |
 | `admitted` | `admitted` | `holds` |
 | `admitted` | `absent`, for a `Clause` or `Frame` selection | `holds` (the constraint was dropped; a frame exists only while a clause or attempt names its operation, FR-105) |
@@ -73,11 +73,11 @@ order, that matches, which is FR-452's result over FR-342's classes:
 ## Dependencies
 
 - FR-342 (the two classes), FR-105 (a frame exists only while named).
-- QSpec FR-452 (the case results and the rules that give them).
+- FSpec FR-452 (the case results and the rules that give them).
 
 ## References
 
 - ADR-017 §2 RF-2 "Comparison" (amended 2026-10-01: a prior class
   `incomplete` or `unsupported` at any stage is unresolved), RF-5.
-- QSpec FR-452 (STD-117).
+- FSpec FR-452 (STD-117).
 - Specification ticket QSL-386; implementation ticket QSL-40.

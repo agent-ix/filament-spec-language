@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # FR-080-AC-2 / TC-205: `cargo deny check bans` denies `inventory`, `linkme`
 # and `ctor` outright. ADR-012 §5.3's registry evidence: the `#185` registry
-# (`qsl-route/src/lib.rs`) is an ordinary value, never populated through a
+# (`fsl-route/src/lib.rs`) is an ordinary value, never populated through a
 # link-time/plugin-discovery mechanism, and this is the positive-fail gate
 # that would catch a future contributor reintroducing one -- it is not
 # satisfied merely by the crate graph's current absence of the three crates.
 #
-# ADR-013 §2: `quire-canonical` is QSL's one RFC 8785 implementation, so the
+# ADR-013 §2: `quire-canonical` is FSL's one RFC 8785 implementation, so the
 # `quire-canonical` entry denies a second copy of it in the resolved graph.
 #
 # `make cargo-deny-bans` runs `cargo deny --workspace check bans` over every
@@ -39,8 +39,8 @@ deny = [
     # ADR-013 §2: one RFC 8785 implementation. Two copies of the encoder
     # could produce different package_ids.
     { crate = "quire-canonical", deny-multiple-versions = true },
-    # One copy of each shared leaf in the lock: `quire-semantic-value` and
-    # every QSL crate must resolve `quire-exact` to the same source.
-    { crate = "quire-exact", deny-multiple-versions = true },
-    { crate = "quire-semantic-value", deny-multiple-versions = true },
+    # One copy of each shared leaf in the lock: `filament-semantic-value` and
+    # every FSL crate must resolve `filament-exact` to the same source.
+    { crate = "filament-exact", deny-multiple-versions = true },
+    { crate = "filament-semantic-value", deny-multiple-versions = true },
 ]

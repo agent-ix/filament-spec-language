@@ -3,7 +3,7 @@ id: TC-650
 title: "The protocol subject builds, refuses bad bindings and keys states canonically"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-205
+  - target: ix://agent-ix/filament-spec-language/FR-205
     type: verifies
 ---
 # TC-650: The protocol subject builds, refuses bad bindings and keys states canonically
@@ -80,11 +80,12 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   naming its registration; the commit entry from the commit step until the
   instance finishes. In the `not e.ok` variant, the thread's attempt record
   with the first attempt's `ok` value after its first `cattempt`, a retry
-  `cattempt` enabled after `ok` false and only `cend` after `ok` true,
+  `cattempt` enabled after `ok` false and only `cend` and `cexpire` after `ok` true,
   distinct keys for the two records, and no attempt record after the second
   `cattempt`, after `cend` or after the step of `Committed`. In the `l.ok`
-  variant, no attempt record in any state, and one state after the two first
-  `cattempt` steps.
+  variant, no attempt record in `observations` in any state, and two states
+  with different keys after the two first `cattempt` steps, equal in model
+  state, count, outcome `successful` and enabled steps.
 - Step 9: `w`'s entry is `{"type":"model-binding","selection":"<M's
   identity>"}` in every state; the two-alias variant builds, with entries
   naming `M`'s and `N`'s identities (FR-205-AC-9).

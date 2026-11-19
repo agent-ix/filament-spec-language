@@ -3,27 +3,27 @@ id: FR-335
 title: "Settle a claim over an unbounded declaration end to end"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-144
+  - target: ix://agent-ix/filament-specification/FR-144
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-346
+  - target: ix://agent-ix/filament-specification/FR-346
     type: depends_on
 ---
 # FR-335: Settle a claim over an unbounded declaration end to end
@@ -71,7 +71,7 @@ stays unproved.
   `Unbounded{[s's DomainKey]}`) with domain kind collection, computed from
   the checked types and never from the caller (ADR-014 §6 step 5).
 - When no registrant advertises `value-validity`, the item SHALL settle
-  `unsupported`, warned, naming `value-validity` (FR-076, QSpec FR-290).
+  `unsupported`, warned, naming `value-validity` (FR-076, FSpec FR-290).
 - The request writer SHALL write the item with `finite_bound_available`
   true when every unbounded domain is boundable, and a `requires-bound`
   disposition for it SHALL settle it `requires-bound`, with no harness
@@ -89,6 +89,16 @@ stays unproved.
 - S6a SHALL evaluate the function on a concrete set of any size with no
   cardinality refusal, stopping only on the caller's meter (FR-097-AC-7),
   and the result SHALL be evidence for that value only (ADR-014 §8).
+- A `forall` or `exists` whose collection operand is a concrete value of an
+  unbounded collection type SHALL be evaluated at S6a by visiting that
+  value's occurrences in FSpec FR-144 canonical order with FSpec FR-145's
+  charges, because a concrete value is finite whatever its type declares.
+  The result is the quantifier's value on that one value and is never a
+  settlement of a claim over the declared domain: FSpec FR-346 forbids
+  deciding the claim over the unbounded domain by enumeration, and that claim
+  settles only through the negotiation above (`fsl analyze`). The two rules
+  do not conflict, because one evaluates a value and the other settles a
+  claim.
 
 ## Acceptance Criteria
 
@@ -99,6 +109,7 @@ stays unproved.
 | FR-335-AC-3 | A bounded request with `ProofBound{s, Cardinality{maximum: 8}}` writes a second item with its own request index, classified `bounded`, whose obligation identity differs from the unbounded item's and from that of a request with `maximum: 9`; the unbounded item still settles `requires-bound`. | Test (TC-845) |
 | FR-335-AC-4 | A requirement built over the collection domain at `s` and a domain of kind quantity (no source spelling yet types a parameter by a quantity, so the test builds the requirement directly) is written with `finite_bound_available` false, and its `unbounded-extent` disposition (a fixture) gets no routing target: `unsupported`, warned. | Test (TC-845) |
 | FR-335-AC-5 | At S6a, `f` on the concrete set `{0, 1, …, 999}` of 1,000 distinct members of `Int[0, 9999]` returns 1,001 with no cardinality refusal; forming that set on a meter too small for it returns `Incomplete` at `collection.member-walk`, the first charge a set's formation reaches, and calling `f` on a meter with no work left returns `Incomplete` at `function.call`. Evaluation reads no request item, so neither result changes the AC-1 item's disposition. | Test (TC-845) |
+| FR-335-AC-6 | At S6a, `function p using v(s: Set<Int[0, 9999]>): Boolean pure { forall(x in s : x < 500) }` on the concrete set `{0, 1, …, 999}` returns `false` and on `{0, 1, …, 99}` returns `true`, charging one `collection.visit` per occurrence visited and stopping at the first counterexample; `exists(x in s : x = 7)` on the 100-member set returns `true`; a meter too small for the visits returns `Incomplete` with no value. None of these results is written as a claim settlement, and a claim over `p` requested with an empty registry still settles `unsupported` with a warning naming the capability. | Test (TC-1909) |
 
 ## Dependencies
 
@@ -109,12 +120,12 @@ stays unproved.
   application records), [FR-075](FR-075-compute-candidates-from-registered-backends.md),
   [FR-076](FR-076-settle-backend-absence-as-unsupported.md),
   [FR-333](FR-333-read-an-optional-collection-bound-and-population-maximum.md).
-- QSL's tests supply each negotiation disposition and backend result as a
+- FSL's tests supply each negotiation disposition and backend result as a
   fixture and run no CG or driver code; the end-to-end run through CG
-  `negotiate_*` and the driver lives in quire-integration.
-- QSpec FR-144-AC-12, FR-290, FR-346.
+  `negotiate_*` and the driver lives in filament-integration.
+- FSpec FR-144-AC-12, FR-290, FR-346.
 
 ## References
 
 - Linear QSL-385 (spec ticket); QSL-42 (implementation).
-- QSpec half: QSpec FR-144 (merged).
+- FSpec half: FSpec FR-144 (merged).

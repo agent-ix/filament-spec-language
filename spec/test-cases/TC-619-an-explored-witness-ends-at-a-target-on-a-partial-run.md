@@ -3,7 +3,7 @@ id: TC-619
 title: "An explored witness ends at a target node on a run with open nodes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-168
+  - target: ix://agent-ix/filament-spec-language/FR-168
     type: verifies
 ---
 # TC-619: An explored witness ends at a target node on a run with open nodes

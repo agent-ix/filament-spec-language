@@ -3,7 +3,7 @@ id: TC-242
 title: "A selected object's reference key names the same most-specific type through every conforming query"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-084
+  - target: ix://agent-ix/filament-spec-language/FR-084
     type: verifies
 ---
 # TC-242: A selected object's reference key names the same most-specific type through every conforming query
@@ -14,7 +14,7 @@ Verify that the same underlying object, selected via `allInstances<A>` and
 separately via `allInstances<C>` (where the object's own most-specific
 effective type `C` is a proper subtype of `A`), yields the identical
 `ReferenceKey` in both results — never a key recomputed from the queried
-static type. Scope: FR-084-AC-6, quire-specification FR-153-AC-6.
+static type. Scope: FR-084-AC-6, filament-specification FR-153-AC-6.
 
 Backed by the existing test
 `tests/model_population.rs::l01_all_instances_selects_subtype_population_once`,
@@ -27,7 +27,7 @@ guarantee: querying a fixture population's `b1` member (most-specific type
 
 This moved here from an earlier, FR-081-scoped draft that tried to state
 the guarantee at the runtime `Reference<T>`/static-upcast level, citing
-quire-specification FR-151's "reference upcasts only" as its dispatch-time
+filament-specification FR-151's "reference upcasts only" as its dispatch-time
 type-checking rule. That citation supports type-checking dispatch
 arguments, not a reference-identity guarantee, and the draft's test
 procedure re-read one map lookup twice with no mechanism for a static type

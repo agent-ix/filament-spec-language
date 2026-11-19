@@ -3,7 +3,7 @@ id: TC-860
 title: "The spec-versioning gate reads each pair, refuses a malformed one, and runs every case against both revisions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-340
+  - target: ix://agent-ix/filament-spec-language/FR-340
     type: verifies
 ---
 # TC-860: The spec-versioning gate reads each pair, refuses a malformed one, and runs every case against both revisions
@@ -31,7 +31,7 @@ violates it.
    and violating-parent). Run `xtask refinement versioning`.
 2. Add eight malformed pairs beside step 1's: a `pair.json` holding `{`; one
    with no `superseding`; one with an extra member `expected`; one whose
-   `prior.path` is `../outside.qsl`; one whose `prior.path` is absolute;
+   `prior.path` is `../outside.fsl`; one whose `prior.path` is absolute;
    one whose `superseding.identity` differs from `prior.identity`; one
    whose `packages` names `repo:../outside`; one naming `repo:/etc/hostname`. Run the
    gate. Add to step 1's pair a case naming a snapshot file that does not

@@ -1,14 +1,14 @@
 ---
 id: ADR-010
-title: "Observed QSL and backend architecture baseline (ARCH-00)"
+title: "Observed FSL and backend architecture baseline (ARCH-00)"
 type: ADR
 relationships:
-  - target: ix://agent-ix/quire-integration/IT-010
+  - target: ix://agent-ix/filament-integration/IT-010
     type: relates_to
-  - target: ix://agent-ix/quire-spec-language/ADR-009
+  - target: ix://agent-ix/filament-spec-language/ADR-009
     type: relates_to
 ---
-# ADR-010: Observed QSL and backend architecture baseline (ARCH-00)
+# ADR-010: Observed FSL and backend architecture baseline (ARCH-00)
 
 ## Context
 
@@ -16,7 +16,7 @@ Epic #205 requires an evidence-backed record of the architecture as implemented
 before its Layer 1 design tickets decide the target architecture. #205 lists
 four Layer 1 design tickets: #209 (stage DAG and dependency direction), #210
 (semantic-family extension and dispatch), #211 (canonical type, package and
-conversion ownership) and #229 (QSL Capability specification alignment with
+conversion ownership) and #229 (FSL Capability specification alignment with
 FR-290). #206 requires every stage, handoff, owner and dependency claim to carry
 an evidence path at a named revision, and requires disagreements between
 intended and observed architecture to be recorded as findings.
@@ -41,13 +41,13 @@ Every positive evidence cell is `<prefix>:<path>:<line>`.
 
 | Prefix | Expands to |
 |---|---|
-| `QSL:` | `quire-spec-language:src/` (paths starting `tests/`, `examples/`, `resources/`, `.github/` or `Cargo.*` are repo-root relative) |
-| `QSpec:` | `quire-specification` content resolved into QSL |
-| `IR:` | `quire-contract-ir:` |
-| `RT:` | `quire-contract-runtime:` |
-| `CG:` | `quire-contract-codegen:` |
+| `FSL:` | `filament-spec-language:src/` (paths starting `tests/`, `examples/`, `resources/`, `.github/` or `Cargo.*` are repo-root relative) |
+| `FSpec:` | `filament-specification` content resolved into FSL |
+| `IR:` | `filament-contract-ir:` |
+| `RT:` | `filament-contract-runtime:` |
+| `CG:` | `filament-contract-codegen:` |
 | `FCD:` | `filament-core-data:` |
-| `QI:` | `quire-integration:` |
+| `QI:` | `filament-integration:` |
 | `PR #n:` | the named pull request, repo-root relative |
 
 Absence cells use the negative-evidence form `absent: <pattern> in <path>`,
@@ -63,18 +63,18 @@ or `ADR-010 L1-D1`.
 
 | Measure | Count | What it counts |
 |---|---|---|
-| Present QSL stages | 28 | Stages with an entry function and output type in `src/`: lane A native-v1 8, lane B composed 10, lane C complete-V1 7, lane D simulation 3 (§2) |
-| Absent stages | 7 | Stages AD-016 or the #209 program flow names that have no implementation on QSL main (§2.6) |
+| Present FSL stages | 28 | Stages with an entry function and output type in `src/`: lane A native-v1 8, lane B composed 10, lane C complete-V1 7, lane D simulation 3 (§2) |
+| Absent stages | 7 | Stages AD-016 or the #209 program flow names that have no implementation on FSL main (§2.6) |
 | End-to-end CLI lanes | 1 | native-v1: parse → link → check → package → lower or run |
 | Proof-and-replay paths | 1, test-only; on every full `cargo test` gate, which installs no cargo-kani | IT-010 `tests/configversion_backends.rs` (§2.1 A9–A11) |
-| Top-level QSL modules | 31 | `pub mod` and `mod` items in `QSL:lib.rs:13-44`, placed in §3.1 |
+| Top-level FSL modules | 31 | `pub mod` and `mod` items in `FSL:lib.rs:13-44`, placed in §3.1 |
 | Module SCCs with more than one module | 3 | Largest has 11 modules; 7 two-cycles in total (§3.1) |
-| Repository cycles | 3 | IR ⇄ QSL (normal both ways), QSL ⇄ CG (dev both ways), QSL ⇄ RT (test-time both ways), under the edge rule in §3.2 |
+| Repository cycles | 3 | IR ⇄ FSL (normal both ways), FSL ⇄ CG (dev both ways), FSL ⇄ RT (test-time both ways), under the edge rule in §3.2 |
 | Duplicate or ambiguous authorities | 18 | 14 DUPLICATE, 4 AMBIGUOUS (§5, items DA-01…DA-18) |
 | Findings | 40 | OBS-001…OBS-041, OBS-024 not assigned. Primary owner #209: 19, #210: 6, #211: 15 (§9.2) |
-| Reference claims checked | 50 | AD-016 on QSL 14 (§1.1), #205 ownership boundaries 7 (§1.2), AD-016 downstream 29 (§6.1) |
-| Open QSL issues mapped | 68 | Every open issue in agent-ix/quire-spec-language (§7.1–§7.4) |
-| Downstream issues mapped | 34 | Every downstream issue or PR cited by a mapped QSL issue body, the ARCH-01 comment, §8 or §9 (§7.5) |
+| Reference claims checked | 50 | AD-016 on FSL 14 (§1.1), #205 ownership boundaries 7 (§1.2), AD-016 downstream 29 (§6.1) |
+| Open FSL issues mapped | 68 | Every open issue in agent-ix/filament-spec-language (§7.1–§7.4) |
+| Downstream issues mapped | 34 | Every downstream issue or PR cited by a mapped FSL issue body, the ARCH-01 comment, §8 or §9 (§7.5) |
 
 ## Decision
 
@@ -100,24 +100,24 @@ or `ADR-010 L1-D1`.
 
 ### 1.1 AD-016
 
-AD-016 source: `QSpec:spec/assurance/AD-016-semantic-family-extension-path.md`
+AD-016 source: `FSpec:spec/assurance/AD-016-semantic-family-extension-path.md`
 (accepted). It is the reference design; the right-hand columns are the observation.
 
-| AD-016 claim | Observed on QSL main | Verdict | Evidence |
+| AD-016 claim | Observed on FSL main | Verdict | Evidence |
 |---|---|---|---|
-| QSL check → checked-package/v2 | No v2 emitter. QSL has a reader of the v2 identity preimage only. The v2 schema is a QSpec proposal. | DISAGREES | `QSL:value/package_identity.rs:13,15,334` · `QSpec:proposals/checked-package-v2/schema.json` · absent: `CheckedPackageV2` in `src/` |
-| Shared kernel crate `quire-exact` (Owner decision 2) | No `crates/quire-exact` and no Cargo dependency on it. | ABSENT | absent: `quire-exact` in `Cargo.toml` |
+| FSL check → checked-package/v2 | No v2 emitter. FSL has a reader of the v2 identity preimage only. The v2 schema is an FSpec proposal. | DISAGREES | `FSL:value/package_identity.rs:13,15,334` · `FSpec:proposals/checked-package-v2/schema.json` · absent: `CheckedPackageV2` in `src/` |
+| Shared kernel crate `filament-exact` (Owner decision 2) | No `crates/filament-exact` and no Cargo dependency on it. | ABSENT | absent: `filament-exact` in `Cargo.toml` |
 | `model::intake` | Not on main. PR #200 adds it (2104 lines). | ABSENT on main | absent: `mod intake` in `src/model` · `PR #200:src/model/intake.rs` |
-| ValueTypeRef / NativeValueType for native refs | PR #200 uses `DeclarationKey{package:"quire/native", node:"ix://quire/native/<Name>"}`. | DISAGREES (PR) | `PR #200:src/model/intake.rs:710-722` |
-| QSL is sole minter of spans; SourceMap keyed by checked node id | `SourceMap` maps body bytes to document bytes and is not keyed by node id. Value-lane `Location` carries no byte spans. | DISAGREES | `QSL:source_map.rs:30` · `QSL:value/expression/refusal.rs:32` |
-| QSL admission "negotiates nothing"; CG `negotiate_*` is the single negotiation point | QSL has `Backend{identity, capabilities, families}` and returns `UnsupportedCapability` / `UnsupportedFamily`. QSL has `negotiate_integer_division` and `negotiate_ieee`; RT has its own copies. CG has only `negotiate_kani_obligations`. | DISAGREES | `QSL:linking/composed/requests.rs:80,282` · `QSL:value/division.rs:223` · `QSL:value/ieee.rs:830,882` · `RT:src/exact/ieee.rs:819` · `RT:src/exact/division.rs:217` · `CG:src/kani_obligations.rs:454` |
-| native-v1 `runtime::execute` is not a replay target | IT-010 replays through `runtime::execute`. | DISAGREES (test) | `QSL:tests/configversion_backends.rs:252,259,948-951` |
-| Witness arrives as IR typed witness (`KaniOutcomeKind`, 10 kinds) | IT-010 decodes by splitting stdout on `let concrete_vals: Vec<Vec<u8>> = vec![`. | DISAGREES (test) | `QSL:tests/configversion_backends.rs:843-857` |
-| Replay via `value::expression::CheckedPackage::call` | `call` exists, keyed by function name (`&str`). Only tests call it. | PRESENT, unwired | `QSL:value/expression/mod.rs:635` |
-| QSL → contract-model normal dependency | `quire-contract-ir = {package="quire-contract-model"}` | AGREES | `QSL:Cargo.toml:36` |
-| QSL dev-dependency on CG | Present | AGREES | `QSL:Cargo.toml:43` |
-| QSL dev-dependency on IR historical | Present as `quire-contract-ir-historical` | AGREES | `QSL:Cargo.toml:44` |
-| `Capability` in QSL | 4 variants: FamilyCheck, StateOperation, FiniteReplay, TemporalProjection | AGREES (count) | `QSL:linking/composed/requests.rs:36` |
+| ValueTypeRef / NativeValueType for native refs | PR #200 uses `DeclarationKey{package:"filament/native", node:"ix://filament/native/<Name>"}`. | DISAGREES (PR) | `PR #200:src/model/intake.rs:710-722` |
+| FSL is sole minter of spans; SourceMap keyed by checked node id | `SourceMap` maps body bytes to document bytes and is not keyed by node id. Value-lane `Location` carries no byte spans. | DISAGREES | `FSL:source_map.rs:30` · `FSL:value/expression/refusal.rs:32` |
+| FSL admission "negotiates nothing"; CG `negotiate_*` is the single negotiation point | FSL has `Backend{identity, capabilities, families}` and returns `UnsupportedCapability` / `UnsupportedFamily`. FSL has `negotiate_integer_division` and `negotiate_ieee`; RT has its own copies. CG has only `negotiate_kani_obligations`. | DISAGREES | `FSL:linking/composed/requests.rs:80,282` · `FSL:value/division.rs:223` · `FSL:value/ieee.rs:830,882` · `RT:src/exact/ieee.rs:819` · `RT:src/exact/division.rs:217` · `CG:src/kani_obligations.rs:454` |
+| native-v1 `runtime::execute` is not a replay target | IT-010 replays through `runtime::execute`. | DISAGREES (test) | `FSL:tests/configversion_backends.rs:252,259,948-951` |
+| Witness arrives as IR typed witness (`KaniOutcomeKind`, 10 kinds) | IT-010 decodes by splitting stdout on `let concrete_vals: Vec<Vec<u8>> = vec![`. | DISAGREES (test) | `FSL:tests/configversion_backends.rs:843-857` |
+| Replay via `value::expression::CheckedPackage::call` | `call` exists, keyed by function name (`&str`). Only tests call it. | PRESENT, unwired | `FSL:value/expression/mod.rs:635` |
+| FSL → contract-model normal dependency | `filament-contract-ir = {package="filament-contract-model"}` | AGREES | `FSL:Cargo.toml:36` |
+| FSL dev-dependency on CG | Present | AGREES | `FSL:Cargo.toml:43` |
+| FSL dev-dependency on IR historical | Present as `filament-contract-ir-historical` | AGREES | `FSL:Cargo.toml:44` |
+| `Capability` in FSL | 4 variants: FamilyCheck, StateOperation, FiniteReplay, TemporalProjection | AGREES (count) | `FSL:linking/composed/requests.rs:36` |
 
 Tally: 5 agree, 1 present but unwired, 8 disagree or absent.
 
@@ -128,13 +128,13 @@ compared with the code.
 
 | #205 statement | Observed | Verdict | Evidence |
 |---|---|---|---|
-| QSL owns the compiler pipeline, checked semantic model, package production, reference semantics and CLI orchestration | QSL owns parse, link, check, package and the CLI (§2.1). It has no checked-package/v2 producer (OBS-001). Definedness checking is delegated to IR (OBS-010). QSL also hosts native execution (`runtime::execute`) and value-lane evaluation (`CheckedPackage::call`). | PARTIAL | `QSL:command/compilation.rs:94-103` · `QSL:checking/proof.rs:660` · `QSL:runtime/execution.rs:97` · `QSL:value/expression/mod.rs:635` |
-| QSpec owns normative cross-repository contracts and shared vocabulary | QSpec holds AD-016 and FR-290. IR FR-031 states a replay executor that AD-016 contradicts (OBS-036). | PARTIAL | `QSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · `IR:spec/contract/FR-031-bounded-kani-dispatch-replay-provenance.md:15` |
-| Contract IR owns proof-oriented lowering and its versioned IR/package representation | IR owns the checked-package/v2 reader and Kani lowering. IR also performs native replay by calling QSL `runtime::execute` (OBS-028). | PARTIAL | `IR:crates/quire-contract-model/src/checked_package/dispatch.rs:28` · `IR:src/kani/arithmetic.rs:40` · `IR:src/kani/replay.rs:80-88` |
-| Runtime owns executable semantic behavior and native replay surfaces | Native execution is in QSL `runtime`; value evaluation is in QSL `value` and duplicated in RT `exact` (DA-16). RT has no replay surface. Replay runs in IR and in QSL test IT-010. | DISAGREES | `QSL:runtime/execution.rs:97` · `RT:src/exact/expression.rs:742` · absent-i: `replay` in `src` (RT) · `QSL:tests/configversion_backends.rs:259` |
-| Codegen owns backend emission and generated proof harnesses | CG emits oracles and the Kani bundle. CG's assurance record (`assurance/pins.json`) states CG `src/` has no Kani code (OBS-034). FR-290 names a QSL Kani backend (OBS-013). | PARTIAL | `CG:src/kani.rs:357` · `CG:assurance/pins.json:26` · `QSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` |
+| FSL owns the compiler pipeline, checked semantic model, package production, reference semantics and CLI orchestration | FSL owns parse, link, check, package and the CLI (§2.1). It has no checked-package/v2 producer (OBS-001). Definedness checking is delegated to IR (OBS-010). FSL also hosts native execution (`runtime::execute`) and value-lane evaluation (`CheckedPackage::call`). | PARTIAL | `FSL:command/compilation.rs:94-103` · `FSL:checking/proof.rs:660` · `FSL:runtime/execution.rs:97` · `FSL:value/expression/mod.rs:635` |
+| FSpec owns normative cross-repository contracts and shared vocabulary | FSpec holds AD-016 and FR-290. IR FR-031 states a replay executor that AD-016 contradicts (OBS-036). | PARTIAL | `FSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · `IR:spec/contract/FR-031-bounded-kani-dispatch-replay-provenance.md:15` |
+| Contract IR owns proof-oriented lowering and its versioned IR/package representation | IR owns the checked-package/v2 reader and Kani lowering. IR also performs native replay by calling FSL `runtime::execute` (OBS-028). | PARTIAL | `IR:crates/filament-contract-model/src/checked_package/dispatch.rs:28` · `IR:src/kani/arithmetic.rs:40` · `IR:src/kani/replay.rs:80-88` |
+| Runtime owns executable semantic behavior and native replay surfaces | Native execution is in FSL `runtime`; value evaluation is in FSL `value` and duplicated in RT `exact` (DA-16). RT has no replay surface. Replay runs in IR and in FSL test IT-010. | DISAGREES | `FSL:runtime/execution.rs:97` · `RT:src/exact/expression.rs:742` · absent-i: `replay` in `src` (RT) · `FSL:tests/configversion_backends.rs:259` |
+| Codegen owns backend emission and generated proof harnesses | CG emits oracles and the Kani bundle. CG's assurance record (`assurance/pins.json`) states CG `src/` has no Kani code (OBS-034). FR-290 names an FSL Kani backend (OBS-013). | PARTIAL | `CG:src/kani.rs:357` · `CG:assurance/pins.json:26` · `FSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` |
 | Each semantic concept has one canonical owner and one representation per stage | 14 DUPLICATE and 4 AMBIGUOUS concepts (§5). | DISAGREES | §5 |
-| Boundary conversions are explicit, total over admitted input, and versioned when serialized | Lowering is explicit and versioned. `object_keys` is a caller-supplied bridge, `EffectiveId` bytes are reused as `NodeKey`, and IT-010 decodes the witness by a partial string split (§4.2). | PARTIAL | `QSL:lowering/wire.rs:51` · `QSL:model/checked_dispatch.rs:657` · `QSL:value/model_query.rs:108` · `QSL:tests/configversion_backends.rs:843-857` |
+| Boundary conversions are explicit, total over admitted input, and versioned when serialized | Lowering is explicit and versioned. `object_keys` is a caller-supplied bridge, `EffectiveId` bytes are reused as `NodeKey`, and IT-010 decodes the witness by a partial string split (§4.2). | PARTIAL | `FSL:lowering/wire.rs:51` · `FSL:model/checked_dispatch.rs:657` · `FSL:value/model_query.rs:108` · `FSL:tests/configversion_backends.rs:843-857` |
 
 Tally: 0 agree, 5 partial, 2 disagree. The disagreements on replay ownership
 are OBS-038 and OBS-039.
@@ -180,62 +180,62 @@ graph LR
 
 ### 2.1 Lane A: native-v1 (edition 0-draft). CLI-reachable and the only end-to-end lane.
 
-Orchestrator: `command::compilation::package` (`QSL:command/compilation.rs:94`)
+Orchestrator: `command::compilation::package` (`FSL:command/compilation.rs:94`)
 runs link (:101) → check (:102) → package (:103) on a parsed unit.
 
 | # | Stage | Entry | Input | Output | Refusal |
 |---|---|---|---|---|---|
-| A1 | Source read | `Source::read` `QSL:source.rs:94` (`read_verified` :189) | bytes, path | `Source` | `Box<Diagnostic>` `QSL:diagnostic.rs:306` |
-| A2 | Parse | `parser::parse` `QSL:parser.rs:13`, `parse_source` :25 | `Source`, `Limits` | `ParsedUnit` `QSL:syntax.rs:324` (flat arena, `ExprId` `QSL:syntax.rs:57`). No CST. | `Box<Diagnostic>` |
-| A3 | Model admission | `model_source::read` `QSL:model_source.rs:248`, `.admit` :225 | model JSON (native-state-model/1,2 · native-rule-model/1,2) | `NativeModel` | `Box<Diagnostic>` |
-| A4 | Link | `linking::link` `QSL:linking.rs:295`, `link_native` :319 | `ParsedUnit`, models | `LinkedPackage` `QSL:linking.rs:190` (formal environment native-formal-environment/1, :202) | `Box<Diagnostic>` |
-| A5 | Check | `checking::check` `QSL:checking.rs:302` | `LinkedPackage`, bindings | `CheckedPackage<'a>` `QSL:checking.rs:263` | `Box<Diagnostic>`. Definedness is delegated to IR `DeclarationEnvironment::check_expression` (`QSL:checking/proof.rs:660`). |
-| A6 | Package | `NativePackage::new` `QSL:package.rs:252` | `CheckedPackage` | `NativePackage` `QSL:package.rs:224`, identity `NativePackageIdentity` :202 (retired, QSL-1260), format native-checked-clauses/1 (`QSL:package/view.rs:45`) | `PackageError` `QSL:package.rs:141` |
-| A7 | Lower | `lowering::lower_for` `QSL:lowering.rs:283` (`lower` :274) | `NativePackage`, target | `NativeProjection` `QSL:lowering.rs:228`; wire `ir::EXECUTABLE_PROJECTION_FORMAT` from IR model (`QSL:lowering/wire.rs:51`); targets boolean-oracle/v1, integer-ir/v1, state-scalar-ir/v1 (`QSL:lowering/target.rs:39-46`) | `LoweringError` `QSL:lowering.rs:140` |
-| A8 | Execute (native) | `runtime::execute` `QSL:runtime/execution.rs:97` (validate `QSL:runtime/validation.rs:181`, evaluate `QSL:runtime/evaluation.rs:40`) | `NativePackage`, native-state-input/1 | `ExecutionReport` `QSL:runtime/execution.rs:43` / `ExecutionOutcome` :23 {ValidationFailed, Evaluated} | `ExecutionOutcome::ValidationFailed`, `Box<Diagnostic>` |
-| A9 | Proof (IR → CG → Kani) | No library or CLI entry. Test-only in IT-010: `backend_ir::BoundPackage::from_json_bytes` (IR root historical) `QSL:tests/configversion_backends.rs:543,597,871` → `codegen::generate_kani_bundle` (CG) :789 → generated crate depending on RT (:820-821) → cargo kani :831, :837 | `NativeProjection` bytes | Kani stdout | test panic: each step calls `unwrap` or `expect` (:543, :597, :840, :871) |
-| A10 | Witness decode | No typed decode. Test-only `playback_i64` `QSL:tests/configversion_backends.rs:843-857` | stdout string | `i64` from the first `vec![…]` row only, which must hold exactly 8 bytes | `Option::None` |
-| A11 | Replay | No library entry. Test-only `native_verdict` `QSL:tests/configversion_backends.rs:252` → `runtime::execute` :259; verdict asserted at :948-951 | `i64` | `Option<bool>` verdict | `None` for input outside `DOMAIN` (:262) |
+| A1 | Source read | `Source::read` `FSL:source.rs:94` (`read_verified` :189) | bytes, path | `Source` | `Box<Diagnostic>` `FSL:diagnostic.rs:306` |
+| A2 | Parse | `parser::parse` `FSL:parser.rs:13`, `parse_source` :25 | `Source`, `Limits` | `ParsedUnit` `FSL:syntax.rs:324` (flat arena, `ExprId` `FSL:syntax.rs:57`). No CST. | `Box<Diagnostic>` |
+| A3 | Model admission | `model_source::read` `FSL:model_source.rs:248`, `.admit` :225 | model JSON (native-state-model/1,2 · native-rule-model/1,2) | `NativeModel` | `Box<Diagnostic>` |
+| A4 | Link | `linking::link` `FSL:linking.rs:295`, `link_native` :319 | `ParsedUnit`, models | `LinkedPackage` `FSL:linking.rs:190` (formal environment native-formal-environment/1, :202) | `Box<Diagnostic>` |
+| A5 | Check | `checking::check` `FSL:checking.rs:302` | `LinkedPackage`, bindings | `CheckedPackage<'a>` `FSL:checking.rs:263` | `Box<Diagnostic>`. Definedness is delegated to IR `DeclarationEnvironment::check_expression` (`FSL:checking/proof.rs:660`). |
+| A6 | Package | `NativePackage::new` `FSL:package.rs:252` | `CheckedPackage` | `NativePackage` `FSL:package.rs:224`, identity `NativePackageIdentity` :202 (retired, QSL-1260), format native-checked-clauses/1 (`FSL:package/view.rs:45`) | `PackageError` `FSL:package.rs:141` |
+| A7 | Lower | `lowering::lower_for` `FSL:lowering.rs:283` (`lower` :274) | `NativePackage`, target | `NativeProjection` `FSL:lowering.rs:228`; wire `ir::EXECUTABLE_PROJECTION_FORMAT` from IR model (`FSL:lowering/wire.rs:51`); targets boolean-oracle/v1, integer-ir/v1, state-scalar-ir/v1 (`FSL:lowering/target.rs:39-46`) | `LoweringError` `FSL:lowering.rs:140` |
+| A8 | Execute (native) | `runtime::execute` `FSL:runtime/execution.rs:97` (validate `FSL:runtime/validation.rs:181`, evaluate `FSL:runtime/evaluation.rs:40`) | `NativePackage`, native-state-input/1 | `ExecutionReport` `FSL:runtime/execution.rs:43` / `ExecutionOutcome` :23 {ValidationFailed, Evaluated} | `ExecutionOutcome::ValidationFailed`, `Box<Diagnostic>` |
+| A9 | Proof (IR → CG → Kani) | No library or CLI entry. Test-only in IT-010: `backend_ir::BoundPackage::from_json_bytes` (IR root historical) `FSL:tests/configversion_backends.rs:543,597,871` → `codegen::generate_kani_bundle` (CG) :789 → generated crate depending on RT (:820-821) → cargo kani :831, :837 | `NativeProjection` bytes | Kani stdout | test panic: each step calls `unwrap` or `expect` (:543, :597, :840, :871) |
+| A10 | Witness decode | No typed decode. Test-only `playback_i64` `FSL:tests/configversion_backends.rs:843-857` | stdout string | `i64` from the first `vec![…]` row only, which must hold exactly 8 bytes | `Option::None` |
+| A11 | Replay | No library entry. Test-only `native_verdict` `FSL:tests/configversion_backends.rs:252` → `runtime::execute` :259; verdict asserted at :948-951 | `i64` | `Option<bool>` verdict | `None` for input outside `DOMAIN` (:262) |
 
 IT-010 preconditions and failure modes. The test is not `#[ignore]`d. It
 requires `cargo-kani` on `PATH`
-(`QSL:tests/configversion_backends.rs:34,509-526`). It runs Kani with
+(`FSL:tests/configversion_backends.rs:34,509-526`). It runs Kani with
 `CARGO_NET_OFFLINE=true` (:837), so RT must already be in the cargo
 cache. The only check that IR model (producer) and IR root historical (consumer)
 agree is the equality check at :543-544, present at one of the three consumer
 sites (:543, :597, :871). The IR ↔ CG pairing is checked at
 :504-507 (IT-010-SC-01). RT has no pairing check: `RUNTIME_REVISION` is
 checked only for length 40 (:508). IT-010 has no `required-features` gate
-(`QSL:Cargo.toml:58-95` lists none for it), so the one CI job
+(`FSL:Cargo.toml:58-95` lists none for it), so the one CI job
 (`workflow_dispatch` only) and `make ci` both run it through `cargo test
---workspace` (`QSL:.github/workflows/ci.yml:3-4,22,26`, `QSL:Makefile:34,38`).
+--workspace` (`FSL:.github/workflows/ci.yml:3-4,22,26`, `FSL:Makefile:34,38`).
 Neither installs cargo-kani, so on those gates IT-010 panics at :513.
 
 CLI commands: `parse`, `format`, `run`, `compile`, `lower [--target]`
-(`QSL:cli.rs:59-126`). Entry points: `command::run` `QSL:command.rs:309`,
+(`FSL:cli.rs:59-126`). Entry points: `command::run` `FSL:command.rs:309`,
 `compile` :315, `lower` :321, `lower_for` :326. Exit codes 20/21/22/30
-(`RunCause` / `RunError`, `QSL:main.rs:24-25,113-115,138` ·
-`QSL:command.rs:227-232`). `NativePackage::read_verified` recompiles from source
-and does not trust a stored package (`QSL:package.rs:233-246`).
+(`RunCause` / `RunError`, `FSL:main.rs:24-25,113-115,138` ·
+`FSL:command.rs:227-232`). `NativePackage::read_verified` recompiles from source
+and does not trust a stored package (`FSL:package.rs:233-246`).
 
-Side lane A′ (feature `quire-extraction`): `mapped::compile` `QSL:mapped.rs:138`
-→ `MappedPackage` :110; `quire_source::compile` `QSL:quire_source.rs:312`.
-Reached through `RunSelection::Extracted` (`QSL:command/compilation.rs:26,36`).
+Side lane A′ (feature `quire-extraction`): `mapped::compile` `FSL:mapped.rs:138`
+→ `MappedPackage` :110; `quire_source::compile` `FSL:quire_source.rs:312`.
+Reached through `RunSelection::Extracted` (`FSL:command/compilation.rs:26,36`).
 
 ### 2.2 Lane B: composed (edition 1-draft). Library, examples and tests only; no CLI.
 
 | # | Stage | Entry | Output | Refusal |
 |---|---|---|---|---|
-| B1 | Parse | `parse_native` `QSL:parser.rs:43`, `parse_native_source` :55 | `NativeUnit` `QSL:syntax/composed.rs:10` (EDITION "1-draft" :18) | `Box<Diagnostic>` |
-| B2 | Namespace admission | `linking::composed::admit_namespace` `QSL:linking/composed.rs:375` | `NamespaceReport` :303 | in report |
-| B3 | Bind | `bind` `QSL:linking/composed/binding.rs:180` | `Report` :79 | `Refusal` :16 |
-| B4 | Bind models | `bind_models` `QSL:linking/composed/models.rs:278` | bound models | `ImportRefusal` :70 |
-| B5 | Request/backend disposition | `requests::report` `QSL:linking/composed/requests.rs:282` | `Disposition` (includes UnsupportedCapability, UnsupportedFamily) | in `Disposition` |
-| B6 | Type admission | `checking::composed::admit_types` `QSL:checking/composed.rs:311` | `TypeReport` :266 | in report |
-| B7 | Proof discharge | `proofs::discharge` `QSL:checking/composed/proofs.rs:217` | `ProofReport` :157 | in report |
-| B8 | Protocol artifact emit | `protocol_artifact::native::admit` `QSL:protocol_artifact/native/mod.rs:82` → `emit` :104; `admit_v2` `QSL:protocol_artifact/native/temporal_v2.rs:170`; `admit_v3` `QSL:protocol_artifact/native/temporal_v3.rs:49` | `EmittedPackage` (quire.compiled-protocol/1,2,3) | `Report<FamilyAdmission>` |
-| B9 | Protocol artifact read | `protocol_artifact::read` `QSL:protocol_artifact/intake.rs:520`; `v2::read` `QSL:protocol_artifact/v2/intake.rs:476`; `v3::read` `QSL:protocol_artifact/v3/intake.rs:211` | `AdmittedPackage` `QSL:protocol_artifact/mod.rs:387` | v2 `QSL:protocol_artifact/v2/refusal.rs:141`, v3 `QSL:protocol_artifact/v3/refusal.rs:38` |
-| B10 | Evaluate | `state::evaluate` `QSL:state/evaluation.rs:35` / `evaluate_v2` :45 → `EvaluationReport` `QSL:state/input.rs:316`; `temporal::evaluate` `QSL:temporal.rs:58` / `evaluate_v2` :145 | reports | state `Refusal` `QSL:state/input.rs:277`; temporal `Refusal` `QSL:temporal/result.rs:213` |
+| B1 | Parse | `parse_native` `FSL:parser.rs:43`, `parse_native_source` :55 | `NativeUnit` `FSL:syntax/composed.rs:10` (EDITION "1-draft" :18) | `Box<Diagnostic>` |
+| B2 | Namespace admission | `linking::composed::admit_namespace` `FSL:linking/composed.rs:375` | `NamespaceReport` :303 | in report |
+| B3 | Bind | `bind` `FSL:linking/composed/binding.rs:180` | `Report` :79 | `Refusal` :16 |
+| B4 | Bind models | `bind_models` `FSL:linking/composed/models.rs:278` | bound models | `ImportRefusal` :70 |
+| B5 | Request/backend disposition | `requests::report` `FSL:linking/composed/requests.rs:282` | `Disposition` (includes UnsupportedCapability, UnsupportedFamily) | in `Disposition` |
+| B6 | Type admission | `checking::composed::admit_types` `FSL:checking/composed.rs:311` | `TypeReport` :266 | in report |
+| B7 | Proof discharge | `proofs::discharge` `FSL:checking/composed/proofs.rs:217` | `ProofReport` :157 | in report |
+| B8 | Protocol artifact emit | `protocol_artifact::native::admit` `FSL:protocol_artifact/native/mod.rs:82` → `emit` :104; `admit_v2` `FSL:protocol_artifact/native/temporal_v2.rs:170`; `admit_v3` `FSL:protocol_artifact/native/temporal_v3.rs:49` | `EmittedPackage` (filament.compiled-protocol/1,2,3) | `Report<FamilyAdmission>` |
+| B9 | Protocol artifact read | `protocol_artifact::read` `FSL:protocol_artifact/intake.rs:520`; `v2::read` `FSL:protocol_artifact/v2/intake.rs:476`; `v3::read` `FSL:protocol_artifact/v3/intake.rs:211` | `AdmittedPackage` `FSL:protocol_artifact/mod.rs:387` | v2 `FSL:protocol_artifact/v2/refusal.rs:141`, v3 `FSL:protocol_artifact/v3/refusal.rs:38` |
+| B10 | Evaluate | `state::evaluate` `FSL:state/evaluation.rs:35` / `evaluate_v2` :45 → `EvaluationReport` `FSL:state/input.rs:316`; `temporal::evaluate` `FSL:temporal.rs:58` / `evaluate_v2` :145 | reports | state `Refusal` `FSL:state/input.rs:277`; temporal `Refusal` `FSL:temporal/result.rs:213` |
 
 Lane B has no IR lowering, proof, witness or replay stage (§2.6).
 
@@ -244,43 +244,43 @@ Checked handoffs inside lane B. Their input is the wire-admitted
 
 | Handoff | Derive / produce | Read / evaluate | Format |
 |---|---|---|---|
-| checked predicate | `QSL:protocol_artifact/checked_predicate.rs:139` | `QSL:protocol_artifact/checked_predicate.rs:156` | quire.checked-predicate/v1 (`QSL:protocol_artifact/checked_handoff.rs:1585`) |
-| temporal subject | `QSL:protocol_artifact/temporal_subject.rs:177` | `QSL:protocol_artifact/temporal_subject.rs:193` | quire.checked-temporal-subject/v1 (`QSL:protocol_artifact/checked_handoff.rs:1586`) |
-| native temporal v1 | `QSL:protocol_artifact/native_temporal/request.rs:1317` | `QSL:protocol_artifact/native_temporal/result.rs:754` | request/result /v1 (`QSL:protocol_artifact/native_temporal/common.rs:13-14`) |
-| native temporal v2 | `QSL:protocol_artifact/native_temporal/v2.rs:397` | :535 | /v2 (`QSL:protocol_artifact/native_temporal/v2.rs:22-24`) |
+| checked predicate | `FSL:protocol_artifact/checked_predicate.rs:139` | `FSL:protocol_artifact/checked_predicate.rs:156` | filament.checked-predicate/v1 (`FSL:protocol_artifact/checked_handoff.rs:1585`) |
+| temporal subject | `FSL:protocol_artifact/temporal_subject.rs:177` | `FSL:protocol_artifact/temporal_subject.rs:193` | filament.checked-temporal-subject/v1 (`FSL:protocol_artifact/checked_handoff.rs:1586`) |
+| native temporal v1 | `FSL:protocol_artifact/native_temporal/request.rs:1317` | `FSL:protocol_artifact/native_temporal/result.rs:754` | request/result /v1 (`FSL:protocol_artifact/native_temporal/common.rs:13-14`) |
+| native temporal v2 | `FSL:protocol_artifact/native_temporal/v2.rs:397` | :535 | /v2 (`FSL:protocol_artifact/native_temporal/v2.rs:22-24`) |
 
 B8 has no caller in `src/` outside `protocol_artifact::native`. Its callers are
-the example (`QSL:examples/protocol-handoff/producer.rs:1411,1415,1566`) and
-test files under `QSL:tests/`, for example `QSL:tests/native_protocol_emission.rs:134`
-and `QSL:tests/compiled_protocol_v2.rs:2454`.
+the example (`FSL:examples/protocol-handoff/producer.rs:1411,1415,1566`) and
+test files under `FSL:tests/`, for example `FSL:tests/native_protocol_emission.rs:134`
+and `FSL:tests/compiled_protocol_v2.rs:2454`.
 
 ### 2.3 Lane C: complete-V1. Library and tests only; the source path stops before checking.
 
 | # | Stage | Entry | Output | Refusal |
 |---|---|---|---|---|
-| C1 | Lossless parse | `complete::parse` `QSL:complete/mod.rs:103` | `ParsedSource` with `LosslessCst` `QSL:complete/cst.rs:189` | `Box<CompleteDiagnostic>` `QSL:complete/diagnostic.rs:183` |
-| C2 | Resolve package | `resolve_source_package` `QSL:complete/package.rs:861` | `ResolvedSourcePackage` :587 | `PackageRefusal` :847 |
-| C3 | Lower source graph | `lower_source_graph` `QSL:complete/package.rs:1340` | `LoweredSourceGraph` :625 ((production, span) pairs only) | none |
-| C4 | Check values | `PackageDeclarations::check` `QSL:value/expression/mod.rs:234` | `CheckedPackage` `QSL:value/expression/mod.rs:71` | `Vec<CheckRefusal>` `QSL:value/expression/refusal.rs:363` |
-| C5 | Call / evaluate | `CheckedPackage::call` `QSL:value/expression/mod.rs:635`, `evaluate` :659 | `Evaluation` `QSL:value/expression/evaluate.rs:51`; `Outcome<T>` {Completed, Undefined, Refused, Incomplete} `QSL:value/outcome.rs:18` | `InputRefusal` `QSL:value/expression/mod.rs:105`; `Refusal` `QSL:value/outcome.rs:103` |
-| C6 | Normalize model | `model::normalize` `QSL:model/normalize.rs:2102` | `NormalizeOutcome` :230 | `ModelRefusal` :218 |
-| C7 | Library resolve | `resolve_libraries` `QSL:value/library.rs:374` | `LibraryLock` | `LibraryRefusal` :181 |
+| C1 | Lossless parse | `complete::parse` `FSL:complete/mod.rs:103` | `ParsedSource` with `LosslessCst` `FSL:complete/cst.rs:189` | `Box<CompleteDiagnostic>` `FSL:complete/diagnostic.rs:183` |
+| C2 | Resolve package | `resolve_source_package` `FSL:complete/package.rs:861` | `ResolvedSourcePackage` :587 | `PackageRefusal` :847 |
+| C3 | Lower source graph | `lower_source_graph` `FSL:complete/package.rs:1340` | `LoweredSourceGraph` :625 ((production, span) pairs only) | none |
+| C4 | Check values | `PackageDeclarations::check` `FSL:value/expression/mod.rs:234` | `CheckedPackage` `FSL:value/expression/mod.rs:71` | `Vec<CheckRefusal>` `FSL:value/expression/refusal.rs:363` |
+| C5 | Call / evaluate | `CheckedPackage::call` `FSL:value/expression/mod.rs:635`, `evaluate` :659 | `Evaluation` `FSL:value/expression/evaluate.rs:51`; `Outcome<T>` {Completed, Undefined, Refused, Incomplete} `FSL:value/outcome.rs:18` | `InputRefusal` `FSL:value/expression/mod.rs:105`; `Refusal` `FSL:value/outcome.rs:103` |
+| C6 | Normalize model | `model::normalize` `FSL:model/normalize.rs:2102` | `NormalizeOutcome` :230 | `ModelRefusal` :218 |
+| C7 | Library resolve | `resolve_libraries` `FSL:value/library.rs:374` | `LibraryLock` | `LibraryRefusal` :181 |
 
 C1–C3 form the source path; C4–C5 the value path; C6 and C7 are independent
 entries. The only non-test constructor of `value::expression::Expression` is
-`model::checked_dispatch_operation` `QSL:model/checked_dispatch.rs:653`
+`model::checked_dispatch_operation` `FSL:model/checked_dispatch.rs:653`
 (refusal `DispatchBridgeRefusal` :154). Nothing outside `src/complete` consumes
 `LoweredSourceGraph`.
 
-### 2.4 Lane D: simulation. Generic, with no implementer in QSL.
+### 2.4 Lane D: simulation. Generic, with no implementer in FSL.
 
 | # | Stage | Entry | Output | Refusal |
 |---|---|---|---|---|
-| D1 | Explore | `explore` `QSL:simulation/explore.rs:97` | `Outcome` :59 (for example `Exhaustive(Stats)`) | in `Outcome` |
-| D2 | Sample | `sample` `QSL:simulation/sample.rs:95` | `Trace<TransitionId>` `QSL:simulation/trace.rs:41` | `EmptyInitial` `QSL:simulation/sample.rs:83` |
-| D3 | Replay trace | `replay` `QSL:simulation/trace.rs:97` | `()` | `ReplayError` `QSL:simulation/trace.rs:53` |
+| D1 | Explore | `explore` `FSL:simulation/explore.rs:97` | `Outcome` :59 (for example `Exhaustive(Stats)`) | in `Outcome` |
+| D2 | Sample | `sample` `FSL:simulation/sample.rs:95` | `Trace<TransitionId>` `FSL:simulation/trace.rs:41` | `EmptyInitial` `FSL:simulation/sample.rs:83` |
+| D3 | Replay trace | `replay` `FSL:simulation/trace.rs:97` | `()` | `ReplayError` `FSL:simulation/trace.rs:53` |
 
-`TransitionSystem` has no implementer in QSL (fan-in 0).
+`TransitionSystem` has no implementer in FSL (fan-in 0).
 
 ### 2.5 Program-flow order compared with lane A
 
@@ -291,7 +291,7 @@ execution/proof → typed witness → replay`.
 | Program-flow element | Observed in lane A |
 |---|---|
 | CST | Lane A has no CST (arena `ParsedUnit`). A CST exists only in lane C and stops at C3. |
-| check before link | Link (A4) runs before check (A5): `QSL:command/compilation.rs:101-102` |
+| check before link | Link (A4) runs before check (A5): `FSL:command/compilation.rs:101-102` |
 | typed witness | None. A10 is a test-only string parse. |
 | replay | Test-only, through native-v1 |
 
@@ -299,13 +299,13 @@ execution/proof → typed witness → replay`.
 
 | # | Absent stage | Reference that names it | Evidence of absence |
 |---|---|---|---|
-| X1 | `quire-exact` shared kernel | AD-016 Owner decision 2 | absent: `quire-exact` in `Cargo.toml` |
-| X2 | `model::intake` | AD-016 | absent: `mod intake` in `src/model`; `DomainPackage::new` is caller-constructed (`QSL:model/domain_package.rs:441`) |
-| X3 | checked-package/v2 emitter | AD-016 | absent: `CheckedPackageV2` in `src/`; only the preimage reader `project_declarations` `QSL:value/package_identity.rs:334` |
-| X4 | source → `value::expression::Expression` producer | #209 program flow (CST → checked semantic graph) | absent: `LoweredSourceGraph` in `src` excluding `src/complete` (producer `QSL:complete/package.rs:625`) |
+| X1 | `filament-exact` shared kernel | AD-016 Owner decision 2 | absent: `filament-exact` in `Cargo.toml` |
+| X2 | `model::intake` | AD-016 | absent: `mod intake` in `src/model`; `DomainPackage::new` is caller-constructed (`FSL:model/domain_package.rs:441`) |
+| X3 | checked-package/v2 emitter | AD-016 | absent: `CheckedPackageV2` in `src/`; only the preimage reader `project_declarations` `FSL:value/package_identity.rs:334` |
+| X4 | source → `value::expression::Expression` producer | #209 program flow (CST → checked semantic graph) | absent: `LoweredSourceGraph` in `src` excluding `src/complete` (producer `FSL:complete/package.rs:625`) |
 | X5 | composed → IR lowering | #209 program flow (package form → backend IR) | absent: `crate::lowering` and `EXECUTABLE_PROJECTION` in `src/linking/composed`, `src/checking/composed`, `src/protocol_artifact`, `src/state`, `src/temporal` |
-| X6 | typed witness decode and non-native replay | AD-016; #209 program flow (typed witness → replay) | absent: `kani` in `src/`; only `QSL:tests/configversion_backends.rs:252,843-857` |
-| X7 | native-run-result/2 | AD-014 / QSpec FR-352 | absent: `native-run-result/2` in `src/`; /1 at `QSL:wire_format.rs:31` |
+| X6 | typed witness decode and non-native replay | AD-016; #209 program flow (typed witness → replay) | absent: `kani` in `src/`; only `FSL:tests/configversion_backends.rs:252,843-857` |
+| X7 | native-run-result/2 | AD-014 / FSpec FR-352 | absent: `native-run-result/2` in `src/`; /1 at `FSL:wire_format.rs:31` |
 
 ## 3. Dependency views
 
@@ -316,7 +316,7 @@ imports and root re-exports, excluding `#[cfg(test)]` modules and `*tests.rs`.
 Fan-in and fan-out count distinct top-level modules at the other end of those
 edges.
 
-Top-level modules (`QSL:lib.rs:13-44`; `quire_source` is behind feature
+Top-level modules (`FSL:lib.rs:13-44`; `quire_source` is behind feature
 `quire-extraction`). Lines count every `.rs` line in the module's file and
 directory, including in-file tests. Public items count lines matching
 `^\s*pub (async )?(fn|struct|enum|trait|type|const|static|mod|use) `.
@@ -359,9 +359,9 @@ Strongly connected components with more than one module:
 
 | SCC | Modules | Edges (evidence) |
 |---|---|---|
-| S1 (11) | package, lexer, parser, linking, syntax, runtime, diagnostic, source, formal_source, native_model, checking | closing: diagnostic→linking `QSL:diagnostic.rs:320`; diagnostic→runtime `QSL:diagnostic.rs:324`; source↔diagnostic `QSL:source.rs:3`, `QSL:diagnostic.rs:3`; linking→checking `QSL:linking/composed/models.rs:11`; native_model→linking `QSL:native_model/admission.rs:12`; linking→native_model `QSL:linking.rs:15`; checking→linking `QSL:checking/proof.rs:20`. Entering each other member: package→parser `QSL:package/reading.rs:10`; parser→lexer `QSL:parser.rs:3`; parser→syntax `QSL:parser.rs:4`; syntax→source `QSL:syntax.rs:3`; lexer→diagnostic `QSL:lexer.rs:3`; checking→formal_source `QSL:checking.rs:14`; formal_source→diagnostic `QSL:formal_source.rs:7`; package→checking `QSL:package.rs:20`; runtime→package `QSL:runtime/execution.rs:4` |
-| S2 (2) | value, model | value→model: 8 `use crate::model` items in 6 files, e.g. `QSL:value/composite.rs:31`; model→value: 6 non-test `use crate::value` items (a seventh, `QSL:model/checked_dispatch.rs:860`, is in `#[cfg(test)]`), e.g. `QSL:model/domain_package.rs:14` |
-| S3 (2) | temporal, protocol_artifact | temporal→protocol_artifact `QSL:temporal.rs:29`; protocol_artifact→temporal `QSL:protocol_artifact/native_temporal/common.rs:11` |
+| S1 (11) | package, lexer, parser, linking, syntax, runtime, diagnostic, source, formal_source, native_model, checking | closing: diagnostic→linking `FSL:diagnostic.rs:320`; diagnostic→runtime `FSL:diagnostic.rs:324`; source↔diagnostic `FSL:source.rs:3`, `FSL:diagnostic.rs:3`; linking→checking `FSL:linking/composed/models.rs:11`; native_model→linking `FSL:native_model/admission.rs:12`; linking→native_model `FSL:linking.rs:15`; checking→linking `FSL:checking/proof.rs:20`. Entering each other member: package→parser `FSL:package/reading.rs:10`; parser→lexer `FSL:parser.rs:3`; parser→syntax `FSL:parser.rs:4`; syntax→source `FSL:syntax.rs:3`; lexer→diagnostic `FSL:lexer.rs:3`; checking→formal_source `FSL:checking.rs:14`; formal_source→diagnostic `FSL:formal_source.rs:7`; package→checking `FSL:package.rs:20`; runtime→package `FSL:runtime/execution.rs:4` |
+| S2 (2) | value, model | value→model: 8 `use crate::model` items in 6 files, e.g. `FSL:value/composite.rs:31`; model→value: 6 non-test `use crate::value` items (a seventh, `FSL:model/checked_dispatch.rs:860`, is in `#[cfg(test)]`), e.g. `FSL:model/domain_package.rs:14` |
+| S3 (2) | temporal, protocol_artifact | temporal→protocol_artifact `FSL:temporal.rs:29`; protocol_artifact→temporal `FSL:protocol_artifact/native_temporal/common.rs:11` |
 
 Two-cycles (7 in total): checking↔linking, diagnostic↔linking,
 diagnostic↔runtime, diagnostic↔source, linking↔native_model (all inside S1),
@@ -369,7 +369,7 @@ model↔value (S2) and protocol_artifact↔temporal (S3).
 
 S1 closes because `Diagnostic` embeds `Vec<linking::DeclarationLocation>`,
 `Option<Box<runtime::RuntimeLocation>>` and
-`Option<Box<quire_contract_ir::Diagnostic>>` (`QSL:diagnostic.rs:306-324`): the
+`Option<Box<filament_contract_ir::Diagnostic>>` (`FSL:diagnostic.rs:306-324`): the
 module with the highest fan-in depends on higher-level modules.
 
 | Fan-out (top) | n | Fan-in (top) | n |
@@ -381,9 +381,9 @@ module with the highest fan-in depends on higher-level modules.
 | runtime | 10 | digest | 10 |
 | lowering | 9 | formal_source / linking / checking | 9 each |
 
-Largest files: `QSL:state/evaluation.rs` 3110 · `QSL:value/expression/check.rs`
-2209 · `QSL:model/normalize.rs` 2189 · `QSL:value/ieee.rs` 1821 ·
-`QSL:protocol_artifact/checked_handoff.rs` 1795.
+Largest files: `FSL:state/evaluation.rs` 3110 · `FSL:value/expression/check.rs`
+2209 · `FSL:model/normalize.rs` 2189 · `FSL:value/ieee.rs` 1821 ·
+`FSL:protocol_artifact/checked_handoff.rs` 1795.
 
 Islands with no in-crate production consumer: complete, value+model, state,
 simulation, the composed pipeline (lane B) and protocol_artifact emission.
@@ -433,59 +433,59 @@ graph TD
 Edge rule: a repository edge is a Cargo dependency of any kind (normal, dev,
 optional) or a Cargo manifest that the repository's tests write or build. Edges
 and cycles are counted between the seven Context-table repositories only.
-Dependencies on other repositories (quire-rs, and IR root → quire-protocol) are
-listed where QSL has them but are not followed, so cycles through them, such as
-IR ⇄ quire-protocol, are out of scope. A repository cycle is a pair of
+Dependencies on other repositories (quire-rs, and IR root → filament-protocol) are
+listed where FSL has them but are not followed, so cycles through them, such as
+IR ⇄ filament-protocol, are out of scope. A repository cycle is a pair of
 repositories with an edge in each direction.
 
 | From | To | Kind | Evidence |
 |---|---|---|---|
-| QSL | IR model (package quire-contract-model, alias `quire_contract_ir`) | normal | `QSL:Cargo.toml:36` |
-| QSL | quire-rs | optional (feature quire-extraction) | `QSL:Cargo.toml:26` (feature `:17`) |
-| QSL | CG | dev | `QSL:Cargo.toml:43` |
-| QSL | IR root historical (`quire-contract-ir-historical`) | dev | `QSL:Cargo.toml:44` |
-| QSL tests | RT | test-time: fixture crate built by a test, and the IT-010 generated crates | `QSL:tests/fixtures/native-lowering/Cargo.toml:14` · `QSL:tests/native_backend.rs:281` · `QSL:tests/configversion_backends.rs:820-821` · `CG:src/oracle.rs:17` |
-| QSL | RT | no Cargo dependency | absent: `quire-contract-runtime` in `Cargo.toml` |
-| QSL | FCD | none on main (PR #200 adds it) | absent: `filament` in `Cargo.toml` · `PR #200:Cargo.toml:37-38` |
-| QSL | quire-exact | none (crate absent) | absent: `quire-exact` in `Cargo.toml` |
-| QSL package view | IR and QSpec | hard-coded literals `ir_revision` and `STANDARD`, not the Cargo dependency revision | `QSL:package/view.rs:39,46` |
+| FSL | IR model (package filament-contract-model, alias `filament_contract_ir`) | normal | `FSL:Cargo.toml:36` |
+| FSL | quire-rs | optional (feature quire-extraction) | `FSL:Cargo.toml:26` (feature `:17`) |
+| FSL | CG | dev | `FSL:Cargo.toml:43` |
+| FSL | IR root historical (`filament-contract-ir-historical`) | dev | `FSL:Cargo.toml:44` |
+| FSL tests | RT | test-time: fixture crate built by a test, and the IT-010 generated crates | `FSL:tests/fixtures/native-lowering/Cargo.toml:14` · `FSL:tests/native_backend.rs:281` · `FSL:tests/configversion_backends.rs:820-821` · `CG:src/oracle.rs:17` |
+| FSL | RT | no Cargo dependency | absent: `filament-contract-runtime` in `Cargo.toml` |
+| FSL | FCD | none on main (PR #200 adds it) | absent: `filament` in `Cargo.toml` · `PR #200:Cargo.toml:37-38` |
+| FSL | filament-exact | none (crate absent) | absent: `filament-exact` in `Cargo.toml` |
+| FSL package view | IR and FSpec | hard-coded literals `ir_revision` and `STANDARD`, not the Cargo dependency revision | `FSL:package/view.rs:39,46` |
 | IR root | IR model | normal, workspace path | `IR:Cargo.toml:21` |
-| IR root | IR model (`quire-contract-model-owner`) | dev self-dependency | `IR:Cargo.toml:37` |
-| IR root | QSL | normal and dev | `IR:Cargo.toml:24,38` |
-| IR tests | QSL | test-time fixture manifest | `IR:tests/fixtures/bridge-qsl-consumer/Cargo.toml:13` |
-| CG | IR root (package quire-contract-ir) | normal | `CG:Cargo.toml:17` |
-| CG → IR root | QSL | transitive normal | `IR:Cargo.toml:24` |
+| IR root | IR model (`filament-contract-model-owner`) | dev self-dependency | `IR:Cargo.toml:37` |
+| IR root | FSL | normal and dev | `IR:Cargo.toml:24,38` |
+| IR tests | FSL | test-time fixture manifest | `IR:tests/fixtures/bridge-fsl-consumer/Cargo.toml:13` |
+| CG | IR root (package filament-contract-ir) | normal | `CG:Cargo.toml:17` |
+| CG → IR root | FSL | transitive normal | `IR:Cargo.toml:24` |
 | CG | RT | normal | `CG:Cargo.toml:18,27` |
-| CG | QSL | dev | `CG:Cargo.toml:28` |
-| RT qsl-agreement | QSL | dev | `RT:conformance/qsl-agreement/Cargo.toml:18` |
+| CG | FSL | dev | `CG:Cargo.toml:28` |
+| RT fsl-agreement | FSL | dev | `RT:conformance/fsl-agreement/Cargo.toml:18` |
 
 Repository cycles under the edge rule:
 
 | Cycle | Edges | Kinds |
 |---|---|---|
-| IR ⇄ QSL | IR root → QSL (`IR:Cargo.toml:24`); QSL → IR model (`QSL:Cargo.toml:36`) | normal both ways. The model crate has no QSL dependency, so there is no crate-level cycle. |
-| QSL ⇄ CG | QSL → CG (`QSL:Cargo.toml:43`); CG → QSL (`CG:Cargo.toml:28`); CG → IR root → QSL (`CG:Cargo.toml:17`, `IR:Cargo.toml:24`) | dev both ways, plus a transitive normal edge CG → QSL |
-| QSL ⇄ RT | QSL tests → RT (`QSL:tests/fixtures/native-lowering/Cargo.toml:14`); RT qsl-agreement → QSL (`RT:conformance/qsl-agreement/Cargo.toml:18`) | test-time both ways |
+| IR ⇄ FSL | IR root → FSL (`IR:Cargo.toml:24`); FSL → IR model (`FSL:Cargo.toml:36`) | normal both ways. The model crate has no FSL dependency, so there is no crate-level cycle. |
+| FSL ⇄ CG | FSL → CG (`FSL:Cargo.toml:43`); CG → FSL (`CG:Cargo.toml:28`); CG → IR root → FSL (`CG:Cargo.toml:17`, `IR:Cargo.toml:24`) | dev both ways, plus a transitive normal edge CG → FSL |
+| FSL ⇄ RT | FSL tests → RT (`FSL:tests/fixtures/native-lowering/Cargo.toml:14`); RT fsl-agreement → FSL (`RT:conformance/fsl-agreement/Cargo.toml:18`) | test-time both ways |
 
 Proof-path chain (IT-010). The projection format comes from IR model
-(`QSL:lowering/wire.rs:51`, `QSL:Cargo.toml:36`). The consumer is IR
-root historical (`QSL:Cargo.toml:44`), which is also the IR revision CG depends on
+(`FSL:lowering/wire.rs:51`, `FSL:Cargo.toml:36`). The consumer is IR
+root historical (`FSL:Cargo.toml:44`), which is also the IR revision CG depends on
 (`CG:src/oracle.rs:14`). The generated crates use RT
 (`CG:src/oracle.rs:17`). Only the IR model on this chain is a production
-dependency of QSL. The cross-revision guards are the IR ↔ CG pairing at
-`QSL:tests/configversion_backends.rs:504-507` and the producer/consumer
+dependency of FSL. The cross-revision guards are the IR ↔ CG pairing at
+`FSL:tests/configversion_backends.rs:504-507` and the producer/consumer
 equality check at :543-544; the RT link is checked only for hash length at
 :508 (OBS-040).
 
-IR's typed handoffs from QSL are bound to an older QSL. IR `predicate::project`,
-`temporal::project` and `replay_with_native_runtime(&NativePackage)` take QSL
+IR's typed handoffs from FSL are bound to an older FSL. IR `predicate::project`,
+`temporal::project` and `replay_with_native_runtime(&NativePackage)` take FSL
 Rust types from the crate revision named at `IR:Cargo.toml:24`
 (`IR:src/kani/replay.rs:3-6,80` · `IR:src/predicate/admission.rs:91-92`). A value
-built by QSL main is a different type from a different crate, so QSL
+built by FSL main is a different type from a different crate, so FSL
 main cannot pass it to IR main without serializing it.
 
-IR types used inside QSL (approximate use counts: `git grep -w <Type>` over `src/`
-files that import `quire_contract_ir`; a plain `git grep -w` outside
+IR types used inside FSL (approximate use counts: `git grep -w <Type>` over `src/`
+files that import `filament_contract_ir`; a plain `git grep -w` outside
 `value`, `model` and `complete` gives slightly higher counts, e.g. `ValueType` 219): `ValueType` 212 · `SymbolName` 103 ·
 `StateObservation` 87 · `RequirementRef` 42 · `ExpressionKind` 39 · `Diagnostic`
 31 · `ExecutionPoint` 29 · `SourceSpan` 22 · `DeclarationEnvironment` 20.
@@ -497,9 +497,9 @@ arrows labelled "data flow" point from producer to consumer.
 
 ```mermaid
 graph LR
-  QSpec[QSpec contracts]
-  QSL[QSL crate]
-  IRCM[IR model quire-contract-model]
+  FSpec[FSpec contracts]
+  FSL[FSL crate]
+  IRCM[IR model filament-contract-model]
   IRR[IR root]
   IRH[IR root historical dev only]
   IRA[IR root]
@@ -507,52 +507,52 @@ graph LR
   CGM[CG]
   RT[RT]
   QRS[quire-rs optional]
-  QX[quire-exact ABSENT]
+  QX[filament-exact ABSENT]
   Kani[cargo kani]
-  QSpec -.->|native-v1| QSL
-  QSpec -.->|complete-value| QSL
-  QSL -->|normal dep| IRCM
-  QSL -->|feature quire-extraction| QRS
-  QSL -.->|dev dep IT-010| IRH
-  QSL -.->|dev dep IT-010| CG
-  QSL -.->|test-time| RT
-  QSL -.-x|no dep| QX
-  QSL -->|data flow executable-projection bytes| IRH
+  FSpec -.->|native-v1| FSL
+  FSpec -.->|complete-value| FSL
+  FSL -->|normal dep| IRCM
+  FSL -->|feature quire-extraction| QRS
+  FSL -.->|dev dep IT-010| IRH
+  FSL -.->|dev dep IT-010| CG
+  FSL -.->|test-time| RT
+  FSL -.-x|no dep| QX
+  FSL -->|data flow executable-projection bytes| IRH
   IRH -->|data flow projection to oracle| CG
   CG -->|data flow kani bundle| Kani
-  Kani -->|data flow stdout string split| QSL
+  Kani -->|data flow stdout string split| FSL
   IRR -->|path dep| IRCM
-  IRR ==>|normal dep| QSL
+  IRR ==>|normal dep| FSL
   CGM -->|normal dep| RT
   CGM -->|normal dep| IRA
-  IRA ==>|normal dep| QSL
-  CGM -.->|dev dep| QSL
-  RT -.->|qsl-agreement dev dep| QSL
+  IRA ==>|normal dep| FSL
+  CGM -.->|dev dep| FSL
+  RT -.->|fsl-agreement dev dep| FSL
 ```
 
-### 3.3 Wire formats emitted or read by QSL
+### 3.3 Wire formats emitted or read by FSL
 
 | Format | Direction | Evidence |
 |---|---|---|
-| native-run/1, native-compile/1, native-run-result/1 | emit | `QSL:wire_format.rs:27,29,31` |
-| native-run-result/2 | absent (AD-014 / QSpec FR-352 name /2) | absent: `native-run-result/2` in `src/` |
-| native-rule-model/1,2 | read | `QSL:wire_format.rs:33-35` |
-| native-state-model/1,2 | read | `QSL:native_model.rs:27-28` |
-| native-state-input/1 | read | `QSL:wire_format.rs:37` |
-| native-linked-package/1 | emit | `QSL:wire_format.rs:39` |
-| native-formal-environment/1 | internal | `QSL:linking.rs:202` |
-| native-checked-clauses/1 | package view | `QSL:package/view.rs:45` |
-| quire.contract.executable-projection/v1 | emit (lowering) | `QSL:lowering/wire.rs:51`; listed "unlowered" at `QSL:package/view.rs:395-410` |
-| native-reference/1 | projection "available" | `QSL:package/view.rs:395-410` |
-| quire.compiled-protocol/1,2,3 (+ schemas /1,2,3) | emit + read | `QSL:protocol_artifact/mod.rs:49`, `QSL:protocol_artifact/v2/mod.rs:19`, `QSL:protocol_artifact/v3/mod.rs:14` |
-| quire.protocol.compact-json/1 | encoding | `QSL:protocol_artifact/mod.rs:57` |
-| quire.checked-predicate/v1, quire.checked-temporal-subject/v1 | emit + read | `QSL:protocol_artifact/checked_handoff.rs:1585-1586` |
-| native temporal request/result /v1, /v2 | emit + read | `QSL:protocol_artifact/native_temporal/common.rs:13-14`, `QSL:protocol_artifact/native_temporal/v2.rs:22-24` |
-| quire.checked-package-id/v2, quire.checked-semantic-graph/v2 | read only (preimage) | `QSL:value/package_identity.rs:13,15` |
-| quire.checked-semantic-node/v1 | identity domain tag | `QSL:value/node.rs:18` |
-| quire.model.effective-declaration/v1 | identity domain tag | `QSL:model/key.rs:26` |
-| quire.native.diagnostics/v1 | catalog; revisions "1-draft.3" and "1-draft.1" both claimed | `QSL:complete/diagnostic.rs:13` · `QSL:linking/composed/definition_source.rs:240` |
-| quire.value.accounting/v1 | budget | `QSL:value/accounting.rs:2` |
+| native-run/1, native-compile/1, native-run-result/1 | emit | `FSL:wire_format.rs:27,29,31` |
+| native-run-result/2 | absent (AD-014 / FSpec FR-352 name /2) | absent: `native-run-result/2` in `src/` |
+| native-rule-model/1,2 | read | `FSL:wire_format.rs:33-35` |
+| native-state-model/1,2 | read | `FSL:native_model.rs:27-28` |
+| native-state-input/1 | read | `FSL:wire_format.rs:37` |
+| native-linked-package/1 | emit | `FSL:wire_format.rs:39` |
+| native-formal-environment/1 | internal | `FSL:linking.rs:202` |
+| native-checked-clauses/1 | package view | `FSL:package/view.rs:45` |
+| filament.contract.executable-projection/v1 | emit (lowering) | `FSL:lowering/wire.rs:51`; listed "unlowered" at `FSL:package/view.rs:395-410` |
+| native-reference/1 | projection "available" | `FSL:package/view.rs:395-410` |
+| filament.compiled-protocol/1,2,3 (+ schemas /1,2,3) | emit + read | `FSL:protocol_artifact/mod.rs:49`, `FSL:protocol_artifact/v2/mod.rs:19`, `FSL:protocol_artifact/v3/mod.rs:14` |
+| filament.protocol.compact-json/1 | encoding | `FSL:protocol_artifact/mod.rs:57` |
+| filament.checked-predicate/v1, filament.checked-temporal-subject/v1 | emit + read | `FSL:protocol_artifact/checked_handoff.rs:1585-1586` |
+| native temporal request/result /v1, /v2 | emit + read | `FSL:protocol_artifact/native_temporal/common.rs:13-14`, `FSL:protocol_artifact/native_temporal/v2.rs:22-24` |
+| filament.checked-package-id/v2, filament.checked-semantic-graph/v2 | read only (preimage) | `FSL:value/package_identity.rs:13,15` |
+| filament.checked-semantic-node/v1 | identity domain tag | `FSL:value/node.rs:18` |
+| filament.model.effective-declaration/v1 | identity domain tag | `FSL:model/key.rs:26` |
+| filament.native.diagnostics/v1 | catalog; revisions "1-draft.3" and "1-draft.1" both claimed | `FSL:complete/diagnostic.rs:13` · `FSL:linking/composed/definition_source.rs:240` |
+| filament.value.accounting/v1 | budget | `FSL:value/accounting.rs:2` |
 
 ## 4. Inventory
 
@@ -560,61 +560,61 @@ graph LR
 
 | Boundary | Type | Evidence |
 |---|---|---|
-| source → parse | `Source`, `Span`, `LocatedSpan` | `QSL:source.rs:94` |
-| parse → link | `ParsedUnit` / `NativeUnit` | `QSL:syntax.rs:324`, `QSL:syntax/composed.rs:10` |
-| link → check | `LinkedPackage` | `QSL:linking.rs:190` |
-| check → package | `checking::CheckedPackage<'a>` | `QSL:checking.rs:263` |
-| package → lower / run | `NativePackage` | `QSL:package.rs:224` |
-| lower → IR | `NativeProjection` (bytes in `ir::EXECUTABLE_PROJECTION_FORMAT`) | `QSL:lowering.rs:228` |
-| protocol emit → read | `EmittedPackage` / `AdmittedPackage` | `QSL:protocol_artifact/mod.rs:387` |
-| protocol read → checked handoff → IR | `v2::AdmittedPackage` → `ValidatedCheckedPredicate` / temporal subject | `QSL:protocol_artifact/checked_predicate.rs:139` · `QSL:protocol_artifact/temporal_subject.rs:177` · `IR:src/predicate/admission.rs:92` |
-| value check → call | `value::expression::CheckedPackage` | `QSL:value/expression/mod.rs:71` |
-| complete CST → nothing | `LoweredSourceGraph` (no consumer) | `QSL:complete/package.rs:625` |
+| source → parse | `Source`, `Span`, `LocatedSpan` | `FSL:source.rs:94` |
+| parse → link | `ParsedUnit` / `NativeUnit` | `FSL:syntax.rs:324`, `FSL:syntax/composed.rs:10` |
+| link → check | `LinkedPackage` | `FSL:linking.rs:190` |
+| check → package | `checking::CheckedPackage<'a>` | `FSL:checking.rs:263` |
+| package → lower / run | `NativePackage` | `FSL:package.rs:224` |
+| lower → IR | `NativeProjection` (bytes in `ir::EXECUTABLE_PROJECTION_FORMAT`) | `FSL:lowering.rs:228` |
+| protocol emit → read | `EmittedPackage` / `AdmittedPackage` | `FSL:protocol_artifact/mod.rs:387` |
+| protocol read → checked handoff → IR | `v2::AdmittedPackage` → `ValidatedCheckedPredicate` / temporal subject | `FSL:protocol_artifact/checked_predicate.rs:139` · `FSL:protocol_artifact/temporal_subject.rs:177` · `IR:src/predicate/admission.rs:92` |
+| value check → call | `value::expression::CheckedPackage` | `FSL:value/expression/mod.rs:71` |
+| complete CST → nothing | `LoweredSourceGraph` (no consumer) | `FSL:complete/package.rs:625` |
 
 ### 4.2 Conversions
 
 | From → To | Function | Explicit / total? |
 |---|---|---|
-| `DeclarationKey` → `NodeKey` | caller-supplied `object_keys: &BTreeMap<DeclarationKey, NodeKey>` `QSL:model/checked_dispatch.rs:657` | caller-supplied bridge with no owner |
-| `EffectiveId` → `NodeKey` | `NodeKey::from_bytes(*key.type_identity.as_bytes())` `QSL:value/model_query.rs:108`; `from_bytes` is `pub(crate)` `QSL:value/node.rs:49` | explicit byte transfer from domain quire.model.effective-declaration/v1 (`QSL:model/key.rs:26,157`) into domain quire.checked-semantic-node/v1 (`QSL:value/node.rs:18`); the only production caller |
-| `NodeKey` → `EffectiveId` | `EffectiveId::from_digest_bytes(*reference.object_type().as_bytes())` `QSL:value/model_query.rs:123`; `EffectiveId::from_digest_bytes(*target.as_bytes())` `QSL:value/model_query.rs:155` | explicit byte transfer, reverse direction (two sites) |
-| `NativePackage` → IR projection | `lower_for` `QSL:lowering.rs:283` | explicit, versioned |
-| projection → IR bound package | `backend_ir::BoundPackage::from_json_bytes` `QSL:tests/configversion_backends.rs:543` | test-only |
-| Kani stdout → i64 | `playback_i64` `QSL:tests/configversion_backends.rs:843-857` | string split, first row only, partial |
-| model dispatch → `Expression` | `checked_dispatch_operation` `QSL:model/checked_dispatch.rs:653` | explicit; the only non-test producer |
+| `DeclarationKey` → `NodeKey` | caller-supplied `object_keys: &BTreeMap<DeclarationKey, NodeKey>` `FSL:model/checked_dispatch.rs:657` | caller-supplied bridge with no owner |
+| `EffectiveId` → `NodeKey` | `NodeKey::from_bytes(*key.type_identity.as_bytes())` `FSL:value/model_query.rs:108`; `from_bytes` is `pub(crate)` `FSL:value/node.rs:49` | explicit byte transfer from domain filament.model.effective-declaration/v1 (`FSL:model/key.rs:26,157`) into domain filament.checked-semantic-node/v1 (`FSL:value/node.rs:18`); the only production caller |
+| `NodeKey` → `EffectiveId` | `EffectiveId::from_digest_bytes(*reference.object_type().as_bytes())` `FSL:value/model_query.rs:123`; `EffectiveId::from_digest_bytes(*target.as_bytes())` `FSL:value/model_query.rs:155` | explicit byte transfer, reverse direction (two sites) |
+| `NativePackage` → IR projection | `lower_for` `FSL:lowering.rs:283` | explicit, versioned |
+| projection → IR bound package | `backend_ir::BoundPackage::from_json_bytes` `FSL:tests/configversion_backends.rs:543` | test-only |
+| Kani stdout → i64 | `playback_i64` `FSL:tests/configversion_backends.rs:843-857` | string split, first row only, partial |
+| model dispatch → `Expression` | `checked_dispatch_operation` `FSL:model/checked_dispatch.rs:653` | explicit; the only non-test producer |
 
 ### 4.3 Dispatch points, including string dispatch
 
 | Site | Dispatch on | Evidence |
 |---|---|---|
-| Relationship category | string `"allocation"` (PR #200 removes it; PR-sensitive) | `QSL:model/systems.rs:269` |
-| Protocol admission | string `"quire.protocol.finite-global/v1"` | `QSL:protocol_artifact/validate.rs:287,291` |
-| State canonical JSON | string `"filament-canonical-json-1"` | `QSL:state/evaluation.rs:2478-2484` |
-| State authority adapter | string `"quire.state.authority-adapter"` | `QSL:state/evaluation.rs:2781-2783` |
-| Temporal clock role | prefix `"clock:"` (`CLOCK_PREFIX`) | `QSL:temporal.rs:50` |
-| Backend request | `Capability` (4) × `Family` (4) against `Backend{identity:&str}` | `QSL:linking/composed/requests.rs:20,36,80` |
-| Value call | function name `&str` | `QSL:value/expression/mod.rs:635` |
-| Lowering target | `--target` string → 3 targets | `QSL:lowering/target.rs:39-46` |
-| Complete capability id | `CapabilityId(String)` | `QSL:complete/package.rs:690` |
+| Relationship category | string `"allocation"` (PR #200 removes it; PR-sensitive) | `FSL:model/systems.rs:269` |
+| Protocol admission | string `"filament.protocol.finite-global/v1"` | `FSL:protocol_artifact/validate.rs:287,291` |
+| State canonical JSON | string `"filament-canonical-json-1"` | `FSL:state/evaluation.rs:2478-2484` |
+| State authority adapter | string `"filament.state.authority-adapter"` | `FSL:state/evaluation.rs:2781-2783` |
+| Temporal clock role | prefix `"clock:"` (`CLOCK_PREFIX`) | `FSL:temporal.rs:50` |
+| Backend request | `Capability` (4) × `Family` (4) against `Backend{identity:&str}` | `FSL:linking/composed/requests.rs:20,36,80` |
+| Value call | function name `&str` | `FSL:value/expression/mod.rs:635` |
+| Lowering target | `--target` string → 3 targets | `FSL:lowering/target.rs:39-46` |
+| Complete capability id | `CapabilityId(String)` | `FSL:complete/package.rs:690` |
 
 ### 4.4 Bypass paths
 
 | Bypass | What it skips | Evidence |
 |---|---|---|
-| `protocol_artifact::read` admits wire data into the `state` and `temporal` evaluators | source compile and check; the module doc says the reader "does not prove that a source compiler produced them" | `QSL:protocol_artifact/mod.rs:1-8` |
-| wire-admitted `v2::AdmittedPackage` → checked-predicate / temporal-subject → IR `predicate::project` / `temporal::project` | source compile and check; the "checked" handoffs carry no source-compile provenance (OBS-037) | `QSL:protocol_artifact/v2/intake.rs:476` · `QSL:protocol_artifact/checked_predicate.rs:139,156` · `QSL:protocol_artifact/temporal_subject.rs:177,193` · `IR:src/predicate/admission.rs:91-92` |
-| `DomainPackage::new` is caller-constructed | intake | `QSL:model/domain_package.rs:441` |
-| `EffectiveId` bytes reused as `NodeKey` | the node-id domain (crate-internal; `from_bytes` is `pub(crate)`) | `QSL:value/model_query.rs:108` · `QSL:value/node.rs:49` |
-| IT-010 witness | typed IR witness decode | `QSL:tests/configversion_backends.rs:843-857` |
-| IT-010 replay | value-lane `CheckedPackage::call` | `QSL:tests/configversion_backends.rs:259` |
+| `protocol_artifact::read` admits wire data into the `state` and `temporal` evaluators | source compile and check; the module doc says the reader "does not prove that a source compiler produced them" | `FSL:protocol_artifact/mod.rs:1-8` |
+| wire-admitted `v2::AdmittedPackage` → checked-predicate / temporal-subject → IR `predicate::project` / `temporal::project` | source compile and check; the "checked" handoffs carry no source-compile provenance (OBS-037) | `FSL:protocol_artifact/v2/intake.rs:476` · `FSL:protocol_artifact/checked_predicate.rs:139,156` · `FSL:protocol_artifact/temporal_subject.rs:177,193` · `IR:src/predicate/admission.rs:91-92` |
+| `DomainPackage::new` is caller-constructed | intake | `FSL:model/domain_package.rs:441` |
+| `EffectiveId` bytes reused as `NodeKey` | the node-id domain (crate-internal; `from_bytes` is `pub(crate)`) | `FSL:value/model_query.rs:108` · `FSL:value/node.rs:49` |
+| IT-010 witness | typed IR witness decode | `FSL:tests/configversion_backends.rs:843-857` |
+| IT-010 replay | value-lane `CheckedPackage::call` | `FSL:tests/configversion_backends.rs:259` |
 
 ### 4.5 Coupling hotspots
 
 | Hotspot | Why | Evidence |
 |---|---|---|
-| `Diagnostic` | fan-in 20; embeds linking, runtime and IR types; closes SCC S1 | `QSL:diagnostic.rs:306-324` |
+| `Diagnostic` | fan-in 20; embeds linking, runtime and IR types; closes SCC S1 | `FSL:diagnostic.rs:306-324` |
 | `ir::ValueType` | 212 uses; it is the native-v1 type vocabulary and IR owns it | §3.2 usage census |
-| IR `DeclarationEnvironment::check_expression` | QSL checking, composed proofs and lowering all call IR for definedness | `QSL:checking/proof.rs:660`, `QSL:checking/composed/proofs/engine.rs:579`, `QSL:lowering.rs:385` |
+| IR `DeclarationEnvironment::check_expression` | FSL checking, composed proofs and lowering all call IR for definedness | `FSL:checking/proof.rs:660`, `FSL:checking/composed/proofs/engine.rs:579`, `FSL:lowering.rs:385` |
 | `command` | fan-out 16 | §3.1 |
 | `protocol_artifact` | 22959 lines, 508 public items, fan-out 10 | §3.1 |
 | `src/model` single-writer files | `normalize.rs` (2189 lines) is written by #228, #204 and #200; `conformance.rs` and `refusal.rs` by #204 and #200; `checked_dispatch.rs`, the OBS-007 evidence site, by #204 | `PR #228`, `PR #204`, `PR #200` diffs against main under `src/model` · §8 |
@@ -627,25 +627,25 @@ AMBIGUOUS row is a Layer 1 decision item (DA-nn, §9.3).
 
 | Item | Concept | Owner(s) observed | Evidence | Flag |
 |---|---|---|---|---|
-| DA-01 | Declaration identity | `linking::DeclarationKey` (enum path under `RequirementRef`) and `model::key::DeclarationKey{package: String, node: String}` | `QSL:linking.rs:69` · `QSL:model/key.rs:72` | DUPLICATE |
-| DA-02 | Semantic node identity | `NodeKey([u8;32])` in domain quire.checked-semantic-node/v1; `EffectiveId([u8;32])` in domain quire.model.effective-declaration/v1, carried by `ReferenceKey.type_identity`. `DeclarationKey` is bridged to `NodeKey` by a caller map, and `EffectiveId` bytes are reused as `NodeKey` and back. | `QSL:value/node.rs:18,22,49` · `QSL:model/key.rs:26,157` · `QSL:model/population.rs:376` · `QSL:model/checked_dispatch.rs:657` · `QSL:value/model_query.rs:108,123,155` | AMBIGUOUS |
-| DA-03 | Package identity | `NativePackageIdentity` (native-v1; retired, QSL-1260) and the checked-package-id/v2 preimage reader (value lane) | `QSL:package.rs:202` · `QSL:value/package_identity.rs:13` | DUPLICATE (resolved: the native identity is removed) |
-| DA-04 | Checked typestate | `checking::CheckedPackage<'a>` and `value::expression::CheckedPackage` | `QSL:checking.rs:263` · `QSL:value/expression/mod.rs:71` | DUPLICATE |
-| DA-05 | Types | `ir::ValueType` (212 uses, native-v1), `checking::types::NativeType`, `value::composite::ValueType` | `QSL:value/composite.rs:36` · `QSL:checking/types.rs:12` | DUPLICATE |
-| DA-06 | Values | `value::composite::Value`, `state::input::Value`, `runtime::input::ValueNode` (10 variants; its integers are fixed-width `i64` and it has no function variant) | `QSL:value/composite.rs:132` · `QSL:state/input.rs:207` · `QSL:runtime/input.rs:94,101-104` | DUPLICATE |
-| DA-07 | Rational semantics | historical and composed checkers interpret the same admitted rational differently, asserted by TC-120 | `QSL:checking/types.rs:462` | DUPLICATE |
-| DA-08 | Clause kind (QSL) | `syntax::ClauseKind` and `value::expression::syntax::ClauseKind` | `QSL:syntax.rs:294` · `QSL:value/expression/syntax.rs:86` | DUPLICATE |
-| DA-09 | Outcomes | `value::Outcome<T>` {Completed, Undefined, Refused, Incomplete}; runtime `ExecutionOutcome` / `EvaluationOutcome`; state `EvaluationOutcome`; simulation `Outcome` | `QSL:value/outcome.rs:18` · `QSL:runtime/execution.rs:23` · `QSL:state/input.rs:307` · `QSL:simulation/explore.rs:59` | DUPLICATE |
-| DA-10 | Refusals | `Box<Diagnostic>` (45-variant `Code`), `value::Refusal`, `state::Refusal`, `temporal::Refusal`, protocol v2/v3 refusal, composed binding `Refusal`, `ImportRefusal`, `ModelRefusal`, `PackageRefusal`, `LibraryRefusal`, `CheckRefusal`, `InputRefusal`, `PackageError`, `LoweringError` | `QSL:diagnostic.rs:51,306` · `QSL:value/outcome.rs:103` · `QSL:state/input.rs:277` · `QSL:temporal/result.rs:213` · the refusal columns of §2 | DUPLICATE |
-| DA-11 | Capabilities | `requests::Capability` (4, request label), `CapabilityId(String)` (complete), `IeeeBackendCapabilities`, FR-290's 6 protocol claim kinds, AD-016 language admission capability. Program statements at the retrieval time: #213 implements the canonical `Capability` value type, and #185 owns backend registration and routing and must not own a competing enum; #205 lists #185 as "sole capability registry/routing implementation owner". | `QSL:linking/composed/requests.rs:36` · `QSL:complete/package.rs:690` · `QSL:value/ieee.rs:830` · `QSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · #213, #185, #205 bodies | AMBIGUOUS |
-| DA-12 | Bounds / budgets | `value::accounting` (ChargePoint :143, Incomplete :392, Meter :465), `model::accounting` (ChargePoint :127, Incomplete :201, Meter :244), protocol artifact-work/1, temporal-work/1, state evaluation-work/1, runtime native-ref-cost/1-draft, many `*Limits` | `QSL:value/accounting.rs:143` · `QSL:model/accounting.rs:127` | DUPLICATE |
-| DA-13 | Provenance / spans | `Source`/`Span` (native), `LosslessCst` spans (complete), `SourceMap` (body↔document bytes), value `Location` (no spans), IR `SourceSpan` (22 uses) | `QSL:source.rs:94` · `QSL:complete/cst.rs:189` · `QSL:source_map.rs:30` · `QSL:value/expression/refusal.rs:32` | AMBIGUOUS |
-| DA-14 | Versions | Cargo revision, view `ir_revision` and view `STANDARD`; diagnostic catalog 1-draft.1 and 1-draft.3 claimed inconsistently by two code sites; the IT-010 proof chain on IR root historical, CG and RT (§3.2) | `QSL:Cargo.toml:36` · `QSL:package/view.rs:39,46` · `QSL:linking/composed/definition_source.rs:240` · `QSL:complete/diagnostic.rs:13` · `QSL:tests/configversion_backends.rs:543-544` | AMBIGUOUS |
-| (none) | Witnesses | QSL has no typed witness; test-only i64 decode. IR carries `witness: String`, which replay checks only for non-emptiness. | `QSL:tests/configversion_backends.rs:843` · `IR:src/kani/replay.rs:13-20,41` | ABSENT (see OBS-027) |
-| DA-15 | Content-record types | `digest::ByteDigest`, `state::input::CanonicalDigest{algorithm, domain, value}` (Strings), the `model::key` algorithm string, IR `CanonicalDigest([u8;32])` | `QSL:state/input.rs:43` · `QSL:model/key.rs:23` · `IR:crates/quire-contract-model/src/canonical.rs:68` | DUPLICATE |
-| DA-16 | Exact value kernel (cross-repo) | QSL `value` and RT `exact` (Value 13 vs 12, ValueType 14 vs 13, Refusal 15 vs 13; RT lacks Population, WrongSnapshot, Model). IR `ValueType` has 8 variants. | `QSL:value/composite.rs:36,132` · `RT:src/exact/composite.rs:42,135` · `RT:src/exact/outcome.rs:83` · `IR:crates/quire-contract-model/src/expression.rs:189` | DUPLICATE |
-| DA-17 | Clause kind (cross-repo) | QSL ×2, IR `ClauseKind` (6 variants), RT `ClauseKind` (5 variants) | `IR:crates/quire-contract-model/src/identity.rs:833` · `RT:src/observation.rs:26` | DUPLICATE |
-| DA-18 | Names | native-v1 and the runtime use IR's `ir::SymbolName` (103 uses); the value lane names functions by `&str`; composed and model declarations are named by the two `DeclarationKey` forms (DA-01) | `QSL:checking.rs:200` · `QSL:runtime/input.rs:39` · `QSL:value/expression/mod.rs:635` | DUPLICATE |
+| DA-01 | Declaration identity | `linking::DeclarationKey` (enum path under `RequirementRef`) and `model::key::DeclarationKey{package: String, node: String}` | `FSL:linking.rs:69` · `FSL:model/key.rs:72` | DUPLICATE |
+| DA-02 | Semantic node identity | `NodeKey([u8;32])` in domain filament.checked-semantic-node/v1; `EffectiveId([u8;32])` in domain filament.model.effective-declaration/v1, carried by `ReferenceKey.type_identity`. `DeclarationKey` is bridged to `NodeKey` by a caller map, and `EffectiveId` bytes are reused as `NodeKey` and back. | `FSL:value/node.rs:18,22,49` · `FSL:model/key.rs:26,157` · `FSL:model/population.rs:376` · `FSL:model/checked_dispatch.rs:657` · `FSL:value/model_query.rs:108,123,155` | AMBIGUOUS |
+| DA-03 | Package identity | `NativePackageIdentity` (native-v1; retired, QSL-1260) and the checked-package-id/v2 preimage reader (value lane) | `FSL:package.rs:202` · `FSL:value/package_identity.rs:13` | DUPLICATE (resolved: the native identity is removed) |
+| DA-04 | Checked typestate | `checking::CheckedPackage<'a>` and `value::expression::CheckedPackage` | `FSL:checking.rs:263` · `FSL:value/expression/mod.rs:71` | DUPLICATE |
+| DA-05 | Types | `ir::ValueType` (212 uses, native-v1), `checking::types::NativeType`, `value::composite::ValueType` | `FSL:value/composite.rs:36` · `FSL:checking/types.rs:12` | DUPLICATE |
+| DA-06 | Values | `value::composite::Value`, `state::input::Value`, `runtime::input::ValueNode` (10 variants; its integers are fixed-width `i64` and it has no function variant) | `FSL:value/composite.rs:132` · `FSL:state/input.rs:207` · `FSL:runtime/input.rs:94,101-104` | DUPLICATE |
+| DA-07 | Rational semantics | historical and composed checkers interpret the same admitted rational differently, asserted by TC-120 | `FSL:checking/types.rs:462` | DUPLICATE |
+| DA-08 | Clause kind (FSL) | `syntax::ClauseKind` and `value::expression::syntax::ClauseKind` | `FSL:syntax.rs:294` · `FSL:value/expression/syntax.rs:86` | DUPLICATE |
+| DA-09 | Outcomes | `value::Outcome<T>` {Completed, Undefined, Refused, Incomplete}; runtime `ExecutionOutcome` / `EvaluationOutcome`; state `EvaluationOutcome`; simulation `Outcome` | `FSL:value/outcome.rs:18` · `FSL:runtime/execution.rs:23` · `FSL:state/input.rs:307` · `FSL:simulation/explore.rs:59` | DUPLICATE |
+| DA-10 | Refusals | `Box<Diagnostic>` (45-variant `Code`), `value::Refusal`, `state::Refusal`, `temporal::Refusal`, protocol v2/v3 refusal, composed binding `Refusal`, `ImportRefusal`, `ModelRefusal`, `PackageRefusal`, `LibraryRefusal`, `CheckRefusal`, `InputRefusal`, `PackageError`, `LoweringError` | `FSL:diagnostic.rs:51,306` · `FSL:value/outcome.rs:103` · `FSL:state/input.rs:277` · `FSL:temporal/result.rs:213` · the refusal columns of §2 | DUPLICATE |
+| DA-11 | Capabilities | `requests::Capability` (4, request label), `CapabilityId(String)` (complete), `IeeeBackendCapabilities`, FR-290's 6 protocol claim kinds, AD-016 language admission capability. Program statements at the retrieval time: #213 implements the canonical `Capability` value type, and #185 owns backend registration and routing and must not own a competing enum; #205 lists #185 as "sole capability registry/routing implementation owner". | `FSL:linking/composed/requests.rs:36` · `FSL:complete/package.rs:690` · `FSL:value/ieee.rs:830` · `FSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · #213, #185, #205 bodies | AMBIGUOUS |
+| DA-12 | Bounds / budgets | `value::accounting` (ChargePoint :143, Incomplete :392, Meter :465), `model::accounting` (ChargePoint :127, Incomplete :201, Meter :244), protocol artifact-work/1, temporal-work/1, state evaluation-work/1, runtime native-ref-cost/1-draft, many `*Limits` | `FSL:value/accounting.rs:143` · `FSL:model/accounting.rs:127` | DUPLICATE |
+| DA-13 | Provenance / spans | `Source`/`Span` (native), `LosslessCst` spans (complete), `SourceMap` (body↔document bytes), value `Location` (no spans), IR `SourceSpan` (22 uses) | `FSL:source.rs:94` · `FSL:complete/cst.rs:189` · `FSL:source_map.rs:30` · `FSL:value/expression/refusal.rs:32` | AMBIGUOUS |
+| DA-14 | Versions | Cargo revision, view `ir_revision` and view `STANDARD`; diagnostic catalog 1-draft.1 and 1-draft.3 claimed inconsistently by two code sites; the IT-010 proof chain on IR root historical, CG and RT (§3.2) | `FSL:Cargo.toml:36` · `FSL:package/view.rs:39,46` · `FSL:linking/composed/definition_source.rs:240` · `FSL:complete/diagnostic.rs:13` · `FSL:tests/configversion_backends.rs:543-544` | AMBIGUOUS |
+| (none) | Witnesses | FSL has no typed witness; test-only i64 decode. IR carries `witness: String`, which replay checks only for non-emptiness. | `FSL:tests/configversion_backends.rs:843` · `IR:src/kani/replay.rs:13-20,41` | ABSENT (see OBS-027) |
+| DA-15 | Content-record types | `digest::ByteDigest`, `state::input::CanonicalDigest{algorithm, domain, value}` (Strings), the `model::key` algorithm string, IR `CanonicalDigest([u8;32])` | `FSL:state/input.rs:43` · `FSL:model/key.rs:23` · `IR:crates/filament-contract-model/src/canonical.rs:68` | DUPLICATE |
+| DA-16 | Exact value kernel (cross-repo) | FSL `value` and RT `exact` (Value 13 vs 12, ValueType 14 vs 13, Refusal 15 vs 13; RT lacks Population, WrongSnapshot, Model). IR `ValueType` has 8 variants. | `FSL:value/composite.rs:36,132` · `RT:src/exact/composite.rs:42,135` · `RT:src/exact/outcome.rs:83` · `IR:crates/filament-contract-model/src/expression.rs:189` | DUPLICATE |
+| DA-17 | Clause kind (cross-repo) | FSL ×2, IR `ClauseKind` (6 variants), RT `ClauseKind` (5 variants) | `IR:crates/filament-contract-model/src/identity.rs:833` · `RT:src/observation.rs:26` | DUPLICATE |
+| DA-18 | Names | native-v1 and the runtime use IR's `ir::SymbolName` (103 uses); the value lane names functions by `&str`; composed and model declarations are named by the two `DeclarationKey` forms (DA-01) | `FSL:checking.rs:200` · `FSL:runtime/input.rs:39` · `FSL:value/expression/mod.rs:635` | DUPLICATE |
 
 Tally: 14 DUPLICATE, 4 AMBIGUOUS, 1 ABSENT.
 
@@ -655,23 +655,23 @@ Tally: 14 DUPLICATE, 4 AMBIGUOUS, 1 ABSENT.
 
 | Verdict | Count | Claims |
 |---|---|---|
-| CONFIRMED | 22 | `CheckedPackageV2::read` (`IR:crates/quire-contract-model/src/checked_package/v2/mod.rs:622`), `::lower` (`IR:crates/quire-contract-model/src/checked_package/v2/lower.rs:135`), `CheckedPackageRefusalCode` (13), `CheckedPackageLimit` (7), `CheckedSourceMapEntry`, `CheckedNodeId`, `CheckedDomainPackageRef`, `KaniOutcomeKind` 10 (`IR:src/kani/outcome.rs:8-29`), `ResourceBounds` (`IR:src/kani/abi.rs:21`), RT `exact` feature (`RT:src/lib.rs:55-56`), RT exact expression types, `Integer(BigInt)`, `ChargePoint` (52), RT `negotiate_*` exist, `conformance/qsl-agreement`, RT `ClauseKind` (5), CG `use quire_contract_runtime::exact as rt` (`CG:src/exact_scalar.rs:1370`), CG Cargo dependency lines :18/:27/:28, CG modules, `KaniObligationIdentity.arguments`, `ObligationRecord.disposition`, `GenerationTerminalState` (6) |
-| PARTIAL | 2 | CG `negotiate_*` (only `negotiate_kani_obligations`); IR→QSL edge (present, and it is a normal dependency that carries replay) |
-| DIFFERS / ABSENT | 5 | `witness: Option<Witness>` (is `String`); `kani/witness.rs` (absent); replay.rs "packet type only" (it calls the executor); QI heads workspace (absent); QSL→FCD edge (absent) |
+| CONFIRMED | 22 | `CheckedPackageV2::read` (`IR:crates/filament-contract-model/src/checked_package/v2/mod.rs:622`), `::lower` (`IR:crates/filament-contract-model/src/checked_package/v2/lower.rs:135`), `CheckedPackageRefusalCode` (13), `CheckedPackageLimit` (7), `CheckedSourceMapEntry`, `CheckedNodeId`, `CheckedDomainPackageRef`, `KaniOutcomeKind` 10 (`IR:src/kani/outcome.rs:8-29`), `ResourceBounds` (`IR:src/kani/abi.rs:21`), RT `exact` feature (`RT:src/lib.rs:55-56`), RT exact expression types, `Integer(BigInt)`, `ChargePoint` (52), RT `negotiate_*` exist, `conformance/fsl-agreement`, RT `ClauseKind` (5), CG `use filament_contract_runtime::exact as rt` (`CG:src/exact_scalar.rs:1370`), CG Cargo dependency lines :18/:27/:28, CG modules, `KaniObligationIdentity.arguments`, `ObligationRecord.disposition`, `GenerationTerminalState` (6) |
+| PARTIAL | 2 | CG `negotiate_*` (only `negotiate_kani_obligations`); IR→FSL edge (present, and it is a normal dependency that carries replay) |
+| DIFFERS / ABSENT | 5 | `witness: Option<Witness>` (is `String`); `kani/witness.rs` (absent); replay.rs "packet type only" (it calls the executor); QI heads workspace (absent); FSL→FCD edge (absent) |
 
-AD-016 claims about QSL's own crate (the contract-model and dev dependencies,
-`quire-exact`, `model::intake`) are counted once, in §1.1.
+AD-016 claims about FSL's own crate (the contract-model and dev dependencies,
+`filament-exact`, `model::intake`) are counted once, in §1.1.
 
 ### 6.2 Downstream entry points
 
 | Repo | Stage | Entry | Input → Output | Refusal |
 |---|---|---|---|---|
-| IR | checked-package intake | `read_checked_package` `IR:crates/quire-contract-model/src/checked_package/dispatch.rs:28` (string dispatch on contract_version :65) | bytes → `CheckedPackageDispatchResult{AdmittedV2, Refused, Incomplete}` | `CheckedPackageRefusal` |
-| IR | v2 lower | `CheckedPackageV2::lower` `IR:crates/quire-contract-model/src/checked_package/v2/lower.rs:135` | node ids + profile → `CompleteLoweringResultV2` (:117) | in result |
-| IR | predicate projection | `predicate::project` `IR:src/predicate/admission.rs:92` | QSL `ValidatedCheckedPredicate` → `PredicateProjection` | `PredicateDecision` |
-| IR | temporal projection | `temporal::project` `IR:src/temporal/admission.rs:590` | QSL temporal subject + request/result → `TemporalProjection` | `TemporalDecision` |
+| IR | checked-package intake | `read_checked_package` `IR:crates/filament-contract-model/src/checked_package/dispatch.rs:28` (string dispatch on contract_version :65) | bytes → `CheckedPackageDispatchResult{AdmittedV2, Refused, Incomplete}` | `CheckedPackageRefusal` |
+| IR | v2 lower | `CheckedPackageV2::lower` `IR:crates/filament-contract-model/src/checked_package/v2/lower.rs:135` | node ids + profile → `CompleteLoweringResultV2` (:117) | in result |
+| IR | predicate projection | `predicate::project` `IR:src/predicate/admission.rs:92` | FSL `ValidatedCheckedPredicate` → `PredicateProjection` | `PredicateDecision` |
+| IR | temporal projection | `temporal::project` `IR:src/temporal/admission.rs:590` | FSL temporal subject + request/result → `TemporalProjection` | `TemporalDecision` |
 | IR | Kani lowering / dispatch | `lower_checked_arithmetic` `IR:src/kani/arithmetic.rs:40`, `DispatchIndex::resolve(&str)` `IR:src/kani/dispatch.rs:88` | checked arithmetic → Kani lowering | `KaniOutcome` (`IR:src/kani/outcome.rs:33`) |
-| IR | replay | `replay_counterexample` `IR:src/kani/replay.rs:55`, `replay_with_native_runtime` :80 | packet (+ QSL `NativePackage` for the native form) → `ReplayAgreement` / `NativeReplayAgreement` | `KaniOutcome` (`Inconclusive`, code `kani_native_replay_disagreement`, :65, :92) |
+| IR | replay | `replay_counterexample` `IR:src/kani/replay.rs:55`, `replay_with_native_runtime` :80 | packet (+ FSL `NativePackage` for the native form) → `ReplayAgreement` / `NativeReplayAgreement` | `KaniOutcome` (`Inconclusive`, code `kani_native_replay_disagreement`, :65, :92) |
 | RT | exact check / call | `PackageDeclarations::check` `RT:src/exact/expression.rs:291`, `CheckedPackage::call` :742 | host closures (no wire format) → `Evaluation` | `Vec<CheckRefusal>`, `InputRefusal` |
 | CG | oracle | `generate_boolean_oracle` `CG:src/oracle.rs:504`; `generate_exact_scalar_oracles` `CG:src/exact_scalar.rs:571`; `generate_composite_equality_oracles` `CG:src/composite_equality.rs:568` | IR types / `CheckedPackageV2` → bundles | `GenerationDiagnostic`, `ExactScalarRefusal` (19), `CompositeEqualityRefusal` (17) |
 | CG | Kani | `generate_kani_bundle` `CG:src/kani.rs:357`; `negotiate_kani_obligations` `CG:src/kani_obligations.rs:454`; `execute_kani_obligation` `CG:src/kani_execution.rs:454` | → `KaniArtifactBundle` / `KaniObligationOutcome` / `KaniExecutionEvidence` | `KaniDiagnostic`, `KaniObligationError`, `KaniExecutionRefusal` |
@@ -680,7 +680,7 @@ AD-016 claims about QSL's own crate (the contract-model and dev dependencies,
 | QI | integration | `hello()` placeholder `QI:src/lib.rs:4` | none | none |
 
 The checked-package/v2 reader (IR) and its consumers (CG `exact_scalar`,
-`composite_equality`) exist. The producer (QSL) does not (OBS-001).
+`composite_equality`) exist. The producer (FSL) does not (OBS-001).
 
 Replay reachability: `runtime::execute` is reachable from downstream only through
 IR `replay_with_native_runtime` (`IR:src/kani/replay.rs:80,88`), whose sole caller
@@ -700,15 +700,15 @@ a completed native `false` (:89); any other result is reported as
 
 | Repo | File | Lines |
 |---|---|---|
-| IR | `IR:crates/quire-contract-model/src/expression.rs` | 3886 |
-| IR | `IR:crates/quire-contract-model/src/output_mapping.rs` | 2836 |
+| IR | `IR:crates/filament-contract-model/src/expression.rs` | 3886 |
+| IR | `IR:crates/filament-contract-model/src/output_mapping.rs` | 2836 |
 | FCD | `FCD:crates/semantic-ir/src/schema.rs` | 2911 |
 | CG | `CG:src/exact_scalar.rs` | 1906 |
 | RT | `RT:src/exact/ieee.rs` | 1781 |
 
 ## 7. Ticket map
 
-Scope: every open issue in agent-ix/quire-spec-language (68 at 2026-09-19;
+Scope: every open issue in agent-ix/filament-spec-language (68 at 2026-09-19;
 `gh issue list --state open`), plus the downstream issues selected by the rule
 in §7.5. Bodies are as retrieved at 2026-09-19T17:02Z.
 
@@ -771,7 +771,7 @@ the graph implies only transitively counts as not drawn.
 | #232 depends on #216 | draws only #225 → #232 |
 | #231 depends on #211 | draws only #213 → #231 |
 
-### 7.2 A04–A15 feature ladder and intake (QSL)
+### 7.2 A04–A15 feature ladder and intake (FSL)
 
 | Issue | Class | Boundary consumed | Layer 1 owner |
 |---|---|---|---|
@@ -816,7 +816,7 @@ All rows are class "fix".
 | #147 | FR-151/152 dispatch preconditions and navigation | #210 |
 | #146 | FR-151/152 depth ceilings and cleanup (DA-12) | #211 |
 
-### 7.4 Other open QSL issues
+### 7.4 Other open FSL issues
 
 | Issue | Class | Boundary consumed | Layer 1 owner |
 |---|---|---|---|
@@ -828,8 +828,8 @@ All rows are class "fix".
 | #85 | fix | compiled-protocol channel premise (B8 wire) | #211 |
 | #103 | unrelated | licence text in artifacts | unrelated |
 | #133 | feature | parsing `quire` fences in spec artifacts (A2 or C1) | #209 |
-| #160 | unrelated | coverage rows for QSpec-owned TCs | unrelated |
-| #190 | unrelated | QSL spec text (FR-046, FR-095, FR-047 / ADR-009) | unrelated |
+| #160 | unrelated | coverage rows for FSpec-owned TCs | unrelated |
+| #190 | unrelated | FSL spec text (FR-046, FR-095, FR-047 / ADR-009) | unrelated |
 
 Count check: 28 (§7.1) + 14 (§7.2) + 16 (§7.3) + 10 (§7.4) = 68 rows, one per
 open issue.
@@ -857,7 +857,7 @@ they consume.
 | CG #58, CG #59, CG #60, CG #73 | #219 | proof-gate evidence | gate | #209 |
 | CG #84 | #223 | Verus backend | feature | #210 |
 | FCD #172, FCD #173 | #131 | Semantic IR producer shapes | enablement | #211 |
-| FCD #199 | §8 (FCD PR #200) | intake shapes for QSL #200 | enablement | #211 |
+| FCD #199 | §8 (FCD PR #200) | intake shapes for FSL #200 | enablement | #211 |
 | tl-mltl #68 (as written in #188) | #188 | temporal solver | feature | #210 |
 | spec-objects-business PR #8 (merged) | #133 | object-type model tables and mapping tokens | enablement | #211 |
 | quire-wasm #6 (closed) | #207 | bounded WASM lifecycle parity | feature | unrelated |
@@ -874,12 +874,12 @@ dispositions and for the merge order.
 
 | Item | Scope | Disposition | Layer 1 link or cited fact |
 |---|---|---|---|
-| QSL PR #228 `task/120-normalize-order` | `src/model/normalize.rs` charge and refusal order | keep | merges second (after #204) |
-| QSL PR #204 `task/176-173-174-dispatch` | dispatch through inherited operations, redefinition conflicts, query-only | keep | round 1 implements #176(b); merged first; changes `src/model/checked_dispatch.rs` (OBS-007 site) |
-| QSL PR #200 `task/131-intake-wiring` | Semantic IR 2.0.0 domain-package intake (`model::intake`) | keep | waits on FCD PR #200; merges third; OBS-006, OBS-014, OBS-041 |
+| FSL PR #228 `task/120-normalize-order` | `src/model/normalize.rs` charge and refusal order | keep | merges second (after #204) |
+| FSL PR #204 `task/176-173-174-dispatch` | dispatch through inherited operations, redefinition conflicts, query-only | keep | round 1 implements #176(b); merged first; changes `src/model/checked_dispatch.rs` (OBS-007 site) |
+| FSL PR #200 `task/131-intake-wiring` | Semantic IR 2.0.0 domain-package intake (`model::intake`) | keep | waits on FCD PR #200; merges third; OBS-006, OBS-014, OBS-041 |
 | IR PR #139 | typed `Witness` replacing `witness: String` | keep | changes the OBS-027 fact when merged |
 | IR PR #138 | FR-031-AC-3 states replay is planned | keep | changes FR-031 text cited by OBS-036 when merged |
-| FCD PR #200 | no-slot identities and node-identity frame entries | keep | prerequisite of QSL PR #200 |
+| FCD PR #200 | no-slot identities and node-identity frame entries | keep | prerequisite of FSL PR #200 |
 
 Single writer: Agent A writes `src/model/normalize.rs`,
 `src/model/conformance.rs` and `src/model/refusal.rs`. Merge order:
@@ -890,13 +890,13 @@ lane, and PRs whose disposition names no Layer 1 ticket) are outside Layer 1
 and are recorded only on #207.
 
 PR-sensitive items: X2, OBS-006, OBS-007, OBS-014, OBS-018, OBS-027, OBS-036,
-OBS-041, DA-02, the §2.3 and §4.2 rows citing `QSL:model/checked_dispatch.rs`
+OBS-041, DA-02, the §2.3 and §4.2 rows citing `FSL:model/checked_dispatch.rs`
 (PR #204 removes `DispatchRoot::receiver_type` and adds
 `object_type_supertypes`) and the §4.3 `"allocation"` row describe state that the keep PRs above change.
 
 PR #200 observations that feed §9: it adds the FCD dependency
 (`PR #200:Cargo.toml:37-38`), encodes native references as
-`DeclarationKey{package:"quire/native", …}` (OBS-006), removes the
+`DeclarationKey{package:"filament/native", …}` (OBS-006), removes the
 `"allocation"` string dispatch (OBS-014), promotes `tempfile` to a production
 dependency (`PR #200:Cargo.toml:42`) and adds a second quire-rs revision
 to the lock (`PR #200:Cargo.lock:1077`) (OBS-041).
@@ -915,46 +915,46 @@ Each item has one owner. The owner ticket decides it; this record decides none.
 
 | ID | Finding | Evidence | Owner |
 |---|---|---|---|
-| OBS-001 | No checked-package/v2 emitter exists. QSL reads the v2 identity preimage only, and the v2 schema is a QSpec proposal. No path leads from checked semantics to a downstream package. | `QSL:value/package_identity.rs:13,15,334` · `QSpec:proposals/checked-package-v2/schema.json` · absent: `CheckedPackageV2` in `src/` | #209 (secondary #211) |
-| OBS-002 | The only proof-and-replay path is test IT-010. It uses the historical IR crate, decodes the witness by splitting Kani stdout into an i64, and replays through native-v1 `runtime::execute`. AD-016 rules out all three. Its IR, CG and RT revisions are all separate from the production IR revision. It needs `cargo-kani 0.67.0` on `PATH` and a warm cargo cache. Every full `cargo test` gate runs it, and neither CI nor `make ci` installs cargo-kani, so those gates fail at :513. | `QSL:tests/configversion_backends.rs:32-34,252,259,509-526,543,789,820-821,837,843-857,948-951` · `QSL:Cargo.toml:44` · `QSL:.github/workflows/ci.yml:3-4,22,26` · `QSL:Makefile:34,38` | #209 |
-| OBS-003 | The composed linker performs backend capability negotiation (`Backend{identity, capabilities, families}` → UnsupportedCapability / UnsupportedFamily). AD-016 states QSL admission negotiates nothing. | `QSL:linking/composed/requests.rs:80,282` | #210 |
-| OBS-004 | QSL owns `negotiate_integer_division`, `negotiate_ieee` and `IeeeBackendCapabilities`; RT owns copies of both functions. CG calls neither and has only `negotiate_kani_obligations`. AD-016 places `negotiate_*` in CG as the single point. | `QSL:value/division.rs:223` · `QSL:value/ieee.rs:830,882` · `RT:src/exact/ieee.rs:819` · `RT:src/exact/division.rs:217` · `CG:src/kani_obligations.rs:454` | #210 |
-| OBS-005 | The shared kernel `quire-exact` (AD-016 Owner decision 2) is absent from QSL main: no crate and no dependency. | absent: `quire-exact` in `Cargo.toml` | #211 (secondary #209: crate existence and direction) |
-| OBS-006 | `model::intake` is absent on main, and `DomainPackage::new` is caller-constructed. PR #200 encodes native types as `DeclarationKey{package:"quire/native"}`, not AD-016's ValueTypeRef / NativeValueType. That pseudo-package shares the key space of real domain packages, and `read_field_type_ref` matches the native prefix before it resolves a package's own types. PR-sensitive. | `QSL:model/domain_package.rs:441` · `PR #200:src/model/intake.rs:109,710-722` | #211 |
-| OBS-007 | The complete-V1 lossless CST ends at `LoweredSourceGraph`. No producer builds `value::expression` from source; the only non-test producer is `checked_dispatch_operation`. | `QSL:complete/package.rs:625,1340` · `QSL:model/checked_dispatch.rs:653` | #209 |
-| OBS-008 | Four parallel lanes exist (native-v1, composed, complete-V1, simulation). Only native-v1 runs end to end, and the CLI reaches only native-v1. | `QSL:cli.rs:59-126` · §2 | #209 |
-| OBS-009 | The observed stage order is link → check. The #209 program flow places the checked semantic graph before the linked/package form. | `QSL:command/compilation.rs:101-102` | #209 |
-| OBS-010 | Layering inversion: QSL checking, composed proofs and lowering call IR `DeclarationEnvironment::check_expression` as the definedness authority. | `QSL:checking/proof.rs:660` · `QSL:checking/composed/proofs/engine.rs:579` · `QSL:lowering.rs:385` | #209 |
-| OBS-011 | The composed lane (1-draft) has no IR lowering, proof, witness or replay. Protocol emission (B8) has no caller in `src/` outside `protocol_artifact::native`; only an example and tests call it. | `QSL:protocol_artifact/native/mod.rs:82,104` · `QSL:examples/protocol-handoff/producer.rs:1411,1415,1566` · `QSL:tests/native_protocol_emission.rs:134` | #209 |
-| OBS-012 | "Capability" has three meanings: request label (QSL, 4 variants), language admission (AD-016) and protocol claim kind (FR-290, 6 kinds). FR-290 states QSL's enum aligns to its 6; the enum has 4 different variants. Downstream adds IR `CheckedCapability{feature, disposition}` (both strings), IR Kani `CapabilityDisposition` (3), IR `OutputCapability` (12) and CG `ObligationDisposition` (4). | `QSL:linking/composed/requests.rs:36` · `QSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · `IR:crates/quire-contract-model/src/checked_package/shared.rs:269` · `CG:src/kani_obligations.rs:292` | #210 (secondary #229: vocabulary) |
-| OBS-013 | FR-290 names "quire-spec-language's Kani backend" as a registrant. AD-016 and the #205 ownership boundaries place Kani emission in CG. QSL has no Kani backend outside a test. | `QSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · `QSL:tests/configversion_backends.rs:789` · absent: `kani` in `src/` | #210 (secondary #229) |
-| OBS-014 | String dispatch at five production sites: `"allocation"` (PR-sensitive, #200), `"quire.protocol.finite-global/v1"`, `"filament-canonical-json-1"`, `"quire.state.authority-adapter"`, `"clock:"`. | `QSL:model/systems.rs:269` · `QSL:protocol_artifact/validate.rs:287,291` · `QSL:state/evaluation.rs:2478-2484,2781-2783` · `QSL:temporal.rs:50` | #210 |
-| OBS-015 | Bypass: `protocol_artifact::read` admits wire data into the `state` and `temporal` evaluators without a source compile, and its module doc says so. | `QSL:protocol_artifact/mod.rs:1-8` · `QSL:state/evaluation.rs:35,45` | #209 |
-| OBS-016 | Module cycles: one 11-module SCC (closed by `Diagnostic` embedding linking, runtime and IR types), plus value↔model and protocol_artifact↔temporal; 7 two-cycles in total. | `QSL:diagnostic.rs:306-324` · §3.1 | #209 |
-| OBS-017 | Two `CheckedPackage` types with different meanings (native clauses and value functions). | `QSL:checking.rs:263` · `QSL:value/expression/mod.rs:71` | #211 (secondary #209: checked and unchecked public types) |
-| OBS-018 | Two `DeclarationKey` types and two 32-byte node identities in different identity domains. A caller-supplied map bridges `DeclarationKey` to `NodeKey`, and the crate-internal `NodeKey::from_bytes` reuses `EffectiveId` bytes as a `NodeKey` at its only production call site, with reverse transfers at :123 and :155. The module documents this transfer as the encoding FR-143 requires (`QSL:value/model_query.rs:10-16`); `NODE_KEY_DOMAIN` (`QSL:value/node.rs:17-18`) names a separate node-id domain. #211 decides which holds. | `QSL:linking.rs:69` · `QSL:model/key.rs:26,72,157` · `QSL:value/node.rs:17-18,49` · `QSL:value/model_query.rs:10-16,108,123,155` · `QSL:model/checked_dispatch.rs:657` | #211 |
-| OBS-019 | Three value representations and three type vocabularies. native-v1 uses IR's `ValueType` (212 uses) as its type system. Runtime `ValueNode` integers are fixed-width `i64`, and it has no function variant. | `QSL:value/composite.rs:36,132` · `QSL:state/input.rs:207` · `QSL:runtime/input.rs:94,101-104` · `QSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` | #211 |
-| OBS-020 | TC-120 asserts that the historical and composed checkers interpret the same admitted rational differently: a tested semantic disagreement. | `QSL:checking/types.rs:462` | #211 |
-| OBS-021 | `SourceMap` maps body↔document bytes and is not keyed by checked node id (AD-016 claim). The value-lane `Location` has no byte spans. | `QSL:source_map.rs:30` · `QSL:value/expression/refusal.rs:32` | #211 |
-| OBS-022 | The package view hard-codes two revision literals, `ir_revision` and `STANDARD`, which differ from the Cargo IR revision. | `QSL:package/view.rs:39,46` · `QSL:Cargo.toml:36` | #211 |
-| OBS-023 | The code claims two catalog revisions (1-draft.1 and 1-draft.3). | `QSL:linking/composed/definition_source.rs:240` · `QSL:complete/diagnostic.rs:13` | #211 |
-| OBS-025 | Two accounting systems: `value::accounting` and `model::accounting` have the same shape with independent counters, and four other budget formats exist. | `QSL:value/accounting.rs:143,392,465` · `QSL:model/accounting.rs:127,201,244` | #211 |
-| OBS-026 | native-run-result/2 (AD-014 / QSpec FR-352) is absent; QSL emits /1 only. | `QSL:wire_format.rs:31` · absent: `native-run-result/2` in `src/` | #211 |
+| OBS-001 | No checked-package/v2 emitter exists. FSL reads the v2 identity preimage only, and the v2 schema is an FSpec proposal. No path leads from checked semantics to a downstream package. | `FSL:value/package_identity.rs:13,15,334` · `FSpec:proposals/checked-package-v2/schema.json` · absent: `CheckedPackageV2` in `src/` | #209 (secondary #211) |
+| OBS-002 | The only proof-and-replay path is test IT-010. It uses the historical IR crate, decodes the witness by splitting Kani stdout into an i64, and replays through native-v1 `runtime::execute`. AD-016 rules out all three. Its IR, CG and RT revisions are all separate from the production IR revision. It needs `cargo-kani 0.67.0` on `PATH` and a warm cargo cache. Every full `cargo test` gate runs it, and neither CI nor `make ci` installs cargo-kani, so those gates fail at :513. | `FSL:tests/configversion_backends.rs:32-34,252,259,509-526,543,789,820-821,837,843-857,948-951` · `FSL:Cargo.toml:44` · `FSL:.github/workflows/ci.yml:3-4,22,26` · `FSL:Makefile:34,38` | #209 |
+| OBS-003 | The composed linker performs backend capability negotiation (`Backend{identity, capabilities, families}` → UnsupportedCapability / UnsupportedFamily). AD-016 states FSL admission negotiates nothing. | `FSL:linking/composed/requests.rs:80,282` | #210 |
+| OBS-004 | FSL owns `negotiate_integer_division`, `negotiate_ieee` and `IeeeBackendCapabilities`; RT owns copies of both functions. CG calls neither and has only `negotiate_kani_obligations`. AD-016 places `negotiate_*` in CG as the single point. | `FSL:value/division.rs:223` · `FSL:value/ieee.rs:830,882` · `RT:src/exact/ieee.rs:819` · `RT:src/exact/division.rs:217` · `CG:src/kani_obligations.rs:454` | #210 |
+| OBS-005 | The shared kernel `filament-exact` (AD-016 Owner decision 2) is absent from FSL main: no crate and no dependency. | absent: `filament-exact` in `Cargo.toml` | #211 (secondary #209: crate existence and direction) |
+| OBS-006 | `model::intake` is absent on main, and `DomainPackage::new` is caller-constructed. PR #200 encodes native types as `DeclarationKey{package:"filament/native"}`, not AD-016's ValueTypeRef / NativeValueType. That pseudo-package shares the key space of real domain packages, and `read_field_type_ref` matches the native prefix before it resolves a package's own types. PR-sensitive. | `FSL:model/domain_package.rs:441` · `PR #200:src/model/intake.rs:109,710-722` | #211 |
+| OBS-007 | The complete-V1 lossless CST ends at `LoweredSourceGraph`. No producer builds `value::expression` from source; the only non-test producer is `checked_dispatch_operation`. | `FSL:complete/package.rs:625,1340` · `FSL:model/checked_dispatch.rs:653` | #209 |
+| OBS-008 | Four parallel lanes exist (native-v1, composed, complete-V1, simulation). Only native-v1 runs end to end, and the CLI reaches only native-v1. | `FSL:cli.rs:59-126` · §2 | #209 |
+| OBS-009 | The observed stage order is link → check. The #209 program flow places the checked semantic graph before the linked/package form. | `FSL:command/compilation.rs:101-102` | #209 |
+| OBS-010 | Layering inversion: FSL checking, composed proofs and lowering call IR `DeclarationEnvironment::check_expression` as the definedness authority. | `FSL:checking/proof.rs:660` · `FSL:checking/composed/proofs/engine.rs:579` · `FSL:lowering.rs:385` | #209 |
+| OBS-011 | The composed lane (1-draft) has no IR lowering, proof, witness or replay. Protocol emission (B8) has no caller in `src/` outside `protocol_artifact::native`; only an example and tests call it. | `FSL:protocol_artifact/native/mod.rs:82,104` · `FSL:examples/protocol-handoff/producer.rs:1411,1415,1566` · `FSL:tests/native_protocol_emission.rs:134` | #209 |
+| OBS-012 | "Capability" has three meanings: request label (FSL, 4 variants), language admission (AD-016) and protocol claim kind (FR-290, 6 kinds). FR-290 states FSL's enum aligns to its 6; the enum has 4 different variants. Downstream adds IR `CheckedCapability{feature, disposition}` (both strings), IR Kani `CapabilityDisposition` (3), IR `OutputCapability` (12) and CG `ObligationDisposition` (4). | `FSL:linking/composed/requests.rs:36` · `FSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · `IR:crates/filament-contract-model/src/checked_package/shared.rs:269` · `CG:src/kani_obligations.rs:292` | #210 (secondary #229: vocabulary) |
+| OBS-013 | FR-290 names "filament-spec-language's Kani backend" as a registrant. AD-016 and the #205 ownership boundaries place Kani emission in CG. FSL has no Kani backend outside a test. | `FSpec:spec/objects/protocol/FR-290-protocol-claim-kind.md:33-34,49-51` · `FSL:tests/configversion_backends.rs:789` · absent: `kani` in `src/` | #210 (secondary #229) |
+| OBS-014 | String dispatch at five production sites: `"allocation"` (PR-sensitive, #200), `"filament.protocol.finite-global/v1"`, `"filament-canonical-json-1"`, `"filament.state.authority-adapter"`, `"clock:"`. | `FSL:model/systems.rs:269` · `FSL:protocol_artifact/validate.rs:287,291` · `FSL:state/evaluation.rs:2478-2484,2781-2783` · `FSL:temporal.rs:50` | #210 |
+| OBS-015 | Bypass: `protocol_artifact::read` admits wire data into the `state` and `temporal` evaluators without a source compile, and its module doc says so. | `FSL:protocol_artifact/mod.rs:1-8` · `FSL:state/evaluation.rs:35,45` | #209 |
+| OBS-016 | Module cycles: one 11-module SCC (closed by `Diagnostic` embedding linking, runtime and IR types), plus value↔model and protocol_artifact↔temporal; 7 two-cycles in total. | `FSL:diagnostic.rs:306-324` · §3.1 | #209 |
+| OBS-017 | Two `CheckedPackage` types with different meanings (native clauses and value functions). | `FSL:checking.rs:263` · `FSL:value/expression/mod.rs:71` | #211 (secondary #209: checked and unchecked public types) |
+| OBS-018 | Two `DeclarationKey` types and two 32-byte node identities in different identity domains. A caller-supplied map bridges `DeclarationKey` to `NodeKey`, and the crate-internal `NodeKey::from_bytes` reuses `EffectiveId` bytes as a `NodeKey` at its only production call site, with reverse transfers at :123 and :155. The module documents this transfer as the encoding FR-143 requires (`FSL:value/model_query.rs:10-16`); `NODE_KEY_DOMAIN` (`FSL:value/node.rs:17-18`) names a separate node-id domain. #211 decides which holds. | `FSL:linking.rs:69` · `FSL:model/key.rs:26,72,157` · `FSL:value/node.rs:17-18,49` · `FSL:value/model_query.rs:10-16,108,123,155` · `FSL:model/checked_dispatch.rs:657` | #211 |
+| OBS-019 | Three value representations and three type vocabularies. native-v1 uses IR's `ValueType` (212 uses) as its type system. Runtime `ValueNode` integers are fixed-width `i64`, and it has no function variant. | `FSL:value/composite.rs:36,132` · `FSL:state/input.rs:207` · `FSL:runtime/input.rs:94,101-104` · `FSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` | #211 |
+| OBS-020 | TC-120 asserts that the historical and composed checkers interpret the same admitted rational differently: a tested semantic disagreement. | `FSL:checking/types.rs:462` | #211 |
+| OBS-021 | `SourceMap` maps body↔document bytes and is not keyed by checked node id (AD-016 claim). The value-lane `Location` has no byte spans. | `FSL:source_map.rs:30` · `FSL:value/expression/refusal.rs:32` | #211 |
+| OBS-022 | The package view hard-codes two revision literals, `ir_revision` and `STANDARD`, which differ from the Cargo IR revision. | `FSL:package/view.rs:39,46` · `FSL:Cargo.toml:36` | #211 |
+| OBS-023 | The code claims two catalog revisions (1-draft.1 and 1-draft.3). | `FSL:linking/composed/definition_source.rs:240` · `FSL:complete/diagnostic.rs:13` | #211 |
+| OBS-025 | Two accounting systems: `value::accounting` and `model::accounting` have the same shape with independent counters, and four other budget formats exist. | `FSL:value/accounting.rs:143,392,465` · `FSL:model/accounting.rs:127,201,244` | #211 |
+| OBS-026 | native-run-result/2 (AD-014 / FSpec FR-352) is absent; FSL emits /1 only. | `FSL:wire_format.rs:31` · absent: `native-run-result/2` in `src/` | #211 |
 | OBS-027 | IR `CounterexamplePacket.witness` is `String`, not AD-016's `Option<Witness>`, and replay reads it only to check that it is non-empty. `src/kani/witness.rs` is absent on IR main and present only in open IR PR #139. PR-sensitive. | `IR:src/kani/replay.rs:13-20,41` | #211 |
-| OBS-028 | IR performs native replay itself: `replay_with_native_runtime` calls QSL `runtime::execute` on a native-v1 `NativePackage`, and its sole caller is the IR integration test `IR:tests/kani_replay.rs:240`. CG `replay_codegen_counterexample` (`src/bounded_kani_replay.rs:11`) is a one-line delegation to IR `replay_counterexample` with a caller-supplied executor; no CG call site supplies a real native executor, so no CG replay path reaches QSL. Every `replay_counterexample` call site (CG, and IR tests `IR:tests/kani_replay.rs:208-221`) injects a stub returning the expected verdict: the #205 non-goal "predetermined verdicts, mocked witnesses". Neither IR replay function reads the witness content; disagreement is reported as `Inconclusive` (`kani_native_replay_disagreement`). AD-016 states IR holds the packet type only and CG owns the executor call. | `IR:src/kani/replay.rs:41,55-67,80-97` · `IR:tests/kani_replay.rs:240` · `CG:src/bounded_kani_replay.rs:11,57-60` · `CG:tests/bounded_kani_corpus.rs:204-210,376` · #205 Non-goals | #209 |
-| OBS-029 | Repository cycle: IR root has a normal dependency on an older QSL while QSL depends on IR's model crate. AD-016 describes the IR→QSL edge as "outside this pipeline"; the edge carries the Kani replay path and the predicate and temporal projections. Those typed handoffs take that older QSL's types, so QSL main cannot reach them without serialization. | `IR:Cargo.toml:24,38` · `QSL:Cargo.toml:36` · `IR:src/kani/replay.rs:3-6,80` · `IR:src/predicate/admission.rs:91-92` | #209 |
-| OBS-030 | No code outside tests calls value-lane `CheckedPackage::call` in any repository, and CG source references no QSL code. AD-016's replay target is unwired in every repository. | `RT:conformance/qsl-agreement/tests/tc_191_function_application.rs:54` · `CG:tests/exact_scalar_support/agreement.rs:24` · `QSL:value/expression/mod.rs:635` | #209 |
+| OBS-028 | IR performs native replay itself: `replay_with_native_runtime` calls FSL `runtime::execute` on a native-v1 `NativePackage`, and its sole caller is the IR integration test `IR:tests/kani_replay.rs:240`. CG `replay_codegen_counterexample` (`src/bounded_kani_replay.rs:11`) is a one-line delegation to IR `replay_counterexample` with a caller-supplied executor; no CG call site supplies a real native executor, so no CG replay path reaches FSL. Every `replay_counterexample` call site (CG, and IR tests `IR:tests/kani_replay.rs:208-221`) injects a stub returning the expected verdict: the #205 non-goal "predetermined verdicts, mocked witnesses". Neither IR replay function reads the witness content; disagreement is reported as `Inconclusive` (`kani_native_replay_disagreement`). AD-016 states IR holds the packet type only and CG owns the executor call. | `IR:src/kani/replay.rs:41,55-67,80-97` · `IR:tests/kani_replay.rs:240` · `CG:src/bounded_kani_replay.rs:11,57-60` · `CG:tests/bounded_kani_corpus.rs:204-210,376` · #205 Non-goals | #209 |
+| OBS-029 | Repository cycle: IR root has a normal dependency on an older FSL while FSL depends on IR's model crate. AD-016 describes the IR→FSL edge as "outside this pipeline"; the edge carries the Kani replay path and the predicate and temporal projections. Those typed handoffs take that older FSL's types, so FSL main cannot reach them without serialization. | `IR:Cargo.toml:24,38` · `FSL:Cargo.toml:36` · `IR:src/kani/replay.rs:3-6,80` · `IR:src/predicate/admission.rs:91-92` | #209 |
+| OBS-030 | No code outside tests calls value-lane `CheckedPackage::call` in any repository, and CG source references no FSL code. AD-016's replay target is unwired in every repository. | `RT:conformance/fsl-agreement/tests/tc_191_function_application.rs:54` · `CG:tests/exact_scalar_support/agreement.rs:24` · `FSL:value/expression/mod.rs:635` | #209 |
 | OBS-031 | QI has no `heads/` workspace, no heads.toml and no `make heads` / `make heads-update`. QI main is a placeholder crate with no dependencies, so no current-head integration lane exists. ARCH-01 defers QI PR #2 on #209 for the same question. | `QI:src/lib.rs:4` · `QI:Cargo.toml:16-18` · absent: `heads` in `Makefile` (QI) · ARCH-01 comment on #207 §2a | #209 (secondary #211: revision versus current-head rule) |
-| OBS-032 | RT `exact` states it keeps QSL `value`'s names and order, and it differs: Value 12 vs 13, ValueType 13 vs 14, Refusal 13 vs 15 (RT lacks Population, WrongSnapshot, Model). | `RT:src/exact/mod.rs:6-11` · `RT:src/exact/composite.rs:42,135` · `RT:src/exact/outcome.rs:83` · `QSL:value/composite.rs:67,158` · `QSL:value/outcome.rs:171,175` | #211 |
-| OBS-033 | Backend dispatch runs on wire strings: IR `CheckedNodeTag::from_wire`, `required_by(tag, form:&str)`, `DispatchIndex::resolve(&str)`; CG `semantic_form=="call"` and `node_tag=="state" && semantic_form=="frame"`; RT function lookup by name. #210 decides the cross-repository dispatch contract; the string sites are IR-, CG- and RT-owned code. | `IR:crates/quire-contract-model/src/checked_package/v2/mod.rs:104` · `IR:src/kani/dispatch.rs:88` · `CG:src/composite_equality.rs:799` · `CG:src/kani_obligations.rs:828` · `RT:src/exact/expression.rs:583` | #210 |
-| OBS-034 | Revisions trail their targets and are duplicated as literals. Four QSL revisions are in use: one by IR and, through IR, by CG builds; one by CG; one by RT; and head. QSL in turn depends on IR at more than one revision (§3.2). CG hard-codes `IR_CANDIDATE_REVISION` and `RUNTIME_REVISION`. CG `assurance/pins.json` states "no Kani or vacuity code under src/", and CG `src/` contains Kani code. | `CG:src/oracle.rs:14,17` · `CG:assurance/pins.json:26` · `CG:src/kani.rs:357` · `IR:Cargo.toml:24` | #211 (secondary #209: dependency direction) |
-| OBS-035 | IR `CheckedPackageRefusalCode` has 13 variants. IR's PROVENANCE states FR-322 has 16 codes, 5 of them cause-carrying, which the reader does not implement. #211 decides the refusal-outcome contract; reader conformance is IR-owned. | `IR:crates/quire-contract-model/src/checked_package/shared.rs:65` · `IR:tests/fixtures/checked-package/PROVENANCE:117-127` | #211 |
-| OBS-036 | Specification conflict: IR FR-031's Behavior names native `runtime::execute` as the replay executor, while accepted AD-016 arrow 7 places the executor at QSL complete-V1 `value::expression::CheckedPackage::call` and states `runtime::execute` is not a replay target. IR #140 tracks the conflict and the code move; IR PR #138 edits FR-031-AC-3. PR-sensitive. | `IR:spec/contract/FR-031-bounded-kani-dispatch-replay-provenance.md:15,23,31,39` · `QSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · IR #140 | #209 |
-| OBS-037 | Bypass at a cross-repository handoff: the "checked" predicate and temporal-subject handoffs are derived from the wire-admitted `v2::AdmittedPackage`, not from a source-compiled package, and IR `predicate::project` / `temporal::project` consume them as QSL checked leaves. The values carry no source-compile provenance. | `QSL:protocol_artifact/mod.rs:1-8` · `QSL:protocol_artifact/v2/intake.rs:476` · `QSL:protocol_artifact/checked_predicate.rs:139,156` · `QSL:protocol_artifact/temporal_subject.rs:177,193` · `IR:src/predicate/admission.rs:91-92` | #209 (secondary #211) |
-| OBS-038 | #205 assigns executable semantic behavior and native replay surfaces to Runtime. Observed: QSL hosts native execution (`runtime::execute`) and value evaluation (`CheckedPackage::call`), IR performs native replay, and RT has no replay surface. | `QSL:runtime/execution.rs:97` · `QSL:value/expression/mod.rs:635` · `IR:src/kani/replay.rs:80-88` · absent-i: `replay` in `src` (RT) · §1.2 | #209 |
-| OBS-039 | The two reference designs name different replay owners: AD-016 arrow 7 places the replay executor at QSL `value::expression::CheckedPackage::call`; #205 gives native replay surfaces to Runtime. | `QSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · #205 "Ownership boundaries" | #209 (secondary #211) |
-| OBS-040 | Test-time repository cycles QSL ⇄ CG and QSL ⇄ RT exist alongside IR ⇄ QSL (§3.2). The IT-010 proof chain (IR model format → IR root historical → CG → RT) shares no revision with production except the format producer, and its cross-revision guards are the IR ↔ CG pairing check and one equality check at one of three consumer sites; the RT link is checked only for hash length. | `QSL:Cargo.toml:43,44` · `CG:Cargo.toml:28` · `QSL:tests/fixtures/native-lowering/Cargo.toml:14` · `RT:conformance/qsl-agreement/Cargo.toml:18` · `QSL:tests/configversion_backends.rs:504-508,543-544,597,871` · `CG:src/oracle.rs:14,17` | #209 |
-| OBS-041 | PR #200 adds a normal QSL → FCD edge, promotes `tempfile` to a production dependency, and adds a second quire-rs revision to the lock. PR-sensitive. | `PR #200:Cargo.toml:37-38,42` · `PR #200:Cargo.lock:1077,1098` | #209 (secondary #211: duplicate revision) |
+| OBS-032 | RT `exact` states it keeps FSL `value`'s names and order, and it differs: Value 12 vs 13, ValueType 13 vs 14, Refusal 13 vs 15 (RT lacks Population, WrongSnapshot, Model). | `RT:src/exact/mod.rs:6-11` · `RT:src/exact/composite.rs:42,135` · `RT:src/exact/outcome.rs:83` · `FSL:value/composite.rs:67,158` · `FSL:value/outcome.rs:171,175` | #211 |
+| OBS-033 | Backend dispatch runs on wire strings: IR `CheckedNodeTag::from_wire`, `required_by(tag, form:&str)`, `DispatchIndex::resolve(&str)`; CG `semantic_form=="call"` and `node_tag=="state" && semantic_form=="frame"`; RT function lookup by name. #210 decides the cross-repository dispatch contract; the string sites are IR-, CG- and RT-owned code. | `IR:crates/filament-contract-model/src/checked_package/v2/mod.rs:104` · `IR:src/kani/dispatch.rs:88` · `CG:src/composite_equality.rs:799` · `CG:src/kani_obligations.rs:828` · `RT:src/exact/expression.rs:583` | #210 |
+| OBS-034 | Revisions trail their targets and are duplicated as literals. Four FSL revisions are in use: one by IR and, through IR, by CG builds; one by CG; one by RT; and head. FSL in turn depends on IR at more than one revision (§3.2). CG hard-codes `IR_CANDIDATE_REVISION` and `RUNTIME_REVISION`. CG `assurance/pins.json` states "no Kani or vacuity code under src/", and CG `src/` contains Kani code. | `CG:src/oracle.rs:14,17` · `CG:assurance/pins.json:26` · `CG:src/kani.rs:357` · `IR:Cargo.toml:24` | #211 (secondary #209: dependency direction) |
+| OBS-035 | IR `CheckedPackageRefusalCode` has 13 variants. IR's PROVENANCE states FR-322 has 16 codes, 5 of them cause-carrying, which the reader does not implement. #211 decides the refusal-outcome contract; reader conformance is IR-owned. | `IR:crates/filament-contract-model/src/checked_package/shared.rs:65` · `IR:tests/fixtures/checked-package/PROVENANCE:117-127` | #211 |
+| OBS-036 | Specification conflict: IR FR-031's Behavior names native `runtime::execute` as the replay executor, while accepted AD-016 arrow 7 places the executor at FSL complete-V1 `value::expression::CheckedPackage::call` and states `runtime::execute` is not a replay target. IR #140 tracks the conflict and the code move; IR PR #138 edits FR-031-AC-3. PR-sensitive. | `IR:spec/contract/FR-031-bounded-kani-dispatch-replay-provenance.md:15,23,31,39` · `FSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · IR #140 | #209 |
+| OBS-037 | Bypass at a cross-repository handoff: the "checked" predicate and temporal-subject handoffs are derived from the wire-admitted `v2::AdmittedPackage`, not from a source-compiled package, and IR `predicate::project` / `temporal::project` consume them as FSL checked leaves. The values carry no source-compile provenance. | `FSL:protocol_artifact/mod.rs:1-8` · `FSL:protocol_artifact/v2/intake.rs:476` · `FSL:protocol_artifact/checked_predicate.rs:139,156` · `FSL:protocol_artifact/temporal_subject.rs:177,193` · `IR:src/predicate/admission.rs:91-92` | #209 (secondary #211) |
+| OBS-038 | #205 assigns executable semantic behavior and native replay surfaces to Runtime. Observed: FSL hosts native execution (`runtime::execute`) and value evaluation (`CheckedPackage::call`), IR performs native replay, and RT has no replay surface. | `FSL:runtime/execution.rs:97` · `FSL:value/expression/mod.rs:635` · `IR:src/kani/replay.rs:80-88` · absent-i: `replay` in `src` (RT) · §1.2 | #209 |
+| OBS-039 | The two reference designs name different replay owners: AD-016 arrow 7 places the replay executor at FSL `value::expression::CheckedPackage::call`; #205 gives native replay surfaces to Runtime. | `FSpec:spec/assurance/AD-016-semantic-family-extension-path.md:238` · #205 "Ownership boundaries" | #209 (secondary #211) |
+| OBS-040 | Test-time repository cycles FSL ⇄ CG and FSL ⇄ RT exist alongside IR ⇄ FSL (§3.2). The IT-010 proof chain (IR model format → IR root historical → CG → RT) shares no revision with production except the format producer, and its cross-revision guards are the IR ↔ CG pairing check and one equality check at one of three consumer sites; the RT link is checked only for hash length. | `FSL:Cargo.toml:43,44` · `CG:Cargo.toml:28` · `FSL:tests/fixtures/native-lowering/Cargo.toml:14` · `RT:conformance/fsl-agreement/Cargo.toml:18` · `FSL:tests/configversion_backends.rs:504-508,543-544,597,871` · `CG:src/oracle.rs:14,17` | #209 |
+| OBS-041 | PR #200 adds a normal FSL → FCD edge, promotes `tempfile` to a production dependency, and adds a second quire-rs revision to the lock. PR-sensitive. | `PR #200:Cargo.toml:37-38,42` · `PR #200:Cargo.lock:1077,1098` | #209 (secondary #211: duplicate revision) |
 
 Owner tally (primary):
 
@@ -990,7 +990,7 @@ Rows and evidence are in §5.
 | DA-05 | Types | DUPLICATE | OBS-019 | #211 |
 | DA-06 | Values | DUPLICATE | OBS-019 | #211 |
 | DA-07 | Rational semantics | DUPLICATE | OBS-020 | #211 |
-| DA-08 | Clause kind (QSL) | DUPLICATE | none | #211 |
+| DA-08 | Clause kind (FSL) | DUPLICATE | none | #211 |
 | DA-09 | Outcomes | DUPLICATE | none | #211 |
 | DA-10 | Refusals | DUPLICATE | OBS-035 | #211 |
 | DA-11 | Capabilities | AMBIGUOUS | OBS-003, OBS-004, OBS-012 | #210 (secondary #229) |

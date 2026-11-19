@@ -3,13 +3,13 @@ id: TC-1028
 title: "Compare native String, UUID and Timestamp with = and != in the unit language"
 type: TC
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-056"
+  - target: "ix://agent-ix/filament-spec-language/FR-056"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-091"
+  - target: "ix://agent-ix/filament-spec-language/FR-091"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-093"
+  - target: "ix://agent-ix/filament-spec-language/FR-093"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-098"
+  - target: "ix://agent-ix/filament-spec-language/FR-098"
     type: verifies
 ---
 # TC-1028: Compare native String, UUID and Timestamp with = and != in the unit language
@@ -96,9 +96,9 @@ fields; TC-1052 covers the literal forms of these types.
   `String`, `UUID` and `Timestamp` value types, distinct from `Text`.
 - Step 2: each R-row refuses with the stated code and cause (`type-mismatch` for unlike types, `operator-ineligible` for ordering) at the comparison
   and yields no Boolean, no coercion and no node.
-- Step 3: the String comparisons lower to `quire.op.string.eq` and `.ne`, the
-  UUID comparisons to `quire.op.uuid.eq` and `.ne`, the Timestamp comparisons
-  to `quire.op.timestamp.eq` and `.ne`, each `binary` with result `boolean`,
+- Step 3: the String comparisons lower to `filament.op.string.eq` and `.ne`, the
+  UUID comparisons to `filament.op.uuid.eq` and `.ne`, the Timestamp comparisons
+  to `filament.op.timestamp.eq` and `.ne`, each `binary` with result `boolean`,
   arguments `[ref(a), ref(b)]`, and no law, mode, member or leaves.
 - Step 4: the use of `UUID` refuses `ambiguous_declaration`/`ambiguous-name`,
   naming the use, the span of the record declaration and the native `UUID`

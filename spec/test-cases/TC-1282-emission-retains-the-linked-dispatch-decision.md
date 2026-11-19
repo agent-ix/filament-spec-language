@@ -3,14 +3,14 @@ id: TC-1282
 title: "Emission retains the linked dispatch decision"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-494
+  - target: ix://agent-ix/filament-spec-language/FR-494
     type: verifies
 ---
 # TC-1282: Emission retains the linked dispatch decision
 
 ## Description
 
-Verify that QSL emits the exact producer-linked dispatch decision into the
+Verify that FSL emits the exact producer-linked dispatch decision into the
 checked package for one dispatched call, including candidate order, selection
 keys and effective-precondition identities, while leaving semantic graph
 identity unchanged. Scope: FR-494-AC-1, AC-3 and AC-4.

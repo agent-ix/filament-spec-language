@@ -3,19 +3,19 @@ id: FR-090
 title: "Return a family outcome or a typed family refusal from S6a evaluation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-013
+  - target: ix://agent-ix/filament-spec-language/US-013
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: traces_to
-  - target: ix://agent-ix/quire-exact/FR-090
+  - target: ix://agent-ix/filament-exact/FR-090
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-068
+  - target: ix://agent-ix/filament-spec-language/FR-068
     type: traces_to
 ---
 # FR-090: Return a family outcome or a typed family refusal from S6a evaluation
@@ -24,35 +24,35 @@ relationships:
 
 ADR-011 S6a reference evaluation SHALL return
 `Result<Evaluation<T>, InternalFault>`, where
-`Evaluation<T> { outcome: FamilyOutcome<T>, location: Option<quire_semantic_value::location::ExpressionLocation>,
-losses: Vec<LocatedLoss> }` is a layer-E `quire-eval` type
-([FR-401](FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md)) and `T` is
+`Evaluation<T> { outcome: FamilyOutcome<T>, location: Option<filament_semantic_value::location::ExpressionLocation>,
+losses: Vec<LocatedLoss> }` is a layer-E `filament-eval` type
+([FR-401](FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md)) and `T` is
 the evaluated family's `ReferenceEvaluation::Observed`. `CheckedPackage::call`
 and `CheckedPackage::evaluate` return `Evaluation<Value>`, written
 `Evaluation`: `FamilyOutcome<Value>` beside the location and the losses.
-The public `qsl_eval::value::ApplicationObservation` passed to checked
+The public `fsl_eval::value::ApplicationObservation` passed to checked
 function-body evaluation SHALL expose that same evaluation's outcome and
 losses, its ten accounting-counter totals (FR-255), and an ordered
-charge-operation ledger. QSL SHALL capture each charge request and its
+charge-operation ledger. FSL SHALL capture each charge request and its
 admission result at the `Meter::charge` call boundary. For each admitted
 request, the ledger SHALL append one record in call order containing the
 charge point and every requested counter amount, including `work_units`,
 `result_units` and semantic-size requests. A request refused by the Meter
 does not produce a record. A partial evaluation retains the admitted prefix.
-The ledger is QSL-owned evaluation evidence, captured as each request is
+The ledger is FSL-owned evaluation evidence, captured as each request is
 admitted; it is not reconstructed from the Meter's optional diagnostic log.
 The per-binder aggregation remains the separate contract of FR-520; FR-397
 defines the ordered charge points for IEEE evaluation. The observation does
 not redefine the Meter's charge points or counter semantics.
-`FamilyOutcome` is a layer-E `quire-eval` type with exactly two variants:
-`Evaluated(quire_exact::Outcome<T>)`, which carries the kernel evaluation
+`FamilyOutcome` is a layer-E `filament-eval` type with exactly two variants:
+`Evaluated(filament_exact::Outcome<T>)`, which carries the kernel evaluation
 outcome unchanged, and `FamilyEvaluated(FamilyResult)`, which carries a
 family-owned evaluation-time result. `FamilyResult` is a layer-E type with
 exactly two variants: `Refused(Box<dyn CatalogCoded>)`, category
 `refusal`, and `Undefined(Box<dyn UndefinedCoded>)`, category `undefined`.
 `CatalogCoded` and `UndefinedCoded` are SV `catalog` traits. `InternalFault`
 is ADR-013 T-4's type in SV `catalog`
-(`quire_semantic_value::catalog::InternalFault`). A family's `evaluate` hook
+(`filament_semantic_value::catalog::InternalFault`). A family's `evaluate` hook
 returns `Result<EvalOutcome<T>, InternalFault>`, where `EvalOutcome` is a
 layer-E type with exactly two variants: `Kernel(Outcome<T>)` and
 `Family(FamilyResult)`.
@@ -80,7 +80,7 @@ reason `incomplete-closure`. Its structured fields SHALL name queried type
 `T` and `uncovered_subtypes` equal to `[T]`, the minimal witness that no
 declared member type covers the query. Declaring `T` itself or any supertype
 of `T` as a member type resolves this subtype-closure incompleteness. At the
-contract boundary (QSpec FR-153-AC-14) the same undefined record is reported with
+contract boundary (FSpec FR-153-AC-14) the same undefined record is reported with
 the code `incomplete_population` and the cause `unclosed-subtypes`: the record
 exposes them as a projection of its reason `incomplete-closure`, derived and not
 stored, so a consumer that reads a catalog code reads these and a consumer that
@@ -111,7 +111,7 @@ This requirement carries testable criteria for decisions already taken:
   `Evaluation.location`, the E6 row that refuses bad arguments at admission
   before S6a (`CheckedPackage::call` returns
   `CallFailure::Input(InputRefusal)`), and the layer-E row that places
-  `FamilyOutcome`, `FamilyResult` and `EvalOutcome` in `quire-eval`.
+  `FamilyOutcome`, `FamilyResult` and `EvalOutcome` in `filament-eval`.
 - ADR-012 §2, §3, §5.1 S1 and §13.5: every family except `Relation`
   implements `ReferenceEvaluation`, whose hook returns
   `Result<EvalOutcome<Observed>, InternalFault>`; a kernel `Outcome`'s
@@ -124,11 +124,11 @@ This requirement carries testable criteria for decisions already taken:
 - An S6a family kind, a checked declaration identity of that family, the
   family's evaluation environment (for `Value`, the checked package, the
   caller's object environment and argument values) and a
-  `quire_exact::Meter`.
+  `filament_exact::Meter`.
 - For a clause expression (a postcondition, an invariant or another checked
   expression that is not a function declaration): the checked package, the
   `CheckedExpression`, its argument values, the caller's object environment
-  and a `quire_exact::Meter`, passed to `CheckedPackage::evaluate`.
+  and a `filament_exact::Meter`, passed to `CheckedPackage::evaluate`.
 - For argument admission: the caller's argument values, including
   `Value::Population(PopulationId)` arguments.
 - For the `wrong_snapshot` path: a postcondition whose `pre(..)` reads a
@@ -147,13 +147,13 @@ This requirement carries testable criteria for decisions already taken:
 
 - `Ok(e)`, where `e` is an `Evaluation` whose `outcome` is one of:
   - `FamilyOutcome::Evaluated(outcome)`, where `outcome` is a
-    `quire_exact::Outcome<Value>`;
+    `filament_exact::Outcome<Value>`;
   - `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))`, where
     `cause.catalog_code()` is the family cause's catalog code;
   - `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`, where
     `cause.undefined_record()` is the family cause's `UndefinedRecord`: its
     undefined reason and that reason's catalog payload.
-- `e.location`, the `quire_semantic_value::location::ExpressionLocation` of the node at which an evaluation that
+- `e.location`, the `filament_semantic_value::location::ExpressionLocation` of the node at which an evaluation that
   did not complete stopped. A root `function.call` charge denied or cancelled
   after successful Begin carries the checked body root location
   (FR-262-AC-13). A completed evaluation carries `None`. A refusal raised
@@ -230,7 +230,7 @@ unchanged (ADR-011 §2.2 E6: carried, never re-derived). The caller receives
 them only inside the `Evaluation`, so it cannot drop them apart from the
 outcome. `FamilyOutcome`, `FamilyResult` and `EvalOutcome` hold no
 location.
-`location` is `quire_semantic_value::location::ExpressionLocation`, the declaration
+`location` is `filament_semantic_value::location::ExpressionLocation`, the declaration
 origin and child-index path that every checked expression node carries. It
 is the one locus of the evaluation: the node at which an evaluation that did
 not complete stopped. A root `function.call` charge denied or cancelled after
@@ -238,12 +238,12 @@ successful Begin carries the checked body root location (FR-262-AC-13). A
 completed evaluation carries `None`. A refusal raised before any node runs
 without an established root call site, such as the FR-380-AC-7
 population-bound refusal, also carries `None`; a consumer reports `None` as
-"unavailable" (`quire.native.diagnostics/v1` common context). `losses` holds
+"unavailable" (`filament.native.diagnostics/v1` common context). `losses` holds
 the loss records of operations a completed evaluation performed, in
-evaluation order, as QSpec FR-140-AC-3 requires
+evaluation order, as FSpec FR-140-AC-3 requires
 ("the rounded value plus a canonical-rational loss record"); it is empty
 unless the outcome is `FamilyOutcome::Evaluated(Outcome::Completed(_))`.
-`Evaluation` is a layer-E `quire-eval` type, because the shared evaluation
+`Evaluation` is a layer-E `filament-eval` type, because the shared evaluation
 interface returns it (FR-262); `LocatedLoss` is an SV type it can name.
 
 Each catalog locus of a family cause is `Evaluation.location`, the node
@@ -309,7 +309,7 @@ its category is `refusal`.
 `UndefinedRecord { reason, fields }` is an SV `catalog` type, the
 undefined-side counterpart of O-17's `RefusalRecord`. `reason` is an
 `UndefinedReason`, the closed reason set of the
-`quire.native.diagnostics/v1` "Undefined reasons" table, which the catalog
+`filament.native.diagnostics/v1` "Undefined reasons" table, which the catalog
 states is not a refusal code or cause. `fields` is the structured payload that
 table requires for that reason. The trait returns the record, not the bare
 reason, because the catalog requires the payload and a consumer outside the
@@ -409,7 +409,7 @@ cause types that each have one) and implement `CatalogCoded`. When
 with a `ModelRefusal`, S6a SHALL return `Ok(e)` with `e.outcome` equal to
 `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))`, where
 `cause.catalog_code()` is that refusal's `ModelRefusal::catalog_code()`. The
-carried refusal holds no native-v1 `qsl_foundation::diagnostic::Code` value:
+carried refusal holds no native-v1 `fsl_foundation::diagnostic::Code` value:
 ADR-013 R-09 gives a lane-private representation no canonical authority and
 no new consumer.
 
@@ -428,8 +428,8 @@ evaluates to `false`, S6a SHALL return `Ok(e)` with `e.outcome` equal to
 `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`, where
 `cause.undefined_record().reason` is `precondition-false`. The result is
 category `undefined`, never `refusal`. The operation, selected method and receiver come from FR-151 dispatch, which
-is QSL model vocabulary (ADR-013 O-13). The kernel's `Undefined` variant set is
-`ix://agent-ix/quire-exact/FR-090`'s.
+is FSL model vocabulary (ADR-013 O-13). The kernel's `Undefined` variant set is
+`ix://agent-ix/filament-exact/FR-090`'s.
 
 The owner is `StateModel` because ADR-012 assigns dispatch and dispatch
 preconditions to it (§1 family table and checked-type table, §3 per-family
@@ -447,7 +447,7 @@ reason's catalog payload: the population binding and the requested reference
 key. The `lookup` locus is `e.location`, the location of the `lookup`
 node. The result is category `undefined`. This `UndefinedRecord` is the
 only carrier of undefined reason `absent-key`; that the kernel's `Undefined`
-has no `AbsentKey` variant is `ix://agent-ix/quire-exact/FR-090`'s.
+has no `AbsentKey` variant is `ix://agent-ix/filament-exact/FR-090`'s.
 
 `absent-key` is a `StateModel` undefined cause for three reasons. The
 catalog requires a payload for it, which a payload-free kernel variant
@@ -458,7 +458,7 @@ the kernel.
 `lookup<T>(p, r) absent refused` is a different query: FR-153 has it refuse
 an absent key. That refusal is `ModelRefusalCause::AbsentKey`, catalog code
 `invalid_runtime_input` with cause tag `absent-key`, category `refusal`
-(native-diagnostics `invalid_runtime_input` row; QSpec TC-198 L03), and
+(native-diagnostics `invalid_runtime_input` row; FSpec TC-198 L03), and
 reaches the caller in `FamilyResult::Refused` as the model-query refusal
 above. The catalog defines the `absent-key` cause tag of
 `invalid_runtime_input` and the `absent-key` undefined reason as separate
@@ -468,15 +468,15 @@ selects which one S6a returns.
 ### The kernel refusal holds kernel causes only
 
 What the kernel `Refusal` and `Undefined` variants may name is
-`ix://agent-ix/quire-exact/FR-090`'s. A caller that matches
+`ix://agent-ix/filament-exact/FR-090`'s. A caller that matches
 `FamilyOutcome::Evaluated(Outcome::Refused(r))` reads a kernel cause.
 
-### QSL-owned invariant producers
+### FSL-owned invariant producers
 
 When a producer in the following table detects its stated condition during
-S6a, QSL SHALL return `Err(InternalFault)` with stage `S6a` and the table's
-stable invariant identifier. These are QSL-owned conditions, not kernel
-`CheckedInvariantCause` variants. QSL SHALL NOT manufacture a kernel
+S6a, FSL SHALL return `Err(InternalFault)` with stage `S6a` and the table's
+stable invariant identifier. These are FSL-owned conditions, not kernel
+`CheckedInvariantCause` variants. FSL SHALL NOT manufacture a kernel
 `Refusal::CheckedInvariant`, choose a kernel cause by resemblance, or attach
 synthetic kernel provenance to these faults. The table fixes classification,
 not a requirement to expose unchecked constructors to public callers.
@@ -579,10 +579,10 @@ error to map to an S6a fault. The obsolete `ieee-conversion-rejected`
 producer classification and its temporary Inspection exception are retired.
 Float operand checks, IEEE profile checks, ordinary IEEE
 Completed/Undefined/Refused/Incomplete outcomes and exact charge prefixes
-remain executable obligations. Cancellation remains QSL-owned; the kernel
+remain executable obligations. Cancellation remains FSL-owned; the kernel
 Outcome has no cancellation variant.
 
-QSL SHALL preserve the charges already performed before the detected break
+FSL SHALL preserve the charges already performed before the detected break
 and SHALL perform no fault-specific charge, retry, query rerun or result
 retention after that break. An earlier denied charge or cancellation remains
 `Incomplete`; it does not become a fault for a producer not reached. Shape
@@ -603,18 +603,18 @@ or budget exhaustion retain their existing contracts.
 ### Layering
 
 `FamilyOutcome`, `FamilyResult` and `EvalOutcome` are
-defined once, in the layer-E crate `quire-eval` (FR-401), beside
+defined once, in the layer-E crate `filament-eval` (FR-401), beside
 `Evaluation`, which carries `FamilyOutcome`, and the shared evaluation
 interface that returns it. `CatalogCoded`, `UndefinedCoded`
 and `UndefinedRecord` are defined once, in SV `catalog`, so that `model`
 (below the `check` core) and `value::expression` (above it) can each
 implement the traits for their own cause types, and E can name them. Under
-ADR-011 §6.1's "Depends on" column, the QSL crates that may name the three
-layer-E types are the ones at layer 5 or above: `qsl-eval` with its family
-evaluators and `simulation`, `qsl-replay`, `qsl-analyze` and the root
-crate's `command`, `cli` and `main`. K (`quire-exact`), SV
-(`quire-semantic-value`), F (`qsl-foundation`), layer 1 (`qsl-cst`), layer
-2 `forms`, layer 3 `qsl-semantics`, layer 4 `package` and layer R `route`
+ADR-011 §6.1's "Depends on" column, the FSL crates that may name the three
+layer-E types are the ones at layer 5 or above: `fsl-eval` with its family
+evaluators and `simulation`, `fsl-replay`, `fsl-analyze` and the root
+crate's `command`, `cli` and `main`. K (`filament-exact`), SV
+(`filament-semantic-value`), F (`fsl-foundation`), layer 1 (`fsl-cst`), layer
+2 `forms`, layer 3 `fsl-semantics`, layer 4 `package` and layer R `route`
 name none of them.
 Today `semantic_value`'s modules are `value::{definition, enumeration, unit,
 quantity, key, reference}` (ADR-011 §6.2).
@@ -630,20 +630,20 @@ undefined cause type.
 | FR-090-AC-1 | Given a checked `Value` function `f(x: Float[binary64]): Rational[-9..9 / 1..9] = convert(x)`, which the checker admits (an IEEE-to-rational conversion carries no definedness obligation), S6a returns `Ok(e)` with exactly these `e.outcome` values. For `x = 0.5` with an unlimited meter: `FamilyOutcome::Evaluated(Outcome::Completed(Value::Rational(1/2)))`, with `e.location` `None` and `e.losses` empty. For `x = NaN`: `FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::IeeeNotFinite))`, with `e.location` `Some` and `e.losses` empty. For `x = 20.0`: `FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IeeeRationalOutOfDomain))`, with `e.location` `Some` and `e.losses` empty. For `x = 0.5` with a meter whose work limit is zero, the hook's `Ok(EvalOutcome::Kernel(Outcome::Incomplete(i)))` becomes `FamilyOutcome::Evaluated(Outcome::Incomplete(i))`, and `i` names `ChargePoint::FunctionCall`. None of the four is returned as `FamilyOutcome::FamilyEvaluated` or as `Err`. | Test |
 | FR-090-AC-3 | Each S6a invariant break returns `Err(fault)` without panicking. The cases are: a second S6a call on a `Value` evaluation environment whose arguments an earlier S6a call already consumed; and an S6a call with a checked identity the package does not resolve. For each, `fault.stage()` names S6a, `fault.invariant()` is the stable identifier of that invariant (distinct for the two cases), and `fault.category()` is `Category::InternalFailure`. The result is not an `Ok(e)` whose `e.outcome` is `FamilyOutcome::Evaluated(Outcome::Refused(_))` or a `FamilyOutcome::FamilyEvaluated`. | Test |
 | FR-090-AC-4 | S6a's input type admits no `Relation`. The S6a family kind has no `Relation` variant, and the S6a seam's family parameter has that type; `FamilyOutcome` has exactly the two variants `Evaluated` and `FamilyEvaluated`. A test holds an exhaustive `match` with no `_` arm over each type whose arms name neither `Relation` nor a third `FamilyOutcome` variant, so adding either variant fails to compile, and the test passes each S6a family kind variant to the S6a seam's dispatch, which compiles only if the seam takes that type. This is the precise form of FR-062-AC-6. | Test |
-| FR-090-AC-5 | F `diagnostic`'s catalog-code-to-category map returns `Category::Refusal` for every code the `ProtocolClause` snapshot cause's `catalog_code()` returns and for every code `ModelRefusal::catalog_code()` returns; `qsl-foundation` has no dependency on the crate that defines `FamilyOutcome` or on any crate at layer 3 or above. | Test |
+| FR-090-AC-5 | F `diagnostic`'s catalog-code-to-category map returns `Category::Refusal` for every code the `ProtocolClause` snapshot cause's `catalog_code()` returns and for every code `ModelRefusal::catalog_code()` returns; `fsl-foundation` has no dependency on the crate that defines `FamilyOutcome` or on any crate at layer 3 or above. | Test |
 | FR-090-AC-6 | The `ProtocolClause` family cause carrying `WrongSnapshotCause` has an exhaustive `catalog_code()` with no `_` arm that returns `wrong_snapshot`/`wrong-anchor` for `WrongAnchor` and `wrong_snapshot`/`forbidden-pre-read` for `ForbiddenPreRead`. | Test |
 | FR-090-AC-7 | Given a postcondition `pre(allInstances<T>(p))` evaluated through `CheckedPackage::evaluate` with a population argument admitted through `admit_binding` (no pre anchor), the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))` and `cause.catalog_code()` equal to `wrong_snapshot`/`wrong-anchor`. The result is not a panic, not `FamilyOutcome::Evaluated(Outcome::Refused(_))` and not `Err(CallFailure::Input(_))`. | Test |
-| FR-090-AC-8 | Given an `allInstances<T>(p)` query whose selected member count is above the population's declared maximum, evaluated through `CheckedPackage::evaluate`, the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))` and `cause.catalog_code()` equal to the refusing `ModelRefusal`'s `catalog_code()`, `cardinality_out_of_bound`/`above-maximum`. The result is not a panic and not `FamilyOutcome::Evaluated(Outcome::Refused(_))`. The carried refusal holds no `qsl_foundation::diagnostic::Code` value. | Test |
-| FR-090-AC-9 | `FamilyOutcome`, `FamilyResult` and `EvalOutcome` are each defined once, in the layer-E crate `quire-eval`, and no QSL crate defines any of them. No `use` edge or inline path under `qsl-cst/src/`, `qsl-forms/src/`, `qsl-semantics/src/` or `qsl-package/src/` resolves to any of the three. No `use` edge or inline path under the `check` core resolves to the `ProtocolClause` snapshot cause type, `ModelRefusal` or the `StateModel` undefined cause type. None of `qsl-foundation`, `qsl-cst`, `qsl-forms`, `qsl-semantics` and `qsl-package` depends on `quire-eval`. | Test |
+| FR-090-AC-8 | Given an `allInstances<T>(p)` query whose selected member count is above the population's declared maximum, evaluated through `CheckedPackage::evaluate`, the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))` and `cause.catalog_code()` equal to the refusing `ModelRefusal`'s `catalog_code()`, `cardinality_out_of_bound`/`above-maximum`. The result is not a panic and not `FamilyOutcome::Evaluated(Outcome::Refused(_))`. The carried refusal holds no `fsl_foundation::diagnostic::Code` value. | Test |
+| FR-090-AC-9 | `FamilyOutcome`, `FamilyResult` and `EvalOutcome` are each defined once, in the layer-E crate `filament-eval`, and no FSL crate defines any of them. No `use` edge or inline path under `fsl-cst/src/`, `fsl-forms/src/`, `fsl-semantics/src/` or `fsl-package/src/` resolves to any of the three. No `use` edge or inline path under the `check` core resolves to the `ProtocolClause` snapshot cause type, `ModelRefusal` or the `StateModel` undefined cause type. None of `fsl-foundation`, `fsl-cst`, `fsl-forms`, `fsl-semantics` and `fsl-package` depends on `filament-eval`. | Test |
 | FR-090-AC-10 | Given a checked `Value` function with a `Population<T>[N]` parameter, `CheckedPackage::call` with an argument whose `PopulationId` names no recorded binding, or whose resolved binding's declared maximum differs from `N`, returns `Err(CallFailure::Input(_))` before S6a runs. Given the same argument passed directly to the S6a seam, bypassing admission, S6a returns `Err(InternalFault)`, not a kernel or family refusal. | Test |
-| FR-090-AC-11 | Given an FR-151 dispatched call `receiver.member(args)` whose selected method's effective precondition evaluates to `false` (QSpec TC-196 D06), evaluated through `CheckedPackage::evaluate`, the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`, where `cause.undefined_record()` has `reason` `precondition-false` and `fields` naming the called effective operation, the selected method's effective identity and the receiver reference, and `e.location` is the location of the dispatched call node, not of the evaluated expression's root. The result is not `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(_))`, not `FamilyOutcome::Evaluated(Outcome::Undefined(_))` and not a panic. | Test |
+| FR-090-AC-11 | Given an FR-151 dispatched call `receiver.member(args)` whose selected method's effective precondition evaluates to `false` (FSpec TC-196 D06), evaluated through `CheckedPackage::evaluate`, the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`, where `cause.undefined_record()` has `reason` `precondition-false` and `fields` naming the called effective operation, the selected method's effective identity and the receiver reference, and `e.location` is the location of the dispatched call node, not of the evaluated expression's root. The result is not `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(_))`, not `FamilyOutcome::Evaluated(Outcome::Undefined(_))` and not a panic. | Test |
 | FR-090-AC-12 | Given a `lookup<T>(p, r) absent undefined` query whose reference `r` names no member of the population bound to `p`, evaluated through `CheckedPackage::evaluate`, the result is `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`, where `cause.undefined_record()` has `reason` `absent-key` and `fields` naming the population binding and the requested reference key. The result is not `FamilyOutcome::Evaluated(Outcome::Undefined(_))`, not `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(_))` and not a panic. The same query with `absent refused` returns `Ok(e)` with `e.outcome` equal to `FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause))` and `cause.catalog_code()` equal to `invalid_runtime_input`/`absent-key`. | Test |
 | FR-090-AC-21 | Given an admitted population with no declared member type to which queried type `T` conforms, an `allInstances<T>` query evaluated through `CheckedPackage::evaluate` returns `Ok(e)` with `e.outcome` exactly `FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))`; `cause.undefined_record()` has reason `incomplete-closure`, names queried type `T`, and has `uncovered_subtypes` equal to `[T]` as the minimal witness, with no member collection, and projects to the code `incomplete_population` and cause `unclosed-subtypes`. Declaring `T` itself or any supertype of `T` as a member type resolves this subtype-closure incompleteness. `FamilyResult` and `FamilyOutcome` retain exactly their two variants. | Test (TC-227) |
 | FR-090-AC-13 | For an admitted population binding containing a selected member with empty object identity, public `allInstances` evaluation returns `CallFailure::Fault` with stage `S6a` and invariant `model-query-object-identity-empty`. The fault has no synthetic kernel cause. | Test |
 | FR-090-AC-14 | Each model-query shape producer in the table returns the table's `S6a` fault when its stated condition is supplied through a private seam, including option wrapping after a successful query. | Test |
 | FR-090-AC-15 | Each production evaluator producer in the table other than `record-present-value-missing`, exercised at the detecting site with its stated malformed state, returns the table's `S6a` fault rather than a manufactured kernel CheckedInvariant. | Test |
 | FR-090-AC-16 | A metered run reaching a table producer records precisely its ordinary charge prefix through that producer; a run stopped by an earlier denied charge or cancellation records its existing Incomplete outcome instead. | Test |
-| FR-090-AC-17 | A QSL-owned table fault propagated through public call, public evaluate or replay retains its stage and invariant identifier in the existing fault channel. | Test |
+| FR-090-AC-17 | An FSL-owned table fault propagated through public call, public evaluate or replay retains its stage and invariant identifier in the existing fault channel. | Test |
 | FR-090-AC-18 | Inspection of the Record producer establishes that `record-present-value-missing` is locally unreachable: `pop_many(present)` either stops earlier or supplies exactly the number of Present slots counted, and `zip(slots, declared)` consumes at most that many values. | Inspection |
 | FR-090-AC-20 | The production IEEE-to-rational caller uses `ieee_to_exact(&RationalDomain, Meter) -> Outcome<IeeeExact>` directly. The evaluator contains no outer construction-error arm or `ieee-conversion-rejected` producer row, and the producer inventory retains verification obligations for every remaining producer. | Inspection |
 | FR-090-AC-22 | When an admitted state predicate reads an attribute through a reference to an object absent from the current state, S6a returns `Err(InternalFault)` with stage `S6a`, invariant `attribute-slot-unresolved` and category `Category::InternalFailure`; the public call or evaluate seam preserves it as `CallFailure::Fault`. The evaluator does not panic or manufacture a kernel/family result. | Test (TC-917) |
@@ -681,10 +681,10 @@ complete interval; a typed truncated ledger exposes only admitted-prefix amounts
   `CallFailure::Input`. `CatalogCode`, `Category` and `InternalFault` are
   SV `catalog`'s (FR-401).
 - **Downstream:** none. The removal of `src/value/outcome.rs`'s kernel
-  copy in favour of `quire_exact::{Outcome, Refusal, Undefined}` needs no
+  copy in favour of `filament_exact::{Outcome, Refusal, Undefined}` needs no
   FR-090-AC change. The kernel's variant set is
-  `ix://agent-ix/quire-exact/FR-090`'s. FR-090-AC-1's `Evaluated`
-  payload was already `quire_exact::Outcome<T>`; that removal is exactly the
+  `ix://agent-ix/filament-exact/FR-090`'s. FR-090-AC-1's `Evaluated`
+  payload was already `filament_exact::Outcome<T>`; that removal is exactly the
   one that lets the `Value` evaluator produce it directly, with no
   coupled change on either side.
 - ADR-012 §14.1 lists `Relation`'s non-native evaluability

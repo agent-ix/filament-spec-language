@@ -3,7 +3,7 @@ id: TC-457
 title: "S2 state clause dispatch is thin, bounded and seam-probed"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-102
+  - target: ix://agent-ix/filament-spec-language/FR-102
     type: verifies
 ---
 # TC-457: S2 state clause dispatch is thin, bounded and seam-probed
@@ -17,7 +17,7 @@ Scope: FR-102-AC-4, FR-102-AC-5, FR-102-AC-6, FR-102-AC-7.
 
 ## Test Procedure
 
-1. Run `dispatch_entry_is_a_single_thin_call` (`qsl-forms/src/dispatch.rs`)
+1. Run `dispatch_entry_is_a_single_thin_call` (`fsl-forms/src/dispatch.rs`)
    over the extended `dispatch`.
 2. Build a unit whose only declaration begins `temporal` (a spelling no
    family claims).

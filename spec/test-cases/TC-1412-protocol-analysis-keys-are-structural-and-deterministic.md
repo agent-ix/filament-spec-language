@@ -3,11 +3,11 @@ id: TC-1412
 title: "Protocol analysis keys are structural, complete and deterministic"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-572
+  - target: ix://agent-ix/filament-spec-language/FR-572
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-174
+  - target: ix://agent-ix/filament-specification/FR-174
     type: references
-  - target: ix://agent-ix/quire-specification/FR-175
+  - target: ix://agent-ix/filament-specification/FR-175
     type: references
 ---
 # TC-1412: Protocol analysis keys are structural, complete and deterministic
@@ -17,7 +17,7 @@ relationships:
 Verify which changes alter the key, that an absent member is refused by
 builder and reader, that no digest is a member, and determinism.
 
-Scope: FR-572-AC-1 to FR-572-AC-6; QSpec FR-174-AC-6, FR-175-AC-6.
+Scope: FR-572-AC-1 to FR-572-AC-6; FSpec FR-174-AC-6, FR-175-AC-6.
 
 ## Test Procedure
 

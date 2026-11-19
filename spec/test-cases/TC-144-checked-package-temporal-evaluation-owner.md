@@ -3,7 +3,7 @@ id: TC-144
 title: "Preserve temporal evaluation ownership on the checked-package route"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-052, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-052, type: verifies }
 ---
 # TC-144: Preserve temporal evaluation ownership on the checked-package route
 
@@ -13,10 +13,10 @@ Verify FR-052-AC-9 to FR-052-AC-14 on the Layer-4 checked-package routes. Each
 row is verified on the entry point that carries its
 input:
 
-- the clause route, `qsl_replay::spine::run_clause` (FR-330) with a
+- the clause route, `fsl_replay::spine::run_clause` (FR-330) with a
   `ClauseRunRequest`, for rows 1, 4a to 4f, 4h, 5, 6, 7 and 8, which need only a
   clause, a trace, progress and a ledger;
-- the evidence route, `qsl_eval::temporal::evidence` (FR-516): `EvidenceRequest`,
+- the evidence route, `fsl_eval::temporal::evidence` (FR-516): `EvidenceRequest`,
   `evaluate_temporal_evidence` and `activate`, over a package compiled through S1
   to S4 and its FR-449 activation map, for rows 2, 3, 4g and 9. Trigger identity,
   the activation map, capture removal and the correction relation (FR-524,
@@ -33,8 +33,8 @@ erases a settled sibling when one obligation exhausts its budget, accepts a
 non-direct correction predecessor, or refuses the finite-window profile.
 
 Executable controls for the clause-route rows live in the module
-`checked_route_owner` beside the spine clause tests in `qsl-replay`; those of the
-evidence-route rows (2, 3, 4g, 9) live in `qsl-eval/tests/it`.
+`checked_route_owner` beside the spine clause tests in `fsl-replay`; those of the
+evidence-route rows (2, 3, 4g, 9) live in `fsl-eval/tests/it`.
 Expected values come from the authored unit and the stated traces, and are computed by the FR-043/FR-501 reference rules
 written in the table, never from the route's own output.
 
@@ -83,4 +83,4 @@ Row 9's first step keeps the correspondence unchanged and changes only the evide
   alone.
 - Test code carries the tags FR-052-AC-9 to AC-14, FR-501-AC-19 (row 5) and TC-144.
   The clause-route rows are tagged in `checked_route_owner`; the rows 2, 3, 4g and
-  9 in `qsl-eval/tests/it`.
+  9 in `fsl-eval/tests/it`.

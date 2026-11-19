@@ -3,7 +3,7 @@ id: TC-393
 title: "The forms FunctionDeclaration carries its name, using alias, type forms, measure and body"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-091
+  - target: ix://agent-ix/filament-spec-language/FR-091
     type: verifies
 ---
 # TC-393: The forms FunctionDeclaration carries its name, using alias, type forms, measure and body

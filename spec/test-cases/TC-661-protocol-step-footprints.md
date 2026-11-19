@@ -3,7 +3,7 @@ id: TC-661
 title: "Protocol steps carry static footprints, enabling footprints and visibility"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-216
+  - target: ix://agent-ix/filament-spec-language/FR-216
     type: verifies
 ---
 # TC-661: Protocol steps carry static footprints, enabling footprints and visibility

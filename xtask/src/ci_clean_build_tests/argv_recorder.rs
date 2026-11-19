@@ -8,7 +8,7 @@ fn main() -> std::io::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let mut log = std::fs::OpenOptions::new()
         .append(true)
-        .open(std::env::var_os("QSL_ARGV_LOG").expect("argument receipt path"))?;
+        .open(std::env::var_os("FSL_ARGV_LOG").expect("argument receipt path"))?;
     match std::env::var_os("CARGO_TARGET_DIR") {
         None => log.write_all(&[0])?,
         Some(root) => {

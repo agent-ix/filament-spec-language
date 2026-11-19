@@ -3,7 +3,7 @@ id: TC-1262
 title: "The quire frontend parses, encodes, writes and exits for parse, format, run and compile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-287
+  - target: ix://agent-ix/filament-spec-language/FR-287
     type: verifies
 ---
 # TC-1262: The quire frontend parses, encodes, writes and exits for parse, format, run and compile
@@ -32,4 +32,4 @@ Tag the tests `#[trace("TC-1262", "<AC id>")]`.
 - Step 3: the non-UTF-8 operand exits 20 before the file is opened, no panic; the non-UTF-8 path parses.
 - Step 4: exit 30 for every verb.
 - Step 5: no stderr output and the outcome's FR-285 exit code.
-- Step 6: stdout is exactly the producer-owned `quire-outcome/1` document for success and refusal, with no CLI-added or removed member. No package bytes, native result document or refusal envelope replace it on either stream. The two working directories give equal machine document bytes and exit codes.
+- Step 6: stdout is exactly the producer-owned `filament-outcome/1` document for success and refusal, with no CLI-added or removed member. No package bytes, native result document or refusal envelope replace it on either stream. The two working directories give equal machine document bytes and exit codes.

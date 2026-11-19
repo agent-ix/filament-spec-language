@@ -3,25 +3,25 @@ id: FR-180
 title: "Hand over a step relation's code claim and replay its Kani counterexample"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-179
+  - target: ix://agent-ix/filament-spec-language/FR-179
     type: depends_on
 ---
 # FR-180: Hand over a step relation's code claim and replay its Kani counterexample
@@ -32,9 +32,9 @@ When every execution variable of an HP-1 step relation names an operation
 bound to an implementation by the abstraction relation, S3 SHALL record a
 second requirement, an `operation-contract` code claim, beside the model
 claim (ADR-023 XC-1), and S4 SHALL emit what a two-call harness reads. The
-harness is generated and run on the IR/CG side; QSL states what it hands
+harness is generated and run on the IR/CG side; FSL states what it hands
 over and what the harness must prove (ADR-023 XC-2), and replays a Kani
-counterexample's tuple of executions (ADR-023 XC-4). QSL names no harness,
+counterexample's tuple of executions (ADR-023 XC-4). FSL names no harness,
 backend or Kani construct.
 
 ## Use case
@@ -43,7 +43,7 @@ A verification operator states that a vault's `step` is deterministic, and
 `step` is bound to a Rust function. They get two results: the model claim
 over the reachable transitions (FR-179), and a code claim that runs the
 function twice from any two pre-states satisfying the declared invariants.
-A Kani counterexample to the code claim replays in QSL against the same
+A Kani counterexample to the code claim replays in FSL against the same
 body, with no reachability path.
 
 ## Inputs
@@ -78,7 +78,7 @@ body, with no reachability path.
   the model claim alone.
 - S4 SHALL emit the relation node with the members listed under Outputs, so
   the harness generator reads every premise and the body from the checked
-  package. The node is one QSpec FR-477 `claim`/`step_relation` node: its
+  package. The node is one FSpec FR-477 `claim`/`step_relation` node: its
   `subjects`, its `executions` (per variable: alias, the operation's
   `state`/`operation_anchor` node, the execution's own parameter nodes, with
   binder levels continuing from the previous execution's so that two
@@ -88,9 +88,9 @@ body, with no reachability path.
   reference.
 - S4 SHALL emit the node whether or not the code claim is recorded; an
   operation with no binding has an empty `implementation`.
-- QSL's I2 reader SHALL admit an emitted step-relation node and SHALL refuse
+- FSL's I2 reader SHALL admit an emitted step-relation node and SHALL refuse
   a node that breaks an FR-477 rule with FR-477's code at FR-477's locus.
-  TC-1143 step 2 feeds QSpec TC-962's mutations RN-07 to RN-12 and RN-14 to
+  TC-1143 step 2 feeds FSpec TC-962's mutations RN-07 to RN-12 and RN-14 to
   the I2 reader.
 - The code claim's meaning, which the generated harness must prove, SHALL
   be: for all pre-states `s_1 … s_n` of the declared types, each satisfying
@@ -127,7 +127,7 @@ body, with no reachability path.
 | FR-180-AC-1 | `Det` over a vault whose `step` is bound to an implementation records a `temporal-satisfaction` model claim and an `operation-contract` code claim with different identities; the checked package's relation node holds `x` and `y` naming `step`, the lowered body, `Vault`'s declared invariants, `step`'s effective precondition, frame and postcondition, and its binding. `Det` over a vault with no binding records the model claim alone. | Test (TC-605) |
 | FR-180-AC-2 | A code-claim counterexample with two executions of `step` from equal pre-states and equal inputs giving `l = 0` and `l = 1` replays to `reproduced-with-evaluated-witness`; the same counterexample with equal post-states settles `inconclusive`, `ReplayParity`. | Test (TC-605) |
 | FR-180-AC-3 | Over a vault variant that declares the invariant `self.l <= self.h`, a counterexample with pre-state `(h, l) = (0, 1)` refuses `invalid_runtime_input`/`invalid-value` naming the execution and the invariant; one whose pre-state fails FR-106 admission refuses with FR-106's record. | Test (TC-605) |
-| FR-180-AC-4 | AC-1's `Det` with the binding emits one `claim`/`step_relation` node whose body has QSpec FR-477's `subjects`, `executions`, `invariants` and `body` in order, each `executions` entry referencing `step`'s operation anchor, its precondition and postcondition nodes and the abstraction relation node; without the binding the `implementation` members are empty; `x`'s and `y`'s `self` nodes are different nodes, as are their `i` nodes (levels 0 and 1 for `x`, 2 and 3 for `y`), and the body reads `pre(x.self.l)` and `pre(y.self.l)` through those different nodes, so an emitter that shares one set of binders between `x` and `y` fails; neither unit is refused `NotEmitted`. Fed to QSL's I2 reader, the node with `x`'s precondition removed from `preconditions` refuses `invalid_model_binding`/`malformed-declaration` at that aggregate, and each of QSpec TC-962's RN-07 to RN-12 and RN-14 refuses as TC-962 states. | Test (TC-1143) |
+| FR-180-AC-4 | AC-1's `Det` with the binding emits one `claim`/`step_relation` node whose body has FSpec FR-477's `subjects`, `executions`, `invariants` and `body` in order, each `executions` entry referencing `step`'s operation anchor, its precondition and postcondition nodes and the abstraction relation node; without the binding the `implementation` members are empty; `x`'s and `y`'s `self` nodes are different nodes, as are their `i` nodes (levels 0 and 1 for `x`, 2 and 3 for `y`), and the body reads `pre(x.self.l)` and `pre(y.self.l)` through those different nodes, so an emitter that shares one set of binders between `x` and `y` fails; neither unit is refused `NotEmitted`. Fed to FSL's I2 reader, the node with `x`'s precondition removed from `preconditions` refuses `invalid_model_binding`/`malformed-declaration` at that aggregate, and each of FSpec TC-962's RN-07 to RN-12 and RN-14 refuses as TC-962 states. | Test (TC-1143) |
 
 ## Dependencies
 
@@ -140,10 +140,10 @@ body, with no reachability path.
   [FR-107](FR-107-evaluate-state-clauses-at-s6a.md).
 - Harness construction, unwinding and state representation are CG's; IR
   admits the obligation (ADR-023 XC-5, DS-2, DS-3).
-- QSpec owns the claim-form row for a relation's code claim and its Kani
+- FSpec owns the claim-form row for a relation's code claim and its Kani
   counterexample replay (ADR-023 QS-4, QS-6).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-397 (Linear STD-136; ADR-023 QS-4, QS-6).
-- QSpec FR-477 (checked-package step-relation claim body; Linear STD-291).
+- ADR-023. FSpec half: FSpec FR-397 (Linear STD-136; ADR-023 QS-4, QS-6).
+- FSpec FR-477 (checked-package step-relation claim body; Linear STD-291).

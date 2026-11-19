@@ -3,35 +3,35 @@ id: FR-381
 title: "Check protocol captures, activation and compensation recovery at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-113
+  - target: ix://agent-ix/filament-spec-language/FR-113
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-114
+  - target: ix://agent-ix/filament-spec-language/FR-114
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-218
+  - target: ix://agent-ix/filament-spec-language/FR-218
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-308
+  - target: ix://agent-ix/filament-spec-language/FR-308
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-055
+  - target: ix://agent-ix/filament-specification/FR-055
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-056
+  - target: ix://agent-ix/filament-specification/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-057
+  - target: ix://agent-ix/filament-specification/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-058
+  - target: ix://agent-ix/filament-specification/FR-058
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-172
+  - target: ix://agent-ix/filament-specification/FR-172
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-173
+  - target: ix://agent-ix/filament-specification/FR-173
     type: depends_on
 ---
 # FR-381: Check protocol captures, activation and compensation recovery at S3
@@ -164,7 +164,7 @@ reading stage may not read, and `unbound` for a name nothing declares.
 
 A `compensate N for E as (forward: T) by R on M::X::op using A clock "c" {...}`
 template registers one obligation for each occurrence of the forward `effect`
-node `E` (QSpec FR-056).
+node `E` (FSpec FR-056).
 
 - S3 SHALL check that `E` names an `effect` node and that `commit` names a
   `commit` node as FR-113's site table states, and SHALL refuse a template whose
@@ -191,7 +191,7 @@ node `E` (QSpec FR-056).
   resolves a declared type, check the guard as a Boolean over the names its
   stage may read, and check the activation captures in source order.
 - `attempts n of T`: `n` is the maximum number of attempts, counting the
-  initial attempt (QSpec FR-058). S3 SHALL refuse an `n` of zero with
+  initial attempt (FSpec FR-058). S3 SHALL refuse an `n` of zero with
   `ill_typed`/`type-mismatch` at the count, retaining `compensation`, `member`
   (`attempts`), `expected` (a count of at least one) and `actual` (`0`). S3 SHALL admit every
   `n` from one to the greatest `u64` and SHALL record it exactly.
@@ -216,12 +216,12 @@ node `E` (QSpec FR-056).
 
 - S3 SHALL check the `retry` relation as a Boolean through the clause checker
   over the names its stage may read, refusing a non-Boolean with `ill_typed`/
-  `non-boolean-root` at the relation. The relation is total (QSpec FR-058): S3
+  `non-boolean-root` at the relation. The relation is total (FSpec FR-058): S3
   SHALL refuse an operation with an undischarged definedness obligation with the
   `undefined_expression` cause FR-104 gives, at the operation. The relation
   constrains a retry and never forces one.
 - S3 SHALL type the `=` and `!=` of a retry relation and of a recovery
-  predicate by the expected-type rule FR-104 states for every equality (QSpec
+  predicate by the expected-type rule FR-104 states for every equality (FSpec
   FR-149): an `Int[lo,hi]` operand types a binary `+`, `-` or `*` operand on
   the other side `Int[lo,hi]` with a range obligation, an unproved obligation
   refusing `undefined_expression`/`unproved-range` at the arithmetic node, and
@@ -229,7 +229,7 @@ node `E` (QSpec FR-056).
   operands is an integer ordering and is accepted.
 - A `commit` member is either `commit never` or `commit N` naming a `commit`
   node. S3 SHALL record `Never` for the first, which selects no earlier cutoff,
-  and `Node(id)` for the second (QSpec FR-057). S3 SHALL refuse a `commit` node
+  and `Node(id)` for the second (FSpec FR-057). S3 SHALL refuse a `commit` node
   that dominates the forward effect. S3 decides dominance on the control tree
   only, which is conservative and sound: a commit dominates an effect when a
   `sequence` holds, in order, a child that passes the commit and a later child
@@ -251,7 +251,7 @@ node `E` (QSpec FR-056).
   does not dominate the effect even when a `send` and a `receive` order them
   across the branches. Deciding dominance through such cross-branch causal
   edges is a later extension, and until then S3 admits that commit. The refusal is
-  `unsupported_construct`/`declaration-form` at the commit anchor, as QSpec
+  `unsupported_construct`/`declaration-form` at the commit anchor, as FSpec
   FR-052 refuses a structurally prohibited form, retaining the selected
   protocol profile that prohibits it, `compensation`, `member` (`commit`),
   `commit`, `effect` and `reason` (`commit-precedes-effect`). A commit that
@@ -302,6 +302,6 @@ node `E` (QSpec FR-056).
   (anchors, kinds, no shadowing), [FR-114](FR-114-bind-a-protocol-attempt-to-its-operation-frame.md)
   (operation anchor and frame), [FR-104](FR-104-check-state-clauses.md) (the
   clause checker, definedness).
-- QSpec owns the grammar and meaning of every construct: QSpec FR-055,
+- FSpec owns the grammar and meaning of every construct: FSpec FR-055,
   FR-056, FR-057, FR-058, FR-172, FR-173 and the choreography surface contract
   (its compensation rows).

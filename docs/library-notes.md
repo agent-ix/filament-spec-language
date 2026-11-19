@@ -1,6 +1,6 @@
 # Library notes
 
-Reference details for calling QSL as a Rust library. The
+Reference details for calling FSL as a Rust library. The
 [README](../README.md) explains the language and the command line.
 
 ## Source identity and locations
@@ -31,7 +31,7 @@ a successful partial unit.
 
 ## Formatting
 
-- `qsl_cst::format::format(unit)` keeps the default 1 MiB output ceiling.
+- `fsl_cst::format::format(unit)` keeps the default 1 MiB output ceiling.
 - `format_with_limit(unit, output_bytes)` replaces that ceiling. The value is
   used as given, including zero and values above the default.
 - `format_with_limits` takes a typed `FormatLimits`.
@@ -44,7 +44,7 @@ a successful partial unit.
 
 ## Rules from Markdown (`quire-extraction`)
 
-`qsl_source::extract(original, context, selection, limits)` in the `qsl-source`
+`fsl_source::extract(original, context, selection, limits)` in the `fsl-source`
 crate calls quire-rs's extractor and returns an `ExtractedSource`, which holds:
 
 - the verified rule body in its document source map;
@@ -55,23 +55,23 @@ It takes these inputs:
 
 - `original`: an immutable `Source`.
 - `context`: a loaded Quire `SemanticContext`. The `run` command builds it with
-  `qsl_source::clause_context`.
+  `fsl_source::clause_context`.
 - `selection`: a `Selection` naming the authored clause id, the package and the
   body identity.
 
 The adapter checks source coordinates and exact bytes before it builds the
 source map, including the final LF that Quire omits on CRLF input. It does not
 compile. To run the verified body through the spine, pass the
-`ExtractedSource` as `qsl_replay::spine::ClauseRunSource::Extracted` and call
-`qsl_replay::spine::run_clause` with `qsl-replay/quire-extraction` enabled.
+`ExtractedSource` as `fsl_replay::spine::ClauseRunSource::Extracted` and call
+`fsl_replay::spine::run_clause` with `fsl-replay/quire-extraction` enabled.
 The runner compiles the body under its own identity; the source map remains
 available on the `ExtractedSource`. Input is bounded to 1 MiB and 4096 lines.
 
-The tests in [`qsl-source/tests/it/quire_source.rs`](../qsl-source/tests/it/quire_source.rs)
+The tests in [`fsl-source/tests/it/quire_source.rs`](../fsl-source/tests/it/quire_source.rs)
 show how the context and the selection are built. Run them with:
 
 ```sh
-cargo test -p qsl-source --features quire-extraction
+cargo test -p fsl-source --features quire-extraction
 ```
 
 ## Further reference

@@ -3,10 +3,10 @@ id: FR-038
 title: "Encode compiled protocol numbers without rounding"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-004, type: implements }
-  - { target: ix://agent-ix/quire-specification/FR-039, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-protocol/FR-001, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-004, type: implements }
+  - { target: ix://agent-ix/filament-specification/FR-039, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-protocol/FR-001, type: references }
 ---
 # FR-038: Encode compiled protocol numbers without rounding
 
@@ -24,13 +24,13 @@ and field-specific bounds remain separate admission requirements; fitting these
 wire components does not admit a value under an arbitrary model type.
 
 This chooses the representation required by compiler #40 and the accepted
-[consumer numeric contract](https://github.com/agent-ix/quire-protocol/pull/2).
+[consumer numeric contract](https://github.com/agent-ix/filament-protocol/pull/2).
 All native numeric values use strings, including integers inside the JSON safe
 range. Structural counts/indices are separate fields with their own safe bounds.
 
 ## Outputs
 
-The numeric profile is `quire.protocol.numeric/1`. Its two closed object shapes
+The numeric profile is `filament.protocol.numeric/1`. Its two closed object shapes
 are `{ "kind": "integer", "decimal": "-17" }` and
 `{ "kind": "rational", "numerator": "1", "denominator": "3" }`.
 Member order in these illustrative objects is not a canonicalization rule;
@@ -80,5 +80,5 @@ original Serde cause; it does not become an admitted native number.
 [US-004](../usecase/US-004-reuse-existing-toolchain.md) owns the consumer need.
 The enclosing compiled artifact, exact selectors, source correspondence and
 producer/consumer integration remain the full scope of
-[compiler #40](https://github.com/agent-ix/quire-spec-language/issues/40).
+[compiler #40](https://github.com/agent-ix/filament-spec-language/issues/40).
 This numeric component alone does not complete that delivery.

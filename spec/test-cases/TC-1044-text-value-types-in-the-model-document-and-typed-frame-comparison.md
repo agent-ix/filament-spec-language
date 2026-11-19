@@ -3,9 +3,9 @@ id: TC-1044
 title: "A Text value type is declared in the model document, bounds its values and is compared by its declared type"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-1044: A Text value type is declared in the model document, bounds its values and is compared by its declared type
@@ -18,7 +18,7 @@ surface decides on the retained sequence, and the frame check's comparison of
 each declared type by that type's own equality.
 
 Scope: FR-056-AC-37, FR-056-AC-38, FR-056-AC-39, FR-106-AC-40 and FR-106-AC-49. The bare
-`ix://quire/native/Text` `typeRef` rows stay with TC-897 step 3, which
+`ix://filament/native/Text` `typeRef` rows stay with TC-897 step 3, which
 depends on the semantic-IR validator's native vocabulary naming `Text`; this
 case never uses that spelling.
 
@@ -60,7 +60,7 @@ are decided by the validator or the reader without it and are reachable today.
    `unicode-scalars`, `nfd`, `nfkc`, `nfkd` and `binary-utf8`; with the
    constraints in the order `Cfmt`, `Cmax`, `Cmin`; with `minLength` `0` and
    `maxLength` `0`; with `3` and `3`. Declare `Tag` with `target`
-   `ix://quire/native/String` and no constraint, and a field `tag: Tag`.
+   `ix://filament/native/String` and no constraint, and a field `tag: Tag`.
 2. Mutate `Title` one row at a time, each from the base: (a) add the member
    `"textProfile":"nfc"`; (b) add a constraint `{"appliesTo":"ix://P/Title",
    "diagnosticCode":"K.TITLE_PATTERN","identity":"ix://P/constraint/Title/
@@ -72,7 +72,7 @@ are decided by the validator or the reader without it and are reachable today.
    with the profile `nfx`; (l) set `minLength` `-1`; (m) set `maxLength`
    `1.5`; (n) set `Cfmt`'s name to `text-profile:`. Separately, give the field
    `label` the member `"textProfile":"nfc"` with `typeRef`
-   `ix://quire/native/String` and `Title` unchanged.
+   `ix://filament/native/String` and `Title` unchanged.
 3. Admit a snapshot with `child.title` `Text[1, 8; nfc]` holding eight pairs
    of U+0065 U+0301 (sixteen supplied scalars) and then nine pairs, and an
    empty text. Replay a function with one parameter typed `Title`, written as

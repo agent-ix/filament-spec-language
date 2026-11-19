@@ -3,7 +3,7 @@ id: TC-709
 title: "Timed runs sample with exact rational delays, measure timed events and replay"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-254
+  - target: ix://agent-ix/filament-spec-language/FR-254
     type: verifies
 ---
 # TC-709: Timed runs sample with exact rational delays, measure timed events and replay

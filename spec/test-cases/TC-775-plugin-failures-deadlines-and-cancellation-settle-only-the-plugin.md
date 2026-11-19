@@ -3,14 +3,14 @@ id: TC-775
 title: "Plugin-run failures settle as typed records of the plugin's own items"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-291
+  - target: ix://agent-ix/filament-spec-language/FR-291
     type: verifies
 ---
 # TC-775: Plugin-run failures settle as typed records of the plugin's own items
 
 ## Description
 
-Verify the terminal records, categories and exit codes QSL gives each QSpec FR-462 plugin-run settlement, and that one plugin's failure leaves other providers' records unchanged.
+Verify the terminal records, categories and exit codes FSL gives each FSpec FR-462 plugin-run settlement, and that one plugin's failure leaves other providers' records unchanged.
 
 Scope: FR-291-AC-1 to FR-291-AC-3.
 

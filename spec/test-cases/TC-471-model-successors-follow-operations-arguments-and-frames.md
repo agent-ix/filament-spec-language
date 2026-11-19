@@ -3,7 +3,7 @@ id: TC-471
 title: "Model successors follow operations, arguments, frames and contracts"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
 ---
 # TC-471: Model successors follow operations, arguments, frames and contracts
@@ -18,7 +18,7 @@ Scope: FR-120-AC-1, FR-120-AC-2, FR-120-AC-3, FR-120-AC-4, FR-120-AC-27.
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/`. Build FR-120's `test/counters`
+Integration tests in `fsl-eval/tests/it/`. Build FR-120's `test/counters`
 domain package (package identity `test/counters`, nodes
 `test/counters/Counter`, `test/counters/Counter/value`, `…/label`, `…/next`,
 `test/counters/counters` and `test/counters/Counter/<operation>`) as a

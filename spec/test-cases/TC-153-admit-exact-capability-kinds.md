@@ -3,7 +3,7 @@ id: TC-153
 title: "Admit exactly the twelve capability kinds and refuse every other label"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-153: Admit exactly the twelve capability kinds and refuse every other label
@@ -11,14 +11,14 @@ relationships:
 ## Description
 
 Verify that the canonical `Capability` value type admits exactly the twelve labels
-of FR-057's `quire.capability-kind/v1` table, compares kinds by label, keeps
+of FR-057's `filament.capability-kind/v1` table, compares kinds by label, keeps
 every requested pair at its index, refuses an absent or unknown label without
 mapping it, and that each claim form requests its FR-290 kind. Scope:
 FR-057-AC-1, FR-057-AC-2, FR-057-AC-4, FR-057-AC-7 and FR-057-AC-10.
 
 ## Test Procedure
 
-1. Hold FR-057's v1 table (quire-specification FR-290 at the revision FR-057
+1. Hold FR-057's v1 table (filament-specification FR-290 at the revision FR-057
    names) as a test constant. Parse each label, serialize the result, and compare the admitted
    set with the constant's set.
 2. Submit a requested pair with no label, then one whose label is JSON `null`.
@@ -31,7 +31,7 @@ FR-057-AC-1, FR-057-AC-2, FR-057-AC-4, FR-057-AC-7 and FR-057-AC-10.
 5. Build two sets holding the same kinds in different orders and compare them.
    Permute three requested pairs over different kinds. Submit two pairs with the
    same declaration and kind and different `required` flags.
-6. Scan the QSL source tree for types that parse or emit an FR-290 label.
+6. Scan the FSL source tree for types that parse or emit an FR-290 label.
 7. Check one of each claim form in FR-057's claim-form table: a function
    application clause, a clause with a nested `case` expression and function
    application, an operation precondition, postcondition and invariant, a frame

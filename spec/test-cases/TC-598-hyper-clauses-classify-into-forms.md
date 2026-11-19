@@ -3,7 +3,7 @@ id: TC-598
 title: "Hyper and relation clauses classify into HP-1 to HP-6 and HP-4 settles unsupported"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-173
+  - target: ix://agent-ix/filament-spec-language/FR-173
     type: verifies
 ---
 # TC-598: Hyper and relation clauses classify into HP-1 to HP-6 and HP-4 settles unsupported

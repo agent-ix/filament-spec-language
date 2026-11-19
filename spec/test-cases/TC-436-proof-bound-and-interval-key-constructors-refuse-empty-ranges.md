@@ -3,7 +3,7 @@ id: TC-436
 title: "Proof-bound and interval-key constructors refuse empty ranges, and domain keys order by node then path"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-436: Proof-bound and interval-key constructors refuse empty ranges, and domain keys order by node then path

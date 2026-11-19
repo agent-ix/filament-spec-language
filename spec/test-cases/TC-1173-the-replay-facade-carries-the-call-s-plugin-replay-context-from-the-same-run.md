@@ -3,7 +3,7 @@ id: TC-1173
 title: "The replay facade carries the call's plugin replay context from the same run"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-404
+  - target: ix://agent-ix/filament-spec-language/FR-404
     type: verifies
 ---
 # TC-1173: The replay facade carries the call's plugin replay context from the same run
@@ -14,16 +14,16 @@ Verify that `run_with_replay_context` returns, with the outcome and members
 of `run_with_requirements`, a replay context built from the same compile and
 limits, that the context builds requests only for the call's own items and
 only with the run's `package_id`, and that a consumer obtains it through the
-`qsl_replay` root alone. Scope: FR-404-AC-1 to FR-404-AC-9.
+`fsl_replay` root alone. Scope: FR-404-AC-1 to FR-404-AC-9.
 
 ## Test Procedure
 
-Test layer: integration tests in `qsl-replay/tests`, beside
+Test layer: integration tests in `fsl-replay/tests`, beside
 `call_requirements_facade.rs` and `call_requirements_root_only.rs` (TC-1089).
-The facade calls under test reach only the `qsl_replay` root. The independent
+The facade calls under test reach only the `fsl_replay` root. The independent
 oracle (a `PluginReplayContext` built by `PluginReplayContext::new` from a
 separate `parse`, `select`, `check` and `package` of the same inputs, and the
-items `items_from_requirements` writes) is read through `qsl_replay::spine`
+items `items_from_requirements` writes) is read through `fsl_replay::spine`
 inside the test, as `call_requirements_facade.rs` reads the spine's graph;
 consumer code does not. Fixtures R and R2 and the plugin `acme` are those of
 FR-404. A request names its member by the run's `package_id` and the member's
@@ -56,8 +56,8 @@ request index unless a step says otherwise.
    cancelled handle; run `run_with_requirements` over the same inputs with
    `CallerLimits::default().spine`.
 9. In a root-only test (like `call_requirements_root_only.rs`), run step 1,
-   build step 2's request and settle a step 4 refusal naming only `qsl_replay`
-   root paths and `qsl_route::items_from_requirements`; run FR-060's T12-A
+   build step 2's request and settle a step 4 refusal naming only `fsl_replay`
+   root paths and `fsl_route::items_from_requirements`; run FR-060's T12-A
    rule over that test. Add one `compile_fail` doctest for each FR-404-AC-9
    case: a `CallReplayContext` struct literal, `CallReplayContext::new()`,
    `CallReplayContext::default()`,

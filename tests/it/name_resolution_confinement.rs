@@ -4,8 +4,8 @@
 //! the one documented exception being the `replay` facade's own E9 lookup.
 //!
 //! **Scope.** This walks every function and method definition in this
-//! crate's own `src/` and in `qsl-semantics/src/`, outside
-//! `qsl-semantics/src/check/`, and fails on any whose signature
+//! crate's own `src/` and in `fsl-semantics/src/`, outside
+//! `fsl-semantics/src/check/`, and fails on any whose signature
 //! both (a) takes a parameter naming `QualifiedName` and (b) returns a type naming `NodeKey`, `DeclarationKey`
 //! or `ExportIdentity` -- exactly AC-5's own literal criterion for that
 //! half, "a function ... accepts a `QualifiedName` ... and returns a node id
@@ -87,7 +87,7 @@ fn source_files(workspace_root: &Path, exclude_prefixes: &[&str]) -> Vec<String>
 
 /// The workspace members this scan leaves out: `xtask` and
 /// `tools/arch-lint` are build tooling, not on the stage DAG (ADR-011
-/// §6.2), so TC-251's rule about QSL's own name resolution does not reach
+/// §6.2), so TC-251's rule about FSL's own name resolution does not reach
 /// them.
 const UNSCANNED_MEMBERS: &[&str] = &["xtask", "tools/arch-lint"];
 
@@ -195,7 +195,7 @@ impl<'ast> Visit<'ast> for SignatureScanner {
 fn no_signature_outside_check_or_replay_resolves_a_qualified_name_to_an_identity() {
     let root = workspace_root();
     let mut violations = Vec::new();
-    for file in source_files(&root, &["qsl-semantics/src/check/", "qsl-replay/src/"]) {
+    for file in source_files(&root, &["fsl-semantics/src/check/", "fsl-replay/src/"]) {
         let path = root.join(&file);
         let source = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("{file}: failed to read: {error}"));
@@ -237,7 +237,7 @@ impl<'ast> Visit<'ast> for DefinedNames {
 /// by directory: `crate::check::CheckedGraph::callable`/`function_identity`
 /// are the checker's own name -> node id resolution functions R-06/O-11
 /// name (reached from outside `check` only through `CheckedPackage::call`'s
-/// (`qsl_package::CheckedPackage`, via `CheckedPackageEvaluation`) typed
+/// (`fsl_package::CheckedPackage`, via `CheckedPackageEvaluation`) typed
 /// `QualifiedName` lookup, itself inside the check stage's own resolution path per that
 /// method's doc). This asserts they still exist under `check` as real
 /// parsed function/method definitions (not a text search that a comment or
@@ -247,15 +247,15 @@ impl<'ast> Visit<'ast> for DefinedNames {
 #[trace("TC-251", "FR-088-AC-5")]
 #[test]
 fn the_checker_own_name_resolution_functions_still_live_under_check() {
-    let path = workspace_root().join("qsl-semantics/src/check/mod.rs");
-    let source = std::fs::read_to_string(&path).expect("qsl-semantics/src/check/mod.rs reads");
-    let parsed = syn::parse_file(&source).expect("qsl-semantics/src/check/mod.rs parses as Rust");
+    let path = workspace_root().join("fsl-semantics/src/check/mod.rs");
+    let source = std::fs::read_to_string(&path).expect("fsl-semantics/src/check/mod.rs reads");
+    let parsed = syn::parse_file(&source).expect("fsl-semantics/src/check/mod.rs parses as Rust");
     let mut names = DefinedNames(BTreeSet::new());
     names.visit_file(&parsed);
     for function_name in ["callable", "function_identity", "function"] {
         assert!(
             names.0.contains(function_name),
-            "expected a defined `fn {function_name}` in qsl-semantics/src/check/mod.rs -- \
+            "expected a defined `fn {function_name}` in fsl-semantics/src/check/mod.rs -- \
              has the checker's own name resolution moved?"
         );
     }

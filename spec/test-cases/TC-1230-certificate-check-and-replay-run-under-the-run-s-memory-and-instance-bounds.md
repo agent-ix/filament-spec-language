@@ -3,11 +3,11 @@ id: TC-1230
 title: "The certificate check and replay run under the run's memory and instance bounds"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-338
+  - target: ix://agent-ix/filament-spec-language/FR-338
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-227
+  - target: ix://agent-ix/filament-spec-language/FR-227
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-217
+  - target: ix://agent-ix/filament-spec-language/FR-217
     type: verifies
 ---
 # TC-1230: The certificate check and replay run under the run's memory and instance bounds

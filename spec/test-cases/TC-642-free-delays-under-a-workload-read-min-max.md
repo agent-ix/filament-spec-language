@@ -3,7 +3,7 @@ id: TC-642
 title: "A delay no distribution gives is decided by its minimum or maximum under a workload"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: verifies
 ---
 # TC-642: A delay no distribution gives is decided by its minimum or maximum under a workload

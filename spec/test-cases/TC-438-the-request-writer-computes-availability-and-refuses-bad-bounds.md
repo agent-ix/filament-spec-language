@@ -3,14 +3,14 @@ id: TC-438
 title: "The request writer computes the available finite bound, writes a bounded request as its own item, and refuses bad bounds before writing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: verifies
 ---
 # TC-438: The request writer computes the available finite bound, writes a bounded request as its own item, and refuses bad bounds before writing
 
 ## Description
 
-Verify the O-20 request writer (`qsl_route::request`). Scope: FR-097-AC-3, FR-097-AC-4
+Verify the O-20 request writer (`fsl_route::request`). Scope: FR-097-AC-3, FR-097-AC-4
 FR-097-AC-9 (kind emission) and FR-097-AC-10 (temporal subject proof bounds).
 
 ## Test Procedure

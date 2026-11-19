@@ -5,24 +5,24 @@ title: "Audit unsafe code in the evaluator closure against a third-party unsafe 
 type: NFR
 quality_attribute: compliance
 relationships:
-  - target: ix://agent-ix/quire-spec-language/AD-001
+  - target: ix://agent-ix/filament-spec-language/AD-001
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-400
+  - target: ix://agent-ix/filament-spec-language/FR-400
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-401
+  - target: ix://agent-ix/filament-spec-language/FR-401
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-403
+  - target: ix://agent-ix/filament-spec-language/FR-403
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/NFR-015
+  - target: ix://agent-ix/filament-spec-language/NFR-015
     type: references
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: references
 ---
 # NFR-016: Audit unsafe code in the evaluator closure against a third-party unsafe inventory
 
 ## Statement
 
-The `make audit-unsafe` gate in `agent-ix/quire-eval` shall fail when a
+The `make audit-unsafe` gate in `agent-ix/filament-eval` shall fail when a
 first-party crate in the evaluator closure has unsafe code in its shipped
 source or does not declare `unsafe_code` forbidden, or when a third-party
 crate in the closure that contains unsafe code does not have exactly one
@@ -37,42 +37,42 @@ resolved, what counts as unsafe code in a first-party and in a third-party
 crate, the first-party rule, the inventory of third-party unsafe code and
 how an entry is accepted, the conditions that fail the gate, and where the
 gate runs. S8's dependency half (allowed sources, licences and advisories)
-is `agent-ix/quire-eval`'s existing `make deny` gate over its `deny.toml`;
+is `agent-ix/filament-eval`'s existing `make deny` gate over its `deny.toml`;
 this requirement does not restate it.
 
 ### The evaluator closure
 
-The evaluator closure is the set of packages Cargo resolves for `quire-eval`
-alone, including `quire-eval` itself, as `cargo tree --locked -p quire-eval
+The evaluator closure is the set of packages Cargo resolves for `filament-eval`
+alone, including `filament-eval` itself, as `cargo tree --locked -p filament-eval
 -e normal,no-proc-macro --target thumbv7em-none-eabi` reports it in the
-`agent-ix/quire-eval` workspace with that repository's `Cargo.lock`. That
-resolution selects features for `quire-eval` alone, so a feature another
+`agent-ix/filament-eval` workspace with that repository's `Cargo.lock`. That
+resolution selects features for `filament-eval` alone, so a feature another
 workspace member enables on a shared crate adds no package to the closure.
-`quire-eval` has no `std` feature
-([FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md))
+`filament-eval` has no `std` feature
+([FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md))
 and no feature that adds or removes the evaluator
-([FR-403](../functional/FR-403-implement-the-no-std-evaluator-in-quire-eval.md)),
+([FR-403](../functional/FR-403-implement-the-no-std-evaluator-in-filament-eval.md)),
 and it takes each dependency without `std`, so this is the closure that links
-into the `no_std` evaluator. It contains `quire-checked`
+into the `no_std` evaluator. It contains `filament-checked`
 ([FR-400](../functional/FR-400-separate-checked-terms-from-the-checker.md)),
-the shared leaves `quire-semantic-value`, `quire-exact`, `quire-walk` and
+the shared leaves `filament-semantic-value`, `filament-exact`, `filament-walk` and
 `quire-canonical`, and every third-party crate those reach.
 
 These are outside the closure:
 
-- a proc-macro crate, and a package reached from `quire-eval` only through
+- a proc-macro crate, and a package reached from `filament-eval` only through
   a proc-macro crate, because it runs in the compiler on the build host and
   links into no evaluator artifact;
 - build dependencies and dev-dependencies;
-- `quire-eval-corpus`, the checker and every other workspace member that
-  `quire-eval` does not depend on;
-- the QSL repository's crates: QSL's host builds unify `std` features into
+- `filament-eval-corpus`, the checker and every other workspace member that
+  `filament-eval` does not depend on;
+- the FSL repository's crates: FSL's host builds unify `std` features into
   the shared leaves (FR-403), so they do not build this closure.
 
 ### First-party and third-party crates
 
 A first-party crate is a closure package whose source is a member of the
-`agent-ix/quire-eval` workspace or a git repository under
+`agent-ix/filament-eval` workspace or a git repository under
 `https://github.com/agent-ix/`. Every other closure package is a third-party
 crate; the repository's `deny.toml` admits no source besides crates.io and
 those git repositories.
@@ -138,7 +138,7 @@ no unsafe code.
 ### The inventory
 
 The inventory is the file `unsafe-inventory.toml` at the root of
-`agent-ix/quire-eval`. It holds one `[[crate]]` table per third-party crate
+`agent-ix/filament-eval`. It holds one `[[crate]]` table per third-party crate
 in the closure that contains unsafe code, ordered by `name`, with exactly
 these keys:
 
@@ -156,20 +156,20 @@ no inventory change. A change that brings a new unsafe-bearing crate into
 the closure, or adds unsafe code to a crate that had none, fails until the
 same change adds its entry.
 
-A QSL maintainer accepts an entry by approving the change that adds it; the
+An FSL maintainer accepts an entry by approving the change that adds it; the
 change's review is the acceptance record, and the entry carries no reviewer,
 date or approval field.
 
 ### Gate
 
-`make audit-unsafe` in `agent-ix/quire-eval` SHALL run the checker, a `std`
+`make audit-unsafe` in `agent-ix/filament-eval` SHALL run the checker, a `std`
 binary crate of the workspace outside the closure that itself forbids unsafe
 code. The checker takes four inputs:
 
 1. **The closure**, from the `cargo tree` resolution above, in a form that
    keeps each package's dependency edges (`--prefix depth`), so the checker
    can name the first-party crates that reach a third-party crate.
-2. **The scan report**, from `cargo-geiger` run on the package `quire-eval`
+2. **The scan report**, from `cargo-geiger` run on the package `filament-eval`
    through its own manifest given by absolute path (the repository root is a
    virtual manifest), for the target `thumbv7em-none-eabi`, with `--locked`
    and the JSON report format. The report's `packages`,
@@ -213,12 +213,12 @@ target SHALL fail when any of these holds:
    a finding.
 
 The target passes only when the checker reports no finding. `make ci` in
-`agent-ix/quire-eval` SHALL list `audit-unsafe` among its prerequisites. That
-repository's `make ci` is its CI gate; QSL's `make ci` runs no copy of it.
+`agent-ix/filament-eval` SHALL list `audit-unsafe` among its prerequisites. That
+repository's `make ci` is its CI gate; FSL's `make ci` runs no copy of it.
 
 ### Ownership
 
-The gate is QSL-owned and runs in `agent-ix/quire-eval`, the QSL-owned
+The gate is FSL-owned and runs in `agent-ix/filament-eval`, the FSL-owned
 repository that holds the closure's root (FR-401). It reads the shared
 leaves' manifests and sources as closure members and adds no gate to their
 repositories. RT and CG decide the unsafe policy for their own targets.
@@ -242,9 +242,9 @@ those files; the checker's own parse of the shipped module tree can.
 Third-party crates are judged on every file because the gate does not
 review their layout.
 
-Running in `agent-ix/quire-eval` places the gate where the closure is
+Running in `agent-ix/filament-eval` places the gate where the closure is
 resolved: that repository's lockfile fixes the shared leaves' revisions, and
-the `-p quire-eval` resolution selects their `no_std` features, which QSL's
+the `-p filament-eval` resolution selects their `no_std` features, which FSL's
 workspace cannot reproduce.
 
 ## Measurement and Evaluation
@@ -258,19 +258,19 @@ workspace cannot reproduce.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| NFR-016-AC-1 | `make audit-unsafe` in `agent-ix/quire-eval` runs the checker over the closure `cargo tree --locked -p quire-eval -e normal,no-proc-macro --target thumbv7em-none-eabi` reports and a `cargo-geiger` JSON scan of `quire-eval` through its absolute manifest path for that target with `--locked`, and passes on the repository's main branch; `make ci` lists `audit-unsafe` as a prerequisite; and `unsafe-inventory.toml` holds an entry for each third-party closure crate the scan reports with unsafe code and for no other crate. | Test (TC-1130) |
+| NFR-016-AC-1 | `make audit-unsafe` in `agent-ix/filament-eval` runs the checker over the closure `cargo tree --locked -p filament-eval -e normal,no-proc-macro --target thumbv7em-none-eabi` reports and a `cargo-geiger` JSON scan of `filament-eval` through its absolute manifest path for that target with `--locked`, and passes on the repository's main branch; `make ci` lists `audit-unsafe` as a prerequisite; and `unsafe-inventory.toml` holds an entry for each third-party closure crate the scan reports with unsafe code and for no other crate. | Test (TC-1130) |
 | NFR-016-AC-2 | Every first-party crate in the closure declares `unsafe_code` at level `forbid` in a place the first-party rule lists. Over fixture crates, the checker accepts a crate's own `[lints.rust]` forbid, its table form with a `priority`, `[lints] workspace = true` under a git-checkout workspace root whose `[workspace.lints.rust]` forbids it, and `workspace = true` under a root that does not, with `#![forbid(unsafe_code)]` at the crate root; it reports `first-party-not-forbidden` for a crate declaring `unsafe_code = "deny"` only and for a crate declaring nothing, and fails. | Test (TC-1131) |
-| NFR-016-AC-3 | Over fixture crates that declare `forbid`, the checker reports `first-party-unsafe` naming the crate and file for an unsafe block in a module the library root declares, in a module declared with `#[path = "gen/raw.rs"]`, in a file the library root brings in with `include!("gen/table.rs")`, and in a module declared under `#[cfg(any())]`; it reports `unscanned` for a `#[path]` module whose file is missing, and fails; and it reports nothing for an unsafe block in a file under `tests/`. In a scratch copy of `agent-ix/quire-eval`, adding `#[cfg(any())] mod probe;` to `quire-eval`'s library root with `probe.rs` holding `unsafe {}` makes `make audit-unsafe` print `first-party-unsafe quire-eval` and fail. | Test (TC-1131) |
-| NFR-016-AC-4 | Given a fixture closure in which `quire-exact` reaches a third-party crate whose scan reports unsafe code and the inventory has no entry for it, the checker reports `unlisted-unsafe` naming the crate and `quire-exact` and fails; adding a well-formed entry for it makes the same fixture pass. | Test (TC-1131) |
+| NFR-016-AC-3 | Over fixture crates that declare `forbid`, the checker reports `first-party-unsafe` naming the crate and file for an unsafe block in a module the library root declares, in a module declared with `#[path = "gen/raw.rs"]`, in a file the library root brings in with `include!("gen/table.rs")`, and in a module declared under `#[cfg(any())]`; it reports `unscanned` for a `#[path]` module whose file is missing, and fails; and it reports nothing for an unsafe block in a file under `tests/`. In a scratch copy of `agent-ix/filament-eval`, adding `#[cfg(any())] mod probe;` to `filament-eval`'s library root with `probe.rs` holding `unsafe {}` makes `make audit-unsafe` print `first-party-unsafe filament-eval` and fail. | Test (TC-1131) |
+| NFR-016-AC-4 | Given a fixture closure in which `filament-exact` reaches a third-party crate whose scan reports unsafe code and the inventory has no entry for it, the checker reports `unlisted-unsafe` naming the crate and `filament-exact` and fails; adding a well-formed entry for it makes the same fixture pass. | Test (TC-1131) |
 | NFR-016-AC-5 | Given an inventory entry for a crate that is not in the fixture closure, and separately for a closure crate whose scan reports no unsafe code, the checker reports `stale-entry` naming the crate and fails. | Test (TC-1131) |
-| NFR-016-AC-6 | Given an entry with a `version` key, an entry with a `reached_through` key, an entry with an empty `acceptance`, two entries with the same `name`, two entries out of `name` order, and an entry naming the first-party crate `quire-checked`, the checker reports `malformed-entry` for each and fails. | Test (TC-1131) |
+| NFR-016-AC-6 | Given an entry with a `version` key, an entry with a `reached_through` key, an entry with an empty `acceptance`, two entries with the same `name`, two entries out of `name` order, and an entry naming the first-party crate `filament-checked`, the checker reports `malformed-entry` for each and fails. | Test (TC-1131) |
 | NFR-016-AC-7 | Given a fixture in which unsafe code is reported only in a proc-macro crate and in a crate reached only through it, and that crate is absent from the closure, the checker reports no finding and requires no entry, and an entry for that proc-macro crate reports `stale-entry`. Given a scan that lists a closure package under `packages_without_metrics`, and separately a scan whose `packages` lacks a closure package, the checker reports `unscanned` naming it and fails. A scan listing a build-script output file under `used_but_not_scanned_files` yields no finding. | Test (TC-1131) |
 | NFR-016-AC-8 | With `cargo-geiger` absent from `PATH`, `make audit-unsafe` exits non-zero and prints the install command; the Makefile, the checker's command line and its environment offer no setting that skips the gate, a crate or a finding. | Test (TC-1130) and Inspection |
-| NFR-016-AC-9 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement: no `sha2` dependency enters a QSL crate's list. | Test, retired |
+| NFR-016-AC-9 | **RETIRED (source-byte integrity removed).** Withdrawn with no replacement: no `sha2` dependency enters an FSL crate's list. | Test, retired |
 
 ## Verification
 
-TC-1130 runs the gate in `agent-ix/quire-eval`: the real closure, the real
+TC-1130 runs the gate in `agent-ix/filament-eval`: the real closure, the real
 inventory, the `make ci` wiring and the missing-tool failure. TC-1131 runs
 the checker's own tests over fixtures, one per finding kind and declaration
 form, plus the scratch-copy probe module. Rust tests carry
@@ -281,10 +281,10 @@ form, plus the scratch-copy probe module. Rust tests carry
 - [AD-001](../assurance/AD-001-shared-evaluation-core-interface.md) slice S8
   (IR-592).
 - [FR-400](../functional/FR-400-separate-checked-terms-from-the-checker.md)
-  and [FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-quire-eval-leaf.md):
-  `quire-checked` and `quire-eval`, their repository and dependency sets.
-- [FR-403](../functional/FR-403-implement-the-no-std-evaluator-in-quire-eval.md):
-  the `no_std` evaluator in `quire-eval`, which the gate scans; the gate
+  and [FR-401](../functional/FR-401-host-the-evaluation-interface-in-the-filament-eval-leaf.md):
+  `filament-checked` and `filament-eval`, their repository and dependency sets.
+- [FR-403](../functional/FR-403-implement-the-no-std-evaluator-in-filament-eval.md):
+  the `no_std` evaluator in `filament-eval`, which the gate scans; the gate
   passes only once it exists.
 - [NFR-015](NFR-015-build-evaluator-crates-no-std-behind-a-default-std-feature.md):
   the `thumbv7em-none-eabi` target.

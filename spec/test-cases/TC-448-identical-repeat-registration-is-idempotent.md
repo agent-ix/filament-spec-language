@@ -3,9 +3,9 @@ id: TC-448
 title: "An identical repeat registration is idempotent"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: verifies
 ---
 # TC-448: An identical repeat registration is idempotent
@@ -17,9 +17,9 @@ already holds in every equality-compared descriptor member -- identity,
 provider origin, advertised pairs, retained `domains`, and evidence-kind set --
 is one registration and is never refused. Scope: FR-075-AC-7.
 
-Mirrors quire-specification's TC-282 DB-01 and DB-02 vectors (FR-290-AC-9),
-which state the same rule for QSpec's own registry model; this test case
-verifies it against `qsl-route`'s real `Registry`.
+Mirrors filament-specification's TC-282 DB-01 and DB-02 vectors (FR-290-AC-9),
+which state the same rule for FSpec's own registry model; this test case
+verifies it against `fsl-route`'s real `Registry`.
 
 ## Test Procedure
 

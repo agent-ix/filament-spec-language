@@ -3,7 +3,7 @@ id: TC-409
 title: "An enum value's VariantId is its FR-141 member node key, and its rank orders sets and bags"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-409: An enum value's VariantId is its FR-141 member node key, and its rank orders sets and bags
@@ -11,18 +11,18 @@ relationships:
 ## Description
 
 Verify FR-088-AC-11. A kernel enum value carries its `VariantId` and its
-rank in the QSpec FR-141 canonical member list (ADR-013 O-14, OQ-D and
+rank in the FSpec FR-141 canonical member list (ADR-013 O-14, OQ-D and
 OQ-F rulings). The `VariantId` is the node key over
-`{version: quire.enum-member-node/v1, declaration_node_id, case}`. The rank
+`{version: filament.enum-member-node/v1, declaration_node_id, case}`. The rank
 is the canonical key, so a set visits an ordered enum's values in
 declaration order and an unordered enum's values in case identifier byte
-order (QSpec FR-144 enumeration key row, FR-144-AC-9). Identity and
+order (FSpec FR-144 enumeration key row, FR-144-AC-9). Identity and
 equality use the `VariantId` only, and a rank is a function of its
 `VariantId` through the enum shape. Scope: FR-088-AC-11.
 
 This catches five faults: a `VariantId` minted over a private preimage
 instead of the FR-141 member node key; a set ordered by the `VariantId` key
-rather than its rank (`quire-exact/src/key.rs:103`); an unordered enum ordered by declaration
+rather than its rank (`filament-exact/src/key.rs:103`); an unordered enum ordered by declaration
 position; a rank that disagrees with its `VariantId`; and a declaration key
 accepted as a `VariantId` (ADR-013 C-30).
 
@@ -32,7 +32,7 @@ accepted as a `VariantId` (ADR-013 C-30).
    `ordered enum E { b, a, c }` and read `E`'s node key.
 2. For each case, compute the expected `VariantId` independently: build
    the tuple
-   `{version: quire.enum-member-node/v1, declaration_node_id: E's node key, case}`.
+   `{version: filament.enum-member-node/v1, declaration_node_id: E's node key, case}`.
    Compare it by equality with the `VariantId` C-26 produces for that variant.
 3. Build the kernel values `E::b`, `E::a` and `E::c`, read each rank, and
    form the kernel set `{E::c, E::a, E::b}`. Record the visiting order.
@@ -48,7 +48,7 @@ Tag the test `#[trace("FR-088-AC-11", "TC-409")]`.
 Steps 2 to 6 use retagged existing tests rather than one end-to-end test
 built from the literal `E{b, a, c}` source in this procedure. Step 6 uses a
 declaration-identity change directly rather than a package version bump:
-SR-511 FND-007 found the version-bump framing unsupported by QSpec.
+SR-511 FND-007 found the version-bump framing unsupported by FSpec.
 
 ## Expected Results
 

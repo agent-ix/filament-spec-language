@@ -3,7 +3,7 @@ id: TC-540
 title: "S3 checks a refinement declaration's subjects, population map and object map"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-135
+  - target: ix://agent-ix/filament-spec-language/FR-135
     type: verifies
 ---
 # TC-540: S3 checks a refinement declaration's subjects, population map and object map
@@ -69,7 +69,7 @@ Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
 - Step 7: `unsupported_construct`/`declaration-form` at the alias `Q`; no
   `CheckedRefinement`.
 - Step 8: the rows check; then `unsupported_construct`/`expression-form` at
-  the `protocol` token naming `quire.protocol.complete/v1`.
+  the `protocol` token naming `filament.protocol.complete/v1`.
 - Step 9: the protocol and model subjects of the two headers; `concrete_protocol`
   naming the clause for the first refinement and absent for the second.
 - Step 10: the machine fields check through one `ObjectRow` without a

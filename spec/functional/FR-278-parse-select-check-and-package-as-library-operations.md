@@ -3,30 +3,30 @@ id: FR-278
 title: "Parse, select, check and package as typed library operations"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-015
+  - target: ix://agent-ix/filament-spec-language/ADR-015
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-099
+  - target: ix://agent-ix/filament-spec-language/FR-099
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
 ---
 # FR-278: Parse, select, check and package as typed library operations
 
 ## Description
 
-QSL SHALL expose its front end as four library operations with the FR-275
+FSL SHALL expose its front end as four library operations with the FR-275
 call shape (ADR-029 OP-1):
 
 - `parse` reads source bytes into syntax (S1, S2). It takes the source bytes,
@@ -43,7 +43,7 @@ call shape (ADR-029 OP-1):
   `AdmittedModels`, the dependency input (ADR-015 D-1, FR-099) and the package
   selections (ADR-011 §2.4), and returns `Staged<CheckedPackage>`.
 - `package` emits the checked package (E4). It takes `&CheckedPackage` and
-  returns `Staged<EmittedPackage>`: the `quire.checked-package/v2` bytes with
+  returns `Staged<EmittedPackage>`: the `filament.checked-package/v2` bytes with
   the source provision, keyed by source identity, another party needs to import (I2)
   or replay (E9) the package.
 
@@ -79,7 +79,7 @@ declaration, in declaration order); `StageFailure::Limit` carries them likewise.
   independently of the unit that imports it, so a library's recomputed
   `package_id` does not depend on who imports it.
 - The `package` operation shall emit the `CheckedPackage` as
-  `quire.checked-package/v2` bytes with its source provision.
+  `filament.checked-package/v2` bytes with its source provision.
 - The composition of the four operations over a source shall return the same
   bytes, and for a refused source the same stage and cause code, that FR-027's
   `compile` command writes and reports for that source and inputs.
@@ -88,7 +88,7 @@ declaration, in declaration order); `StageFailure::Limit` carries them likewise.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-278-AC-1 | `parse`, `select`, `check` and `package` composed over `tests/fixtures/spine-compile.native`, over FR-027-AC-9's domain-package request and over FR-027-AC-10's library request each return the bytes FR-027's `compile` command writes for the same source and inputs (FR-027-AC-5, AC-9, AC-10), and QSL's I2 reader reads each back Verified. | Test (TC-759) |
+| FR-278-AC-1 | `parse`, `select`, `check` and `package` composed over `tests/fixtures/spine-compile.native`, over FR-027-AC-9's domain-package request and over FR-027-AC-10's library request each return the bytes FR-027's `compile` command writes for the same source and inputs (FR-027-AC-5, AC-9, AC-10), and FSL's I2 reader reads each back Verified. | Test (TC-759) |
 | FR-278-AC-2 | A source with a syntax error is refused by `parse` with `invalid_syntax`; a `model` declaration naming a document the request does not supply is refused by `select` at the `model` declaration; FR-100-AC-5's `inv` function is refused by `check` with `ill_typed`. Each refusal's stage and cause code equal those FR-027's `compile` command reports for the same source. | Test (TC-759) |
 | FR-278-AC-3 | The `EmittedPackage` from `package` carries a source provision whose identities name every source the package was compiled from, and FR-098's `replay`, given that provision, recompiles the package to an equal package (identity, version, selections and source labels). | Test (TC-759) |
 
@@ -101,9 +101,9 @@ declaration, in declaration order); `StageFailure::Limit` carries them likewise.
 - [FR-027](FR-027-export-compiled-native-package.md): the command encoding.
 - [FR-056](FR-056-admit-domain-package-model-declarations.md): domain package admission.
 - [FR-099](FR-099-compile-against-supplied-libraries.md): supplied libraries.
-- QSpec FR-300: the `parse`, `select_model` and `check` operations.
+- FSpec FR-300: the `parse`, `select_model` and `check` operations.
 
 ## References
 
 - QSL-393 (V1-A06): typed library APIs.
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

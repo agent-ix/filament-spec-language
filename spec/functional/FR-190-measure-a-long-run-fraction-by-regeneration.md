@@ -3,13 +3,13 @@ id: FR-190
 title: "Measure a long-run fraction by regeneration"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-188
+  - target: ix://agent-ix/filament-spec-language/FR-188
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: depends_on
 ---
 # FR-190: Measure a long-run fraction by regeneration
@@ -60,7 +60,7 @@ FR-189's `StatisticalOutcome`, whose verdict basis records
   `z · √(S² + 1/n) / (L̄ · √n)`, with `S` the sample standard deviation of
   `Y_k − Â · L_k`, `L̄` the mean cycle weight and `z` the one-sided
   `1 − min(α', β')` normal quantile. The square root and the quantile SHALL
-  be QSpec's rational bounds, rounded so the half-width rounds up.
+  be FSpec's rational bounds, rounded so the half-width rounds up.
 - The test SHALL stop when the half-width is at most `ι`, and decide as
   Okamoto does (FR-189) over the interval `[Â − w, Â + w]`.
 - When a cycle reaches `max_cycle_steps` steps without returning to `s0`,
@@ -85,11 +85,11 @@ FR-189's `StatisticalOutcome`, whose verdict basis records
 ## Dependencies
 
 - ADR-024 PF-6, ST-7, ST-8, ST-9, SV-2, RU-1.
-- [FR-188](FR-188-draw-weighted-choices-with-the-qspec-sampler.md),
+- [FR-188](FR-188-draw-weighted-choices-with-the-fspec-sampler.md),
   [FR-189](FR-189-decide-a-probabilistic-claim-by-statistical-model-checking.md).
 
 ## References
 
-- QSpec half, which owns the regenerative estimator, its interval and the
-  `limit-reached` stop: QSpec FR-408 (Linear STD-137).
+- FSpec half, which owns the regenerative estimator, its interval and the
+  `limit-reached` stop: FSpec FR-408 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

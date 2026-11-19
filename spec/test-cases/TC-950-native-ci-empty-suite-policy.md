@@ -4,7 +4,7 @@ org: agent-ix
 title: "Native CI accepts only declared genuine empty suites"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/NFR-014
+  - target: ix://agent-ix/filament-spec-language/NFR-014
     type: verifies
 ---
 # TC-950: Native CI accepts only declared genuine empty suites

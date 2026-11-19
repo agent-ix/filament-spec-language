@@ -1,0 +1,511 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-193 "Replay" and "The qualitative claim" (ADR-024 SV-7, SV-8): the
+//! replay of one sampled witness, and its conversion to an ADR-018
+//! counterexample.
+//!
+//! A witness replays by re-running the sampler, never by trusting its
+//! record. [`fsl_eval::simulation::replay_sampled`] holds the draw checks
+//! (each drawn value in its support, each choice recomputed from the seed,
+//! the trace index, the step and the choice index, the path probability
+//! recomputed exactly). The value check reads the claim again on the
+//! recomputed sample. The layer-A engine owns that reading (ADR-011 layering:
+//! `fsl-replay` is layer 6 and does not depend on `fsl-analyze`), so it
+//! reaches this module through the [`WitnessReader`] seam, as FR-128's
+//! replay reaches its `holds` atoms through `ModelLetters`.
+
+use filament_exact::{Cancel, Rational};
+use filament_semantic_value::catalog::CatalogCode;
+use fsl_eval::simulation::model::{
+    replay_timed_sample, ClauseOutcome, ModelSystem, TimedSample, TimedSampleDisagreement,
+    TimedSampleReplay, TimedSampleStop, TimedState, TimedSystem, TransitionId,
+};
+use fsl_eval::simulation::{
+    replay_sampled, SampleStop, SampledDisagreement, SampledRecord, SampledReplay,
+    SampledReplayRefusal, SampledStep, TransitionSystem,
+};
+use fsl_semantics::check::{NegotiationOutcome, Workload};
+
+use super::{SampledWitness, StatisticalProvenance, TestProvenance, WitnessValue};
+use crate::model_check::counterexample::{CounterexampleKind, ModelStep, TemporalCounterexample};
+
+/// FR-254/FR-193: recompute a timed statistical witness's ordered timed
+/// steps from its seed, trace index, delay grid and checked sample horizon.
+/// The timed sample is the witness payload, so delay changes are compared
+/// alongside transitions and successor states.
+#[allow(clippy::too_many_arguments)] // each value is an explicit witness replay input
+pub fn replay_timed_sampled_witness(
+    system: &TimedSystem<'_, '_>,
+    initial: &TimedState,
+    workload: &Workload,
+    seed: u64,
+    trace: u64,
+    q: u32,
+    horizon: &Rational,
+    max_sample_steps: u64,
+    witness: &TimedSample,
+) -> Result<TimedSampleReplay, TimedSampleStop> {
+    replay_timed_sample(
+        system,
+        initial,
+        workload,
+        fsl_eval::simulation::ChoicePoint {
+            seed,
+            trace,
+            step: 0,
+            choice: 0,
+        },
+        q,
+        horizon,
+        max_sample_steps,
+        witness,
+    )
+}
+
+/// What the claim reads on one recomputed sample (FR-193 "Replay"): the
+/// value it would keep as a witness, and the sample's steps.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WitnessReading {
+    /// The value of a sample on the violating side of the claim's bound, or
+    /// the undefined evaluation of the claim; `None` for a sample that is
+    /// neither.
+    pub value: Option<WitnessValue>,
+    /// The recomputed sample's steps.
+    pub steps: Vec<SampledStep>,
+}
+
+/// Why the claim could not be read on a recomputed sample.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WitnessReadStop {
+    /// The sampler stopped.
+    Sample(Box<SampleStop>),
+    /// The bounded event's automaton would exceed its state limit, at the
+    /// value it was set to (FR-126 `ResourceExhausted`).
+    AutomatonStates {
+        /// The limit's value.
+        value: u64,
+    },
+    /// A claim predicate's read was refused with no value undefined.
+    PredicateRefused(Box<ClauseOutcome>),
+    /// The witness reader does not implement timed claim readings.
+    TimedUnsupported,
+}
+
+/// The seam to the layer-A engine that read the claim when the witness was
+/// kept (FR-189 "Per sample").
+pub trait WitnessReader {
+    /// Draw the sample of `test` at `trace` again under `seed` and read the
+    /// claim on it. `steps` is the recorded witness's step count, which
+    /// bounds the walk of a long-run fraction, whose only witness is an
+    /// undefined one.
+    ///
+    /// # Errors
+    ///
+    /// A [`WitnessReadStop`] when the sample cannot be drawn and read.
+    fn read(
+        &mut self,
+        test: &TestProvenance,
+        seed: u64,
+        trace: u64,
+        steps: u64,
+    ) -> Result<WitnessReading, WitnessReadStop>;
+
+    /// Read a timed sample after its delay draws have replayed (FR-254).
+    /// Implementations that do not read timed claims keep the default refusal.
+    fn read_timed(
+        &mut self,
+        _test: &TestProvenance,
+        _seed: u64,
+        _trace: u64,
+        _sample: &TimedSample,
+    ) -> Result<WitnessReading, WitnessReadStop> {
+        Err(WitnessReadStop::TimedUnsupported)
+    }
+}
+
+/// The subject a witness replays over: the admitted system, the workload
+/// the claim runs under, and what the verdict recorded (FR-191).
+#[derive(Clone, Copy)]
+pub struct WitnessReplay<'a> {
+    /// The admitted model system.
+    pub system: &'a ModelSystem<'a>,
+    /// The timed subject for FR-254 witnesses, when the claim was timed.
+    pub timed: Option<&'a TimedSystem<'a, 'a>>,
+    /// The workload the claim runs under.
+    pub workload: &'a Workload,
+    /// The verdict's provenance: the seed, the sampler and each test's
+    /// initial state and binding.
+    pub provenance: &'a StatisticalProvenance,
+    /// The cancellation handle (FR-276).
+    pub cancel: &'a Cancel,
+}
+
+/// Where a replayed witness disagrees with its record (FR-193 "Replay").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SampledParity {
+    /// A recomputed draw, or the path probability, differs.
+    Draw(SampledDisagreement),
+    /// A timed delay, ordered transition or timed endpoint differs.
+    TimedDraw(TimedSampleDisagreement),
+    /// The recomputed sample takes a different number of steps.
+    Length {
+        /// The recorded step count.
+        recorded: u64,
+        /// The recomputed step count.
+        replayed: u64,
+    },
+    /// The claim reads another value on the recomputed sample.
+    Value {
+        /// The recorded value.
+        recorded: Box<WitnessValue>,
+        /// The recomputed value, `None` when the sample is not a witness.
+        replayed: Option<Box<WitnessValue>>,
+    },
+}
+
+/// A sampled witness's replay (FR-193 "Outputs"). It never changes the
+/// item's `measured` record, which the caller holds.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SampledWitnessReplay {
+    /// Every check agrees.
+    Reproduced,
+    /// `Inconclusive(ReplayParity)`: a check disagrees.
+    Inconclusive(SampledParity),
+}
+
+/// Why a witness is refused before it settles (FR-193 "Replay").
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum SampledWitnessRefusal {
+    /// The provenance records no test of the witness's index.
+    #[error("the provenance records no test {test}")]
+    UnknownTest {
+        /// The witness's test index.
+        test: u32,
+    },
+    /// The test's initial state is not one of the subject's.
+    #[error("test {test} starts at initial state {initial}, which the subject does not have")]
+    UnknownInitial {
+        /// The test's index.
+        test: u32,
+        /// The initial-state index.
+        initial: u32,
+    },
+    /// A recorded value lies outside its support, or the recomputation
+    /// stopped.
+    #[error(transparent)]
+    Draw(#[from] SampledReplayRefusal),
+    /// A timed sample could not be reproduced from its seed.
+    #[error("timed witness replay stopped: {0}")]
+    TimedSample(#[from] TimedSampleStop),
+    /// The claim could not be read on the recomputed sample.
+    #[error("the claim could not be read on the recomputed sample: {0:?}")]
+    Read(WitnessReadStop),
+}
+
+/// `invalid_runtime_input`/`invalid-value`: a witness no subject has.
+const INVALID_VALUE: CatalogCode = CatalogCode::new("invalid_runtime_input", "invalid-value");
+
+/// `cancelled`/`caller-cancelled`: the caller's `Cancel` handle fired.
+const CANCELLED: CatalogCode = CatalogCode::new("cancelled", "caller-cancelled");
+
+/// `unsupported_projection`/`unsupported-requested-capability`: the witness
+/// names a sampler this one is not (FR-192).
+const UNSUPPORTED: CatalogCode = NegotiationOutcome::UnsupportedRequestedCapability.code();
+
+/// `unsupported_projection`/`not-markov`: the sample took a step that is not
+/// Markov (ADR-024 PM-3).
+const NOT_MARKOV: CatalogCode = CatalogCode::new("unsupported_projection", "not-markov");
+
+/// `resource_exhausted`/`max-automaton-states`: FR-126's limit on the bounded
+/// event's automaton, not the evaluation meter's.
+const AUTOMATON_STATES: CatalogCode =
+    CatalogCode::new("resource_exhausted", "max-automaton-states");
+
+/// `runtime_invariant`/`established-invariant-broken`: a stop with no code
+/// of FR-193's own.
+const BROKEN: CatalogCode = CatalogCode::new("runtime_invariant", "established-invariant-broken");
+
+impl SampledWitnessRefusal {
+    /// The catalog code of the refusal. A witness the provenance or subject
+    /// does not place, a timed sample that cannot be regenerated, a value
+    /// outside its support and a `TotalAboveDrawRange` are
+    /// `invalid_runtime_input`/`invalid-value` (FR-193 "Replay"); an
+    /// expansion stop keeps its own code; a cancelled replay, another
+    /// sampler, a non-Markov step and the automaton limit each have their
+    /// own; only an undecided successor or a refused predicate is a broken
+    /// invariant.
+    pub fn catalog_code(&self) -> CatalogCode {
+        match self {
+            Self::UnknownTest { .. } | Self::UnknownInitial { .. } | Self::TimedSample(_) => {
+                INVALID_VALUE
+            }
+            Self::Draw(refusal) => refusal.catalog_code().unwrap_or_else(|| match refusal {
+                SampledReplayRefusal::Sample(stop) => stop_code(stop),
+                SampledReplayRefusal::OutsideSupport { .. } => INVALID_VALUE,
+            }),
+            Self::Read(WitnessReadStop::Sample(stop)) => stop_code(stop),
+            Self::Read(WitnessReadStop::AutomatonStates { .. }) => AUTOMATON_STATES,
+            Self::Read(WitnessReadStop::PredicateRefused(_)) => BROKEN,
+            Self::Read(WitnessReadStop::TimedUnsupported) => UNSUPPORTED,
+        }
+    }
+}
+
+fn stop_code(stop: &SampleStop) -> CatalogCode {
+    match stop {
+        SampleStop::TotalAboveDrawRange(_) => INVALID_VALUE,
+        SampleStop::Expansion(stop) => stop.cause,
+        SampleStop::GeneratorMismatch { .. } => UNSUPPORTED,
+        SampleStop::NotMarkov(_) => NOT_MARKOV,
+        SampleStop::Cancelled(_) => CANCELLED,
+        // A replayed step is one the sampler already took, so an undecided
+        // successor there is a broken invariant.
+        SampleStop::UndecidedSuccessor => BROKEN,
+    }
+}
+
+/// FR-193 "Replay": replay `witness` over `replay`. The draw checks run
+/// first and refuse a recorded value outside its support; `reader` then
+/// reads the claim on the recomputed sample, whose length and value must be
+/// the record's. The witness and the verdict it came from are not changed.
+///
+/// # Errors
+///
+/// [`SampledWitnessRefusal`] for a witness the provenance does not place,
+/// a value outside its support, a recomputation that stops, or a claim that
+/// cannot be read.
+pub fn replay_sampled_witness(
+    replay: &WitnessReplay<'_>,
+    witness: &SampledWitness,
+    reader: &mut dyn WitnessReader,
+) -> Result<SampledWitnessReplay, SampledWitnessRefusal> {
+    let test = test_of(replay.provenance, witness)?;
+    if let Some(horizon) = &replay.provenance.timed_horizon {
+        let timed = replay.timed.ok_or(SampledWitnessRefusal::Read(
+            WitnessReadStop::TimedUnsupported,
+        ))?;
+        let initial = timed
+            .initial()
+            .into_iter()
+            .nth(usize::try_from(test.initial).unwrap_or(usize::MAX))
+            .ok_or(SampledWitnessRefusal::UnknownInitial {
+                test: test.index,
+                initial: test.initial,
+            })?;
+        let q = replay
+            .provenance
+            .delay_grid_bits
+            .ok_or_else(|| SampledWitnessRefusal::Read(WitnessReadStop::TimedUnsupported))?;
+        let max_sample_steps = replay
+            .provenance
+            .max_sample_steps
+            .ok_or_else(|| SampledWitnessRefusal::Read(WitnessReadStop::TimedUnsupported))?;
+        let at = fsl_eval::simulation::ChoicePoint {
+            seed: replay.provenance.seed,
+            trace: witness.trace,
+            step: 0,
+            choice: 0,
+        };
+        let mut record = fsl_eval::simulation::model::sample_timed(
+            timed,
+            &initial,
+            replay.workload,
+            at,
+            q,
+            horizon,
+            max_sample_steps,
+        )?;
+        record.steps.clone_from(&witness.steps);
+        if let TimedSampleReplay::Disagrees(disagreement) = replay_timed_sample(
+            timed,
+            &initial,
+            replay.workload,
+            at,
+            q,
+            horizon,
+            max_sample_steps,
+            &record,
+        )? {
+            return Ok(SampledWitnessReplay::Inconclusive(
+                SampledParity::TimedDraw(disagreement),
+            ));
+        }
+        let reading = reader
+            .read_timed(test, replay.provenance.seed, witness.trace, &record)
+            .map_err(SampledWitnessRefusal::Read)?;
+        if reading.steps != witness.steps {
+            return Ok(SampledWitnessReplay::Inconclusive(
+                SampledParity::TimedDraw(TimedSampleDisagreement::EndPosition),
+            ));
+        }
+        if reading.value.as_ref() != Some(&witness.value) {
+            return Ok(SampledWitnessReplay::Inconclusive(SampledParity::Value {
+                recorded: Box::new(witness.value.clone()),
+                replayed: reading.value.map(Box::new),
+            }));
+        }
+        return Ok(SampledWitnessReplay::Reproduced);
+    }
+    let start = usize::try_from(test.initial)
+        .ok()
+        .and_then(|index| replay.system.initial().into_iter().nth(index))
+        .ok_or(SampledWitnessRefusal::UnknownInitial {
+            test: test.index,
+            initial: test.initial,
+        })?;
+    let drawn = replay_sampled(
+        replay.system,
+        replay.workload,
+        &start,
+        &replay.provenance.sampler,
+        replay.provenance.seed,
+        SampledRecord {
+            trace: witness.trace,
+            steps: &witness.steps,
+            path_probability: &witness.path_probability,
+        },
+        replay.cancel,
+    )?;
+    if let SampledReplay::Disagrees(disagreement) = drawn {
+        return Ok(SampledWitnessReplay::Inconclusive(SampledParity::Draw(
+            disagreement,
+        )));
+    }
+    let recorded = u64::try_from(witness.steps.len()).unwrap_or(u64::MAX);
+    let reading = reader
+        .read(test, replay.provenance.seed, witness.trace, recorded)
+        .map_err(SampledWitnessRefusal::Read)?;
+    let replayed = u64::try_from(reading.steps.len()).unwrap_or(u64::MAX);
+    if replayed != recorded {
+        return Ok(SampledWitnessReplay::Inconclusive(SampledParity::Length {
+            recorded,
+            replayed,
+        }));
+    }
+    if reading.value.as_ref() != Some(&witness.value) {
+        return Ok(SampledWitnessReplay::Inconclusive(SampledParity::Value {
+            recorded: Box::new(witness.value.clone()),
+            replayed: reading.value.map(Box::new),
+        }));
+    }
+    Ok(SampledWitnessReplay::Reproduced)
+}
+
+fn test_of<'p>(
+    provenance: &'p StatisticalProvenance,
+    witness: &SampledWitness,
+) -> Result<&'p TestProvenance, SampledWitnessRefusal> {
+    provenance
+        .tests
+        .iter()
+        .find(|test| test.index == witness.test)
+        .ok_or(SampledWitnessRefusal::UnknownTest { test: witness.test })
+}
+
+impl SampledWitness {
+    /// FR-193 "The qualitative claim" (ADR-024 SV-7): the ADR-018
+    /// counterexample over the same subject that this witness is: the
+    /// initial state and binding the provenance records for its test, and
+    /// its steps up to a terminal stutter. An undefined witness is the
+    /// undefined-evaluation counterexample of its evaluation (UE-5); any
+    /// other refutes the formula.
+    ///
+    /// # Errors
+    ///
+    /// [`SampledWitnessRefusal::UnknownTest`] when the provenance records no
+    /// test of the witness's index.
+    pub fn counterexample(
+        &self,
+        provenance: &StatisticalProvenance,
+    ) -> Result<TemporalCounterexample, SampledWitnessRefusal> {
+        let test = test_of(provenance, self)?;
+        let initial_state =
+            usize::try_from(test.initial).map_err(|_| SampledWitnessRefusal::UnknownInitial {
+                test: test.index,
+                initial: test.initial,
+            })?;
+        let prefix = self
+            .steps
+            .iter()
+            .map_while(|step| match &step.transition {
+                TransitionId::Operation(transition) => Some(ModelStep {
+                    transition: transition.clone(),
+                    post_state: step.post_state.clone(),
+                    delay: None,
+                }),
+                TransitionId::Stutter => None,
+            })
+            .collect();
+        let kind = match &self.value {
+            WitnessValue::Undefined(evaluation) => {
+                CounterexampleKind::UndefinedEvaluation(evaluation.clone())
+            }
+            WitnessValue::Event(_) | WitnessValue::Fraction(_) | WitnessValue::Measure(_) => {
+                CounterexampleKind::Formula
+            }
+        };
+        Ok(TemporalCounterexample {
+            initial_state,
+            prefix,
+            over_binding: test.binding.clone(),
+            fairness: Vec::new(),
+            kind,
+            lasso: None,
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{CancelCause, ObjectId, ObjectReference};
+    use fsl_eval::simulation::model::{NotMarkov, ScheduledIdentity};
+    use fsl_foundation::selection::DefinitionRef;
+
+    use super::*;
+
+    fn code(stop: SampleStop) -> CatalogCode {
+        SampledWitnessRefusal::Draw(SampledReplayRefusal::Sample(Box::new(stop))).catalog_code()
+    }
+
+    /// FR-193 "Replay": each stop of a replay settles under its own code,
+    /// and only a true invariant break is `runtime_invariant`.
+    #[test]
+    fn each_stop_has_its_own_catalog_code() {
+        assert_eq!(
+            code(SampleStop::Cancelled(CancelCause::Requested)),
+            CANCELLED
+        );
+        let other = DefinitionRef::new("agent-ix", "filament.simulation.other/v1").expect("valid");
+        assert_eq!(
+            code(SampleStop::GeneratorMismatch { supplied: other }),
+            UNSUPPORTED
+        );
+        let not_markov = NotMarkov {
+            state: fsl_eval::simulation::StateKey::from_canonical_bytes(b"\"s\"".to_vec()),
+            transition: ScheduledIdentity {
+                operation: "tick".to_owned(),
+                receiver: ObjectReference::new(
+                    crate::fixture_universe(1),
+                    crate::fixture_effective(2),
+                    ObjectId::new("n").expect("a key"),
+                ),
+                arguments: Vec::new(),
+            },
+            random: Vec::new(),
+            post_states: 2,
+        };
+        assert_eq!(code(SampleStop::NotMarkov(not_markov)), NOT_MARKOV);
+        assert_eq!(code(SampleStop::UndecidedSuccessor), BROKEN);
+        assert_eq!(
+            SampledWitnessRefusal::TimedSample(TimedSampleStop::MaxSampleSteps).catalog_code(),
+            INVALID_VALUE
+        );
+        assert_eq!(
+            SampledWitnessRefusal::Read(WitnessReadStop::AutomatonStates { value: 1 })
+                .catalog_code(),
+            AUTOMATON_STATES
+        );
+    }
+}

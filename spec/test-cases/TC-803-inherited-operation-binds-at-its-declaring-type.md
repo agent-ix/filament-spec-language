@@ -3,7 +3,7 @@ id: TC-803
 title: "An inherited operation's frame binds only at its declaring type"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-305
+  - target: ix://agent-ix/filament-spec-language/FR-305
     type: verifies
 ---
 # TC-803: An inherited operation's frame binds only at its declaring type

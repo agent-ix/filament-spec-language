@@ -3,9 +3,9 @@ id: TC-1210
 title: "Compile, link and replay a package of several source units"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-480
+  - target: ix://agent-ix/filament-spec-language/FR-480
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-027
+  - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
 ---
 # TC-1210: Compile, link and replay a package of several source units
@@ -27,7 +27,7 @@ Every fixture unit starts with the complete-V1 header
 alias is `v` unless a step says otherwise. Units have the authority `a` and
 the identities their step names.
 
-1. Compile QSpec TC-196 D10's split fixture, `U1` (D01, `PX`, `pre PA`) and
+1. Compile FSpec TC-196 D10's split fixture, `U1` (D01, `PX`, `pre PA`) and
    `U2` (`pre PB1`, `pre PB2` through `U2`'s own `model M`), as `[U1, U2]`
    and `[U2, U1]`; then with the two bodies' names swapped; then with `PB1`
    in `U1`, again in both orders. Evaluate `I` for `d1` in each package,

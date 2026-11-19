@@ -3,7 +3,7 @@ id: TC-1060
 title: "S1 parses terminal when and terminal any as terminal declarations"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: verifies
 ---
 # TC-1060: S1 parses terminal when and terminal any as terminal declarations

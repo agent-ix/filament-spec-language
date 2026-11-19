@@ -3,7 +3,7 @@ id: TC-120
 title: "Distinguish explicit rational native models from historical models"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-041
+  - target: ix://agent-ix/filament-spec-language/FR-041
     type: verifies
 ---
 # TC-120: Distinguish explicit rational native models from historical models

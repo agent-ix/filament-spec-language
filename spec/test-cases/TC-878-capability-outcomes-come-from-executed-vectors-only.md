@@ -3,7 +3,7 @@ id: TC-878
 title: "Capability outcomes come only from vectors executed in the run, over the scope the caller selects"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-351
+  - target: ix://agent-ix/filament-spec-language/FR-351
     type: verifies
 ---
 # TC-878: Capability outcomes come only from vectors executed in the run, over the scope the caller selects

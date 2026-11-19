@@ -3,7 +3,7 @@ id: TC-1058
 title: "S3 checks a compensation's registration, attempt bound, retry relation, commit and recovery"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-381
+  - target: ix://agent-ix/filament-spec-language/FR-381
     type: verifies
 ---
 # TC-1058: S3 checks a compensation's registration, attempt bound, retry relation, commit and recovery

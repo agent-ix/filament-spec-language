@@ -3,20 +3,20 @@ id: FR-047
 title: "Evaluate finite typed object-reference graphs"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/US-002, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/US-003, type: implements }
-  - { target: ix://agent-ix/quire-spec-language/FR-036, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-040, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-027, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-049, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-056, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/NFR-009, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-038, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-039, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-043, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-specification/FR-045, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/ADR-009, type: references }
+  - { target: ix://agent-ix/filament-spec-language/US-002, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/US-003, type: implements }
+  - { target: ix://agent-ix/filament-spec-language/FR-036, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-040, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-027, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-049, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-056, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/NFR-009, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-038, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-039, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-043, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-045, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/ADR-009, type: references }
 ---
 # FR-047: Evaluate finite typed object-reference graphs
 
@@ -27,7 +27,7 @@ the language pipeline SHALL preserve and evaluate exact object identity,
 dereference and positive-length reachability without ambient lookup.
 
 This requirement retrospectively scopes roadmap L4 under compiler
-[#37](https://github.com/agent-ix/quire-spec-language/issues/37). It adopts the
+[#37](https://github.com/agent-ix/filament-spec-language/issues/37). It adopts the
 finite-graph extension in the immutable composed-v1 baseline without changing
 the historical ConfigVersion profile or inventing finite bounds for that model.
 
@@ -115,13 +115,13 @@ again. It SHALL return false only after deterministic traversal finds no target
 in the selected declared-complete snapshot domain; an isolated start in such a
 domain is false.
 
-The evaluator SHALL use the caller's `quire.value.accounting/v1` meter and the
+The evaluator SHALL use the caller's `filament.value.accounting/v1` meter and the
 charge-before-work depth-first-search rules in
 [NFR-009](../non-functional/NFR-009-bound-composed-evaluation.md), over an
 explicit stack of entered storage keys rather than native recursion. Graph
 expansion charges `accounting.value_occurrences`, each graph edge inspection
 charges `accounting.work_units`, and the Boolean result uses
-`accounting.result_units`, with settings and defaults owned by FR-255 and QSpec
+`accounting.result_units`, with settings and defaults owned by FR-255 and FSpec
 FR-323. Endpoint testing is included in the edge charge; there is no separate
 graph-comparison counter. If the next charge exceeds the caller's limit,
 evaluation SHALL return the owning typed incomplete/resource-limit result
@@ -150,7 +150,7 @@ merely to reuse `reaches`.
 | FR-047-AC-4 | Reachability is positive-length: an isolated `a` does not reach itself, while `a→a` and `a→b→a` do; a direct or longer path to another target succeeds. | Test (TC-130) |
 | FR-047-AC-5 | Deterministic depth-first search expands each full storage identity at most once, visits sibling edges in authored occurrence order and charges duplicate edges independently without changing Boolean reachability. | Test (TC-130) |
 | FR-047-AC-6 | In the field-edge form `reaches(a, b, field)`, an absent optional slot and an empty edge sequence have no outgoing edge, and a sequence edge has one edge per element in order; only `Ref(T)`, `Option(Ref(T))` and ordered `Seq(Ref(T),N)` edges are admitted by this profile, and a set, bag, optional sequence or scalar edge refuses `ill_typed`/`operator-ineligible` at the `reaches`. | Test (TC-130) |
-| FR-047-AC-7 | Zero, exact, one-step-insufficient and above-default requests under `quire.value.accounting/v1` exercise `accounting.value_occurrences` for graph expansion, `accounting.work_units` for edge inspection and `accounting.result_units` for the result, using FR-255's settings; they distinguish completed true/false results from the owning typed resource-limit outcome, and a sufficient retry starts fresh and returns the same Boolean with deterministic usage. | Test (TC-131) |
+| FR-047-AC-7 | Zero, exact, one-step-insufficient and above-default requests under `filament.value.accounting/v1` exercise `accounting.value_occurrences` for graph expansion, `accounting.work_units` for edge inspection and `accounting.result_units` for the result, using FR-255's settings; they distinguish completed true/false results from the owning typed resource-limit outcome, and a sufficient retry starts fresh and returns the same Boolean with deterministic usage. | Test (TC-131) |
 | FR-047-AC-8 | On the checked route, the ConfigVersion fixtures keep their original source and model identities, with no finite numeric maximum, replacement parent relation or graph selection added, and give the `parent` member no graph semantics: an update that keeps the child's `parent` evaluates true; an update that rewrites it is refused at admission with `frame_violation`, because the frame forbids the write; a `parent` naming no row is refused at admission with `dangling_reference`. Each refusal reports the stage `Admit` and the catalog code, gives no Boolean and is not an evaluation outcome. | Test (TC-131) |
 
 ## Dependencies
@@ -166,7 +166,7 @@ the immutable storage/input admission boundary and
 versioned work identity, default limits and charge order. The immutable standard's
 FR-043 supplies the selected graph meaning. Concrete object membership and
 closure are independently supplied runtime inputs. This retrospective cycle under
-[#66](https://github.com/agent-ix/quire-spec-language/issues/66) records that
+[#66](https://github.com/agent-ix/filament-spec-language/issues/66) records that
 earlier graph code and tests preceded this compiler-owned requirement.
 [ADR-009](../decisions/ADR-009-graph-path-witness-content.md) holds, for
 owner ruling, the open question of what a graph path witness carries; it does

@@ -3,7 +3,7 @@ id: TC-734
 title: "A 100,000-deep recursive call completes on work fuel"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-262
+  - target: ix://agent-ix/filament-spec-language/FR-262
     type: verifies
 ---
 # TC-734: A 100,000-deep recursive call completes on work fuel

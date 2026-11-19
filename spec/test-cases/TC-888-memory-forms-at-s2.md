@@ -3,7 +3,7 @@ id: TC-888
 title: "S2 builds the memory clause, access ordering and fence forms"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-309
+  - target: ix://agent-ix/filament-spec-language/FR-309
     type: verifies
 ---
 # TC-888: S2 builds the memory clause, access ordering and fence forms

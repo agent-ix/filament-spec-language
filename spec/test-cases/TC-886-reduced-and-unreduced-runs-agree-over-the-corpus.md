@@ -3,7 +3,7 @@ id: TC-886
 title: "Reduced and unreduced runs agree over the model-check corpus"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-160
+  - target: ix://agent-ix/filament-spec-language/FR-160
     type: verifies
 ---
 # TC-886: Reduced and unreduced runs agree over the model-check corpus
@@ -18,9 +18,9 @@ Scope: FR-160-AC-6.
 
 ## Test Procedure
 
-Fixtures: every model-check case of QSL's model-check test corpus, which
+Fixtures: every model-check case of FSL's model-check test corpus, which
 includes the worked examples of ADR-018, ADR-019, ADR-021 §7.1 to §7.6 and
-ADR-027, and the QSpec conformance vectors QSL runs.
+ADR-027, and the FSpec conformance vectors FSL runs.
 
 1. For each case, list the selections among symmetry, partial-order
    reduction, and both, whose PT-2 rows admit the case's claim form and

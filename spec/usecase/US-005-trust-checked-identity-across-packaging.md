@@ -3,26 +3,26 @@ id: US-005
 title: "Trust checked identity through the packaging boundary"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-062
+  - target: ix://agent-ix/filament-spec-language/FR-062
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-066
+  - target: ix://agent-ix/filament-spec-language/FR-066
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-094
+  - target: ix://agent-ix/filament-spec-language/FR-094
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
 ---
 # US-005: Trust checked identity through the packaging boundary
 
 ## Story
 
-**As a** developer of a QSL packaging, lowering or proof-pipeline consumer
+**As a** developer of an FSL packaging, lowering or proof-pipeline consumer
 **I want** the function I am packaging or lowering to carry the same stable
 identity and source provenance on both sides of the checked-package boundary
 **So that** I can trust a function's identity and its reported source location
@@ -45,7 +45,7 @@ has no single, trustworthy answer.
 
 - **Given** a function declared once and called once in a source file.
 - **When** the declaration and call are checked, linked into a package, and
-  the package is emitted as `quire.checked-package/v2` bytes and read back.
+  the package is emitted as `filament.checked-package/v2` bytes and read back.
 - **Then** the function's identity, read from the checked node, the linked
   package and the decoded v2 bytes, is the same value every time.
 

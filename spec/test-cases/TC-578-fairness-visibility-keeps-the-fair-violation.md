@@ -3,7 +3,7 @@ id: TC-578
 title: "Fairness visibility keeps a fair violation that C0 to C3 alone would discard"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-157
+  - target: ix://agent-ix/filament-spec-language/FR-157
     type: verifies
 ---
 # TC-578: Fairness visibility keeps a fair violation that C0 to C3 alone would discard

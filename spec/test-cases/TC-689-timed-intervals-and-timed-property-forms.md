@@ -3,7 +3,7 @@ id: TC-689
 title: "S3 checks timed intervals with open or closed ends and classifies TT-1 to TT-4, with the punctual-interval boundary"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-234
+  - target: ix://agent-ix/filament-spec-language/FR-234
     type: verifies
 ---
 # TC-689: S3 checks timed intervals with open or closed ends and classifies TT-1 to TT-4, with the punctual-interval boundary

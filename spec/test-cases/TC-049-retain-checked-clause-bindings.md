@@ -3,7 +3,7 @@ id: TC-049
 title: "Retain exact checked source and authored clause bindings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-016
     type: verifies
 ---
 # TC-049: Retain exact checked source and authored clause bindings

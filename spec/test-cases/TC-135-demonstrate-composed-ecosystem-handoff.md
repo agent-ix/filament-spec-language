@@ -3,12 +3,12 @@ id: TC-135
 title: "Demonstrate the composed compiler-to-assessment ecosystem handoff"
 type: TC
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-048, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-042, type: verifies }
-  - { target: ix://agent-ix/quire-spec-language/FR-050, type: references }
-  - { target: ix://agent-ix/quire-protocol/IT-001, type: references }
-  - { target: ix://agent-ix/quire-specification/IT-020, type: references }
-  - { target: ix://agent-ix/quire-specification/IT-050, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-048, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-042, type: verifies }
+  - { target: ix://agent-ix/filament-spec-language/FR-050, type: references }
+  - { target: ix://agent-ix/filament-protocol/IT-001, type: references }
+  - { target: ix://agent-ix/filament-specification/IT-020, type: references }
+  - { target: ix://agent-ix/filament-specification/IT-050, type: references }
 ---
 # TC-135: Demonstrate the composed compiler-to-assessment ecosystem handoff
 
@@ -25,7 +25,7 @@ without making A's local evidence claim B/F semantics.
    the admitted domain package by identity and merged L5
    PR #70's
    FR-043/044/045 Rust-interface baseline. Require the reviewed
-   `quire.compiled-protocol/2` extension carrying every selected temporal
+   `filament.compiled-protocol/2` extension carrying every selected temporal
    definition identity/revision/artifact and exactly one tagged
    clock configuration; do not pass the timed subject through `/1`.
 2. Record A's exact source/domain-package/profile/configuration selections,

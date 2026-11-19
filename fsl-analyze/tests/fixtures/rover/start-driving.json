@@ -1,0 +1,59 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {
+    "authority": "example",
+    "identity": "ix://example/rover/data/start-driving"
+  },
+  "model": {
+    "identity": "example/rover"
+  },
+  "observation": "current",
+  "anchor": {
+    "kind": "initialization",
+    "name": "start"
+  },
+  "populations": [
+    {
+      "population": "ix://example/rover/rovers",
+      "complete": true,
+      "objects": [
+        {
+          "key": "r1",
+          "type": "ix://example/rover/Rover",
+          "fields": {
+            "mode": {
+              "variant": {
+                "type": "ix://example/rover/Mode",
+                "case": "Driving"
+              }
+            },
+            "speed": {
+              "integer": "800"
+            },
+            "stopped": {
+              "boolean": false
+            },
+            "lidarOk": {
+              "boolean": true
+            },
+            "rangeA": {
+              "integer": "5000"
+            },
+            "rangeB": {
+              "integer": "5000"
+            },
+            "rangeC": {
+              "integer": "5000"
+            },
+            "clock": {
+              "integer": "0"
+            },
+            "voteWrong": {
+              "boolean": false
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

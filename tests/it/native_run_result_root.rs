@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-535: the bounded `native-run-result/2` boundary, through crate-root names only.
 
-use ix_trace_rs::trace;
-use qsl_replay::{
+use fsl_replay::{
     read_native_run_result_bounded, write_clause_run_result, ClauseDisposition, ClauseRunReport,
     NativeRunLimits, NativeRunReadError, NativeRunResult, SettlementBasis,
 };
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 fn report() -> ClauseRunReport {
@@ -16,6 +16,8 @@ fn report() -> ClauseRunReport {
         usage: Default::default(),
         basis: SettlementBasis::Unavailable,
         witness: None,
+        frame_field_values: None,
+        state_clause_counterexample: None,
         consequent_source_events: Default::default(),
         finite_window: None,
         counterexample: None,
@@ -74,7 +76,7 @@ fn refusal(value: &Value) -> NativeRunReadError {
     }
 }
 
-/// FR-535-AC-2: the QSpec TC-255 NR-05/06/07 mutations over a decisive-witness
+/// FR-535-AC-2: the FSpec TC-255 NR-05/06/07 mutations over a decisive-witness
 /// record keep their FR-267 refusals; no fallback or normalized success.
 #[test]
 #[trace("TC-1340", "FR-535-AC-2")]
@@ -199,7 +201,8 @@ fn tc_1340_root_api_refuses_invalid_documents() {
 
 /// FR-535-AC-4: the facade adds no tool-version, digest, receipt or token. The
 /// limits are exactly the two bounds, and a written document keeps only the
-/// FR-267 member set.
+/// FR-267 member set, which includes FR-622's `axes` (FR-267 "Outcome axes",
+/// FR-267-AC-22).
 #[test]
 #[trace("TC-1340", "FR-535-AC-4")]
 fn tc_1340_root_api_adds_no_authentication_claim() {
@@ -216,7 +219,7 @@ fn tc_1340_root_api_adds_no_authentication_claim() {
         .map(String::as_str)
         .collect();
     members.sort_unstable();
-    assert_eq!(members, ["basis", "disposition", "format", "usage"]);
+    assert_eq!(members, ["axes", "basis", "disposition", "format", "usage"]);
 }
 
 /// FR-535-AC-3: both bounds, refused before a result exists.

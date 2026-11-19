@@ -3,7 +3,7 @@ id: TC-1292
 title: "Select reader-backed Union cases by exact member identity"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1292: Select reader-backed Union cases by exact member identity

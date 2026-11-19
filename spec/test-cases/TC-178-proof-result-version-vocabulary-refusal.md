@@ -3,7 +3,7 @@ id: TC-178
 title: "The proof-result reader refuses an oversized envelope"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: verifies
 ---
 # TC-178: The proof-result reader refuses an oversized envelope

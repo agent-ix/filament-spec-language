@@ -3,9 +3,9 @@ id: TC-1041
 title: "The population manifest decides whether a missing object is dangling or undecidable"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
 ---
 # TC-1041: The population manifest decides whether a missing object is dangling or undecidable

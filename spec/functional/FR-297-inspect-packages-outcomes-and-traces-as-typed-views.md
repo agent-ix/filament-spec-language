@@ -3,37 +3,37 @@ id: FR-297
 title: "Inspect packages, nodes, outcomes, counterexamples, traces and state graphs as typed views"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-029
+  - target: ix://agent-ix/filament-spec-language/US-029
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-029
+  - target: ix://agent-ix/filament-spec-language/ADR-029
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-095
+  - target: ix://agent-ix/filament-spec-language/FR-095
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-276
+  - target: ix://agent-ix/filament-spec-language/FR-276
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-286
+  - target: ix://agent-ix/filament-spec-language/FR-286
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: references
-  - target: "ix://agent-ix/quire-specification/FR-300"
+  - target: "ix://agent-ix/filament-specification/FR-300"
     type: depends_on
 ---
 # FR-297: Inspect packages, nodes, outcomes, counterexamples, traces and state graphs as typed views
 
 ## Description
 
-`inspect` returns typed views (ADR-029 IN-1). It lives in QSL layer P, crate
-`qsl-inspect`, above the qualified core. Each view locates source through the
+`inspect` returns typed views (ADR-029 IN-1). It lives in FSL layer P, crate
+`fsl-inspect`, above the qualified core. Each view locates source through the
 occurrence-keyed source map (FR-095), never by reparsing text (ADR-011
 FB-01).
 
@@ -200,10 +200,10 @@ remain the separate contracts in
 - [FR-286](FR-286-serialize-every-outcome-as-one-json-outcome-document.md): outcome fields retain their existing meaning.
 - [FR-120](FR-120-simulate-a-checked-package-s-state-family.md): simulation runs.
 - [FR-290](FR-290-settle-plugin-results-as-typed-terminal-records.md): the `trusted` label.
-- QSpec FR-300: the `inspect` operation.
+- FSpec FR-300: the `inspect` operation.
 
 ## References
 
 - QSL-390 (ARCH-50), QSL-393 (V1-A06): inspection.
 - QSL-600 (IN1): typed views; LC4 supplies typed outcomes and E11 supplies retained state graphs.
-- QSpec FR-300 (STD-141): the QSpec half.
+- FSpec FR-300 (STD-141): the FSpec half.

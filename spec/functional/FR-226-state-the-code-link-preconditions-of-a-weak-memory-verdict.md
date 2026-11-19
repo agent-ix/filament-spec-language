@@ -3,27 +3,27 @@ id: FR-226
 title: "State the code-link preconditions of a memory-model verdict and route by resolved model"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-025
+  - target: ix://agent-ix/filament-spec-language/US-025
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-025
+  - target: ix://agent-ix/filament-spec-language/ADR-025
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-017
+  - target: ix://agent-ix/filament-spec-language/ADR-017
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-219
+  - target: ix://agent-ix/filament-spec-language/FR-219
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-220
+  - target: ix://agent-ix/filament-spec-language/FR-220
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-224
+  - target: ix://agent-ix/filament-spec-language/FR-224
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-353
+  - target: ix://agent-ix/filament-specification/FR-353
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-439
+  - target: ix://agent-ix/filament-specification/FR-439
     type: depends_on
 ---
 # FR-226: State the code-link preconditions of a memory-model verdict and route by resolved model
@@ -31,11 +31,11 @@ relationships:
 ## Description
 
 A proof under resolved model `M` transfers to concurrent code only under the
-preconditions MX-1 to MX-4 below, which QSL states as preconditions of the
+preconditions MX-1 to MX-4 below, which FSL states as preconditions of the
 code claim (ADR-025 §8). For an item resolved to `ra`, EN-1's pre-check SHALL
 warn of each load-buffering shape of its subject (ADR-025 MX-4). EN-1's
 provider manifest SHALL advertise the
-memory models it decides, and QSL's `route` candidate step (FR-075) SHALL
+memory models it decides, and FSL's `route` candidate step (FR-075) SHALL
 give an item over a subject with a weak `parallel` only candidates that
 advertise its resolved model (ADR-025 MX-7).
 
@@ -55,7 +55,7 @@ which locations are shared.
   source defaults (FR-219).
 - The item's resolved memory model (ADR-025 MM-2) and EN-1's instantiated
   footprints with the shared locations they decide (ADR-025 MA-1).
-- The registered backends and their QSpec FR-290 provider manifests
+- The registered backends and their FSpec FR-290 provider manifests
   (FR-075).
 
 ## Outputs
@@ -64,13 +64,13 @@ which locations are shared.
   `memory.load-buffering-shape{load, store}` on the item's FR-331 terminal
   record, naming the load and the store.
 - EN-1's provider manifest entry carrying `memory_models` `sc`, `tso` and
-  `ra` (QSpec FR-331).
+  `ra` (FSpec FR-331).
 - The candidate set of an item over a subject with a weak `parallel`.
 
 ## Preconditions
 
 A code claim inherited from a verdict under resolved model `M`, read through
-the abstraction relation (QSpec FR-353, ADR-017 AR-2), holds when all of the
+the abstraction relation (FSpec FR-353, ADR-017 AR-2), holds when all of the
 following hold, together with the per-function proofs of each bound
 function against its operation's contract (ADR-017 AR-5):
 
@@ -121,7 +121,7 @@ exists only in a weak `parallel`, and the load-buffering condition of MX-4
 applies only under `ra`.
 
 - EN-1's provider manifest descriptor SHALL carry the `memory_models` member
-  (QSpec FR-331) listing `sc`, `tso` and `ra` by the names of the `memory`
+  (FSpec FR-331) listing `sc`, `tso` and `ra` by the names of the `memory`
   clause.
 - The `route` candidate step SHALL include in the candidate set of an item
   over a subject with a weak `parallel` only backends whose manifest
@@ -137,7 +137,7 @@ applies only under `ra`.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-226-AC-1 | For a request resolved to `ra` over a package with branch `t` (`r1 := x (relaxed); y := 1 (relaxed)`) and branch `s` (`y := 0 (relaxed); x := 1 (relaxed)`), which makes `x` and `y` shared, EN-1's pre-check puts one `memory.load-buffering-shape{load, store}` warning naming both `t` attempts in the item's terminal record `warnings`, and the record's value, label, basis, counterexample and obligation identity equal those of the same request settled without the warning. With the load `acquire`, or an `acquire` fence between the two, no warning is reported. A load followed by a store to the same location reports none; neither does a variant whose load is of a location only `t` accesses, nor one whose store is to a location only `t` accesses. The same package resolved to `sc` or `tso` reports none. | Test (TC-671) |
-| FR-226-AC-2 | EN-1's registered provider manifest descriptor carries `memory_models` `sc`, `tso` and `ra` (QSpec FR-331-AC-30); a descriptor without the member advertises `sc` only. | Test (TC-671) |
+| FR-226-AC-2 | EN-1's registered provider manifest descriptor carries `memory_models` `sc`, `tso` and `ra` (FSpec FR-331-AC-30); a descriptor without the member advertises `sc` only. | Test (TC-671) |
 | FR-226-AC-3 | With EN-1 and a test candidate whose manifest advertises only `sc`, an item over `SB` resolved to `tso` has the candidate set `{EN-1}`. With the test candidate alone, the item's candidate set is empty, and the `sc` request over `SB` has the candidate set `{test candidate}`. A test candidate whose descriptor has no `memory_models` is a candidate for the `sc` request over `SB` and for no `tso` or `ra` request. | Test (TC-671) |
 
 ## Dependencies
@@ -145,11 +145,11 @@ applies only under `ra`.
 - ADR-025 §8 MX-1 to MX-7; ADR-017 AR-2, AR-5.
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md)
   (candidates and manifests), FR-219, FR-220, FR-224.
-- QSpec owns the provider manifest's memory-model member and the warning's
-  wire form (QSpec FR-331) and the routing by
-  resolved model (QSpec FR-439, FR-290) and the abstraction relation (QSpec
+- FSpec owns the provider manifest's memory-model member and the warning's
+  wire form (FSpec FR-331) and the routing by
+  resolved model (FSpec FR-439, FR-290) and the abstraction relation (FSpec
   FR-353).
 
 ## References
 
-- Owning ticket: Linear QSL-372. QSpec half: QSpec FR-439 (Linear STD-138).
+- Owning ticket: Linear QSL-372. FSpec half: FSpec FR-439 (Linear STD-138).

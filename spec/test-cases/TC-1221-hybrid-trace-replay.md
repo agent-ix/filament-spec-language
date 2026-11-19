@@ -3,11 +3,11 @@ id: TC-1221
 title: "Hybrid traces replay statically and exactly against the checked hybrid model"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-450
+  - target: ix://agent-ix/filament-spec-language/FR-450
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-290
+  - target: ix://agent-ix/filament-spec-language/FR-290
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-269
+  - target: ix://agent-ix/filament-spec-language/FR-269
     type: verifies
 ---
 # TC-1221: Hybrid traces replay statically and exactly against the checked hybrid model
@@ -18,7 +18,7 @@ Verify static replay, exact replay and the settlement each gives, for a
 trace from a `solver-inconclusive` cause and from a provider's `refuted`
 entry.
 
-Scope: FR-450-AC-1 to FR-450-AC-9, FR-290-AC-19 and FR-269-AC-5.
+Scope: FR-450-AC-1 to FR-450-AC-10, FR-290-AC-19 and FR-269-AC-5.
 
 ## Test Procedure
 
@@ -47,12 +47,14 @@ provider, each returning a scripted entry with a scripted `HybridTrace`.
 9. Over `Braking` with `Moving`'s flow `v' = -v`, submit AC-2's point trace
    as a provider's `refuted` entry.
 10. For a process provider's `refuted` entry on the hybrid `Braking` claim,
-    read AC-2's named `hybrid-counterexample` in QSpec FR-193 wire form and
+    read AC-2's named `hybrid-counterexample` in FSpec FR-193 wire form and
     settle it; repeat with a malformed trace and on a non-hybrid claim.
 11. Serialize Step 3's `NotReproduced` hybrid cause and Step 9's `NotExact`
     hybrid cause through the shared `DisagreementCause` codec with the
     checked `Braking` model, then read each cause with that model and the
     checked package; repeat a read with no model context.
+12. Replay each `end`-cut `Braking` trace FR-450-AC-10 lists, and the trace
+    carrying both `end` and `loop_to`.
 
 Run each step through both fixture providers.
 
@@ -92,7 +94,7 @@ Tag the tests `#[trace("TC-1221", "FR-450-AC-n")]`.
   `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}` and the item
   settles `incomplete`, `LimitReached{limit: work_units, value: 100,
   setting: accounting.work_units}`, with no verdict or counterexample; under
-  `u64::MAX`, QSpec FR-146 admits the `Int[0, 20000]` measure, the call takes
+  `u64::MAX`, FSpec FR-146 admits the `Int[0, 20000]` measure, the call takes
   20,000 recursive edges (20,001 recursive `descend` calls plus the one
   `descending` wrapper call) and completes on the explicit stack,
   static replay returns `Consistent`, and no stack overflow occurs.
@@ -107,4 +109,6 @@ Tag the tests `#[trace("TC-1221", "FR-450-AC-n")]`.
 - Step 11: the two causes round-trip to equal, distinct typed arms; the
   read without a checked model is refused. The existing verdict, no-value
   and witness cause codec round trips remain unchanged.
+- Step 12: `Reproduced` with the bad prefix ending at `end`; `NotReproduced`
+  at `/end`; `Inconsistent` at check `End`; refused at `/end`.
 - Both fixture providers give the same outcomes.

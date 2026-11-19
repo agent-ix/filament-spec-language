@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"int-lt-mixed-ok.native","authority":"agent-ix","identity":"test:corpus:int-lt-mixed-ok","document":"int-lt-mixed-ok","formal_revision":1}},"call":{"function":"f","arguments":[]}}}

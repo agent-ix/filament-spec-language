@@ -3,7 +3,7 @@ id: TC-165
 title: "The migration recipe names every required test, conversion, removal condition and remaining family"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-066
+  - target: ix://agent-ix/filament-spec-language/FR-066
     type: verifies
 ---
 # TC-165: The migration recipe names every required test, conversion, removal condition and remaining family

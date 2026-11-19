@@ -3,7 +3,7 @@ id: TC-971
 title: "Capability family projection matches FR-290"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: verifies
 ---
 # TC-971: Capability family projection matches FR-290

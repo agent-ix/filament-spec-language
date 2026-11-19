@@ -3,28 +3,28 @@ id: FR-265
 title: "Derive the separating witness of a state clause from its evaluation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-031
+  - target: ix://agent-ix/filament-spec-language/ADR-031
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-107
+  - target: ix://agent-ix/filament-spec-language/FR-107
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-108
+  - target: ix://agent-ix/filament-spec-language/FR-108
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-041
+  - target: ix://agent-ix/filament-specification/FR-041
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-243
+  - target: ix://agent-ix/filament-specification/FR-243
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-351
+  - target: ix://agent-ix/filament-specification/FR-351
     type: depends_on
 ---
 # FR-265: Derive the separating witness of a state clause from its evaluation
 
 ## Description
 
-When S6a evaluates a state clause (FR-107) to a Boolean, QSL SHALL derive
+When S6a evaluates a state clause (FR-107) to a Boolean, FSL SHALL derive
 the clause's settlement basis and, when that basis is decisive, its one
-separating witness record (QSpec FR-351), as ADR-031 SW-1 to SW-6 and SW-9
+separating witness record (FSpec FR-351), as ADR-031 SW-1 to SW-6 and SW-9
 decide. The derivation is one function. The FR-109 clause run (FR-266) and
 the FR-122 replay (FR-268) both call it, so producer and replay derive the
 record the same way.
@@ -36,20 +36,36 @@ record the same way.
   report for each quantifier occurrence that stopped before its last
   element. A stop report holds the quantifier's occurrence key (O-07), the
   index of the element it stopped at, the value bound to its binder there
-  and that element's source binding (QSpec FR-041-AC-4).
+  and that element's source binding (FSpec FR-041-AC-4).
+- Beside the outcome, one comparison report for each authored comparison
+  the evaluation completed outside every quantifier, `filter` and `map`
+  body: the comparison's occurrence key and its two operand values, left
+  then right.
 - The admitted observation (FR-106) the evaluation read.
 
 ## Outputs
 
-- A settlement basis from QSpec FR-243: `decisive-counterexample`,
+- A settlement basis from FSpec FR-243: `decisive-counterexample`,
   `decisive-witness` or `closed-scope` for a completed Boolean.
-- When the basis is decisive, one `SeparatingWitnessRecord` holding:
+- When the basis is decisive and the walk ends at a stopped quantifier, one
+  `SeparatingWitnessRecord` holding:
   - `quantifier`: the decisive quantifier's occurrence key;
   - `deciding_element`: the kernel `Value` bound to its binder at the stop;
   - `index`: the element's zero-based position in the domain's own order;
   - `value_path`: the path from the observation root to the domain
-    collection, in QSpec's value-path segment vocabulary;
+    collection, in FSpec's value-path segment vocabulary;
   - `trace_position`: absent.
+- When the basis is decisive and the walk ends at an authored comparison,
+  one `SeparatingWitnessRecord` holding (FSpec FR-351 "Comparison"):
+  - `deciding_comparison`: the comparison's occurrence key;
+  - `operands`: the comparison's two operand values as kernel `Value`s,
+    left then right;
+  - `decision_path`: the occurrence keys of the nodes the walk visited, from
+    the claim root to the comparison, root first and the comparison last;
+  - `deciding_element`: the comparison's Boolean value;
+  - `value_path`: the FSpec FR-207 path rooted at the clause's `self`
+    binding in the admitted observation, with an empty `steps` array;
+  - `quantifier`, `index` and `trace_position`: absent.
 
 ## Behavior
 
@@ -74,39 +90,57 @@ record the same way.
 - A connective node SHALL record a decision for its left operand if and
   only if its origin is `Authored`. A `Synthesized` connective, such as the
   composition the checker builds for a Float ordering (`<`, `<=`, `>`,
-  `>=`, QSL FR-397), therefore records none.
+  `>=`, FSL FR-397), therefore records none.
 - If the walk ends at a connective whose origin is `Synthesized`, then the
   derivation SHALL settle basis `closed-scope` with no record, because the
   connective's operands were not decided by anything the source wrote.
 - The derivation SHALL read the origin of a connective from the checked
-  node (`quire_checked::NodeKind::Connective(connective, origin, left,
-  right)` with `ConnectiveOrigin::{Authored, Synthesized}`, quire-eval
+  node (`filament_checked::NodeKind::Connective(connective, origin, left,
+  right)` with `ConnectiveOrigin::{Authored, Synthesized}`, filament-eval
   FR-002).
 - The derivation SHALL NOT infer the origin of a connective from source
   locations or operand shape.
-- A package read from `quire.checked-package/v2` bytes carries no
+- A package read from `filament.checked-package/v2` bytes carries no
   connective origin (Contract IR IR-1276 added no wire marker), so the
   derivation runs over the native checked clause only.
-- If the walk ends at a node that is not a stopped quantifier occurrence,
+- The S6a evaluator SHALL report, beside the outcome and never inside a
+  `Value`, each authored comparison (`=`, `!=`, `<`, `<=`, `>`, `>=`) it
+  completes outside every quantifier, `filter` and `map` body, with the
+  comparison's occurrence key and its two operand values. Such a comparison
+  is evaluated at most once per evaluation, so the reports are bounded by
+  the claim's size.
+- If the walk ends at an authored comparison, then the derivation SHALL
+  settle the decisive basis for the clause's truth (`decisive-counterexample`
+  for `false`, `decisive-witness` for `true`) and SHALL build the comparison
+  record of "Outputs" from that comparison's report and the nodes the walk
+  visited. The comparison's operand values decide its result and the
+  admitted observation is closed, so they separate the clause's truth from
+  its negation as a stopped quantifier's element does. A Float ordering is
+  held as a synthesized connective (FSL FR-397), so its walk ends at that
+  connective, not at a comparison.
+- If the walk ends at a node that is neither a stopped quantifier occurrence
+  nor an authored comparison, such as a call, a member read or a literal,
   then the derivation SHALL settle basis `closed-scope` with no record. A
   quantifier that visited every element (a `true` `forall`, a `false`
-  `exists`, or an empty domain) has no stop report.
+  `exists`, or an empty domain) has no stop report, so a walk ending at it
+  also settles `closed-scope`.
 - The record SHALL name the decisive occurrence the walk reaches, the
   root-most one on the path. A quantifier decided inside its body is not
   recorded.
-- The value path SHALL be the QSpec FR-207 runtime value path of the
-  deciding element's location, with QSpec FR-207's subjects, steps and wire
+- The value path SHALL be the FSpec FR-207 runtime value path of the
+  deciding element's location, with FSpec FR-207's subjects, steps and wire
   spelling (FR-207-AC-9 to AC-11).
 - If the domain is computed by `filter` or `map`, or built inside the
-  claim, then the index and value path SHALL be the ones QSpec FR-207 gives
-  that element (QSpec FR-207-AC-9 to AC-11), and the deciding element SHALL
+  claim, then the index and value path SHALL be the ones FSpec FR-207 gives
+  that element (FSpec FR-207-AC-9 to AC-11), and the deciding element SHALL
   stay the value the body was evaluated on, which for `map` is the mapped
   value.
 - An evaluation that completes no Boolean (`refused`, `undefined`,
   `incomplete`, or a family result) SHALL yield no basis from this
   derivation and no record; FR-266 gives such a result basis `unavailable`.
-- The derivation SHALL read nothing beyond the clause, the stop reports and
-  the admitted observation. It SHALL evaluate no element after a stop.
+- The derivation SHALL read nothing beyond the clause, the stop reports, the
+  comparison reports and the admitted observation. It SHALL evaluate no
+  element after a stop and re-evaluate no comparison.
 
 ## Criteria fixture
 
@@ -131,7 +165,11 @@ claim:
 - `MappedAll`: `forall(n in map(m in [0, self.versionNumber]: m + 1): n <
   500)`;
 - `NoneSelected`: `forall(n in filter(m in [0, self.versionNumber]: m >
-  900): n < 0)`.
+  900): n < 0)`;
+- `MatchesParent`: `present(self.parent) implies self.versionNumber =
+  value(self.parent).versionNumber`;
+- `AtLeastParent`: `present(self.parent) implies self.versionNumber >=
+  value(self.parent).versionNumber`.
 
 The Float criteria add to the unit the IEEE profile, the pure function
 `fl using v(x: Float64[nearest-even]): Float64[nearest-even] { x }`, and
@@ -163,15 +201,18 @@ criteria `self` is `mid`, its `history` is given with each criterion, and
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-265-AC-1 | `AllBelow` over `high` derives basis `decisive-counterexample` and a record whose `quantifier` is the `forall`'s occurrence key, `deciding_element` 600, `index` 1, a `value_path` rooted at a `built` subject naming the list's occurrence key and ending in an index step for position 1, and no trace position. The evaluation visits two elements, so the equal element after the stop is never evaluated. Over `low` it derives `closed-scope` and no record. | Test (TC-740) |
-| FR-265-AC-2 | `SomeAtLeast` over `high` and `NotAllBelow` over `high` each derive `decisive-witness` with a record naming 600 at index 1 and the `exists` or the `forall` occurrence respectively. `SomeAtLeast` over `low` derives `closed-scope`, no record. `EqualsAll` over `high` derives `closed-scope` and no record, though its `forall` stopped. | Test (TC-740) |
-| FR-265-AC-3 | Decision path: `GuardedAll` over `high` (parent present) derives the record for its own `forall`, naming the reference to `mid` at index 1 of its list; with `self` `root` (no parent) it derives `closed-scope`, no record. `LetAll` over `high` derives the record for its own `forall`. `OrAll` over `high` with `self` `mid` (`versionNumber` 600) is `false`, its walk ends at the right operand `self.versionNumber = 0`, and it derives `closed-scope`, no record. | Test (TC-740) |
+| FR-265-AC-2 | `SomeAtLeast` over `high` and `NotAllBelow` over `high` each derive `decisive-witness` with a record naming 600 at index 1 and the `exists` or the `forall` occurrence respectively. `SomeAtLeast` over `low` derives `closed-scope`, no record. `EqualsAll` over `high` (`false = true`) derives `decisive-counterexample` with the comparison record of its root `=`, operands `false` and `true`, and no quantifier, though its `forall` stopped below the comparison. | Test (TC-740, TC-2981) |
+| FR-265-AC-3 | Decision path: `GuardedAll` over `high` (parent present) derives the record for its own `forall`, naming the reference to `mid` at index 1 of its list; with `self` `root` (no parent) it derives `closed-scope`, no record. `LetAll` over `high` derives the record for its own `forall`. `OrAll` over `high` with `self` `mid` (`versionNumber` 600) is `false`, its walk ends at the right operand `self.versionNumber = 0`, and it derives `decisive-counterexample` with the comparison record of that `=`, operands 600 and 0, and a `decision_path` of the `or` then the `=`. | Test (TC-740, TC-2981) |
 | FR-265-AC-4 | `NestedAll` over `high` is `false` (the outer element 0 fails at inner element 600); the record names the outer `forall`'s occurrence, `deciding_element` 0, `index` 0, and no inner occurrence. | Test (TC-740) |
-| FR-265-AC-5 | Computed domains: `FilteredAll` over `high` names 600 with `index` 2, its position in the built list, not the position 1 it holds in the filtered collection. `MappedAll` over `high` holds `deciding_element` 601, the mapped value, and `index` 1. Both value paths are rooted at the built list's occurrence and end in an index step for that index (QSpec FR-207-AC-9). | Test (TC-740) |
+| FR-265-AC-5 | Computed domains: `FilteredAll` over `high` names 600 with `index` 2, its position in the built list, not the position 1 it holds in the filtered collection. `MappedAll` over `high` holds `deciding_element` 601, the mapped value, and `index` 1. Both value paths are rooted at the built list's occurrence and end in an index step for that index (FSpec FR-207-AC-9). | Test (TC-740) |
 | FR-265-AC-6 | No Boolean, no record: `AllBelow` over `high` with an evaluation budget of zero completes `incomplete`, and the derivation yields no basis and no record. `NoneSelected` over `low`, whose filtered domain is empty, derives `closed-scope`, no record. | Test (TC-740) |
 | FR-265-AC-7 | Member domains: `MemberAll` with `history` `[0, 600, 700]` names 600 at `index` 1, with a value path rooted at `mid` in the current observation whose one step selects the member `history`. `ConvertedAll` with `history` `[700, 0, 600]` names 600 at `index` 2, its position in the stored member, on the same path. `MaybeAll` with `[0, 600, 700]` names 600 at `index` 1 on the path whose steps select the member `maybeHistory` and then the option's value. `MemberPre` over a pre-call observation, and over an invocation, derives the same record, whose path names the pre observation, not the invocation's post one. | Test (TC-740) |
 | FR-265-AC-8 | `FloatOrder` over `high` evaluates `true` and derives basis `closed-scope` and no record. | Test (TC-740) |
 | FR-265-AC-9 | `FloatAndOperand` over `high` with `self` `mid` evaluates `true`; its authored `and` stopped on the right operand, the walk ends at the Float ordering's synthesized connective, and the derivation yields basis `closed-scope` and no record. | Test (TC-740) |
 | FR-265-AC-10 | Two checked trees with the same source locations that differ only in the `ConnectiveOrigin` of their root `and` connective, whose left operand is `true`, evaluated over one observation, record the decision `true` for the left operand when the origin is `Authored` and record no decision when it is `Synthesized`. | Test (TC-740) |
+| FR-265-AC-11 | Comparison leaf: `MatchesParent` over `high` (`self` `mid`, 600, parent `root`, 0) is `false`; the walk passes the `implies` (antecedent `true`) to its consequent and ends at the `=`, and the derivation yields basis `decisive-counterexample` and one record whose `deciding_comparison` is that `=`'s occurrence key, `operands` `[600, 0]`, `decision_path` the `implies`'s occurrence key then the `=`'s, `deciding_element` `false`, a `value_path` rooted at `mid` in the current observation with empty `steps`, and no `quantifier`, `index` or `trace_position`. | Test (TC-2981) |
+| FR-265-AC-12 | `AtLeastParent` over `high` is `true` and derives `decisive-witness` with the comparison record of its `>=`, `operands` `[600, 0]` and `deciding_element` `true`; `MatchesParent` with `self` `root` (no parent) is `true` by its antecedent, its walk ends at `present(self.parent)`, a call, and it derives `closed-scope` and no record. | Test (TC-2981) |
+| FR-265-AC-13 | The comparison reports: evaluating `MatchesParent` over `high` reports exactly one comparison, the `=`, and evaluating `MemberAll` reports none, because its only comparison is inside the `forall` body; a replay of `MatchesParent`'s record (FR-268) derives the equal record from the same clause and observation. | Test (TC-2981) |
 
 ## Dependencies
 
@@ -182,15 +223,15 @@ criteria `self` is `mid`, its `history` is given with each criterion, and
   (the admitted observation),
   [FR-108](FR-108-run-the-configversion-spine-corpus.md) (the `Config`
   domain package).
-- quire-eval FR-002 (`ConnectiveOrigin` on the checked `Connective` node);
-  QSL FR-397 (the Float ordering whose composition is synthesized).
-- QSpec FR-041 (decisive occurrence and source binding), FR-243 (basis
-  labels), QSpec FR-351 (the record), FR-207 AC-9 to AC-11 (the runtime value
-  path) and QSpec FR-351-AC-7 (the deciding-quantifier component).
+- filament-eval FR-002 (`ConnectiveOrigin` on the checked `Connective` node);
+  FSL FR-397 (the Float ordering whose composition is synthesized).
+- FSpec FR-041 (decisive occurrence and source binding), FR-243 (basis
+  labels), FSpec FR-351 (the record), FR-207 AC-9 to AC-11 (the runtime value
+  path) and FSpec FR-351-AC-7 (the deciding-quantifier component).
 
 ## References
 
 - Owning ticket: Linear QSL-389. Implementation: Linear QSL-45.
-- QSpec half (Linear STD-144): QSpec FR-207 AC-9 to AC-11 (value-path
-  segment vocabulary and the building-expression root) and QSpec FR-351-AC-7 (the
+- FSpec half (Linear STD-144): FSpec FR-207 AC-9 to AC-11 (value-path
+  segment vocabulary and the building-expression root) and FSpec FR-351-AC-7 (the
   deciding-quantifier component).

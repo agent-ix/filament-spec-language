@@ -1,0 +1,27 @@
+[package]
+name = "facade-contract-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fsl-package = { path = "../../../fsl-package" }
+fsl-replay = { path = "../../../fsl-replay" }
+fsl-analyze = { path = "../../../fsl-analyze" }
+fsl-semantics = { path = "../../../fsl-semantics" }
+fsl-forms = { path = "../../../fsl-forms" }
+filament-semantic-value = { workspace = true }
+fsl-foundation = { path = "../../../fsl-foundation" }
+fsl-cst = { path = "../../../fsl-cst" }
+filament-contract-model = { workspace = true }
+filament-observation = { workspace = true }
+filament-exact = { workspace = true }
+quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.1" }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+
+[dev-dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"

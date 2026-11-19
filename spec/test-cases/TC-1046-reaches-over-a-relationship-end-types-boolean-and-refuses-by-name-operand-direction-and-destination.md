@@ -3,7 +3,7 @@ id: TC-1046
 title: "reaches over a relationship end types as Boolean and refuses by name, operand, direction and destination"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-365
+  - target: ix://agent-ix/filament-spec-language/FR-365
     type: verifies
 ---
 # TC-1046: reaches over a relationship end types as Boolean and refuses by name, operand, direction and destination

@@ -3,7 +3,7 @@ id: TC-764
 title: "Certificate checkers accept genuine certificates and reject altered or misbound ones in a core-only process"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-282
+  - target: ix://agent-ix/filament-spec-language/FR-282
     type: verifies
 ---
 # TC-764: Certificate checkers accept genuine certificates and reject altered or misbound ones in a core-only process

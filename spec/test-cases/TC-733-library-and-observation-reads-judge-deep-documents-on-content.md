@@ -3,7 +3,7 @@ id: TC-733
 title: "Observation reads judge deep documents on their content"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-261
+  - target: ix://agent-ix/filament-spec-language/FR-261
     type: verifies
 ---
 # TC-733: Observation reads judge deep documents on their content

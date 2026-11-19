@@ -3,7 +3,7 @@ id: TC-043
 title: "Verify model loci and inventory identity consistency"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: verifies
 ---
 # TC-043: Verify model loci and inventory identity consistency

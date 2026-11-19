@@ -3,7 +3,7 @@ id: TC-1387
 title: "The parity runner fails coverage gaps, empty comparisons and reference faults, refuses an empty scope, and excuses nothing"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-563
+  - target: ix://agent-ix/filament-spec-language/FR-563
     type: verifies
 ---
 # TC-1387: The parity runner fails coverage gaps, empty comparisons and reference faults, refuses an empty scope, and excuses nothing

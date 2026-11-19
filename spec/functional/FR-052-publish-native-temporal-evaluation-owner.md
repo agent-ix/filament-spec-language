@@ -3,18 +3,18 @@ id: FR-052
 title: "Preserve temporal evaluation ownership on the checked-package route"
 type: FR
 relationships:
-  - { target: ix://agent-ix/quire-spec-language/FR-043, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-044, type: depends_on }
-  - { target: ix://agent-ix/quire-spec-language/FR-051, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-390, type: references }
-  - { target: ix://agent-ix/quire-spec-language/FR-449, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-043, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-044, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-051, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-390, type: references }
+  - { target: ix://agent-ix/filament-spec-language/FR-449, type: references }
 ---
 # FR-052: Preserve temporal evaluation ownership on the checked-package route
 
 ## Description
 
 When a checked temporal protocol obligation is evaluated through the Layer-4
-checked-package route, the QSL evaluator SHALL remain the sole owner of its
+checked-package route, the FSL evaluator SHALL remain the sole owner of its
 temporal truth, settlement and decision support, with outcomes and failures
 consistent with FR-043 and activation inputs consistent with FR-044.
 
@@ -47,11 +47,11 @@ to a correction relation actually carried by that route.
 These obligations specify behavior on checked-package protocol evaluation
 (FR-390) and its Layer-4 activation mapping (FR-449). They do not require a
 separate native-temporal request/result document. The typed request and result
-that carry them for quire-protocol are FR-516's; they are Rust values with no
-document, schema or QSL-computed content digest (the observation owner's
+that carry them for filament-protocol are FR-516's; they are Rust values with no
+document, schema or FSL-computed content digest (the observation owner's
 identifiers on `EvidenceRef` are opaque and echoed).
 
-The QSL-owned native owner-report route (`temporal::evaluate_v2`, its `Report`
+The FSL-owned native owner-report route (`temporal::evaluate_v2`, its `Report`
 and the `Report::to_owner_bytes` / `Report::from_owner_bytes` flat-bytes
 carrier) is not part of this requirement. Its binding, support, predecessor and
 limit obligations are specified on the spine evidence result by FR-526 ("Result

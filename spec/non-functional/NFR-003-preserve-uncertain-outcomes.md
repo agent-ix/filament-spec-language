@@ -4,13 +4,13 @@ title: "Preserve refusal and incompleteness through the pipeline"
 type: NFR
 quality_attribute: reliability
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-005"
+  - target: "ix://agent-ix/filament-spec-language/FR-005"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-006"
+  - target: "ix://agent-ix/filament-spec-language/FR-006"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-106"
+  - target: "ix://agent-ix/filament-spec-language/FR-106"
     type: constrains
-  - target: "ix://agent-ix/quire-spec-language/FR-107"
+  - target: "ix://agent-ix/filament-spec-language/FR-107"
     type: constrains
 ---
 # NFR-003: Preserve refusal and incompleteness through the pipeline

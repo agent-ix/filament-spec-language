@@ -3,7 +3,7 @@ id: TC-208
 title: "The S7 seam probe fails to compile the registry arm on an unhandled capability-kind variant"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-080
+  - target: ix://agent-ix/filament-spec-language/FR-080
     type: verifies
 ---
 # TC-208: The S7 seam probe fails to compile the registry arm on an unhandled capability-kind variant

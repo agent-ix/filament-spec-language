@@ -3,34 +3,34 @@ id: FR-192
 title: "Settle a statistical result on the measured axis"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-022
+  - target: ix://agent-ix/filament-spec-language/US-022
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-016
+  - target: ix://agent-ix/filament-spec-language/ADR-016
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-024
+  - target: ix://agent-ix/filament-spec-language/ADR-024
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-189
+  - target: ix://agent-ix/filament-spec-language/FR-189
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-280
+  - target: ix://agent-ix/filament-spec-language/FR-280
     type: references
 ---
 # FR-192: Settle a statistical result on the measured axis
 
 ## Description
 
-QSL's settlement map in `qsl-replay` SHALL settle every
+FSL's settlement map in `fsl-replay` SHALL settle every
 `probabilistic-satisfaction` item that EN-4 runs as exactly one FR-331 terminal record with
 the result value `measured`, carried by `TerminalValue::Measured
 (StatisticalVerdict)`, and SHALL never settle it `proved` or `refuted`
-(ADR-024 SV-1 to SV-5, SV-9, SV-10). The record SHALL carry QSpec FR-241's
+(ADR-024 SV-1 to SV-5, SV-9, SV-10). The record SHALL carry FSpec FR-241's
 execution disposition and a separate `measured` axis with the values
 `accepted`, `rejected` and `undecided`, and no FR-242 truth and no FR-243
 basis. A Rejected measurement SHALL fail the pipeline as an O-16 violation
@@ -82,8 +82,8 @@ pub enum Coverage { FiniteSample, Asymptotic }
 
 - EN-4's provider manifest SHALL be the one FR-280 states, which lists the evidence
   kind `statistical` only. Routing an item by its evidence kind, and never
-  substituting one kind for the other, is QSpec FR-290's negotiation rule,
-  which QSL does not restate.
+  substituting one kind for the other, is FSpec FR-290's negotiation rule,
+  which FSL does not restate.
 - When EN-4's negotiation gate refuses a claim (FR-195, which owns the
   claims it refuses and the order of the causes `EveryScheduler`,
   `ExactOnlyForm`, `MissingConfidence`), the map SHALL settle the refusal
@@ -102,20 +102,20 @@ pub enum Coverage { FiniteSample, Asymptotic }
 | `Completed`, Undecided | `measured` | `completed` | `undecided` | `Measured{decision: Undecided(cause), …}` | inconclusive |
 | `Stopped` by a limit | `incomplete` | `limit-reached{limit, value, setting}` | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
 | `Stopped` by `AutomatonStates{value}` | `incomplete` | `limit-reached{limit: max_automaton_states, value}` (FR-126 `ResourceExhausted`) | none | `Incomplete(LimitReached{limit, value})` (ADR-018 V-7) | incomplete |
-| `Stopped` by a sample expansion (`Expansion(ExpansionStop)`) that names a limit (`EvaluationMeter` or `MaxCandidates`, FR-126) | `incomplete` | `limit-reached{limit, value, setting}`, written as FR-203 writes the same stop for EN-5 (FR-255 Behavior 9, QSpec FR-461 Behavior 6): for an `EvaluationMeter` stop, `limit` the `quire.value.accounting/v1` name of the counter the stop names as exhausted (FR-120: an `EvaluationMeter` stop carries that counter), `value` that counter's configured bound in the request's evaluation meter budget, and `setting` that counter's FR-255 accounting setting name; for a `MaxCandidates` stop, `limit` `max_candidates`, `value` the request's `max_candidates` and `setting` `expansion.max_candidates`, its FR-255 engine-table setting. `EvaluationMeter` and `MaxCandidates` are the stop's labels and are not written as `limit`. The map receives the configured bounds with the outcome, because the stop carries its cause, its limit and, for the meter, the counter, but no bound. No setting is spelled `meter` or bare `max_candidates`: the setting is the name the settings operation and a replay request accept to raise the bound | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
+| `Stopped` by a sample expansion (`Expansion(ExpansionStop)`) that names a limit (`EvaluationMeter` or `MaxCandidates`, FR-126) | `incomplete` | `limit-reached{limit, value, setting}`, written as FR-203 writes the same stop for EN-5 (FR-255 Behavior 9, FSpec FR-461 Behavior 6): for an `EvaluationMeter` stop, `limit` the `filament.value.accounting/v1` name of the counter the stop names as exhausted (FR-120: an `EvaluationMeter` stop carries that counter), `value` that counter's configured bound in the request's evaluation meter budget, and `setting` that counter's FR-255 accounting setting name; for a `MaxCandidates` stop, `limit` `max_candidates`, `value` the request's `max_candidates` and `setting` `expansion.max_candidates`, its FR-255 engine-table setting. `EvaluationMeter` and `MaxCandidates` are the stop's labels and are not written as `limit`. The map receives the configured bounds with the outcome, because the stop carries its cause, its limit and, for the meter, the counter, but no bound. No setting is spelled `meter` or bare `max_candidates`: the setting is the name the settings operation and a replay request accept to raise the bound | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
 | `Stopped` by a sample expansion that names no limit and is an internal failure (`ExpansionStop::is_internal_failure`) | `failed` | diagnostic `runtime_invariant`/`established-invariant-broken` | none | `Failed` | failed (ADR-013 O-16 internal failure) |
-| `Stopped` by a sample expansion that names no limit and is not an internal failure (for example a state-constraint family that evaluation refuses) | `failed` | the stop's own `ExpansionStop.cause` (QSL FR-120), as the one diagnostic (QSpec FR-331, FR-408 "stops the run with that cause") | none | `Failed` carrying that diagnostic | failed |
+| `Stopped` by a sample expansion that names no limit and is not an internal failure (for example a state-constraint family that evaluation refuses) | `failed` | the stop's own `ExpansionStop.cause` (FSL FR-120), as the one diagnostic (FSpec FR-331, FR-408 "stops the run with that cause") | none | `Failed` carrying that diagnostic | failed |
 | `Stopped` by a cancelled `Cancel` handle | `incomplete` | `cancelled{source}` | none | `Incomplete(Cancelled{source})` (ADR-018 V-7) | incomplete |
 | `Unsupported` outcome | `unsupported` | cause `not-markov{…}` or `total-above-draw-range{total}` | none | `Unsupported(cause)` | unsupported |
 | `GeneratorMismatch`, `TooManyTests`, `TraceIndexRange` or `FractionForEvent` refusal | `unsupported` | diagnostic `unsupported_projection`/`unsupported-requested-capability` naming the refusal | none | `Unsupported(diagnostic)` | unsupported |
-| `ConfidenceBeyondPrecision` refusal | `unsupported` | the cause `confidence-beyond-precision` (QSpec FR-331, FR-408 Admission) | none | `Unsupported(cause)` | unsupported |
+| `ConfidenceBeyondPrecision` refusal | `unsupported` | the cause `confidence-beyond-precision` (FSpec FR-331, FR-408 Admission) | none | `Unsupported(cause)` | unsupported |
 | `EveryScheduler`, `MissingConfidence` or `ExactOnlyForm` refusal | `unsupported` | the cause `every-scheduler`, `missing-confidence` or `exact-only-form` | none | `Unsupported(cause)` | unsupported |
 | `Admission` or `RequiresBound` refusal | none: the refusal is the caller's to report (FR-106 admission failure, ADR-016 EX-8 disposition) | none | none | no terminal result | none |
 | `PredicateRefused(KernelRefused(r))`, `r` not `CheckedInvariant`, or `PredicateRefused(FamilyRefused(code))` | `failed` | the refusal's catalog code and cause as the one diagnostic (FR-100's refusal table) | none | `Failed` carrying that diagnostic | failed |
-| `PredicateRefused(Incomplete(i))` | `incomplete` | `limit-reached{limit, value, setting}` naming `i`'s counter by FR-255 Behavior 9's rule, `value` that counter's configured bound (QSpec FR-408: a clause-meter exhaustion stops the run `incomplete`) | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
+| `PredicateRefused(Incomplete(i))` | `incomplete` | `limit-reached{limit, value, setting}` naming `i`'s counter by FR-255 Behavior 9's rule, `value` that counter's configured bound (FSpec FR-408: a clause-meter exhaustion stops the run `incomplete`) | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
 | `PredicateRefused` holding `KernelRefused(CheckedInvariant)`, `NotBoolean`, `KernelUndefined` or `FamilyUndefined` | `failed` | diagnostic `runtime_invariant`/`established-invariant-broken` | none | `Failed` | failed (ADR-013 O-16 internal failure) |
 | `Symmetry` refusal (a malformed symmetry declaration, FR-151) | none: the refusal is the caller's `invalid_runtime_input`/`invalid-value` | none | none | no terminal result | none |
-| `NotStatistical` refusal | none: a negotiation outcome, `invalid-request` | diagnostic `invalid_capability`/`not-statistical` (QSpec FR-408 Admission, FR-331) | none | no terminal result | none |
+| `NotStatistical` refusal | none: a negotiation outcome, `invalid-request` | diagnostic `invalid_capability`/`not-statistical` (FSpec FR-408 Admission, FR-331) | none | no terminal result | none |
 | `NoTest` refusal | `inconclusive` | `no-initial-state` | none | `Inconclusive(NoInitialState)` (ADR-018 V-6) | inconclusive |
 | `Internal` refusal | `failed` | diagnostic `runtime_invariant`/`established-invariant-broken` | none | `Failed` | failed (ADR-013 O-16 internal failure) |
 
@@ -143,7 +143,7 @@ pub enum Coverage { FiniteSample, Asymptotic }
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-192-AC-1 | Each outcome row maps exactly as the table states: an Accepted, a Rejected and an Undecided (`IndifferenceRegion`) `Completed` outcome; a `Stopped` naming `max_samples`, settling `Incomplete(LimitReached{limit, value, setting})` with setting `statistical.max_samples`; an `Unsupported` outcome with cause `NotMarkov`; a `NoTest` refusal settling `inconclusive`, `no-initial-state`; a `ConfidenceBeyondPrecision` refusal settling `unsupported`, `confidence-beyond-precision`; an `Internal` refusal settling `failed`; a `Stopped` by an expansion naming `EvaluationMeter` with exhausted counter `work_units`, under a meter budget whose `work_units` is 4096, settling `incomplete`, `limit-reached` with limit `work_units`, value 4096 and setting the `work_units` counter's FR-255 accounting setting name, and one naming `value_occurrences` under a budget whose `value_occurrences` is 7 settling with limit `value_occurrences`, value 7 and that counter's setting name, and one naming `MaxCandidates` under `max_candidates` 2 settling with limit `max_candidates`, value 2 and setting `expansion.max_candidates`, each equal to the record FR-203 writes for the same stop (each the name FR-255 registers for it, which the settings operation accepts to raise that bound; no setting `meter` and no bare `max_candidates`), one by an internal-failure expansion naming no limit settling `failed`, `runtime_invariant`/`established-invariant-broken`, and one by a non-internal expansion naming no limit settling `failed` with the stop's own `ExpansionStop.cause` (QSL FR-120) as its one diagnostic. None of the measured, stopped and unsupported records carries an FR-242 truth or an FR-243 basis. | Test (TC-627) |
+| FR-192-AC-1 | Each outcome row maps exactly as the table states: an Accepted, a Rejected and an Undecided (`IndifferenceRegion`) `Completed` outcome; a `Stopped` naming `max_samples`, settling `Incomplete(LimitReached{limit, value, setting})` with setting `statistical.max_samples`; an `Unsupported` outcome with cause `NotMarkov`; a `NoTest` refusal settling `inconclusive`, `no-initial-state`; a `ConfidenceBeyondPrecision` refusal settling `unsupported`, `confidence-beyond-precision`; an `Internal` refusal settling `failed`; a `Stopped` by an expansion naming `EvaluationMeter` with exhausted counter `work_units`, under a meter budget whose `work_units` is 4096, settling `incomplete`, `limit-reached` with limit `work_units`, value 4096 and setting the `work_units` counter's FR-255 accounting setting name, and one naming `value_occurrences` under a budget whose `value_occurrences` is 7 settling with limit `value_occurrences`, value 7 and that counter's setting name, and one naming `MaxCandidates` under `max_candidates` 2 settling with limit `max_candidates`, value 2 and setting `expansion.max_candidates`, each equal to the record FR-203 writes for the same stop (each the name FR-255 registers for it, which the settings operation accepts to raise that bound; no setting `meter` and no bare `max_candidates`), one by an internal-failure expansion naming no limit settling `failed`, `runtime_invariant`/`established-invariant-broken`, and one by a non-internal expansion naming no limit settling `failed` with the stop's own `ExpansionStop.cause` (FSL FR-120) as its one diagnostic. None of the measured, stopped and unsupported records carries an FR-242 truth or an FR-243 basis. | Test (TC-627) |
 | FR-192-AC-2 | FR-189-AC-1's Okamoto result at `5 ms` settles `measured`, `accepted`, with `interval` present, `coverage: FiniteSample`, `samples = 23,026`, `tests = 1`, `alpha_per_test = 1/100`; the SPRT result at `2 ms` settles `measured`, `rejected` with no `interval`; FR-190-AC-1's result settles `accepted` with `coverage: Asymptotic`. | Test (TC-627) |
 | FR-192-AC-3 | A request with `P95` accepted and the `2 ms` claim rejected fails the pipeline gate with the same status as a request holding one O-16 violation; the same request without the rejected item passes. Its proof summary counts 0 proved items. | Test (TC-627) |
 | FR-192-AC-4 | EN-4's manifest is the one FR-280-AC-4 fixes. EN-4's gate given a checked claim `under every scheduler` refuses `EveryScheduler`; given `NoFault` with no confidence parameters refuses `MissingConfidence`; given `expected accumulate duration until holds(c.phase = Replied)` refuses `ExactOnlyForm`; each draws no sample and settles `unsupported` with its cause. | Test (TC-627) |
@@ -165,7 +165,7 @@ pub enum Coverage { FiniteSample, Asymptotic }
 
 ## References
 
-- QSpec half, which owns the FR-331 value `measured`, the `measured` axis,
-  the evidence kinds and the no-substitution rule: QSpec FR-409, FR-410 and
+- FSpec half, which owns the FR-331 value `measured`, the `measured` axis,
+  the evidence kinds and the no-substitution rule: FSpec FR-409, FR-410 and
   FR-290 (Linear STD-137).
 - Owning ticket: Linear QSL-371.

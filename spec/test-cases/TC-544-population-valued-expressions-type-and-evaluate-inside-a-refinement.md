@@ -3,7 +3,7 @@ id: TC-544
 title: "Population-valued expressions type and evaluate inside a refinement"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-139
+  - target: ix://agent-ix/filament-spec-language/FR-139
     type: verifies
 ---
 # TC-544: Population-valued expressions type and evaluate inside a refinement

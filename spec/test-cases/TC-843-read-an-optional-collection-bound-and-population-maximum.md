@@ -3,7 +3,7 @@ id: TC-843
 title: "Collection and population types resolve with an optional bound"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-333
+  - target: ix://agent-ix/filament-spec-language/FR-333
     type: verifies
 ---
 # TC-843: Collection and population types resolve with an optional bound

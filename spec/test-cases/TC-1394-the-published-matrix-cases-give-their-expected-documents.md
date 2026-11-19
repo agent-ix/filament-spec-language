@@ -3,9 +3,9 @@ id: TC-1394
 title: "The published matrix cases give their expected documents, stable and independent of the working directory"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-565
+  - target: ix://agent-ix/filament-spec-language/FR-565
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-564
+  - target: ix://agent-ix/filament-spec-language/FR-564
     type: verifies
 ---
 # TC-1394: The published matrix cases give their expected documents, stable and independent of the working directory

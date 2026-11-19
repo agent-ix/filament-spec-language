@@ -3,9 +3,9 @@ id: TC-016
 title: "Inclusive formatter byte ceilings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/NFR-001
+  - target: ix://agent-ix/filament-spec-language/NFR-001
     type: verifies
 ---
 

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Checked temporal classifications keep node facts separate from occurrence selection.
 
-use ix_trace_rs::trace;
-use qsl_package::checked_views::{mapping_support, temporal_subject, Closure, Support, Unmatched};
-use quire_contract_model::{
+use filament_contract_model::{
     CheckedNodeKind, CheckedOccurrenceRole, ClockConfiguration, TemporalForm,
 };
-use quire_spec_language::emit_checked_v2::{emit, ClockSelection, Request};
+use fsl_command::emit_checked_v2::{emit, ClockSelection, Request};
+use fsl_package::checked_views::{mapping_support, temporal_subject, Closure, Support, Unmatched};
+use ix_trace_rs::trace;
 
 #[trace("TC-1322", "FR-527-AC-28")]
 #[test]
@@ -22,15 +22,15 @@ fn shared_classification_preserves_occurrence_keys_and_detects_changed_public_fa
     std::fs::write(
         &source,
         r#"language "ix:native" edition "1-draft";
-profile v = "quire.model.complete/v1";
-profile t = "quire.temporal.event-position.false-extension/v1";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.event-position.false-extension/v1";
 model Alpha = "example/config-version";
 model Zeta = "example/auxiliary";
 invariant Auxiliary using v on Zeta::ConfigVersion at current { self.versionNumber >= 0 }
-temporal First using t over (c: Alpha::ConfigVersion) clock "events" on origin {
+temporal First using t over (c: Alpha::ConfigVersion) clock "model-steps" on origin {
     eventually[0,2] holds(c.versionNumber = 2)
 }
-temporal Second using t over (c: Alpha::ConfigVersion) clock "events" on origin {
+temporal Second using t over (c: Alpha::ConfigVersion) clock "model-steps" on origin {
     eventually[0,2] holds(c.versionNumber = 2)
 }
 "#,

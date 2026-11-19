@@ -3,7 +3,7 @@ id: TC-838
 title: "S6a evaluates an infinite-trace clause three-valued over a finite prefix"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: verifies
 ---
 # TC-838: S6a evaluates an infinite-trace clause three-valued over a finite prefix
@@ -11,7 +11,8 @@ relationships:
 ## Description
 
 Verify that a finite prefix under infinite-trace yields a violation only
-for a bad prefix of a safety-fragment formula, pending otherwise, and never
+for a bad prefix of a safety-fragment formula, holds for a good prefix,
+pending otherwise, and never
 a proof.
 
 Scope: FR-328-AC-1 to FR-328-AC-4.
@@ -29,7 +30,7 @@ Tag the tests `#[trace("TC-838", "FR-328-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: `false` at 0; `Pending`; `Pending`; `Pending`.
+- Step 1: `false` at 0; `Pending`; `Completed(true)`; `Pending`.
 - Step 2: `false` at 0; `Pending`.
 - Step 3: `false` at 0.
-- Step 4: violation or pending only; no `tested`, no `proved`.
+- Step 4: no `tested`; each `Pending` is pending and the `Completed(true)` is success with truth `true`.

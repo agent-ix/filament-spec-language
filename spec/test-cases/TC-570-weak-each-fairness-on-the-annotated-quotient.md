@@ -3,7 +3,7 @@ id: TC-570
 title: "Weak each fairness is decided on the annotated quotient"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-153
+  - target: ix://agent-ix/filament-spec-language/FR-153
     type: verifies
 ---
 # TC-570: Weak each fairness is decided on the annotated quotient

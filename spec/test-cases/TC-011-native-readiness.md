@@ -3,7 +3,7 @@ id: TC-011
 title: "Exact native source intake"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: verifies
 ---
 

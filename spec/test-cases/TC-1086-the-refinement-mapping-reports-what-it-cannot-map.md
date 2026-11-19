@@ -3,9 +3,9 @@ id: TC-1086
 title: "The refinement mapping reports an unmapped type, a wrong system and the first failure, and never drops an object"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
 ---
 # TC-1086: The refinement mapping reports an unmapped type, a wrong system and the first failure, and never drops an object

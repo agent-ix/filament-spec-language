@@ -1,0 +1,899 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
+
+use filament_contract_model as ir;
+use filament_semantic_value::checking::CheckMode;
+use fsl_foundation::serde_object::{deserialize_objects, from_object};
+use fsl_foundation::AccountingSetting;
+use serde::Deserialize;
+use serde_json::value::RawValue;
+
+/// The selected request shape owns its admitted envelope format.
+pub(super) trait RequestKind: serde::de::DeserializeOwned {
+    const FORMAT: fsl_foundation::wire_format::WireFormat;
+}
+
+impl RequestKind for Request {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::RunRequest;
+}
+
+impl RequestKind for CompileRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::CompileRequest;
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Envelope<'a> {
+    pub format: String,
+    #[serde(borrow)]
+    pub request: &'a RawValue,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CompileRequest {
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(deserialize_with = "compile_program")]
+    pub program: CompileProgram,
+    /// FR-147/FR-099: the unit's unchecked internal-list value.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    /// A `1-draft` program's supplied libraries (FR-027, ADR-015 D-1); none
+    /// when absent.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    /// FR-660: request supplied extension definitions.
+    #[serde(default, deserialize_with = "extensions")]
+    pub extensions: Vec<Extension>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-810: the file the checked package is written to; none when absent.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub output: Option<OutputMember>,
+    /// FR-665: checked-package handoff written after compilation succeeds.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub handoff: Option<Handoff>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+    /// FR-952: the mode every function body of the unit is checked under;
+    /// `Linked` when absent.
+    #[serde(default = "linked", deserialize_with = "check_mode")]
+    pub check_mode: CheckMode,
+}
+
+const fn linked() -> CheckMode {
+    CheckMode::Linked
+}
+
+/// FR-952: `"linked"` or `"kernel"`; any other value, a non-string or
+/// `null` included, refuses naming the member.
+fn check_mode<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<CheckMode, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(mode) if mode == "linked" => Ok(CheckMode::Linked),
+        serde_json::Value::String(mode) if mode == "kernel" => Ok(CheckMode::Kernel),
+        other => Err(serde::de::Error::custom(format!(
+            "check_mode must be `linked` or `kernel`, found {other}"
+        ))),
+    }
+}
+
+/// FR-767's run-side supplied library: its own law is independent of the
+/// top-level program law.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RunLibrary {
+    pub identity: String,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+}
+
+/// FR-665's checked-package handoff selection.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Handoff {
+    pub directory: String,
+    pub package_name: String,
+    #[serde(default)]
+    pub execution_points: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(default, deserialize_with = "handoff_corpus")]
+    pub corpus: HandoffCorpus,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub native_join: Option<NativeJoin>,
+}
+
+/// The adverse corpus requested for a handoff.
+#[derive(Clone, Copy, Default)]
+pub(super) enum HandoffCorpus {
+    #[default]
+    None,
+    Standard,
+}
+
+fn handoff_corpus<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<HandoffCorpus, D::Error> {
+    let value = String::deserialize(decoder)?;
+    match value.as_str() {
+        "none" => Ok(HandoffCorpus::None),
+        "standard" => Ok(HandoffCorpus::Standard),
+        _ => Err(serde::de::Error::custom(format!(
+            "handoff.corpus must be `none` or `standard`, found {value:?}"
+        ))),
+    }
+}
+
+/// Required native-join ceilings for handoff identity joins.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NativeJoin {
+    pub work_units: u64,
+    pub storage: u64,
+}
+
+/// FR-810's closed `output` record.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OutputMember {
+    #[serde(deserialize_with = "package_path")]
+    pub package: std::path::PathBuf,
+}
+
+fn package_path<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<std::path::PathBuf, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(path) if !path.is_empty() => Ok(path.into()),
+        _ => Err(serde::de::Error::custom(
+            "output member \"package\" must be a non-empty string",
+        )),
+    }
+}
+
+/// The compiler accepts its legacy single-program object or FR-480's ordered
+/// array of source selections. Extraction is retained only for FR-031's typed
+/// refusal before source files are opened.
+pub(super) struct CompileProgram {
+    pub sources: Vec<SourceFile>,
+    pub extraction: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SingleCompileProgram {
+    #[serde(deserialize_with = "from_object")]
+    source: SourceFile,
+    #[serde(default, deserialize_with = "present_json_value")]
+    extraction: Option<serde_json::Value>,
+}
+
+fn compile_program<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<CompileProgram, D::Error> {
+    let value = serde_json::Value::deserialize(decoder)?;
+    let (sources, extraction) = match value {
+        serde_json::Value::Object(_) => {
+            let program =
+                SingleCompileProgram::deserialize(value).map_err(serde::de::Error::custom)?;
+            (vec![program.source], program.extraction.is_some())
+        }
+        serde_json::Value::Array(value) => {
+            let sources = Vec::<SourceFile>::deserialize(serde_json::Value::Array(value))
+                .map_err(serde::de::Error::custom)?;
+            (sources, false)
+        }
+        other => {
+            return Err(serde::de::Error::custom(format!(
+                "expected a compile program object or source array, found {other}"
+            )));
+        }
+    };
+    Ok(CompileProgram {
+        sources,
+        extraction,
+    })
+}
+
+/// One supplied library: its identity and source selection.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Library {
+    pub identity: String,
+    /// FR-147/FR-099: this library's unchecked internal-list value.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+}
+
+/// One FR-660 extension definition and its selected source document.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Extension {
+    pub authority: String,
+    pub identity: String,
+    pub file: String,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub depends_on: Vec<DefinitionReference>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// One exact definition dependency reference from FR-660.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DefinitionReference {
+    pub authority: String,
+    pub identity: String,
+}
+
+pub(super) fn extensions<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Vec<Extension>, D::Error> {
+    let value = serde_json::Value::deserialize(decoder)?;
+    let serde_json::Value::Array(entries) = value else {
+        return Err(serde::de::Error::custom(
+            "extensions must be an array of definition entries",
+        ));
+    };
+    entries
+        .into_iter()
+        .map(|entry| Extension::deserialize(entry).map_err(serde::de::Error::custom))
+        .collect()
+}
+
+fn present_json_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<serde_json::Value>, D::Error> {
+    serde_json::Value::deserialize(decoder).map(Some)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Request {
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    /// FR-100: the program source selection; exactly one of `program` and
+    /// `package` is present.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub program: Option<Program>,
+    /// FR-100, FR-1039: a selected checked package in place of `program`; a
+    /// package takes no request-selected law (FR-767).
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<RunPackageSelection>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: Limits,
+    /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
+    /// program.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub call: Option<Call>,
+    /// FR-312: a clause run, mutually exclusive with `call` for 1-draft.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub clause: Option<ClauseRun>,
+    /// FR-651: several independent call or clause selections in one request.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub items: Option<serde_json::Value>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+    /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
+    /// when absent.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<RunLibrary>,
+    /// FR-660: request supplied extension definitions.
+    #[serde(default, deserialize_with = "extensions")]
+    pub extensions: Vec<Extension>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-931: the TL lowering request member, decoded by its own reader so
+    /// each refusal names its member path; none when absent.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub tl_lowering: Option<serde_json::Value>,
+}
+
+fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
+    decoder: D,
+) -> Result<Option<T>, D::Error> {
+    from_object(decoder).map(Some)
+}
+
+/// FR-312's closed clause-run selection and observation file table.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ClauseRun {
+    #[serde(deserialize_with = "from_object")]
+    pub selection: fsl_replay::spine::ClauseRunSelectionWire,
+    #[serde(deserialize_with = "from_object")]
+    pub observations: std::collections::BTreeMap<String, String>,
+    /// FR-312: optional clause-run accounting limits, using FR-100's closed
+    /// counter object and defaults.
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub observation_limits: Option<fsl_replay::spine::ObservationLimitsWire>,
+}
+
+/// The `call` member of a `1-draft` native-run/1 request (FR-100): which
+/// function to call, its arguments, and an optional closed `accounting`
+/// object. A top-level `work_units` is no member: `deny_unknown_fields`
+/// refuses it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Call {
+    pub function: String,
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub arguments: Vec<Argument>,
+    /// FR-100: the call's accounting limits by counter name; absent is `{}`.
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    /// NFR-130, FR-100: the call's evaluation limits; absent is `{}`.
+    #[serde(default, deserialize_with = "from_object")]
+    pub evaluation: Evaluation,
+    /// FR-650: the file of the one current snapshot the call's Reference and
+    /// Population arguments resolve against.
+    #[serde(default)]
+    pub snapshot: Option<String>,
+    /// FR-960: the call's requirement settlement and the backends of its
+    /// items, read by `requirements::read`; absent settles no item.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub requirements: Option<serde_json::Value>,
+}
+
+/// The `accounting` member of a [`Call`] (FR-100): any subset of the ten
+/// `filament.value.accounting/v1` counters, each a JSON integer from 0 to
+/// `u64::MAX`. A member that names no counter, or is named twice, refuses at
+/// decode (serde's derive rejects both).
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Accounting {
+    #[serde(default, deserialize_with = "counter")]
+    integer_bits: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    decimal_digits: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    scale_expansion: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    text_input_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    text_scalars: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    normalized_scalars: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    unit_edges: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    value_occurrences: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    work_units: Option<u64>,
+    #[serde(default, deserialize_with = "counter")]
+    result_units: Option<u64>,
+}
+
+impl Accounting {
+    /// The counters the object names, as their settings with their bounds.
+    pub fn entries(&self) -> impl Iterator<Item = (AccountingSetting, u64)> {
+        [
+            (AccountingSetting::IntegerBits, self.integer_bits),
+            (AccountingSetting::DecimalDigits, self.decimal_digits),
+            (AccountingSetting::ScaleExpansion, self.scale_expansion),
+            (AccountingSetting::TextInputBytes, self.text_input_bytes),
+            (AccountingSetting::TextScalars, self.text_scalars),
+            (
+                AccountingSetting::NormalizedScalars,
+                self.normalized_scalars,
+            ),
+            (AccountingSetting::UnitEdges, self.unit_edges),
+            (AccountingSetting::ValueOccurrences, self.value_occurrences),
+            (AccountingSetting::WorkUnits, self.work_units),
+            (AccountingSetting::ResultUnits, self.result_units),
+        ]
+        .into_iter()
+        .filter_map(|(setting, bound)| bound.map(|bound| (setting, bound)))
+    }
+}
+
+/// The `evaluation` member of a [`Call`] (FR-100, NFR-130): a closed object
+/// whose one member, `live_occurrences`, is a JSON integer from 0 to
+/// `u64::MAX`. Any other member, or a malformed value, refuses at decode.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Evaluation {
+    #[serde(default, deserialize_with = "live_occurrence_limit")]
+    live_occurrences: Option<u64>,
+}
+
+impl Evaluation {
+    /// The live-occurrence limit the call evaluates under: the member's
+    /// value, or the FR-255 default 1048576 when it is omitted. Zero is a
+    /// real limit.
+    pub fn live_occurrences(&self) -> u64 {
+        self.live_occurrences
+            .unwrap_or(fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES)
+    }
+}
+
+/// A present `live_occurrences` is a JSON integer from 0 to `u64::MAX`; a
+/// malformed one refuses naming the member (NFR-130-AC-4).
+fn live_occurrence_limit<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(decoder).map(Some).map_err(|error| {
+        serde::de::Error::custom(format!("`call.evaluation.live_occurrences`: {error}"))
+    })
+}
+
+/// A present counter is a JSON integer from 0 to `u64::MAX`. This
+/// deserializes `u64` directly, so serde calls it only for a present key and
+/// a present `null` fails `u64`'s own visitor rather than becoming absent.
+fn counter<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(decoder).map(Some)
+}
+
+/// One `{parameter, value}` argument of a [`Call`] (FR-100, FR-650): `value` is
+/// a JSON integer in the signed 64-bit range or a JSON object; the command
+/// refuses any other JSON value `invalid-request` before the run.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Argument {
+    pub parameter: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SourceFile {
+    pub file: String,
+    #[serde(flatten)]
+    pub identity: Identity,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Model {
+    pub format: String,
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Program {
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+    /// FR-031: extraction body identity selected from the original Markdown document.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub extraction: Option<Extraction>,
+    /// FR-031: authored clause bindings for the extraction.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<ClauseBinding>,
+}
+
+/// FR-031's extracted body identity.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Extraction {
+    #[serde(deserialize_with = "from_object")]
+    pub body: ExtractedBody,
+}
+
+/// Native and formal identity of the body Quire extracts.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtractedBody {
+    pub authority: String,
+    pub identity: String,
+    pub document: String,
+}
+
+/// One authored clause selection for an extraction.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ClauseBinding {
+    pub clause: String,
+    pub package: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Identity {
+    pub authority: String,
+    pub identity: String,
+    pub document: String,
+    pub formal_revision: u64,
+}
+
+impl Identity {
+    pub fn bind(
+        &self,
+        request_member: &str,
+    ) -> Result<crate::formal_source::SourceIdentities, ir::Diagnostic> {
+        let document = ir::SourceDocumentId::new(&self.document)?;
+        let revision =
+            ir::SourceRevision::new(self.formal_revision).map_err(|mut diagnostic| {
+                diagnostic.path = format!("{request_member}.formal_revision");
+                diagnostic.message = format!("{request_member}.formal_revision must be positive");
+                diagnostic
+            })?;
+        Ok(crate::formal_source::SourceIdentities {
+            native: fsl_foundation::SourceIdentity::new(
+                self.authority.clone(),
+                self.identity.clone(),
+            ),
+            formal: ir::SourceIdentity::new(document, revision),
+        })
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Limits {
+    /// FSpec FR-323 `limits.supplied`: the supplied-value helper ceilings.
+    /// Absent resolves to each published default; a present object is closed
+    /// and complete with each ceiling an exact `u64`, or the request is
+    /// refused before anything runs.
+    #[serde(default, deserialize_with = "supplied_limits")]
+    pub supplied: Option<filament_semantic_value::supplied_stop::SuppliedLimits>,
+}
+
+/// `limits.supplied`, read by the one strict reader the replay request also
+/// uses ([`fsl_replay::read_supplied_limits`]).
+fn supplied_limits<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<filament_semantic_value::supplied_stop::SuppliedLimits>, D::Error> {
+    let value = serde_json::Value::deserialize(decoder)?;
+    fsl_replay::read_supplied_limits(&value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
+impl RequestKind for AnalyzeRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::AnalyzeRequest;
+}
+
+/// FR-620's closed `native-analyze/1` request (FSpec FR-520 "Document
+/// members").
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeRequest {
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub program: Option<Program>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<HandoffSelection>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<DocumentFileSelection>,
+    #[serde(default)]
+    pub memory: Vec<serde_json::Value>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: AnalyzeLimits,
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// FR-850's `package` selection: the FR-517 handoff directory, beneath the
+/// request's directory, holding `checked-package.json`, `identities.json`
+/// and, when the unit has equality rows, `equality.json`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct HandoffSelection {
+    pub directory: String,
+}
+
+/// FR-1039: a run request's `package` selection, exactly one of `{file}`, a
+/// checked-package v2 file, and `{directory}`, an FR-517 handoff directory.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RunPackageSelection {
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub directory: Option<String>,
+}
+
+/// A supplied document and its optional FR-821 provision identity.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DocumentFileSelection {
+    pub file: String,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub identity: Option<serde_json::Value>,
+}
+
+/// The request-level `limits`: what every item of the run shares.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeLimits {
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    #[serde(default, deserialize_with = "from_object")]
+    pub observation: ObservationLimits,
+    #[serde(default, deserialize_with = "from_object")]
+    pub normalization: NormalizationLimits,
+}
+
+/// FR-620's `limits.observation`: the FR-255 `observation.*` settings by
+/// their names without the stage prefix, each omitted one at its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ObservationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub input_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub objects: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub values: Option<u64>,
+}
+
+impl ObservationLimits {
+    /// The published observation limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::observation::ObservationLimits {
+        let mut limits = fsl_semantics::model::observation::ObservationLimits::default();
+        if let Some(bound) = self.input_bytes {
+            limits.document_bytes = bound;
+        }
+        if let Some(bound) = self.objects {
+            limits.objects_per_document = bound;
+        }
+        if let Some(bound) = self.values {
+            limits.values_per_document = bound;
+        }
+        limits
+    }
+}
+
+/// FR-620's `limits.normalization`: the FR-255 `model.*` normalization
+/// settings by their names without the stage prefix, each omitted one at
+/// its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NormalizationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub declaration_records: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub derivation_facts: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub effective_declarations: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub dispatch_candidates: Option<u64>,
+    /// `model.hashed_bytes` is FSpec's limit name (FR-255): it is read and
+    /// range-checked so a request that states it is admitted, but FSL's
+    /// normalization hashes under no byte meter, so no FSL limit takes it.
+    #[serde(default, rename = "hashed_bytes", deserialize_with = "limit")]
+    _hashed_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub work_units: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub ancestor_steps: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub family_steps: Option<u64>,
+}
+
+impl NormalizationLimits {
+    /// The published normalization limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::accounting::ModelNormalizationLimits {
+        let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+        for (field, bound) in [
+            (&mut limits.declaration_records, self.declaration_records),
+            (&mut limits.derivation_facts, self.derivation_facts),
+            (
+                &mut limits.effective_declarations,
+                self.effective_declarations,
+            ),
+            (&mut limits.dispatch_candidates, self.dispatch_candidates),
+            (&mut limits.work_units, self.work_units),
+            (&mut limits.ancestor_steps, self.ancestor_steps),
+            (&mut limits.family_steps, self.family_steps),
+        ] {
+            if let Some(bound) = bound {
+                *field = bound;
+            }
+        }
+        limits
+    }
+}
+
+/// One limit member: a JSON integer from 0 to 2^53 - 1 (FR-620).
+fn limit<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "limit {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// The largest integer every JSON reader holds exactly (FSpec FR-520).
+const MAX_DEADLINE_MS: u64 = 9_007_199_254_740_991;
+
+/// `deadline_ms`: a JSON integer from 0 to 2^53 - 1.
+fn deadline<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "deadline_ms {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// FR-640's `clocks`: an object from clock name to one closed clock
+/// configuration in the `TemporalBinding` `clock` wire form. A value that is
+/// not an object, a repeated name, an empty name and a member that is not a
+/// well-formed configuration each refuse, naming `clocks` or the member.
+fn clocks<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<fsl_replay::spine::RequestClocks, D::Error> {
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = fsl_replay::spine::RequestClocks;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a clocks object keyed by clock name")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut members = std::collections::BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                let value = map.next_value::<serde_json::Value>()?;
+                let bad = |reason: String| {
+                    serde::de::Error::custom(format!("clocks member {name:?}: {reason}"))
+                };
+                if members.contains_key(&name) {
+                    return Err(bad("given more than once".to_owned()));
+                }
+                let clock = ir::ClockConfiguration::deserialize(value)
+                    .map_err(|error| bad(error.to_string()))?;
+                members.insert(name, clock);
+            }
+            fsl_replay::spine::RequestClocks::new(members).map_err(serde::de::Error::custom)
+        }
+    }
+    decoder.deserialize_map(Visitor)
+}
+
+/// A request kind that carries FR-640's `clocks` member.
+pub(super) trait ClocksRequest: RequestKind {
+    /// The request's clock selections.
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks;
+}
+
+impl ClocksRequest for Request {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+impl ClocksRequest for CompileRequest {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+/// Read a supplied `clocks` value exactly as the request member is read: the
+/// same object shape, repeated-name and configuration refusals.
+pub(super) fn read_clocks(
+    raw: &RawValue,
+) -> Result<fsl_replay::spine::RequestClocks, serde_json::Error> {
+    clocks(&mut serde_json::Deserializer::from_str(raw.get()))
+}
+
+impl RequestKind for MonitorRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::MonitorRequest;
+}
+
+/// FR-644's closed `native-monitor/1` request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorRequest {
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(deserialize_with = "from_object")]
+    pub program: Program,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    /// Optional caller-supplied integer-division law (FR-767).
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<MonitorClauseWire>,
+    #[serde(deserialize_with = "from_object")]
+    pub trace: MonitorTraceWire,
+    /// The path of an FR-641 ledger file.
+    #[serde(default)]
+    pub ledger: Option<String>,
+    /// The path of a `filament.monitor-state/1` checkpoint to resume from.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Snapshot files by key, for records that name a snapshot by key.
+    #[serde(default, deserialize_with = "from_object")]
+    pub observations: std::collections::BTreeMap<String, String>,
+    /// The relative path of a JSON Lines record file (the batch form).
+    #[serde(default)]
+    pub records: Option<String>,
+    /// The provider-routed FSpec FR-520 analysis items (FR-644
+    /// "Provider-routed items"), read as a `native-analyze/1` request reads
+    /// them.
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    /// The items' model subject, as FR-620 reads it.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    /// The documents the items read, as FR-620 reads them.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<DocumentFileSelection>,
+    /// The items' deadline in milliseconds, as FR-620 reads it.
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// One selected clause: its name and, for a snapshot trace, its `over`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorClauseWire {
+    pub name: String,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub over: Option<MonitorOverWire>,
+}
+
+/// FR-641's `over`: the object a clause's `over` parameter names.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorOverWire {
+    #[serde(deserialize_with = "from_object")]
+    pub reference: fsl_replay::spine::ObjectReferenceWire,
+}
+
+/// The `trace` member: the kind and the members FR-641 gives it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorTraceWire {
+    pub kind: MonitorKindWire,
+    #[serde(default)]
+    pub lower_boundary: Option<fsl_replay::spine::LowerBoundaryWire>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub binding: Option<fsl_replay::spine::BindingWire>,
+    #[serde(default)]
+    pub cover: Option<fsl_replay::spine::CoverWire>,
+}
+
+/// The trace kinds a monitor request names.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum MonitorKindWire {
+    Finite,
+    Progressed,
+    Timestamped,
+    Timed,
+}

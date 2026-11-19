@@ -3,15 +3,15 @@ id: FR-367
 title: "Bind an admitted Call's named values to a scalar application occurrence in generated-oracle operand order"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-010
+  - target: ix://agent-ix/filament-spec-language/US-010
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-092
+  - target: ix://agent-ix/filament-spec-language/FR-092
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-100
+  - target: ix://agent-ix/filament-spec-language/FR-100
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-357
+  - target: ix://agent-ix/filament-spec-language/FR-357
     type: depends_on
 ---
 # FR-367: Bind an admitted Call's named values to a scalar application occurrence in generated-oracle operand order
@@ -24,7 +24,7 @@ oracle's argument order), and needs to know which supplied value fed which
 operand. FR-100's `Call` holds its arguments as an unordered list keyed by
 parameter name, and Contract IR's `scalar_application_operands` returns the
 static operand structure and ranges only. This requirement adds the join:
-`qsl_replay::spine::bind_scalar_operands` admits a `Call` as FR-100 does,
+`fsl_replay::spine::bind_scalar_operands` admits a `Call` as FR-100 does,
 selects the occurrence the caller's scalar claim names (FR-357), reads the
 occurrence's operands from Contract IR, and returns each operand's value in
 operand order with the argument that supplied it. The driver maps nothing by
@@ -111,7 +111,7 @@ the internal failure `RunRefusal::Fault`.
   `level` is that node's declared level as Contract IR's
   `parameter_declaration(node)` returns it (decimal text).
 - `InlineLiteral`: the operand is an integer literal term of the application's
-  arguments and no argument fed it. QSL lowers an integer literal operand of
+  arguments and no argument fed it. FSL lowers an integer literal operand of
   `add`, `sub`, `mul` and `negate` to such a term, so this is the form a
   source-compiled package yields. Its value is the literal's own value, which
   equals the singleton of its range.
@@ -179,7 +179,7 @@ the joined node, are internal failures (`RunRefusal::Fault`), never a
      node to the called function's parameter of that node id (the join
      FR-098-AC-2 states) and take the value from the `CallArgument` that
      supplied that parameter. A parameter node that is no parameter of the
-     called function, such as the binder of a `let` or quantifier (QSL lowers a
+     called function, such as the binder of a `let` or quantifier (FSL lowers a
      binder to a `value`/`parameter` node at the next level), has no supplied
      value; the entry SHALL return `Refused(OperandNotArgument)` with the
      `ordinal`, the declared name and the level.

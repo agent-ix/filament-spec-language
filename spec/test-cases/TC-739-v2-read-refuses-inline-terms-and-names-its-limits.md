@@ -3,7 +3,7 @@ id: TC-739
 title: "The v2 read refuses an inline nested term and names its limits' settings"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-264
+  - target: ix://agent-ix/filament-spec-language/FR-264
     type: verifies
 ---
 # TC-739: The v2 read refuses an inline nested term and names its limits' settings

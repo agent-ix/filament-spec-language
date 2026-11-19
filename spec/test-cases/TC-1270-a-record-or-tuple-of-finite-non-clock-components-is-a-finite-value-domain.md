@@ -3,11 +3,11 @@ id: TC-1270
 title: "A record or tuple of finite non-clock components is a finite value domain"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: references
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
 ---
 # TC-1270: A record or tuple of finite non-clock components is a finite value domain
@@ -27,7 +27,7 @@ Scope: FR-120-AC-22 to FR-120-AC-26 and FR-120-AC-28.
 
 ## Test Procedure
 
-Integration tests in `qsl-eval/tests/it/`. Build a hand-authored domain package
+Integration tests in `fsl-eval/tests/it/`. Build a hand-authored domain package
 in TC-458's fixture shape (package `test/cells`): object type `Cell`, population
 `cells` with universe `{k1}`, and the record, tuple and clock types each step
 names, selected as model alias `Cells`. Compile through S1 to S4 in memory, with

@@ -3,7 +3,7 @@ id: TC-519
 title: "Terminal declarations check, and the request carries one deadlock-freedom item per subject"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-124
+  - target: ix://agent-ix/filament-spec-language/FR-124
     type: verifies
 ---
 # TC-519: Terminal declarations check, and the request carries one deadlock-freedom item per subject

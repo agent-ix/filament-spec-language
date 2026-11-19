@@ -3,7 +3,7 @@ id: TC-835
 title: "S2 parses temporal operators with an optional interval, independent of profile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-325
+  - target: ix://agent-ix/filament-spec-language/FR-325
     type: verifies
 ---
 # TC-835: S2 parses temporal operators with an optional interval, independent of profile

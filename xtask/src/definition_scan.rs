@@ -103,7 +103,7 @@ impl<'ast> Visit<'ast> for DefScanner {
         }
         let previous = self
             .current_impl_self
-            .replace(qsl_string_edge::impl_self_name(&node.self_ty));
+            .replace(fsl_string_edge::impl_self_name(&node.self_ty));
         syn::visit::visit_item_impl(self, node);
         self.current_impl_self = previous;
     }
@@ -201,27 +201,27 @@ pub struct CrateDefinitions {
     pub methods: BTreeMap<(String, String), Vec<Definition>>,
 }
 
-/// Scan the QSL crate's `src/` tree and its extracted layer-3, layer-4 and
-/// layer-5 crates' (`qsl-semantics/src/`, `qsl-package/src/`,
-/// `qsl-eval/src/`), once, as one set of definitions:
+/// Scan the FSL crate's `src/` tree and its extracted layer-3, layer-4 and
+/// layer-5 crates' (`fsl-semantics/src/`, `fsl-package/src/`,
+/// `fsl-eval/src/`), once, as one set of definitions:
 /// `check`, `model`, `library`, the S4 `CheckedPackage` and the S6a
 /// `value::expression` moved there, and the checks below still ask where in
-/// the QSL crate family an item is defined.
+/// the FSL crate family an item is defined.
 pub fn scan_crate(workspace_root: &Path) -> Result<CrateDefinitions> {
     scan_dirs(
         workspace_root,
         &[
             "src",
-            "qsl-semantics/src",
-            "qsl-package/src",
-            "qsl-eval/src",
+            "fsl-semantics/src",
+            "fsl-package/src",
+            "fsl-eval/src",
         ],
     )
 }
 
 /// Scan every `.rs` tree in `dirs` (relative to `workspace_root`) once, as
 /// one set of definitions -- FR-090-AC-9/TC-390 counts one type's
-/// definitions across the root crate and `qsl-foundation`.
+/// definitions across the root crate and `fsl-foundation`.
 pub fn scan_dirs(workspace_root: &Path, dirs: &[&str]) -> Result<CrateDefinitions> {
     let mut items: BTreeMap<String, Vec<Definition>> = BTreeMap::new();
     let mut methods: BTreeMap<(String, String), Vec<Definition>> = BTreeMap::new();
@@ -310,18 +310,18 @@ mod tests {
         }
     }
 
-    /// FR-401-AC-3: `WrongSnapshotCause` lives in `quire-semantic-value`
-    /// alone. No QSL crate defines it or re-exports it through a `pub use`,
-    /// so no path of a QSL crate names it.
+    /// FR-401-AC-3: `WrongSnapshotCause` lives in `filament-semantic-value`
+    /// alone. No FSL crate defines it or re-exports it through a `pub use`,
+    /// so no path of an FSL crate names it.
     #[trace("FR-401-AC-3")]
     #[test]
-    fn no_qsl_crate_reexports_wrong_snapshot_cause() {
+    fn no_fsl_crate_reexports_wrong_snapshot_cause() {
         let root = workspace_root();
         let mut dirs = vec!["src".to_owned()];
         for entry in fs::read_dir(&root).expect("workspace root lists") {
             let name = entry.expect("entry reads").file_name();
             let name = name.to_string_lossy().into_owned();
-            if name.starts_with("qsl-") && root.join(&name).join("src").is_dir() {
+            if name.starts_with("fsl-") && root.join(&name).join("src").is_dir() {
                 dirs.push(format!("{name}/src"));
             }
         }
@@ -343,11 +343,11 @@ mod tests {
 
     /// TC-170 step 2: `value::expression::mod.rs` declares none of `check`,
     /// `facts`, `ir`, `termination`, the check-stage modules that moved to
-    /// `qsl-semantics`.
+    /// `fsl-semantics`.
     #[trace("TC-170", "FR-068-AC-1")]
     #[test]
     fn value_expression_mod_declares_no_check_stage_module() {
-        let mods = mod_declarations(&workspace_root(), "qsl-eval/src/value/expression/mod.rs")
+        let mods = mod_declarations(&workspace_root(), "fsl-eval/src/value/expression/mod.rs")
             .expect("scan runs");
         for forbidden in ["check", "facts", "ir", "termination"] {
             assert!(
@@ -357,18 +357,18 @@ mod tests {
         }
     }
 
-    /// TC-170 step 1: `check` is declared at the root of `qsl-semantics`,
+    /// TC-170 step 1: `check` is declared at the root of `fsl-semantics`,
     /// the layer-3 crate it moved into.
     #[trace("TC-170", "FR-068-AC-1")]
     #[test]
     fn crate_root_declares_check() {
         let mods =
-            mod_declarations(&workspace_root(), "qsl-semantics/src/lib.rs").expect("scan runs");
+            mod_declarations(&workspace_root(), "fsl-semantics/src/lib.rs").expect("scan runs");
         assert!(mods.iter().any(|name| name == "check"));
     }
 
-    /// Asserts `name` is defined exactly once under `qsl-semantics/src/check/` and not at
-    /// all under `qsl-eval/src/value/expression/` -- TC-170's own actual intent ("no
+    /// Asserts `name` is defined exactly once under `fsl-semantics/src/check/` and not at
+    /// all under `fsl-eval/src/value/expression/` -- TC-170's own actual intent ("no
     /// leftover in `value::expression`, no duplicate under `check`"), not a
     /// literal crate-wide uniqueness claim. Some CON-3/TC-173 names (e.g.
     /// `Obligation`) collide, by plain English word, with unrelated,
@@ -381,32 +381,32 @@ mod tests {
         let relevant: Vec<&Definition> = locations
             .iter()
             .filter(|location| {
-                location.file.starts_with("qsl-semantics/src/check/")
-                    || location.file.starts_with("qsl-eval/src/value/expression/")
+                location.file.starts_with("fsl-semantics/src/check/")
+                    || location.file.starts_with("fsl-eval/src/value/expression/")
             })
             .collect();
         assert_eq!(
             relevant.len(),
             1,
-            "{name} has {} defining location(s) under qsl-semantics/src/check/ or qsl-eval/src/value/expression/: {relevant:?} (all locations: {locations:?})",
+            "{name} has {} defining location(s) under fsl-semantics/src/check/ or fsl-eval/src/value/expression/: {relevant:?} (all locations: {locations:?})",
             relevant.len()
         );
         assert!(
-            relevant[0].file.starts_with("qsl-semantics/src/check/"),
-            "{name} is defined at {:?}, not under qsl-semantics/src/check/",
+            relevant[0].file.starts_with("fsl-semantics/src/check/"),
+            "{name} is defined at {:?}, not under fsl-semantics/src/check/",
             relevant[0]
         );
     }
 
     /// Asserts `name` has no definition in any tree [`scan_crate`] reads:
-    /// the one definition lives in the `quire-semantic-value` repository, so
+    /// the one definition lives in the `filament-semantic-value` repository, so
     /// a definition here is a second copy. A canonical type
-    /// (`/// quire:canonical`) is held to one definition by
+    /// (`/// filament:canonical`) is held to one definition by
     /// `cargo xtask canonical-types`.
-    fn assert_not_defined_in_qsl(name: &str, locations: &[Definition]) {
+    fn assert_not_defined_in_fsl(name: &str, locations: &[Definition]) {
         assert!(
             locations.is_empty(),
-            "{name} is defined in the QSL trees at {locations:?}; it lives in quire-semantic-value"
+            "{name} is defined in the FSL trees at {locations:?}; it lives in filament-semantic-value"
         );
     }
 
@@ -415,8 +415,8 @@ mod tests {
     /// symbols are counted under `check`/`value::expression` (see
     /// [`assert_defined_exactly_once_under_check`] for why that is scoped
     /// rather than crate-wide). The checking limits and `CheckMode` live in
-    /// the layer-SV leaf `quire-semantic-value` and are defined in no scanned
-    /// tree ([`assert_not_defined_in_qsl`]).
+    /// the layer-SV leaf `filament-semantic-value` and are defined in no scanned
+    /// tree ([`assert_not_defined_in_fsl`]).
     /// `CheckRefusal` and `CheckedGraph` are canonical types, which
     /// `cargo xtask canonical-types` holds to one definition.
     ///
@@ -424,7 +424,7 @@ mod tests {
     /// `CheckedPackage` -> `CheckedGraph` (ADR-013 T-1): the checking
     /// methods this test pins moved with it, and `CheckedPackage` itself is
     /// now `package`'s own, different, S4 in-process type
-    /// (`qsl-package/src/checked.rs`), so it no longer belongs in this check-scoped assertion
+    /// (`fsl-package/src/checked.rs`), so it no longer belongs in this check-scoped assertion
     /// at all -- it is covered instead by `package`'s own TC-243 inspection.
     /// This test does not itself verify FR-087-AC-9 (TC-256, the
     /// `graph()` delegation point, does), so it no longer cites that AC.
@@ -476,7 +476,7 @@ mod tests {
             "WrongSnapshotCause",
         ] {
             let locations = definitions.items.get(symbol).cloned().unwrap_or_default();
-            assert_not_defined_in_qsl(symbol, &locations);
+            assert_not_defined_in_fsl(symbol, &locations);
         }
     }
 
@@ -522,28 +522,28 @@ mod tests {
         let locations = definitions.items.get(name).cloned().unwrap_or_default();
         assert_eq!(locations.len(), 1, "{name}: {locations:?}");
         assert!(
-            locations[0].file.starts_with("qsl-semantics/src/check/"),
-            "{name} must now live in qsl-semantics/src/check/: {locations:?}"
+            locations[0].file.starts_with("fsl-semantics/src/check/"),
+            "{name} must now live in fsl-semantics/src/check/: {locations:?}"
         );
         assert!(
-            !locations[0].file.starts_with("qsl-semantics/src/model/"),
+            !locations[0].file.starts_with("fsl-semantics/src/model/"),
             "{name}: {locations:?}"
         );
     }
 
     /// TC-173 step 2: the loss records `ValueLoss` and `LocatedLoss` are
     /// each defined in no scanned tree, since they live in
-    /// `quire-semantic-value`; neither `check` nor `value::expression`
+    /// `filament-semantic-value`; neither `check` nor `value::expression`
     /// defines them. The call-admission refusal `InputRefusal` is a
     /// canonical type, which `cargo xtask canonical-types` holds to one
     /// definition.
     #[trace("TC-173", "FR-068-AC-4")]
     #[test]
-    fn input_refusal_and_losses_are_not_defined_in_qsl() {
+    fn input_refusal_and_losses_are_not_defined_in_fsl() {
         let definitions = scan_crate(&workspace_root()).expect("scan runs");
         for name in ["ValueLoss", "LocatedLoss"] {
             let locations = definitions.items.get(name).cloned().unwrap_or_default();
-            assert_not_defined_in_qsl(name, &locations);
+            assert_not_defined_in_fsl(name, &locations);
         }
     }
 }

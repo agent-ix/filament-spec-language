@@ -3,7 +3,7 @@ id: TC-469
 title: "The ConfigVersion spine corpus retains typed dispositions"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-108
+  - target: ix://agent-ix/filament-spec-language/FR-108
     type: verifies
 ---
 # TC-469: The ConfigVersion spine corpus retains typed dispositions
@@ -12,7 +12,7 @@ relationships:
 
 Verify the 17-case ConfigVersion corpus through `run_clause` against the
 independent expected dispositions, through FR-267 native-run-result/2
-serialization, at the QSpec FR-180-AC-4 boundaries, for input-fixed identity,
+serialization, at the FSpec FR-180-AC-4 boundaries, for input-fixed identity,
 and through I3 extraction.
 
 Scope: FR-108-AC-1 to FR-108-AC-6.
@@ -21,7 +21,7 @@ Scope: FR-108-AC-1 to FR-108-AC-6.
 
 Steps 1 to 4 and 6 live in `tests/it/config_version_spine.rs`, with
 `mod config_version_spine;` in `tests/it/main.rs` (AGENTS.md); step 5 lives
-in `qsl-replay`'s tests. The spine
+in `fsl-replay`'s tests. The spine
 corpus generator (`examples/config-version/spine_corpus.rs`, reached through
 the `config_version_spine` support module) writes, per case, the spine files;
 the native fixtures generator (`examples/config-version/fixtures.rs`) writes
@@ -45,15 +45,15 @@ all under `ParentOrder` with self `child`.
    for every case that reaches compile, run again with the expected
    `package_id` set to the `package_id` spine `compile` emits for the unit,
    and compare.
-5. In `qsl-replay`'s integration tests, built with
-   `cargo test -p qsl-replay --features quire-extraction` (the root crate has
+5. In `fsl-replay`'s integration tests, built with
+   `cargo test -p fsl-replay --features quire-extraction` (the root crate has
    no `quire-extraction` feature), take each of the 17 cases' units from the
-   same case catalog, embed each in a `rules.md` fence, extract it through `qsl-source`, and run the extracted
+   same case catalog, embed each in a `rules.md` fence, extract it through `fsl-source`, and run the extracted
    source. Independently compile the extracted body's bytes under its body
    identity with a direct `spine::compile` call.
 6. Independently re-derive the unit's `package_id` via a direct `spine::
    compile` call, compare it with every direct run's report, and read the emitted
-   package bytes through QSpec's I04 `read`.
+   package bytes through FSpec's I04 `read`.
 
 The spine's independent expected table includes the four boundary cases:
 success/true twice, then admission refusal with `invalid_runtime_input`

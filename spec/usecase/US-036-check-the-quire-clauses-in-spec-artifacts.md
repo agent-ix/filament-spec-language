@@ -3,9 +3,9 @@ id: US-036
 title: "Check the Quire clauses written in spec artifacts"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-355
+  - target: ix://agent-ix/filament-spec-language/FR-355
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-036: Check the Quire clauses written in spec artifacts
@@ -27,7 +27,7 @@ A spec artifact declares a domain object: its frontmatter names the object
 type, its Properties table declares the fields, and each clause under its
 Invariants section owns one `quire` fence holding a Quire expression over
 `self`. quire-rs records each fence's language as `quire` and reads nothing
-inside it. QSL already compiles the same artifacts into a domain package
+inside it. FSL already compiles the same artifacts into a domain package
 (FR-056) and checks state invariants over that package's object types
 (FR-104), so it can check each fence as an invariant of the object its
 artifact declares.

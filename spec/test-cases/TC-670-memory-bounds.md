@@ -3,7 +3,7 @@ id: TC-670
 title: "Memory bounds limit stores, default to 4 and are stated in every result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-225
+  - target: ix://agent-ix/filament-spec-language/FR-225
     type: verifies
 ---
 # TC-670: Memory bounds limit stores, default to 4 and are stated in every result
@@ -39,9 +39,9 @@ Tag the tests `#[trace("TC-670", "FR-225-AC-n")]`.
 - Step 2: V-6 `MemoryBoundReached` naming `max_store_buffer` 2; V-1, not
   reached.
 - Step 3: `refuted`; V-6 naming `max_messages` 1.
-- Step 4: no deadlock report and no stutter successor; with `Zero`, 20
-  stored states (12 expanded, 4 of them bound-limited, and 8 boundary
-  states), `ConstraintReached{boundary_states: 8}`, `max_store_buffer` 2
+- Step 4: no deadlock report and no stutter successor; with `Zero`, 21
+  stored states (the pre-fork initial state, 12 expanded, 4 of them
+  bound-limited, and 8 boundary states), `ConstraintReached{boundary_states: 8}`, `max_store_buffer` 2
   stated as reached; without `Zero`, `MemoryBoundReached`.
 - Step 5: one stored state, `ConstraintReached{boundary_states: 1}`,
   `max_messages` 1 stated as not reached.

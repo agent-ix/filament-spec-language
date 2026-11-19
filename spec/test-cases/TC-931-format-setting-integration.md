@@ -3,11 +3,11 @@ id: TC-931
 title: "The formatter output budget is a named caller setting"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-277
+  - target: ix://agent-ix/filament-spec-language/FR-277
     type: verifies
 ---
 
@@ -16,7 +16,7 @@ relationships:
 ## Description
 
 Exercise the formatter's output-byte ceiling through its typed limits value
-and through QSL's settings operation, using the concrete FR-255 row.
+and through FSL's settings operation, using the concrete FR-255 row.
 
 ## Test Procedure
 

@@ -3,7 +3,7 @@ id: TC-840
 title: "run_clause runs a selected temporal clause over a supplied trace"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-330
+  - target: ix://agent-ix/filament-spec-language/FR-330
     type: verifies
 ---
 # TC-840: run_clause runs a selected temporal clause over a supplied trace
@@ -46,7 +46,7 @@ Tag the tests `#[trace("TC-840", "FR-330-AC-n")]`.
 ## Expected Results
 
 - Step 1: stage `evaluate`, `violation`, position 0, exit 10.
-- Step 2: `pending`, exit 0, no `truth`; `violation` at 0; `success`,
+- Step 2: `success` with `truth` `true`, exit 0 (a good prefix); `violation` at 0; `success`,
   exit 0.
 - Step 3: `select` `missing_declaration`/`missing-name`; `admit`
   `invalid_runtime_input`/`invalid-value`; `admit`

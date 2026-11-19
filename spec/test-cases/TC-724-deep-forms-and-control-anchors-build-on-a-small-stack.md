@@ -3,7 +3,7 @@ id: TC-724
 title: "Deep forms and control anchors build on a small stack"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-257
+  - target: ix://agent-ix/filament-spec-language/FR-257
     type: verifies
 ---
 # TC-724: Deep forms and control anchors build on a small stack
@@ -25,7 +25,7 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
 2. Run S2 on a protocol clause holding a 100,000-deep `await … then` chain
    and on one holding a 100,000-deep `repeat … exhausted` chain, and
    resolve each anchor.
-3. Call `qsl_forms::build_unit` on an invariant whose body is 128 nested
+3. Call `fsl_forms::build_unit` on an invariant whose body is 128 nested
    `not`s around `true`, parsed at the default S1 limits.
 
 Tag the tests `#[trace("TC-724", "FR-257-AC-1")]`, `#[trace("TC-724", "FR-257-AC-2")]`, `#[trace("TC-724", "FR-257-AC-3")]`.

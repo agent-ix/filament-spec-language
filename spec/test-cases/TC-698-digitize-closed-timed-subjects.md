@@ -3,7 +3,7 @@ id: TC-698
 title: "Timed items route to the zone engine, and only exact probabilistic claims to the digital-clock route"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-243
+  - target: ix://agent-ix/filament-spec-language/FR-243
     type: verifies
 ---
 # TC-698: Timed items route to the zone engine, and only exact probabilistic claims to the digital-clock route

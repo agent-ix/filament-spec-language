@@ -3,17 +3,17 @@ id: FR-317
 title: "Resolve qualified member references and check union construction"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-032
+  - target: ix://agent-ix/filament-spec-language/US-032
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-065
+  - target: ix://agent-ix/filament-spec-language/FR-065
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-313
+  - target: ix://agent-ix/filament-spec-language/FR-313
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-316
+  - target: ix://agent-ix/filament-spec-language/FR-316
     type: traces_to
-  - target: ix://agent-ix/quire-specification/FR-143
+  - target: ix://agent-ix/filament-specification/FR-143
     type: depends_on
 ---
 # FR-317: Resolve qualified member references and check union construction
@@ -25,7 +25,7 @@ qualified `q::m`, the checker SHALL resolve it through one `check`-core
 call-target seam function to exactly one target (a union member, an enum
 member, an import member, a declared function or a tuple constructor) or
 refuse it; and when the target is a union member, the `SumCase` family SHALL
-check the construction against QSpec FR-143's construction rule (ADR-012
+check the construction against FSpec FR-143's construction rule (ADR-012
 §16.2).
 
 ## Inputs
@@ -73,7 +73,7 @@ check the construction against QSpec FR-143's construction rule (ADR-012
   - an element of a set or sequence literal typed under the expected element
     type `E`.
   An ordering whose typed operand is an unordered `enum` is refused
-  `ill_typed`/`operator-ineligible` at the comparison (QSpec FR-141-AC-5,
+  `ill_typed`/`operator-ineligible` at the comparison (FSpec FR-141-AC-5,
   FR-093), because an unordered enum has
   no case order to compare by; the checker SHALL report that one refusal
   and SHALL NOT resolve a bare operand of that comparison. An operand of an
@@ -99,7 +99,7 @@ check the construction against QSpec FR-143's construction rule (ADR-012
   a nullary member, omits the call for a member that declares a payload, or
   supplies an argument count other than the member's declared arity, then
   the checker SHALL refuse `ill_typed`/`type-mismatch` at the construction
-  expression, naming the expected and actual shape (QSpec FR-143).
+  expression, naming the expected and actual shape (FSpec FR-143).
 - The checker SHALL check a construction the same way in a function body, a
   state clause body and a `decreases` measure, each under its clause kind.
 
@@ -107,7 +107,7 @@ check the construction against QSpec FR-143's construction rule (ADR-012
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-317-AC-1 | With `Shape` from FR-316-AC-1, `Shape::Empty` and `Shape::Rect(2, 3)` check as union constructions of type `Shape` naming members `Empty` and `Rect`; `Shape::Rect(2, true)` refuses `ill_typed`/`type-mismatch` at `true`; each of QSpec TC-262's construction cases gives TC-262's verdict. | Test (TC-819) |
+| FR-317-AC-1 | With `Shape` from FR-316-AC-1, `Shape::Empty` and `Shape::Rect(2, 3)` check as union constructions of type `Shape` naming members `Empty` and `Rect`; `Shape::Rect(2, true)` refuses `ill_typed`/`type-mismatch` at `true`; each of FSpec TC-262's construction cases gives TC-262's verdict. | Test (TC-819) |
 | FR-317-AC-2 | `Shape::Square(1)`, `Shape::Empty(1)`, a bare `Shape::Circle` and `Shape::Rect(1)` each refuse `ill_typed`/`type-mismatch` at the construction expression, one refusal each. | Test (TC-819) |
 | FR-317-AC-3 | In source, when a union `q` declares `m` and an import alias `q` exports `m`, `q::m` refuses `ambiguous_declaration`/`ambiguous-name` naming both candidates, and with the union `q` alone `q::m` resolves to its member. A unit declaring two types named `q` (two unions, or a union and an enum) is refused by the assembler at the second declaration as `ambiguous_declaration`/`ambiguous-name`, so one unit cannot reach the member resolver with two types named `q`; an import contributes only its alias qualifier, never a type, so no import supplies a second type named `q`. The resolver's own ambiguity property is tested on hand-built scopes: when a union `q` and an enum `q` both declare `m`, and when two unions named `q` both declare `m`, `q::m` refuses `ambiguous_declaration`/`ambiguous-name` naming every candidate; when two unions named `q` exist and only one declares `m`, `q::m` resolves to that union's member. An enum member `Kind::Empty` and a tuple constructor `Pair(1, 2)` resolve as they did before unions existed. | Test (TC-820) |
 | FR-317-AC-4 | `Shape::Rect(2, 3)` checks as a union construction inside a state clause body and inside a `decreases` measure, each under its own clause kind, and `Shape::Rect(1)` refuses `ill_typed`/`type-mismatch` in both. | Test (TC-819) |
@@ -115,8 +115,8 @@ check the construction against QSpec FR-143's construction rule (ADR-012
 
 ## Dependencies
 
-- QSpec FR-143 ("Composite-value contract", "Declarations and identity"),
-  FR-143-AC-12; QSpec shared grammar (the one qualified reference and call
+- FSpec FR-143 ("Composite-value contract", "Declarations and identity"),
+  FR-143-AC-12; FSpec shared grammar (the one qualified reference and call
   production).
 - FR-065 (function application under the clause kind), FR-316.
 

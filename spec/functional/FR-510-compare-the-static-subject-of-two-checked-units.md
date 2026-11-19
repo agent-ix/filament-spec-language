@@ -3,15 +3,15 @@ id: FR-510
 title: "Compare the static subject of two checked units"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-036
+  - target: ix://agent-ix/filament-spec-language/FR-036
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-049
+  - target: ix://agent-ix/filament-spec-language/FR-049
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-278
+  - target: ix://agent-ix/filament-spec-language/FR-278
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-255
+  - target: ix://agent-ix/filament-spec-language/FR-255
     type: depends_on
 ---
 # FR-510: Compare the static subject of two checked units
@@ -83,7 +83,7 @@ libraries (FR-099). This is intended.
 | --- | --- | --- |
 | FR-510-AC-1 | Checking one source, model and profile inventory twice, once with every `SpineLimits` field at its default and once with every limit raised, gives equal subjects, `differences` empty, and unequal `BuildProvenance`. | Test (TC-1305) |
 | FR-510-AC-2 | Replaying the emitted unit against two different populations, windows, traces and backend selections (FR-098) leaves the subject computed before and after unchanged, `differences` empty. | Test (TC-1305) |
-| FR-510-AC-3 | Changing the header's authored profile identity (`quire.value.complete/v1` to `quire.state.core/v1` where the source still checks) gives `differences` = [sources, profiles], because the unit's exact source content and resolved profile identity both change; changing only the selected domain package's version gives [models]; changing only the unit's source text gives [sources]; adding an unrelated unused library that the unit does not reach gives [] and one the unit imports gives [sources, dependencies]. | Test (TC-1305) |
+| FR-510-AC-3 | Changing the header's authored profile identity (`filament.value.complete/v1` to `filament.state.core/v1` where the source still checks) gives `differences` = [sources, profiles], because the unit's exact source content and resolved profile identity both change; changing only the selected domain package's version gives [models]; changing only the unit's source text gives [sources]; adding an unrelated unused library that the unit does not reach gives [] and one the unit imports gives [sources, dependencies]. | Test (TC-1305) |
 | FR-510-AC-4 | Two declarations that each bind a role spelled `x` give two role entries with different owners; renaming one declaration's role changes [sources, roles], because the exact unit source content and declaration-owned role spelling both change. | Test (TC-1305) |
 | FR-510-AC-5 | A source that fails to check yields no subject: the check returns its refusal and no `StaticSubject` value can be built for it. | Test (TC-1305) |
 | FR-510-AC-6 | A downstream crate that calls a method on `StaticSubject` to obtain a checked-package identity or the emitted bytes, or that converts it into either, does not compile (compile-fail test); the only comparison it offers is component-wise equality and `differences`. | Test (TC-1305) |

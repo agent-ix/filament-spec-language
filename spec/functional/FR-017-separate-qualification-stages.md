@@ -3,13 +3,13 @@ id: FR-017
 title: "Preserve identity across focused qualification and linkage stages"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: implements
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-013
+  - target: ix://agent-ix/filament-spec-language/FR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-015
+  - target: ix://agent-ix/filament-spec-language/FR-015
     type: traces_to
 ---
 # FR-017: Preserve identity across focused qualification and linkage stages
@@ -52,7 +52,7 @@ expect boundary; a setup failure cannot count as a native checker refusal.
 The native lexer/Pratt parser remains its grammar authority. This refactoring
 introduces no change to reported logical truth or resource outcomes.
 
-**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by the spine source intake (qsl_cst S1 parse with located spans, qsl_forms S2) and FR-056 model intake.
+**QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by the spine source intake (fsl_cst S1 parse with located spans, fsl_forms S2) and FR-056 model intake.
 
 **QSL-1810 disposition:** the `0-draft` linker carrier of the criteria retired below (`link`, `LinkedPackage`, `LinkLimits` and `src/linking*`) is deleted under ADR-011 M-6c, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; import resolution on the spine is owned by FR-099 and FR-111.
 

@@ -6,13 +6,13 @@
 
 use crate::command_harness::{compile_file, run_file, run_file_with_limits, Output};
 use crate::support::config_version_spine::{cases::CASES, spine, Case};
-use ix_trace_rs::trace;
-use qsl_command::command::RunLimits;
-use qsl_foundation::diagnostic::Code;
-use qsl_replay::spine::{
+use filament_semantic_value::catalog::Category;
+use fsl_command::command::RunLimits;
+use fsl_foundation::diagnostic::Code;
+use fsl_replay::spine::{
     run_clause, CallOutcome, ClauseDisposition, ClauseRunRequest, ClauseRunStage,
 };
-use quire_semantic_value::catalog::Category;
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, path::Path, process::Command};
 
@@ -65,7 +65,7 @@ fn expected(case: Case) -> Expected {
 /// FR-108-AC-1: `report.disposition` against `expected(case)` -- stage,
 /// category, truth and exit code, all through the disposition's own typed
 /// accessors (`report.disposition.category().exit_code()`'s "one total match, no `_` arm").
-fn assert_expected(case: Case, report: &qsl_replay::spine::ClauseRunReport) {
+fn assert_expected(case: Case, report: &fsl_replay::spine::ClauseRunReport) {
     let disposition = &report.disposition;
     match expected(case) {
         Expected::Success => {
@@ -167,7 +167,7 @@ fn assert_expected(case: Case, report: &qsl_replay::spine::ClauseRunReport) {
 /// The catalog code a refusal/incomplete disposition carries, or `None` for
 /// a stage this test never expects one at (success/violation).
 fn disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
-    use qsl_semantics::model::observation::AdmissionFailure;
+    use fsl_semantics::model::observation::AdmissionFailure;
     match disposition {
         ClauseDisposition::Compile(refusal) => Some(refusal.code()),
         ClauseDisposition::Admit(AdmissionFailure::Refused(record))
@@ -182,7 +182,7 @@ fn disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
 /// determinism check) comparing every disposition regardless of stage,
 /// including `evaluate`'s own outcomes that carry no catalog code.
 fn maybe_disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
-    use qsl_semantics::model::observation::AdmissionFailure;
+    use fsl_semantics::model::observation::AdmissionFailure;
     match disposition {
         ClauseDisposition::Compile(refusal) => Some(refusal.code()),
         ClauseDisposition::Admit(AdmissionFailure::Refused(record))
@@ -193,7 +193,7 @@ fn maybe_disposition_code(disposition: &ClauseDisposition) -> Option<Code> {
     }
 }
 
-fn run_case(directory: &Path, case: Case) -> qsl_replay::spine::ClauseRunReport {
+fn run_case(directory: &Path, case: Case) -> fsl_replay::spine::ClauseRunReport {
     std::fs::create_dir_all(directory).unwrap();
     let request = build(directory, case);
     run_clause(request).expect("a well-formed FR-108 request always reports")
@@ -259,14 +259,14 @@ fn rename_identity(value: &mut Value, old: &str, new: &str) {
 
 fn emitted_model_bytes(document: &Value) -> Vec<u8> {
     let input = serde_json::to_vec(document).expect("the model fixture is JSON");
-    let packages = qsl_semantics::model::intake::package_input([input.as_slice()])
+    let packages = fsl_semantics::model::intake::package_input([input.as_slice()])
         .expect("the mutated domain package is keyed by its declared identity");
     crate::support::front_end::emitted(
         spine::unit_identity(),
         "spine-unit.native",
         spine::unit_text().as_bytes(),
         &packages,
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .expect("the selected ConfigVersion model admits through the spine")
     .package()
@@ -296,11 +296,11 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         assert_eq!(value["disposition"]["truth"], truth);
         assert_eq!(value["basis"], "closed-scope");
         let decoded =
-            qsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
-        let qsl_replay::spine::ClauseRunSelection::Clause(decoded) = decoded.selection else {
+            fsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
+        let fsl_replay::spine::ClauseRunSelection::Clause(decoded) = decoded.selection else {
             panic!("the wire selection must remain a state clause");
         };
-        let qsl_semantics::model::observation::ClauseSelectionInput::Current {
+        let fsl_semantics::model::observation::ClauseSelectionInput::Current {
             self_object,
             anchor,
             ..
@@ -310,7 +310,9 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         };
         assert_eq!(self_object.expect("a named self").key, "child");
         assert_eq!(anchor.name, "validate");
-        let driver = qsl_command::command::run(&path.join("request.json")).unwrap();
+        let driver =
+            fsl_command::command::run(&path.join("request.json"), &crate::negotiation::Fr290)
+                .unwrap();
         assert_eq!(output.stdout, format!("{}\n", driver.value).into_bytes());
         assert_eq!(driver.exit_code, exit as u8);
     }
@@ -347,7 +349,7 @@ fn walkthrough_requests_reproduce_the_documented_exit_codes() {
             let compiled = compile_file(&path.join("compile.json"));
             assert_eq!(compiled.status.code(), Some(0), "{compiled:?}");
             let package: Value = serde_json::from_slice(&compiled.stdout).unwrap();
-            assert_eq!(package["contract_version"], "quire.checked-package/v2");
+            assert_eq!(package["contract_version"], "filament.checked-package/v2");
         }
     }
 }
@@ -438,7 +440,11 @@ fn clause_run_reader_checks_observation_role_and_anchor() {
     for (label, member, replacement) in [
         ("post", "observation", json!("post")),
         ("unknown-role", "observation", json!("future")),
-        ("unknown-format", "format", json!("quire.state.future/v1")),
+        (
+            "unknown-format",
+            "format",
+            json!("filament.state.future/v1"),
+        ),
     ] {
         let path = directory.path().join(label);
         build(&path, Case::Healthy);
@@ -492,7 +498,7 @@ fn clause_run_reader_accepts_observation_deeper_than_128() {
         serde_json::to_vec(&request).unwrap(),
     )
     .unwrap();
-    let decoded = qsl_command::command::read_clause_run_request(&path.join("request.json"));
+    let decoded = fsl_command::command::read_clause_run_request(&path.join("request.json"));
     assert!(decoded.is_ok(), "{:?}", decoded.err());
 }
 
@@ -519,7 +525,7 @@ fn clause_run_reader_honors_raised_observation_byte_limit() {
         serde_json::to_vec(&request).unwrap(),
     )
     .unwrap();
-    let decoded = qsl_command::command::read_clause_run_request(&path.join("request.json"));
+    let decoded = fsl_command::command::read_clause_run_request(&path.join("request.json"));
     assert!(decoded.is_ok(), "{:?}", decoded.err());
 }
 
@@ -555,8 +561,72 @@ fn clause_run_observation_limit_reports_its_own_bound() {
     );
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(error["details"]["limit"], "observation.document_bytes");
+    assert_eq!(error["details"]["limit"], "observation.input_bytes");
     assert_eq!(error["details"]["maximum"], 1_000_000);
+}
+
+/// The first object anywhere in `value` whose `code` is `code`.
+fn coded<'a>(value: &'a Value, code: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(members) => {
+            if members.get("code").and_then(Value::as_str) == Some(code) {
+                return Some(value);
+            }
+            members.values().find_map(|member| coded(member, code))
+        }
+        Value::Array(items) => items.iter().find_map(|item| coded(item, code)),
+        _ => None,
+    }
+}
+
+/// TC-2982's request path: `document_bytes` settles the native result with an
+/// observation input-byte limit record naming the `observation.input_bytes`
+/// setting. Driver-rendered hints are covered with the driver implementation.
+#[trace("TC-2982", "FR-491-AC-8")]
+#[test]
+fn clause_run_observation_limit_is_one_stage_limit_item_naming_its_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("observation-shape");
+    build(&path, Case::Healthy);
+    let snapshot_path = path.join("spine-snapshot.json");
+    let size = std::fs::metadata(&snapshot_path).unwrap().len();
+    let run = |bound: u64| {
+        let mut request = current_clause_request();
+        request["request"]["clause"]["observation_limits"] = json!({"document_bytes": bound});
+        std::fs::write(
+            path.join("request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        run_file_with_limits(
+            &path.join("request.json"),
+            RunLimits {
+                dependent_bytes: 8_000_000,
+                ..RunLimits::default()
+            },
+        )
+    };
+    let output = run(size - 1);
+    assert_eq!(output.status.code(), Some(22), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).expect("an outcome document");
+    let limit = coded(&document, "stage_limit_exceeded")
+        .unwrap_or_else(|| panic!("a stage_limit_exceeded item: {document}"));
+    assert_eq!(
+        limit["fields"]["setting"], "observation.input_bytes",
+        "{limit}"
+    );
+    assert_eq!(limit["fields"]["bound"], (size - 1).to_string(), "{limit}");
+    assert_eq!(limit["fields"]["actual"], size.to_string(), "{limit}");
+    assert!(
+        coded(&document, "resource_exhausted").is_none(),
+        "{document}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("observation.document_bytes"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(run(size).status.code(), Some(0));
 }
 
 /// FR-312: a deep pre-call parameter reaches the typed reader without a
@@ -586,12 +656,12 @@ fn clause_run_reader_keeps_parameter_beyond_128_levels() {
         .unwrap()
         .replace("\"__DEEP_PARAMETER__\"", &nested);
     std::fs::write(path.join("request.json"), text).unwrap();
-    let decoded = qsl_command::command::read_clause_run_request(&path.join("request.json"))
+    let decoded = fsl_command::command::read_clause_run_request(&path.join("request.json"))
         .expect("deep typed parameter must read without a parser depth cap");
-    let qsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
+    let fsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
         panic!("expected clause selection");
     };
-    let qsl_semantics::model::observation::ClauseSelectionInput::PreCall { parameters, .. } =
+    let fsl_semantics::model::observation::ClauseSelectionInput::PreCall { parameters, .. } =
         clause.input
     else {
         panic!("expected pre-call selection")
@@ -615,11 +685,11 @@ fn clause_run_accounting_object_sets_all_counters_and_rejects_legacy_member() {
     )
     .unwrap();
     let decoded_defaults =
-        qsl_command::command::read_clause_run_request(&path.join("request.json"))
+        fsl_command::command::read_clause_run_request(&path.join("request.json"))
             .expect("omitted accounting uses the published defaults");
     assert_eq!(
         decoded_defaults.accounting,
-        qsl_replay::spine::default_accounting(qsl_replay::spine::DEFAULT_WORK_UNITS)
+        fsl_replay::spine::default_accounting(fsl_replay::spine::DEFAULT_WORK_UNITS)
     );
 
     let mut request = current_clause_request();
@@ -640,11 +710,11 @@ fn clause_run_accounting_object_sets_all_counters_and_rejects_legacy_member() {
         serde_json::to_vec(&request).unwrap(),
     )
     .unwrap();
-    let decoded = qsl_command::command::read_clause_run_request(&path.join("request.json"))
+    let decoded = fsl_command::command::read_clause_run_request(&path.join("request.json"))
         .expect("the closed accounting counter object is accepted");
     assert_eq!(
         decoded.accounting,
-        quire_exact::ScalarLimits {
+        filament_exact::ScalarLimits {
             integer_bits: 1,
             decimal_digits: 2,
             scale_expansion: 3,
@@ -694,7 +764,7 @@ fn clause_run_reader_diagnoses_deep_function_argument() {
         .unwrap()
         .replace("\"__DEEP_ARGUMENT__\"", &nested);
     std::fs::write(path.join("request.json"), text).unwrap();
-    let error = qsl_command::command::read_clause_run_request(&path.join("request.json"))
+    let error = fsl_command::command::read_clause_run_request(&path.join("request.json"))
         .err()
         .expect("nested argument is outside the function argument forms");
     assert!(
@@ -735,19 +805,19 @@ fn clause_run_command_routes_function_and_frame() {
     let path = directory.path().join(Case::Unchanged.id());
     let mut in_process = build(&path, Case::Unchanged);
     let invocation = match &in_process.selection {
-        qsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
-            qsl_semantics::model::observation::ClauseSelectionInput::Invocation { invocation } => {
+        fsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
+            fsl_semantics::model::observation::ClauseSelectionInput::Invocation { invocation } => {
                 invocation.clone()
             }
             _ => panic!("update fixture selects an invocation"),
         },
         _ => panic!("update fixture selects a clause"),
     };
-    in_process.selection = qsl_replay::spine::ClauseRunSelection::Frame {
-        operation: qsl_replay::spine::OperationName {
-            model: quire_exact::Identifier::new("Config").unwrap(),
-            object: quire_exact::Identifier::new("ConfigVersion").unwrap(),
-            operation: quire_exact::Identifier::new("attemptUpdate").unwrap(),
+    in_process.selection = fsl_replay::spine::ClauseRunSelection::Frame {
+        operation: fsl_replay::spine::OperationName {
+            model: filament_exact::Identifier::new("Config").unwrap(),
+            object: filament_exact::Identifier::new("ConfigVersion").unwrap(),
+            operation: filament_exact::Identifier::new("attemptUpdate").unwrap(),
         },
         invocation,
     };
@@ -774,6 +844,166 @@ fn clause_run_command_routes_function_and_frame() {
     );
 }
 
+/// FR-650-AC-7: a function claim maps its Population and Reference
+/// arguments into the selected snapshot before evaluating the function.
+#[trace("FR-650-AC-7")]
+#[test]
+fn function_claim_maps_population_and_reference_arguments_by_role() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("population-reference-claim");
+    build(&path, Case::Healthy);
+
+    let history_population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction acceptsRoles using v(p: Population<Config::ConfigVersion>[4], \
+         r: Config::ConfigVersion): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = current_clause_request();
+    request["request"]["clause"]["selection"] = json!({"function": {
+        "name": "acceptsRoles",
+        "snapshot": "current",
+        "arguments": [
+            {"parameter": "p", "value": {"population": history_population}},
+            {"parameter": "r", "value": {"reference": {
+                "population": history_population,
+                "key": "child"
+            }}}
+        ]
+    }});
+    let output = run_clause_file(&path, &request);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["disposition"]["stage"], "evaluate", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+/// FR-100-AC-4 / FR-650-AC-7: an unbound earlier parameter is reported
+/// before later population arguments are admitted.
+#[trace("FR-100-AC-4", "FR-650-AC-7")]
+#[test]
+fn function_claim_reports_missing_first_parameter_before_population_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unbound-before-population-claim");
+    spine::write(&path, Case::Healthy).unwrap();
+
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction needsFlag using v(flag: Boolean, \
+         p: Population<Config::ConfigVersion>[4], \
+         q: Population<Config::ConfigVersion>[1]): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = spine::request(&path, Case::Healthy).unwrap();
+    let snapshot = match &request.selection {
+        fsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
+            fsl_semantics::model::observation::ClauseSelectionInput::Current {
+                snapshot, ..
+            } => snapshot.clone(),
+            _ => panic!("healthy spine selection carries its current snapshot"),
+        },
+        _ => panic!("healthy spine selection is a clause"),
+    };
+    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    request.selection = fsl_replay::spine::ClauseRunSelection::Function {
+        name: "needsFlag".to_owned(),
+        arguments: vec![
+            fsl_replay::spine::ClauseArgument {
+                parameter: "p".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+            fsl_replay::spine::ClauseArgument {
+                parameter: "q".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+        ],
+        snapshot,
+        snapshot_path: None,
+    };
+
+    let report = run_clause(request).unwrap();
+    let refusal = match report.disposition {
+        ClauseDisposition::ArgumentRefusal(refusal) => refusal,
+        other => panic!("expected a missing-parameter refusal, got {other:?}"),
+    };
+    assert!(
+        matches!(*refusal, fsl_replay::spine::RunRefusal::UnboundParameter { ref parameter } if parameter == "flag"),
+        "{refusal:?}"
+    );
+}
+
+/// FR-100-AC-4 / FR-650-AC-7: an unbound final parameter is reported before
+/// earlier population arguments are admitted.
+#[trace("FR-100-AC-4", "FR-650-AC-7")]
+#[test]
+fn function_claim_reports_missing_last_parameter_before_population_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join("unbound-last-before-population-claim");
+    spine::write(&path, Case::Healthy).unwrap();
+
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction needsFlagLast using v(p: Population<Config::ConfigVersion>[4], \
+         q: Population<Config::ConfigVersion>[1], flag: Boolean): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = spine::request(&path, Case::Healthy).unwrap();
+    let snapshot = match &request.selection {
+        fsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
+            fsl_semantics::model::observation::ClauseSelectionInput::Current {
+                snapshot, ..
+            } => snapshot.clone(),
+            _ => panic!("healthy spine selection carries its current snapshot"),
+        },
+        _ => panic!("healthy spine selection is a clause"),
+    };
+    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    request.selection = fsl_replay::spine::ClauseRunSelection::Function {
+        name: "needsFlagLast".to_owned(),
+        arguments: vec![
+            fsl_replay::spine::ClauseArgument {
+                parameter: "p".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+            fsl_replay::spine::ClauseArgument {
+                parameter: "q".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+        ],
+        snapshot,
+        snapshot_path: None,
+    };
+
+    let report = run_clause(request).unwrap();
+    let refusal = match report.disposition {
+        ClauseDisposition::ArgumentRefusal(refusal) => refusal,
+        other => panic!("expected a missing-parameter refusal, got {other:?}"),
+    };
+    assert!(
+        matches!(*refusal, fsl_replay::spine::RunRefusal::UnboundParameter { ref parameter } if parameter == "flag"),
+        "{refusal:?}"
+    );
+}
+
 /// FR-312-AC-5: the named document role chooses the FR-106 input variant;
 /// role-specific fields come from the request and stay closed.
 #[trace("TC-891", "FR-312-AC-5")]
@@ -797,13 +1027,13 @@ fn clause_run_reader_distinguishes_pre_and_invocation_roles() {
         "{output:?}"
     );
     let decoded =
-        qsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
-    let qsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
+        fsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
+    let fsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
         panic!("expected a clause selection");
     };
     assert!(matches!(
         clause.input,
-        qsl_semantics::model::observation::ClauseSelectionInput::Invocation { .. }
+        fsl_semantics::model::observation::ClauseSelectionInput::Invocation { .. }
     ));
 
     request["request"]["clause"]["selection"] = json!({"clause": {
@@ -813,11 +1043,11 @@ fn clause_run_reader_distinguishes_pre_and_invocation_roles() {
     }});
     run_clause_file(&path, &request);
     let decoded =
-        qsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
-    let qsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
+        fsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
+    let fsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
         panic!("expected a clause selection");
     };
-    let qsl_semantics::model::observation::ClauseSelectionInput::PreCall {
+    let fsl_semantics::model::observation::ClauseSelectionInput::PreCall {
         self_object,
         parameters,
         ..
@@ -1054,9 +1284,9 @@ fn tc_469_every_case_survives_result_two_round_trip() {
     for &case in CASES {
         let report = run_case(&directory.path().join(case.id()), case);
         assert_expected(case, &report);
-        let bytes = qsl_replay::spine::write_clause_run_result(&report).unwrap();
-        let read = qsl_replay::spine::read_native_run_result(&bytes).unwrap();
-        let qsl_replay::spine::NativeRunResult::Clause(read) = read else {
+        let bytes = fsl_replay::spine::write_clause_run_result(&report).unwrap();
+        let read = fsl_replay::spine::read_native_run_result(&bytes).unwrap();
+        let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
             panic!("{}: expected a clause-run result", case.id());
         };
         let stage = match report.disposition.stage() {
@@ -1090,9 +1320,9 @@ fn tc_469_boundary_locus_survives_result_two_round_trip() {
     let directory = tempfile::tempdir().unwrap();
     for (case, object) in [(Case::BelowRange, "root"), (Case::AboveRange, "child")] {
         let report = run_case(&directory.path().join(case.id()), case);
-        let bytes = qsl_replay::spine::write_clause_run_result(&report).unwrap();
-        let read = qsl_replay::spine::read_native_run_result(&bytes).unwrap();
-        let qsl_replay::spine::NativeRunResult::Clause(read) = read else {
+        let bytes = fsl_replay::spine::write_clause_run_result(&report).unwrap();
+        let read = fsl_replay::spine::read_native_run_result(&bytes).unwrap();
+        let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
             panic!("expected a clause-run result");
         };
         assert_eq!(read.stage(), "admit", "{}", case.id());
@@ -1119,7 +1349,7 @@ fn run_report_separates_check_evidence_from_replay_evidence() {
     let directory = tempfile::tempdir().unwrap();
     let document = |case: Case| -> Value {
         let report = run_case(&directory.path().join(case.id()), case);
-        let bytes = qsl_replay::spine::write_clause_run_result(&report).unwrap();
+        let bytes = fsl_replay::spine::write_clause_run_result(&report).unwrap();
         serde_json::from_slice(&bytes).unwrap()
     };
     let replayed = document(Case::Healthy);
@@ -1134,7 +1364,7 @@ fn run_report_separates_check_evidence_from_replay_evidence() {
     assert!(checked["disposition"].get("outcome").is_none());
 
     let read = |value: &Value| {
-        qsl_replay::spine::read_native_run_result(&serde_json::to_vec(value).unwrap()).map(drop)
+        fsl_replay::spine::read_native_run_result(&serde_json::to_vec(value).unwrap()).map(drop)
     };
     read(&replayed).expect("the executed replay document reads");
     read(&checked).expect("the check refusal document reads");
@@ -1144,7 +1374,7 @@ fn run_report_separates_check_evidence_from_replay_evidence() {
     assert!(
         matches!(
             read(&relabelled),
-            Err(qsl_replay::spine::NativeRunReadError::Invalid {
+            Err(fsl_replay::spine::NativeRunReadError::Invalid {
                 member: "disposition.refusal",
                 ..
             })
@@ -1165,7 +1395,7 @@ fn run_report_separates_check_evidence_from_replay_evidence() {
     assert!(
         matches!(
             promoted,
-            Err(qsl_replay::spine::NativeRunReadError::Invalid {
+            Err(fsl_replay::spine::NativeRunReadError::Invalid {
                 member: "disposition.refusal",
                 ..
             })
@@ -1282,9 +1512,9 @@ fn tc_469_step_4_generation_and_reports_are_deterministic() {
     }
 }
 
-/// FR-108-AC-6: the emitted package bytes admit through QSpec
+/// FR-108-AC-6: the emitted package bytes admit through FSpec
 /// I04 `read`, including the frame step and node 8's
-/// `quire.op.model.reaches_field` application, whose reference edge the
+/// `filament.op.model.reaches_field` application, whose reference edge the
 /// reader checks.
 #[trace("TC-469", "FR-108-AC-6")]
 #[test]
@@ -1294,17 +1524,17 @@ fn tc_469_step_6_the_emitted_package_admits_via_i04() {
         spine::unit_identity(),
         "spine-unit.native",
         unit.as_bytes(),
-        &qsl_semantics::model::intake::package_input([spine::DOMAIN_PACKAGE.as_bytes()]).unwrap(),
-        &qsl_replay::spine::DependencyInput::default(),
+        &fsl_semantics::model::intake::package_input([spine::DOMAIN_PACKAGE.as_bytes()]).unwrap(),
+        &fsl_replay::spine::DependencyInput::default(),
     )
     .expect("the FR-108 unit compiles");
 
     let bytes = compiled.package().bytes();
     // I04 `read` needs the lock's required features as supported; they are
     // read straight from the emitted wire (`Emission::evidence` is
-    // `pub(crate)` to `qsl_package`).
+    // `pub(crate)` to `fsl_package`).
     let wire: Value = serde_json::from_slice(bytes).expect("emitted package is JSON");
-    let mut evidence = quire_contract_model::CheckedPackageEvidence::new();
+    let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
     if let Some(features) = wire["lock"]["required_features"].as_array() {
         for feature in features {
             evidence.support_feature(feature.as_str().expect("feature name is a string"));
@@ -1318,14 +1548,14 @@ fn tc_469_step_6_the_emitted_package_admits_via_i04() {
             spine::DOMAIN_PACKAGE.as_bytes().to_vec(),
         )
         .expect("a fresh evidence key");
-    let result = quire_contract_model::read_checked_package(
+    let result = filament_contract_model::read_checked_package(
         bytes,
-        quire_contract_model::CheckedPackageReadLimits::bounded(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
         &evidence,
     );
     match result {
-        quire_contract_model::CheckedPackageDispatchResult::AdmittedV2(_) => {}
-        other => panic!("QSpec I04 read did not admit the emitted package: {other:?}"),
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_) => {}
+        other => panic!("FSpec I04 read did not admit the emitted package: {other:?}"),
     }
 }
 

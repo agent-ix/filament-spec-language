@@ -3,7 +3,7 @@ id: TC-1386
 title: "The parity runner reports every difference and every nondeterministic result"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-563
+  - target: ix://agent-ix/filament-spec-language/FR-563
     type: verifies
 ---
 # TC-1386: The parity runner reports every difference and every nondeterministic result

@@ -3,16 +3,16 @@ id: TC-750
 title: "The parse operation takes caller limits and parses a 100,000-deep source"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-256
+  - target: ix://agent-ix/filament-spec-language/FR-256
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-002
+  - target: ix://agent-ix/filament-spec-language/FR-002
     type: verifies
 ---
 # TC-750: The parse operation takes caller limits and parses a 100,000-deep source
 
 ## Description
 
-Verify that the `parse` operation runs S1 under exactly the `qsl_cst::Limits`
+Verify that the `parse` operation runs S1 under exactly the `fsl_cst::Limits`
 its caller gives it, that FR-255's settings operation builds those limits
 from `s1.*` operands, and that each outcome's document carries FR-285's exit
 code for its category.

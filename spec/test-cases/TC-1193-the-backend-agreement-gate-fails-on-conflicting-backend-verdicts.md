@@ -3,7 +3,7 @@ id: TC-1193
 title: "The backend-agreement gate fails on conflicting verdicts, including a wrong backend's proof or refutation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-448
+  - target: ix://agent-ix/filament-spec-language/FR-448
     type: verifies
 ---
 # TC-1193: The backend-agreement gate fails on conflicting verdicts, including a wrong backend's proof or refutation

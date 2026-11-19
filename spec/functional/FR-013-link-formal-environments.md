@@ -3,9 +3,9 @@ id: FR-013
 title: "Resolve native units against exact formal environments"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-002
+  - target: ix://agent-ix/filament-spec-language/US-002
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/FR-005
+  - target: ix://agent-ix/filament-spec-language/FR-005
     type: depends_on
 ---
 # FR-013: Resolve native units against exact formal environments

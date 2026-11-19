@@ -3,31 +3,31 @@ id: FR-217
 title: "Carry and replay a protocol counterexample"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-024
+  - target: ix://agent-ix/filament-spec-language/US-024
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-027
+  - target: ix://agent-ix/filament-spec-language/ADR-027
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-101
+  - target: ix://agent-ix/filament-spec-language/FR-101
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-128
+  - target: ix://agent-ix/filament-spec-language/FR-128
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-211
+  - target: ix://agent-ix/filament-spec-language/FR-211
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-212
+  - target: ix://agent-ix/filament-spec-language/FR-212
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-215
+  - target: ix://agent-ix/filament-spec-language/FR-215
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-158
+  - target: ix://agent-ix/filament-spec-language/FR-158
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-433
+  - target: ix://agent-ix/filament-specification/FR-433
     type: depends_on
 ---
 # FR-217: Carry and replay a protocol counterexample
@@ -38,7 +38,7 @@ A counterexample over a protocol subject SHALL be ADR-018's
 `TemporalCounterexample` naming the protocol subject, with each step as its
 protocol transition identity and its post-state's state key, each
 `send` step also carrying its `send_record`, and, for
-a deadlock, FR-211's blocked threads (ADR-027 PX-1). `qsl_replay::
+a deadlock, FR-211's blocked threads (ADR-027 PX-1). `fsl_replay::
 replay_model_trace` SHALL replay it by FR-128's rules through
 `ProtocolSystem`, check a lasso against the fairness set over FR-212's
 classes, and for a deadlock check that no protocol step is enabled at the
@@ -156,12 +156,12 @@ causes, and the report counts as a refutation only then.
   DL-5.
 - [FR-128](FR-128-replay-a-model-counterexample.md) (the replay rules this
   extends), [FR-098](FR-098-execute-a-replay-request.md),
-  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-qspec-sampler.md)
+  [FR-101](FR-101-explore-finite-models-with-canonical-order-and-the-fspec-sampler.md)
   (`replay`), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md)
   (the counterexample), FR-211, FR-212, FR-213, FR-215.
-- QSpec owns the counterexample wire for protocol steps and blocked threads
-  and their replay (ADR-027 QS-8): QSpec FR-433, over FR-331.
+- FSpec owns the counterexample wire for protocol steps and blocked threads
+  and their replay (ADR-027 QS-8): FSpec FR-433, over FR-331.
 
 ## References
 
-- Owning ticket: Linear QSL-396. QSpec half: QSpec FR-433 (Linear STD-140).
+- Owning ticket: Linear QSL-396. FSpec half: FSpec FR-433 (Linear STD-140).

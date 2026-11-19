@@ -3,7 +3,7 @@ id: TC-1014
 title: "An abstraction declaration refuses without the model profile"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-361
+  - target: ix://agent-ix/filament-spec-language/FR-361
     type: verifies
 ---
 # TC-1014: An abstraction declaration refuses without the model profile
@@ -14,8 +14,8 @@ Verify that an `abstraction-decl` refuses at S3 without the model profile and ch
 
 ## Test Procedure
 
-1. Compile TC-811 step 1's source (its `model` declaration and `abstraction-decl`) with the header profile `quire.value.complete/v1`.
-2. Compile it with `quire.model.complete/v1`.
+1. Compile TC-811 step 1's source (its `model` declaration and `abstraction-decl`) with the header profile `filament.value.complete/v1`.
+2. Compile it with `filament.model.complete/v1`.
 3. Compile TC-811 step 3's declaration (no binding) under each profile.
 
 ## Expected Results

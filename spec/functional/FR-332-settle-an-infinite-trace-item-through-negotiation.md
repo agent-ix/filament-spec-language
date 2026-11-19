@@ -3,42 +3,42 @@ id: FR-332
 title: "Settle an infinite-trace item only through negotiation"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-076
+  - target: ix://agent-ix/filament-spec-language/FR-076
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-326
+  - target: ix://agent-ix/filament-spec-language/FR-326
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-161
+  - target: ix://agent-ix/filament-specification/FR-161
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
 ---
 # FR-332: Settle an infinite-trace item only through negotiation
 
 ## Description
 
-QSL SHALL send every infinite-trace temporal item to negotiation and settle
+FSL SHALL send every infinite-trace temporal item to negotiation and settle
 it only from a negotiated backend's result (ADR-014 §5 A-5, §6, TR-8). The
 request writer SHALL classify the item `unbounded` with no available finite
 bound. With no backend that advertises (`temporal-satisfaction`,
 `unbounded`) and discharges the infinite-trace form, the item SHALL settle
-`unsupported` with a warning naming the capability (QSpec FR-161-AC-7). A
-backend's QSpec FR-360 result SHALL map to one O-16
+`unsupported` with a warning naming the capability (FSpec FR-161-AC-7). A
+backend's FSpec FR-360 result SHALL map to one O-16
 category. S6a evaluation of the clause on a trace (FR-328, FR-329) is
 evidence for that trace and never settles the item.
 
@@ -56,8 +56,8 @@ request routes to it and its result lands in the matching category.
   `Unbounded{[formula]}`).
 - The registry of backend descriptors (FR-075) and a negotiation
   disposition for the item (CG `negotiate_*` produces it, ADR-012 §7.1).
-- A routed backend's QSpec FR-360 result: label and
-  QSpec FR-241 execution.
+- A routed backend's FSpec FR-360 result: label and
+  FSpec FR-241 execution.
 
 ## Outputs
 
@@ -76,11 +76,11 @@ request routes to it and its result lands in the matching category.
   `unsupported`, warned, naming `temporal-satisfaction`.
 - When the disposition for a sole candidate advertising
   `temporal-satisfaction` in mode `bounded` only is `unbounded-extent`,
-  QSL SHALL settle the item `unsupported`, warned,
-  `unbounded-extent`, naming the kind, the candidate and its modes (QSpec
+  FSL SHALL settle the item `unsupported`, warned,
+  `unbounded-extent`, naming the kind, the candidate and its modes (FSpec
   FR-290).
 - When the disposition is `supported` for a candidate advertising
-  (`temporal-satisfaction`, `unbounded`), QSL SHALL route the item to it; over a model subject that candidate is QSL's
+  (`temporal-satisfaction`, `unbounded`), FSL SHALL route the item to it; over a model subject that candidate is FSL's
   explicit-state model checker (ADR-018 EN-1, FR-126), whose outcome FR-127
   settles.
 - A routed backend's result SHALL map to O-16 as ADR-014 A-5 states:
@@ -89,7 +89,7 @@ request routes to it and its result lands in the matching category.
   `resource-incomplete` to incomplete, and every other `failed` to internal
   failure.
 - An S6a result for the clause on a trace SHALL be `tested` or violation for
-  that trace only; the QSpec FR-331 accounting record SHALL join it to no
+  that trace only; the FSpec FR-331 accounting record SHALL join it to no
   requested item, so it settles no item (ADR-014 §8).
 
 ## Acceptance Criteria
@@ -111,13 +111,13 @@ request routes to it and its result lands in the matching category.
   [FR-076](FR-076-settle-backend-absence-as-unsupported.md),
   [FR-326](FR-326-admit-temporal-operators-by-the-unit-s-temporal-profile.md),
   [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md).
-- QSL's tests supply each negotiation disposition and backend result as a
+- FSL's tests supply each negotiation disposition and backend result as a
   fixture and run no CG or driver code; the end-to-end run through CG
-  `negotiate_*` and the driver lives in quire-integration.
-- QSpec FR-161-AC-7, FR-290, FR-360, FR-331.
+  `negotiate_*` and the driver lives in filament-integration.
+- FSpec FR-161-AC-7, FR-290, FR-360, FR-331.
 
 ## References
 
 - Linear QSL-384 (spec ticket); QSL-43 (implementation).
-- QSpec FR-368 (negotiating temporal model-check items): Linear STD-131
+- FSpec FR-368 (negotiating temporal model-check items): Linear STD-131
   (QS-9).

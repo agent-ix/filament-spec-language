@@ -3,7 +3,7 @@ id: TC-879
 title: "The conformance report gives outcome counts, coverage and each failing vector, in a stable order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-352
+  - target: ix://agent-ix/filament-spec-language/FR-352
     type: verifies
 ---
 # TC-879: The conformance report gives outcome counts, coverage and each failing vector, in a stable order
@@ -34,7 +34,7 @@ Tag the tests `#[trace("TC-879", "FR-352-AC-n")]`.
 
 - Counts 2, 1, 0, 0, 0, 1 for `passed`, `failed`, `tool-failure`, `unsupported`, `incomplete`, `uncovered`; coverage 50 per cent.
 - The failing capability's entry holds the failing vector's id with expected and actual result; passing entries hold no vector detail.
-- The two JSON reports are byte-equal, list capabilities and vectors in ascending id order and name the QSL version that ran. The text report gives the same counts and coverage.
+- The two JSON reports are byte-equal, list capabilities and vectors in ascending id order and name the FSL version that ran. The text report gives the same counts and coverage.
 - After adding the three vectors, capability counts and coverage stay the
   same. The failed capability keeps the original failed vector as its only
   deciding id. Both output modes retain all four non-passing vectors in id

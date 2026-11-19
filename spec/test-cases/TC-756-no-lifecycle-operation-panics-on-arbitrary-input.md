@@ -3,7 +3,7 @@ id: TC-756
 title: "No lifecycle operation panics on arbitrary input"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-275
+  - target: ix://agent-ix/filament-spec-language/FR-275
     type: verifies
 ---
 # TC-756: No lifecycle operation panics on arbitrary input

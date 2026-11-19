@@ -3,7 +3,7 @@ id: TC-738
 title: "A deep package emits, reads back and verifies, in the stratified grammar"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-264
+  - target: ix://agent-ix/filament-spec-language/FR-264
     type: verifies
 ---
 # TC-738: A deep package emits, reads back and verifies, in the stratified grammar
@@ -20,7 +20,7 @@ Scope: FR-264-AC-1, FR-264-AC-2, FR-264-AC-6, FR-264-AC-7.
 Run every step on a thread spawned with a 512 KiB stack unless the step says otherwise.
 
 1. Compile a package holding a 100,000-term sum under limits raised to fit
-   it, emit it, and read it back through QSL's I2 read with the `i2.*`
+   it, emit it, and read it back through FSL's I2 read with the `i2.*`
    settings raised to fit. Clone the `V2Read`, compare, format for debug and
    drop both.
 2. Walk the emitted JSON of every package of the TC-415 corpus (each nested

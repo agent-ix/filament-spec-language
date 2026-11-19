@@ -3,34 +3,34 @@ id: US-023
 title: "Prove a probabilistic property exactly, under a workload or over every scheduler"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-195
+  - target: ix://agent-ix/filament-spec-language/FR-195
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-197
+  - target: ix://agent-ix/filament-spec-language/FR-197
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-198
+  - target: ix://agent-ix/filament-spec-language/FR-198
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-199
+  - target: ix://agent-ix/filament-spec-language/FR-199
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-200
+  - target: ix://agent-ix/filament-spec-language/FR-200
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-201
+  - target: ix://agent-ix/filament-spec-language/FR-201
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/FR-204
+  - target: ix://agent-ix/filament-spec-language/FR-204
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-023: Prove a probabilistic property exactly, under a workload or over every scheduler
 
 ## Story
 
-**As a** verification operator with a probabilistic QSL model
+**As a** verification operator with a probabilistic FSL model
 **I want** a probabilistic claim proved or refuted exactly, under a stated
 workload, over every scheduler, or over every fair scheduler, including
 claims sampling cannot settle (rare events, thresholds near the true value,

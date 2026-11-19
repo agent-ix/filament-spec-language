@@ -3,19 +3,19 @@ id: FR-123
 title: "Check fairness constraints and interval operators of infinite-trace clauses"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-057
+  - target: ix://agent-ix/filament-spec-language/FR-057
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-semantic-value/FR-121
+  - target: ix://agent-ix/filament-semantic-value/FR-121
     type: references
 ---
 # FR-123: Check fairness constraints and interval operators of infinite-trace clauses
@@ -23,7 +23,7 @@ relationships:
 ## Description
 
 The S3 TemporalTrace `check` (ADR-014 §5) SHALL check, on a temporal clause
-whose unit selects `quire.temporal.infinite-trace/v1`, the fairness
+whose unit selects `filament.temporal.infinite-trace/v1`, the fairness
 constraints over model operations (ADR-018 FA-1, FA-5, FA-6) and the
 interval operators nested in any order with unbounded ones (ADR-018 IV-1)
 that the shared grammar parses. It SHALL classify every admitted clause over
@@ -43,7 +43,7 @@ settle each claim.
 
 ## Semantic authority and boundary
 
-QSpec owns the surface grammar of a fairness constraint and of an interval
+FSpec owns the surface grammar of a fairness constraint and of an interval
 under the infinite-trace profile, the meaning of fairness, and the rule
 that the profile admits intervals (ADR-018 QS-4, QS-13; References). This
 requirement specifies what S3 checks once the shared grammar has parsed a
@@ -62,12 +62,12 @@ ADR-018 §6 and are illustrative.
 ## Outputs
 
 - A checked temporal clause holding its formula and its fairness set:
-  `Vec<quire_semantic_value::fairness::FairnessConstraint>`. QSV FR-121 owns
+  `Vec<filament_semantic_value::fairness::FairnessConstraint>`. FSV FR-121 owns
   `FairnessKind::{Weak, Strong}`, `FairnessGranularity::{Whole, Each}` and
   `FairnessOperation`, whose identity pairs the declaring model type's
-  caller-minted `quire_exact::EffectiveId` with the resolved operation name.
+  caller-minted `filament_exact::EffectiveId` with the resolved operation name.
 - Each checked operator holding `Option<TemporalInterval>` (ADR-014 TR-3).
-- The clause's `quire_semantic_value::fairness::PropertyForm` (QSV FR-121),
+- The clause's `filament_semantic_value::fairness::PropertyForm` (FSV FR-121),
   classified as `ReachableInvariant`, `BoundedMltl`, `Safety` or `Liveness`
   (TP-1 to TP-4) and recorded beside its `Requirements` (ADR-014 A-3).
 - A typed `CheckRefusal` with a span, and no checked clause, on refusal.
@@ -83,7 +83,7 @@ ADR-018 §6 and are illustrative.
   `Whole` (ADR-018 FA-6). When it names one, the checker SHALL check it as
   that granularity.
 - The checker SHALL resolve the operation to one operation of an admitted
-  model (FR-103) and construct QSV's `FairnessOperation` from that operation's
+  model (FR-103) and construct FSV's `FairnessOperation` from that operation's
   declaring type `EffectiveId` and resolved name. Same-named operations on
   different declaring types SHALL remain distinct. If the name resolves to
   no operation, then the checker SHALL refuse `missing_declaration`/`missing-name`
@@ -102,7 +102,7 @@ ADR-018 §6 and are illustrative.
 
 ### Interval operators under infinite-trace
 
-- Under `quire.temporal.infinite-trace/v1`, the checker SHALL admit on each
+- Under `filament.temporal.infinite-trace/v1`, the checker SHALL admit on each
   of `eventually`, `always`, `until`, `release`, `once`, `historically`,
   `since` and `triggered` a closed interval `[a,b]` with `a <= b`, an
   interval `[a,*]` with an open upper bound, or none (ADR-018 IV-1). The
@@ -112,7 +112,7 @@ ADR-018 §6 and are illustrative.
 - If an interval has `a > b`, then the checker SHALL refuse it as ADR-014
   TR-3 states, at the interval's span.
 - The checker SHALL key the interval with the infinite-trace profile
-  identity (QSpec FR-255), so it never equals a bounded-profile interval
+  identity (FSpec FR-255), so it never equals a bounded-profile interval
   with the same numbers.
 
 ### Property form
@@ -140,8 +140,8 @@ ADR-018 §6 and are illustrative.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-123-AC-1 | Over ADR-018 §6's ConfigVersion example unit, a weak constraint on `attemptUpdate` written with no granularity and one written `whole` check to equal fairness sets with granularity `Whole`; one written `each` checks to granularity `Each`; and a clause with each fairness set has a different node identity from the same clause with the other. Resolved same-named operations declared by different model types retain their distinct declaring-type `EffectiveId` values and check to distinct fairness constraints. | Test (TC-518) |
-| FR-123-AC-2 | A weak constraint on `Absent`, which names no operation, refuses `missing_declaration`/`missing-name` at `Absent`'s span. A fairness constraint on a clause under `quire.temporal.event-position.false-extension/v1` refuses `unsupported_construct`/`expression-form` at the constraint's span. A constraint written twice checks to a set holding it once. | Test (TC-518) |
-| FR-123-AC-3 | Under infinite-trace, `always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))` checks, with `Some([0,2])` on the inner `always` and `None` on the outer `always` and on `eventually`. `eventually[3,*] holds(p)` checks with `Some([3,Open])`, and the same operator under `quire.temporal.event-position.false-extension/v1` refuses at the interval's span; `eventually[5,3] holds(p)` refuses at the interval's span. The `[0,2]` interval's key differs from the key of `[0,2]` under the event-position profile. | Test (TC-518) |
+| FR-123-AC-2 | A weak constraint on `Absent`, which names no operation, refuses `missing_declaration`/`missing-name` at `Absent`'s span. A fairness constraint on a clause under `filament.temporal.event-position.false-extension/v1` refuses `unsupported_construct`/`expression-form` at the constraint's span. A constraint written twice checks to a set holding it once. | Test (TC-518) |
+| FR-123-AC-3 | Under infinite-trace, `always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))` checks, with `Some([0,2])` on the inner `always` and `None` on the outer `always` and on `eventually`. `eventually[3,*] holds(p)` checks with `Some([3,Open])`, and the same operator under `filament.temporal.event-position.false-extension/v1` refuses at the interval's span; `eventually[5,3] holds(p)` refuses at the interval's span. The `[0,2]` interval's key differs from the key of `[0,2]` under the event-position profile. | Test (TC-518) |
 | FR-123-AC-4 | Property forms: `always holds(c.versionNumber <= 1000)` is `ReachableInvariant`; `eventually[0,5] holds(c.versionNumber = 2)` under event-position false-extension is `BoundedMltl`; `always (holds(req) implies eventually[0,5] holds(ack))` under infinite-trace is `Safety`; `always eventually holds(c.versionNumber = 2)` and the recovery-stability formula are `Liveness`. Each infinite-trace clause records (`temporal-satisfaction`, `Unbounded`). A clause over the ConfigVersion subject under the fixed-sample profile records no property form and keeps that profile in its requirement record. | Test (TC-518) |
 
 ## Dependencies
@@ -154,12 +154,12 @@ ADR-018 §6 and are illustrative.
   (operations), [FR-110](FR-110-resolve-header-profile-selections-at-e3.md)
   (profile selection), [FR-057](FR-057-admit-shared-capability-kinds.md)
   (`temporal-satisfaction`).
-- [QSV FR-121](ix://agent-ix/quire-semantic-value/FR-121) owns the shared
+- [FSV FR-121](ix://agent-ix/filament-semantic-value/FR-121) owns the shared
   checked property-form and fairness value types and their canonical encoding;
   this requirement owns their selection, construction and ordered collection.
 
 ## References
 
-- QSpec FR-362 (fairness constraints), FR-367 (interval operators under
-  infinite-trace) and FR-370 (the temporal clause body): the QSpec half of
+- FSpec FR-362 (fairness constraints), FR-367 (interval operators under
+  infinite-trace) and FR-370 (the temporal clause body): the FSpec half of
   ADR-018, QS-1 to QS-13 (Linear STD-131).

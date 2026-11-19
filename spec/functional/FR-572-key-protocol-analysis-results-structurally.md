@@ -3,19 +3,19 @@ id: FR-572
 title: "Key protocol analysis results structurally and deterministically"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-004
+  - target: ix://agent-ix/filament-spec-language/US-004
     type: traces_to
-  - target: ix://agent-ix/quire-spec-language/ADR-036
+  - target: ix://agent-ix/filament-spec-language/ADR-036
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-174
+  - target: ix://agent-ix/filament-specification/FR-174
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-175
+  - target: ix://agent-ix/filament-specification/FR-175
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-288
+  - target: ix://agent-ix/filament-specification/FR-288
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-054
+  - target: ix://agent-ix/filament-specification/FR-054
     type: depends_on
 ---
 # FR-572: Key protocol analysis results structurally and deterministically
@@ -23,9 +23,9 @@ relationships:
 ## Description
 
 Every projection and realizability result SHALL carry the structural key of
-QSpec FR-174-AC-6 or FR-175-AC-6 as typed members, SHALL never stand in a
+FSpec FR-174-AC-6 or FR-175-AC-6 as typed members, SHALL never stand in a
 digest for a member, and SHALL be a function of its key. It implements
-ADR-036 PA-13 to PA-15 and QSpec FR-174-AC-6 and FR-175-AC-6.
+ADR-036 PA-13 to PA-15 and FSpec FR-174-AC-6 and FR-175-AC-6.
 
 ## Inputs
 
@@ -69,7 +69,7 @@ refused.
 - One key shall yield one result. Collections shall be ordered by checked
   node id or an explicit canonical order, and no hash order, randomness,
   clock or scheduler shall reach the result. The analyzer identity is
-  `qsl-analyze::protocol_analysis` with the crate version (PA-15).
+  `fsl-analyze::protocol_analysis` with the crate version (PA-15).
 - A projection shall be a function of its five members only; its analyzer
   identity is not a member, so a change that alters any projection output is
   a requirement change (PA-15).
@@ -89,7 +89,7 @@ refused.
 
 - ADR-036 PA-13 to PA-15; ADR-018 V-7.
 - [FR-570](FR-570-project-a-global-protocol-onto-one-role.md), [FR-571](FR-571-decide-whether-local-strategies-realize-a-global-protocol.md).
-- QSpec FR-174, FR-175, FR-288, FR-054.
+- FSpec FR-174, FR-175, FR-288, FR-054.
 
 ## References
 

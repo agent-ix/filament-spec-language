@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Agent-IX
-"""QSL's documentation figures, rendered by the docs-figures skill.
+"""FSL's documentation figures, rendered by the docs-figures skill.
 
 Regenerate from the repository root with the agent-ix/dev-tools skill:
 
@@ -21,7 +21,7 @@ STYLE = "ix-docs"
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# One role per kind of thing, fixed across the Quire repositories.
+# One role per kind of thing, fixed across the Filament repositories.
 ROLES = [
     ("code", "authored source", "box"),
     ("logic", "compiler stage", "box"),
@@ -56,7 +56,7 @@ def config_version_unit():
 
 def capability_families():
     """The complete-V1 capability families and their sizes, in inventory order."""
-    source = (ROOT / "qsl-semantics/src/library/bundle.rs").read_text(encoding="utf-8")
+    source = (ROOT / "fsl-semantics/src/library/bundle.rs").read_text(encoding="utf-8")
     table = source.split("const COMPLETE_CAPABILITY_FAMILIES", 1)[1].split("];", 1)[0]
     return [(name, int(n)) for name, n in re.findall(r'\("([A-Z]+)",\s*(\d+)\)', table)]
 
@@ -96,14 +96,14 @@ def hero():
         "hero",
         980,
         336,
-        "A rule written in QSL, either in a .native file or in a fenced block inside a Markdown "
+        "A rule written in FSL, either in a .native file or in a fenced block inside a Markdown "
         "spec, is compiled against a domain model into a checked package, then evaluated against "
         "data. The result is one of: holds, violated, refused, unsupported or incomplete.",
     )
     f.box(0, 40, 170, 56, "code", "rule in .native", "ParentOrder")
     f.box(0, 116, 170, 56, "code", "rule in Markdown", "```ix:native fence")
     f.box(0, 210, 170, 56, "ink", "domain model", "config-version")
-    f.box(214, 116, 140, 56, "logic", "QSL library", "parse · check")
+    f.box(214, 116, 140, 56, "logic", "FSL library", "parse · check")
     f.box(398, 116, 150, 56, "model", "checked package", "exact identity")
     f.line([(170, 68), (190, 68), (190, 144), (211, 144)], "code")
     f.line([(170, 144), (211, 144)], "code")
@@ -129,7 +129,7 @@ def first_rule():
         "first-rule",
         980,
         330,
-        "An annotated QSL unit: (1) the header names the language and edition, (2) the profile "
+        "An annotated FSL unit: (1) the header names the language and edition, (2) the profile "
         "says which part of the language the rules use, (3) the model line imports a domain "
         "package by its identity, (4) invariants must hold for every object, "
         "(5) a post rule compares a value after an operation with its value before.",
@@ -166,13 +166,13 @@ def outcomes():
         ("incomplete · inconclusive", "exit 22", "data or budget ran out"),
         ("indeterminate", "exit 11", "closed evidence is unresolved"),
         ("pending", "exit 0", "no violation seen yet"),
-        ("internal failure", "exit 30", "a bug in QSL"),
+        ("internal failure", "exit 30", "a bug in FSL"),
     ]
     f = Figure(
         "outcomes",
         980,
         440,
-        "Every QSL check ends in exactly one outcome with its own exit code: success 0; violation "
+        "Every FSL check ends in exactly one outcome with its own exit code: success 0; violation "
         "or undefined 10; indeterminate 11; refused 20; unsupported 21; incomplete or inconclusive 22; "
         "internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why "
         "no answer was given.",
@@ -202,7 +202,7 @@ def pipeline():
         "pipeline",
         980,
         426,
-        "QSL compiles source through a lossless syntax tree and parsed forms into a checked graph, "
+        "FSL compiles source through a lossless syntax tree and parsed forms into a checked graph, "
         "resolving names against domain models and dependency packages, then links a checked "
         "package. The package goes three ways: to the reference evaluator, to native model "
         "checking, or as checked-package/v2 bytes to Contract IR and proof backends. A "
@@ -268,47 +268,47 @@ def capabilities():
 # (column, row, repository, what it does, private). Rows: 0 orchestration, 1 the
 # main chain, 2-3 branches off it. Arrows follow what one repository's output feeds.
 REPOS = [
-    (1, 0, "quire-driver", "the quire command", False),
-    (2, 0, "quire-integration", "tests the whole chain", False),
-    (3, 0, "quire-verification", "plans verification", False),
-    (0, 1, "quire-specification", "the standard", False),
-    (1, 1, "quire-spec-language", "compiler · evaluator", False),
-    (2, 1, "quire-contract-ir", "contract model", False),
-    (3, 1, "quire-contract-codegen", "code · tests · proofs", False),
-    (4, 1, "quire-contract-runtime", "runs generated checks", False),
-    (0, 2, "quire-observation", "qualified observations", False),
-    (1, 2, "quire-protocol", "protocol conformance", False),
-    (2, 2, "quire-analyze", "SMT consistency", False),
-    (0, 3, "quire-mltl", "MLTL over observations", False),
+    (1, 0, "filament-driver", "the fsl command", False),
+    (2, 0, "filament-integration", "tests the whole chain", False),
+    (3, 0, "filament-verification", "plans verification", False),
+    (0, 1, "filament-specification", "the standard", False),
+    (1, 1, "filament-spec-language", "compiler · evaluator", False),
+    (2, 1, "filament-contract-ir", "contract model", False),
+    (3, 1, "filament-contract-codegen", "code · tests · proofs", False),
+    (4, 1, "filament-contract-runtime", "runs generated checks", False),
+    (0, 2, "filament-observation", "qualified observations", False),
+    (1, 2, "filament-protocol", "protocol conformance", False),
+    (2, 2, "filament-analyze", "SMT consistency", False),
+    (0, 3, "filament-mltl", "MLTL over observations", False),
 ]
 FEEDS = [
-    ("quire-specification", "quire-spec-language"),
-    ("quire-spec-language", "quire-contract-ir"),
-    ("quire-contract-ir", "quire-contract-codegen"),
-    ("quire-contract-codegen", "quire-contract-runtime"),
-    ("quire-spec-language", "quire-protocol"),
-    ("quire-contract-ir", "quire-analyze"),
-    ("quire-observation", "quire-protocol"),
-    ("quire-observation", "quire-mltl"),
+    ("filament-specification", "filament-spec-language"),
+    ("filament-spec-language", "filament-contract-ir"),
+    ("filament-contract-ir", "filament-contract-codegen"),
+    ("filament-contract-codegen", "filament-contract-runtime"),
+    ("filament-spec-language", "filament-protocol"),
+    ("filament-contract-ir", "filament-analyze"),
+    ("filament-observation", "filament-protocol"),
+    ("filament-observation", "filament-mltl"),
 ]
-SHARED = ["quire-eval", "quire-exact", "quire-semantic-value", "quire-walk", "quire-canonical",
-          "quire-verification-contracts"]
+SHARED = ["filament-eval", "filament-exact", "filament-semantic-value", "filament-walk", "quire-canonical",
+          "filament-verification-contracts"]
 
 
-def ecosystem(here="quire-spec-language"):
-    """The Quire repositories: the main chain, its branches, and what runs and shares it."""
+def ecosystem(here="filament-spec-language"):
+    """The Filament repositories: the main chain, its branches, and what runs and shares it."""
     f = Figure(
         "ecosystem",
         980,
         476,
-        "The Quire repositories. The main chain runs from the standard, quire-specification, to "
-        "the compiler, quire-spec-language, then quire-contract-ir, quire-contract-codegen and "
-        "quire-contract-runtime. quire-spec-language also feeds quire-protocol, and "
-        "quire-contract-ir feeds quire-analyze. quire-observation feeds quire-protocol and "
-        "quire-mltl. Above the chain, quire-driver runs it, quire-integration tests it and "
-        "quire-verification plans verification. Below it, shared libraries used throughout: "
-        "quire-eval, quire-exact, quire-semantic-value, quire-walk, quire-canonical and "
-        "quire-verification-contracts.",
+        "The Filament repositories. The main chain runs from the standard, filament-specification, to "
+        "the compiler, filament-spec-language, then filament-contract-ir, filament-contract-codegen and "
+        "filament-contract-runtime. filament-spec-language also feeds filament-protocol, and "
+        "filament-contract-ir feeds filament-analyze. filament-observation feeds filament-protocol and "
+        "filament-mltl. Above the chain, filament-driver runs it, filament-integration tests it and "
+        "filament-verification plans verification. Below it, shared libraries used throughout: "
+        "filament-eval, filament-exact, filament-semantic-value, filament-walk, quire-canonical and "
+        "filament-verification-contracts.",
     )
     w, h, step = 176, 50, 201
     rows = {0: 20, 1: 120, 2: 210, 3: 290}
@@ -340,16 +340,16 @@ def ecosystem(here="quire-spec-language"):
 
 
 LAYERS = [
-    ("COMMAND LINE", [("qsl-replay", "replay counterexamples"), ("qsl-analyze", "model checking"),
-                      ("quire-driver", "the command line")]),
-    ("EXECUTE", [("qsl-eval", "reference evaluator"), ("qsl-route", "backend routing")]),
-    ("PACKAGE", [("qsl-package", "checked-package/v2")]),
-    ("CHECK", [("qsl-semantics", "names · types · definedness")]),
-    ("PARSE", [("qsl-forms", "parsed forms"), ("qsl-cst", "syntax tree · formatter"),
-               ("qsl-source", "Markdown intake (optional)")]),
-    ("FOUNDATION", [("qsl-foundation", "identity · diagnostics")]),
-    ("SHARED", [("quire-exact", "exact values"), ("quire-semantic-value", "semantic values"),
-                ("quire-walk", "heap-stack walker"), ("quire-canonical", "canonical JSON")]),
+    ("COMMAND LINE", [("fsl-replay", "replay counterexamples"), ("fsl-analyze", "model checking"),
+                      ("filament-driver", "the command line")]),
+    ("EXECUTE", [("fsl-eval", "reference evaluator"), ("fsl-route", "backend routing")]),
+    ("PACKAGE", [("fsl-package", "checked-package/v2")]),
+    ("CHECK", [("fsl-semantics", "names · types · definedness")]),
+    ("PARSE", [("fsl-forms", "parsed forms"), ("fsl-cst", "syntax tree · formatter"),
+               ("fsl-source", "Markdown intake (optional)")]),
+    ("FOUNDATION", [("fsl-foundation", "identity · diagnostics")]),
+    ("SHARED", [("filament-exact", "exact values"), ("filament-semantic-value", "semantic values"),
+                ("filament-walk", "heap-stack walker"), ("quire-canonical", "canonical JSON")]),
 ]
 
 
@@ -359,10 +359,10 @@ def layers():
         "layers",
         980,
         420,
-        "The QSL workspace in layers, bottom to top: the shared no_std libraries quire-exact, "
-        "quire-semantic-value, quire-walk and quire-canonical; qsl-foundation; qsl-cst; qsl-forms; qsl-semantics; "
-        "qsl-package; then qsl-eval and qsl-route; and at the top qsl-replay, qsl-analyze and the "
-        "quire-driver command line.",
+        "The FSL workspace in layers, bottom to top: the shared no_std libraries filament-exact, "
+        "filament-semantic-value, filament-walk and quire-canonical; fsl-foundation; fsl-cst; fsl-forms; fsl-semantics; "
+        "fsl-package; then fsl-eval and fsl-route; and at the top fsl-replay, fsl-analyze and the "
+        "filament-driver command line.",
     )
     left, step = 130, 60
     for i, (band, crates) in enumerate(LAYERS):
@@ -372,7 +372,7 @@ def layers():
         for j, (name, what) in enumerate(crates):
             x = left + j * (w + 12)
             role = "ink" if band == "SHARED" else "model" if band == "PACKAGE" else "logic"
-            f.box(round(x), y, round(w), 50, role, name, what, dashed=name == "qsl-source")
+            f.box(round(x), y, round(w), 50, role, name, what, dashed=name == "fsl-source")
     return f
 
 

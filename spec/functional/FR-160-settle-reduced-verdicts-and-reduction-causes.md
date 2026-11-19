@@ -3,17 +3,17 @@ id: FR-160
 title: "Settle reduced verdicts and reduction causes as terminal records"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-019
+  - target: ix://agent-ix/filament-spec-language/US-019
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-021
+  - target: ix://agent-ix/filament-spec-language/ADR-021
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-126
+  - target: ix://agent-ix/filament-spec-language/FR-126
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-159
+  - target: ix://agent-ix/filament-spec-language/FR-159
     type: depends_on
 ---
 # FR-160: Settle reduced verdicts and reduction causes as terminal records
@@ -25,7 +25,7 @@ finds no counterexample is a proof by its own technique,
 `ProofBasis::Reduced`, never `Exhaustive` (ADR-021 RV-1). No core checker
 verifies a reduced proof (FR-338's closure certificate and FR-339's
 component certificate do not cover a reduced graph), so it is labelled
-`Certification::Uncertified` (ADR-018 PC-1, RU-6). QSL SHALL add
+`Certification::Uncertified` (ADR-018 PC-1, RU-6). FSL SHALL add
 `Reduced` and four inconclusive causes, `ReductionNotPreserving`,
 `SymmetryBroken`, `ConstraintReached` and `ReductionHorizon`, to FR-127's
 terminal values and settle each through FR-127's one map (RV-2 to RV-5).
@@ -75,14 +75,14 @@ pub enum ReductionKind { Symmetry, PartialOrder, StateConstraint }
 
 ## Behavior
 
-QSpec FR-385 owns the terminal-record vocabulary named in the QSpec columns
-below. This table specifies QSL's mapping from reduced-run outcomes to its
-`TerminalValue` and category; the QSpec column values point to that source
+FSpec FR-385 owns the terminal-record vocabulary named in the FSpec columns
+below. This table specifies FSL's mapping from reduced-run outcomes to its
+`TerminalValue` and category; the FSpec column values point to that source
 contract.
 
 - **Map rows.** FR-127's map SHALL gain these rows, with no `_` arm:
 
-| Input | QSpec FR-360 label | QSpec FR-243 basis | QSpec FR-385 proof basis or cause | `TerminalValue` | O-16 category |
+| Input | FSpec FR-360 label | FSpec FR-243 basis | FSpec FR-385 proof basis or cause | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- | --- |
 | `Holds` with symmetry or partial-order reduction applied | `proved` | `closed-scope` | proof basis `reduced`, label `uncertified` | `Proved{basis: Reduced{reductions}, certification: Uncertified}` | success |
 | `Holds` with only a constraint, no boundary state reached | `proved` | `closed-scope` | proof basis `exhaustive`, label `uncertified` | `Proved{basis: Exhaustive, certification: Uncertified}` | success |
@@ -105,7 +105,7 @@ contract.
   completes its method (`max_states`, `max_transitions`,
   `max_automaton_states` or the evaluation meter), the map SHALL settle
   ADR-018 V-7: `incomplete`, `Incomplete(LimitReached{limit, value,
-  setting})`, QSpec cause `limit-reached`, never `failed`. A cancelled run
+  setting})`, FSpec cause `limit-reached`, never `failed`. A cancelled run
   settles as V-7 states.
 - **Precedence.** When a run completes with no counterexample, reached a
   boundary state and reached `max_depth`, it SHALL settle
@@ -117,8 +117,8 @@ contract.
   A symmetry-only run that completes to `max_depth` SHALL settle
   `BoundReached{depth}` (V-5).
 - **Reduced-versus-unreduced agreement.** For every model-check case of
-  QSL's model-check test corpus (the worked examples of ADR-018, ADR-019,
-  ADR-021 and ADR-027, and the QSpec conformance vectors QSL runs) and every
+  FSL's model-check test corpus (the worked examples of ADR-018, ADR-019,
+  ADR-021 and ADR-027, and the FSpec conformance vectors FSL runs) and every
   selection of symmetry, partial-order reduction, or both, whose PT-2 rows
   admit the case, the reduced run and the unreduced run SHALL settle the
   same ADR-018 verdict, and every counterexample from either run SHALL
@@ -158,10 +158,10 @@ contract.
   and category map), [FR-126](FR-126-check-a-temporal-clause-over-every-behaviour-of-a-model.md),
   [FR-127](FR-127-settle-a-model-check-verdict-as-a-terminal-record.md) (the
   map this extends), [FR-159](FR-159-pre-check-selected-reductions-against-the-preservation-table.md).
-- QSpec FR-385 owns proof basis `reduced` in the FR-331 terminal record and
+- FSpec FR-385 owns proof basis `reduced` in the FR-331 terminal record and
   the new causes onto FR-360 and FR-243 (ADR-021 QS-6).
 
 ## References
 
-- QSpec half: QSpec FR-385 (Linear STD-134; ADR-021 §9 QS-6). Owning ticket: Linear
+- FSpec half: FSpec FR-385 (Linear STD-134; ADR-021 §9 QS-6). Owning ticket: Linear
   QSL-368.

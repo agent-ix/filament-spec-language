@@ -3,11 +3,11 @@ id: TC-555
 title: "A mapping row or argument leaves the refinement undetermined or refutes it, an abstract budget stop is incomplete, and reads are ordered"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-140
+  - target: ix://agent-ix/filament-spec-language/FR-140
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-141
+  - target: ix://agent-ix/filament-spec-language/FR-141
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-144
+  - target: ix://agent-ix/filament-spec-language/FR-144
     type: verifies
 ---
 # TC-555: A mapping row or argument leaves the refinement undetermined or refutes it, an abstract budget stop is incomplete, and reads are ordered

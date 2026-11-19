@@ -3,7 +3,7 @@ id: TC-994
 title: "A variant type is admitted as one enum and one variant per case"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: verifies
 ---
 # TC-994: A variant type is admitted as one enum and one variant per case
@@ -14,7 +14,7 @@ Verify that a variant type is admitted and exported as one `enum` and one `varia
 
 ## Test Procedure
 
-1. Lift a bundle with variant type `Tier` (`quire.meaning.model.variant-type/v1`, shape `enumeration`) whose `variants` list gives `Gold` then `Standard`, and a second variant type `Level` with a case `Gold`. Admit it.
+1. Lift a bundle with variant type `Tier` (`filament.meaning.model.variant-type/v1`, shape `enumeration`) whose `variants` list gives `Gold` then `Standard`, and a second variant type `Level` with a case `Gold`. Admit it.
 2. Re-run with the `Tier` cases listed `Standard` then `Gold`.
 3. Re-run with `Tier` cases `Gold` and `gold`.
 

@@ -3,15 +3,15 @@ id: TC-1042
 title: "Replay dereferences a Reference over an admitted object environment and refuses each defect in order"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-098
+  - target: ix://agent-ix/filament-spec-language/FR-098
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-071
+  - target: ix://agent-ix/filament-spec-language/FR-071
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-070
+  - target: ix://agent-ix/filament-spec-language/FR-070
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-364
+  - target: ix://agent-ix/filament-spec-language/FR-364
     type: verifies
 ---
 # TC-1042: Replay dereferences a Reference over an admitted object environment and refuses each defect in order
@@ -55,7 +55,7 @@ type `T` is `ref(k, T)`:
 of `z` `7a`, of `n8` `6e38` and of `n9` `6e39`. A `Witness` entry is
 `P=<value text>`, and the value texts below hold none of `%`, `;`, `<` or `>`.
 
-Environment document **S1**, format `quire.state.snapshot/v1`, observation
+Environment document **S1**, format `filament.state.snapshot/v1`, observation
 `current`, anchor `{"kind":"handler","name":"run"}`, the package's model
 selection, and the one population `G` listed `"complete": true` with the
 objects (each lists every declared field, `next` absent unless stated):

@@ -3,30 +3,34 @@ id: FR-246
 title: "Check task sets and schedulability claims"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-075
+  - target: ix://agent-ix/filament-spec-language/FR-075
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-230
+  - target: ix://agent-ix/filament-spec-language/FR-230
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-142
+  - target: ix://agent-ix/filament-specification/FR-142
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-290
+  - target: ix://agent-ix/filament-specification/FR-290
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-062
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322
     type: depends_on
 ---
 # FR-246: Check task sets and schedulability claims
 
 ## Description
 
-QSL's S3 checker SHALL admit a package's task sets for one preemptive
+FSL's S3 checker SHALL admit a package's task sets for one preemptive
 uniprocessor and the schedulability and response claims over them, and
 route each claim to the closed-form engine EN-7, module `schedulability`
-in layer A, crate `qsl-analyze`,
-under the QSpec FR-290 capability kind `schedulability` (ADR-026 RT-1 to
+in layer A, crate `fsl-analyze`,
+under the FSpec FR-290 capability kind `schedulability` (ADR-026 RT-1 to
 RT-3). WCETs, blocking terms and jitter are stated premises of the claim:
 they are part of the task set, so part of the subject and its obligation
 identity.
@@ -43,12 +47,12 @@ changing one gives a different obligation.
 - A parsed `taskset S { task τ … }` declaration and `schedulable N on S
   under P;` and `response N on S.τ <= d under fixed_priority;` claims, `N`
   the claim's name, `S` the task set and `P` one of `fixed_priority`, `edf`
-  and `amc`, in the spelling QSpec's shared grammar fixes. The grammar admits
+  and `amc`, in the spelling FSpec's shared grammar fixes. The grammar admits
   a task set with no task, a negative time value, a negative `bcet`, a
   `bcet` above the task's upper execution bound and a `lo` task with
   `wcet_hi`, so that S3 refuses them below. A task may write `bcet <time>`
   once, after `deadline` and before `wcet`; it is the task's lower bound on
-  actual job demand (QSpec FR-419), and a task that omits it has `bcet` zero.
+  actual job demand (FSpec FR-419), and a task that omits it has `bcet` zero.
 
 ## Outputs
 
@@ -71,14 +75,14 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 
 ## Behavior
 
-- Every time value SHALL be an exact rational time quantity (QSpec FR-142,
+- Every time value SHALL be an exact rational time quantity (FSpec FR-142,
   FR-230's time units); a value of another dimension SHALL refuse
   `ill_typed`/`type-mismatch` at its span.
 - **The task set's unit.** The checker SHALL order the tasks by task name in
   Unicode scalar value order (the order FR-482 writes them), then take the
   unit of the first task's period or minimum inter-arrival time as the task
   set's unit. It SHALL convert every time value of the task set, and the
-  bound `d` of every `response` claim over it, exactly into that unit (QSpec
+  bound `d` of every `response` claim over it, exactly into that unit (FSpec
   FR-142). Reordering task declarations SHALL NOT change the chosen unit or
   any checked value. EN-7's
   evidence (FR-247) and the settled record (FR-248) state their values in
@@ -96,7 +100,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   deadline that is not positive; a WCET that is not positive; a jitter or
   blocking term that is negative; a `bcet` that is negative; a `bcet` above
   `C` for a `LO` task or above `C(HI)` for a `HI` task; a `HI` task whose `C(LO)` exceeds `C(HI)`;
-  a `LO` task with dual budgets. QSpec FR-419 states the code and every
+  a `LO` task with dual budgets. FSpec FR-419 states the code and every
   one of these conditions, the claim-dependent ones below included, so that
   one invalid task set refuses under one code.
 - Two tasks with one name SHALL refuse `conflicting_declaration`/
@@ -105,7 +109,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   two tasks share a priority, the checker SHALL refuse `invalid_timed_model`/
   `invalid-task-set`, naming both tasks; when a task has no priority, the
   checker SHALL refuse the same way, naming that task. For an `edf` claim the
-  checker SHALL ignore priorities (QSpec FR-419).
+  checker SHALL ignore priorities (FSpec FR-419).
 - When an `edf` claim is over a task with a jitter or blocking term other than
   zero, or an `amc` claim is over a task whose deadline exceeds its period,
   the checker SHALL refuse `invalid_timed_model`/`invalid-task-set`, naming
@@ -126,12 +130,34 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
   other time value.
 - The task set, including every BCET, WCET, blocking term and jitter, SHALL be
   part of the claim's subject and obligation identity (ADR-013 O-09): S4
-  emits each checked claim as one QSpec FR-482 `claim`/`schedulability`
+  emits each checked claim as one FSpec FR-482 `claim`/`schedulability`
   node holding the task set (FR-454), and the identity is keyed from that
   node.
 - The request writer SHALL give each claim the requirement
   (`schedulability`, policy) and route it by negotiation (FR-075), where
   EN-7 registers a provider manifest for that kind.
+- S3 SHALL write one requirement record for each checked `schedulable` and
+  `response` claim into the checked graph's requirement records
+  (`CheckedGraph::requirements`, FR-062-AC-13), so that FR-075's request
+  builder `items_from_requirements` writes one `schedulability` item per claim
+  and routes it to EN-7 like every other record. The record's key is the
+  `claim` occurrence key of the claim's FSpec FR-482 `claim`/`schedulability`
+  node, its kind `schedulability`, its extent `Bounded` (a task set is finite
+  and the analysis is closed form), its extent roots and path condition empty,
+  its owner none (a claim is not a function body), and its requirements the
+  claim's policy (`fixed_priority`, `edf` or `amc`) and, for a `schedulable`
+  claim, its **release-backed** marker: `true` exactly when the claim's task
+  set has at least one checked `release` declaration (FR-249), `false`
+  otherwise. A `response` claim is never release-backed. The marker is what
+  lets FR-075 offer EN-6's task-product check for the claim; it is part of
+  the record, not of the claim's obligation identity, because the claim
+  states the same question either way. A task set refused for its
+  own defects writes no record for its claims.
+- While a `package` is selected (FR-850, FR-940), FSL SHALL read the same records from
+  the package's `schedulability_claims` rows (FSpec FR-322), one per row in row
+  order, the policy read from the FR-482 body and the release-backed
+  marker from whether the package records a checked release of a task of the
+  claim's task set, so both routes write equal items.
 
 ## Acceptance Criteria
 
@@ -140,6 +166,8 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 | FR-246-AC-1 | ADR-026 §12's `Ctl` (periodic, `(C, T = D)` of `(1, 4)`, `(2, 6)` and `(5, 12)` ms, priorities by period) checks; `schedulable CtlFp on Ctl under fixed_priority;` and `schedulable CtlEdf on Ctl under edf;` route to EN-7 under `schedulability`. The `Ctl` with the third WCET 6, or with a task's `bcet` 1 ms, gives a different obligation identity; a task with `bcet` omitted and the same task with `bcet 0 ms` check to one value and one identity. | Test (TC-701) |
 | FR-246-AC-2 | Each of these refuses `invalid_timed_model`/`invalid-task-set` naming the task (the task set for the empty one), and both tasks for a clash: a task set with no task; a period of 0 ms; a deadline of 0 ms; a WCET of 0 ms; a BCET of -1 ms; a `LO` task whose BCET exceeds its WCET and a `HI` task whose BCET exceeds its `C(HI)`; a jitter of -1 ms; a blocking term of -1 ms; a sporadic task with minimum inter-arrival time 0 ms; a `HI` task with `C(LO)` 3 and `C(HI)` 2; a `LO` task with dual budgets; a task with no priority under `fixed_priority`; two tasks with priority 1 under `fixed_priority`; a task with blocking 1 ms under `edf`; a task with jitter 1 ms under `edf`; a task with no priority and two tasks with priority 1 under `amc`; a task with no priority under `response R on Ctl.c <= 12 ms under fixed_priority;`; two tasks with priority 1 under `response R on Ctl.c <= 12 ms under fixed_priority;`; a task with deadline above its period under `amc`. Two tasks named `a` refuse `conflicting_declaration`/`duplicate-declaration`; `response R on Ctl.zz <= 5 ms under fixed_priority;` refuses `missing_declaration`/`missing-name`; a deadline of `3 m` refuses `ill_typed`/`type-mismatch`. The same priority clash and a task with no priority under `edf` check. | Test (TC-701) |
 | FR-246-AC-3 | `Ctl` written in `ms` has unit `ms`, and FR-248 settles `CtlFp` with fixpoints `(1, 3, 12)`; `Ctl` with task `a`'s period written `4000 us` has unit `us`, every value and `response R on Ctl.c <= 12 ms under fixed_priority;`'s bound converted exactly (`12 ms` is `12000`), and fixpoints `(1000, 3000, 12000)`. Reordering those same tasks so `c` is first in source, while task `a` still has period `4000 us`, keeps unit `us`, all checked values and claim identity unchanged. `Ctl` with the first task's jitter `-1 ms` and the second's blocking `-1 ms`, under `CtlEdf`, reports four `invalid_timed_model`/`invalid-task-set` refusals in this order: the first task, the second task (the task set's own), then the first task and the second task (`edf`'s non-zero terms); with tasks declared in the order `a` (valid), `a` (valid) and `z` (period 0 ms), it reports `conflicting_declaration`/`duplicate-declaration` at the second `a`, then `invalid_timed_model`/`invalid-task-set` at `z`, in that order. `taskset Empty { }` with `response R on Empty.c <= 12 ms under fixed_priority;` has no unit, refuses `invalid-task-set` naming `Empty` and `missing_declaration`/`missing-name` at `c`, and keeps the bound `12 ms`. | Test (TC-701) |
+| FR-246-AC-4 | `Ctl` with `schedulable CtlFp on Ctl under fixed_priority;`, `schedulable CtlEdf on Ctl under edf;` and `response R on Ctl.c <= 12 ms under fixed_priority;` writes three requirement records of kind `schedulability`, each keyed by its claim node's `claim` occurrence, extent `Bounded`, no owner, empty extent roots and path condition, and its policy; `items_from_requirements` over them and `Engines::fsl()`'s registry returns three items in occurrence-key order whose candidate set is `["en-7"]`; the same records read from the compiled package's `schedulability_claims` rows give equal items; a task set with a period of 0 ms writes no record. | Test (TC-2961) |
+| FR-246-AC-5 | `Ctl` with `schedulable CtlFp on Ctl under fixed_priority;` and `response R on Ctl.c <= 12 ms under fixed_priority;` and no `release` writes both records with release-backed `false`. Adding `release Ctl.a on M::o;` for an operation `o` of a `time dense` model makes `CtlFp`'s record release-backed `true` and leaves `R`'s `false`; the claim node identity of `CtlFp` is the same in both units; the compiled package's rows give records with the same markers. | Test (TC-3009) |
 
 ## Dependencies
 
@@ -147,10 +175,10 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 - [FR-075](FR-075-compute-candidates-from-registered-backends.md),
   [FR-230](FR-230-check-time-declarations-clocks-and-clock-constraints.md)
   (time units shared with timed models).
-- QSpec FR-142 (units), QSpec FR-290 (capability kinds).
+- FSpec FR-142 (units), FSpec FR-290 (capability kinds).
 
 ## References
 
-- QSpec half: QSpec FR-419 (Linear STD-139) owns the `taskset` grammar,
+- FSpec half: FSpec FR-419 (Linear STD-139) owns the `taskset` grammar,
   the `schedulable` and `response` claims and the FR-290 capability kind
   `schedulability` (ADR-026 OV-10).

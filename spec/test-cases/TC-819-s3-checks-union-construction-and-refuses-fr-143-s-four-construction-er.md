@@ -3,7 +3,7 @@ id: TC-819
 title: "S3 checks union construction and refuses FR-143's four construction errors"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-317
+  - target: ix://agent-ix/filament-spec-language/FR-317
     type: verifies
 ---
 # TC-819: S3 checks union construction and refuses FR-143's four construction errors
@@ -21,7 +21,7 @@ Over `union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }`:
    `Shape::Rect(1)`.
 3. Check `Shape::Rect(2, 3)` and `Shape::Rect(1)` as part of a state clause
    body and of a `decreases` measure.
-4. Run QSpec TC-262's construction cases (tag `QSpec-TC-262`).
+4. Run FSpec TC-262's construction cases (tag `FSpec-TC-262`).
 5. Over ADR-022 §7.2's `Game` unit (unordered enum `G::Phase`), check the
    bare and the qualified `CanStillWin` with `from`, `Lost != x.phase`,
    `x.phase = Draw`, `Lost = Won`, `x.phase < Mid` and

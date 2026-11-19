@@ -3,7 +3,7 @@ id: TC-015
 title: "Parse and format outcomes"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-010
+  - target: ix://agent-ix/filament-spec-language/FR-010
     type: verifies
 ---
 
@@ -17,5 +17,5 @@ Call the `parse` and `format` operations in process for an empty identity, a mis
 
 ## Expected Results
 
-FR-285 exit codes are 0/20/21/22 for success/invalid-or-refused-input/recognized-but-unsupported/incomplete, [FR-301](ix://agent-ix/quire-specification/FR-301)'s contract. Only a successful parse produces a `success` outcome document, and no path claims logical evaluation.
+FR-285 exit codes are 0/20/21/22 for success/invalid-or-refused-input/recognized-but-unsupported/incomplete, [FR-301](ix://agent-ix/filament-specification/FR-301)'s contract. Only a successful parse produces a `success` outcome document, and no path claims logical evaluation.
 

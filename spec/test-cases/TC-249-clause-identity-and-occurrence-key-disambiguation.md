@@ -3,7 +3,7 @@ id: TC-249
 title: "Clause identity is the checked node id; the occurrence key disambiguates structurally identical clauses"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-088
+  - target: ix://agent-ix/filament-spec-language/FR-088
     type: verifies
 ---
 # TC-249: Clause identity is the checked node id; the occurrence key disambiguates structurally identical clauses

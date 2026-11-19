@@ -3,7 +3,7 @@ id: TC-868
 title: "A seeded profile-layering regression fails the gate naming the case and its edge"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-345
+  - target: ix://agent-ix/filament-spec-language/FR-345
     type: verifies
 ---
 # TC-868: A seeded profile-layering regression fails the gate naming the case and its edge
@@ -11,7 +11,7 @@ relationships:
 ## Description
 
 Verify `xtask refinement layering` end to end over layering corpora with
-entries on all six QSpec AD-003 `requires` edges E1 to E6 (QSpec FR-453).
+entries on all six FSpec AD-003 `requires` edges E1 to E6 (FSpec FR-453).
 Each `case` and `distinguishing` entry is two units, byte-equal except for
 the identity string of one header `profile` declaration, and both are
 compiled by the running build.
@@ -28,7 +28,7 @@ Steps 1 to 6 pass a test registry holding one backend that advertises
 `operation-contract` and `value-validity` in `bounded` mode, and a test
 negotiation function, defined in the test module, that settles every
 request `supported`, unless a step names another. No step calls
-quire-contract-codegen's `negotiate_*`.
+filament-contract-codegen's `negotiate_*`.
 
 1. Build a test-only corpus of `entry.json` entries. For each of E1 to E6
    it holds:
@@ -42,7 +42,7 @@ quire-contract-codegen's `negotiate_*`.
    log (state queries), a reachability invariant over a finite universe
    (state graph), a record validation function (complete value), a
    dispatched operation contract (complete model), and a timed state model
-   whose only profile is `quire.temporal.complete/v1`, with a clock field, a
+   whose only profile is `filament.temporal.complete/v1`, with a clock field, a
    reset, a guard, a time invariant and one `invariant` clause (complete
    temporal; model selection follows through `requires`).
 2. Run `xtask refinement layering` over it with the test negotiation function
@@ -78,7 +78,7 @@ quire-contract-codegen's `negotiate_*`.
    environment override and adds no production provider.
 9. From a root-package test, call `compare` over the real corpus that
    `layering_corpus::generate` writes, with the
-   FR-278 composition, QSL's registry snapshot and a test negotiation
+   FR-278 composition, FSL's registry snapshot and a test negotiation
    function that settles every request `supported`; then call it without a
    negotiation function. Capture both reports and process streams, and read
    `cargo tree -p xtask -e normal,build,dev`.
@@ -104,7 +104,7 @@ Each expected result is a literal in the test. Tag the test
   identities and the parent's codes; every other result as in step 2.
 - Step 4: each run gives `tool failure` naming the entry; verdict tool
   failure, exit 30.
-- Step 5: the first run gives a `regression` naming `quire.state.core/v1`;
+- Step 5: the first run gives a `regression` naming `filament.state.core/v1`;
   the second gives a `regression` naming E1; the third gives a
   `regression` for each of the five layers whose `witness_request` kind is
   `operation-contract` (state core, state queries, state graph, model and
@@ -127,7 +127,7 @@ Each expected result is a literal in the test. Tag the test
   state graph / `witness` and E5 / `distinguishing`; one naming the
   `entry.json` path and the member `expected`, with every other entry still
   compiled. Each verdict tool failure, exit 30.
-- Step 7: exactly two tool-failure results, one naming E6 / `distinguishing` and one naming `quire.temporal.complete/v1` / `witness`; verdict tool failure, exit 30 (FR-345-AC-11).
+- Step 7: exactly two tool-failure results, one naming E6 / `distinguishing` and one naming `filament.temporal.complete/v1` / `witness`; verdict tool failure, exit 30 (FR-345-AC-11).
 - Step 8, with all six witness units admitted and each layer's candidate set
   non-empty: the CLI exits 21 and reports `unsupported`; each of the six layer
   results is `unresolved (unsupported)` with reason `not-negotiated` and its
@@ -142,7 +142,7 @@ Each expected result is a literal in the test. Tag the test
   no request, returns a byte-equal report to the no-negotiation CLI report and
   reports all six witness results as `unresolved (unsupported)`, reason
   `not-negotiated`. Neither call writes to stdout or stderr, and the dependency tree contains no
-  quire-contract-codegen crate.
+  filament-contract-codegen crate.
 - Step 10: both runs write the whole corpus; each unit over the model names
   the model identity and version, and after the
   edit the edited version, with no other change (FR-345-AC-14).

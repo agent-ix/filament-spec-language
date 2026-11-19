@@ -3,7 +3,7 @@ id: TC-1290
 title: "Project Quantity units into protocol evaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-390
+  - target: ix://agent-ix/filament-spec-language/FR-390
     type: verifies
 ---
 # TC-1290: Project Quantity units into protocol evaluation

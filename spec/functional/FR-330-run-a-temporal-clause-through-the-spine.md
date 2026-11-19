@@ -3,30 +3,36 @@ id: FR-330
 title: "Run a selected temporal clause over a supplied trace through the spine"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-033
+  - target: ix://agent-ix/filament-spec-language/US-033
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-011
+  - target: ix://agent-ix/filament-spec-language/ADR-011
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-014
+  - target: ix://agent-ix/filament-spec-language/ADR-014
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-106
+  - target: ix://agent-ix/filament-spec-language/FR-106
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-109
+  - target: ix://agent-ix/filament-spec-language/FR-109
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-327
+  - target: ix://agent-ix/filament-spec-language/FR-327
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-328
+  - target: ix://agent-ix/filament-spec-language/FR-328
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-329
+  - target: ix://agent-ix/filament-spec-language/FR-329
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-301
+  - target: ix://agent-ix/filament-spec-language/FR-641
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-642
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-645
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
 ---
 # FR-330: Run a selected temporal clause over a supplied trace through the spine
 
 ## Description
 
-`qsl_replay::spine::run_clause` (FR-109) SHALL accept a `Temporal` selection
+`fsl_replay::spine::run_clause` (FR-109) SHALL accept a `Temporal` selection
 that names one temporal clause, a supplied trace and the clause's `over`
 binding. It compiles the unit through the spine, admits each observation of
 the trace (FR-106), evaluates the clause at S6a through the TemporalTrace
@@ -36,7 +42,7 @@ runtime's exit asks (ADR-011 §5).
 
 ## Use case
 
-An operator has recorded observations of a running system and a QSL unit
+An operator has recorded observations of a running system and an FSL unit
 with temporal clauses. They run one clause by name over the recording, as
 they already run a state clause, and get one report: held on this trace,
 violated at a named position, pending, unsupported, or incomplete.
@@ -83,7 +89,8 @@ order. Each sample SHALL conform to the declared record type and supplies the
 value of the clause's subject parameter at that position. This route takes no
 model population, object reference, or `over` object. It is separate from
 `run_clause`: the existing `ClauseRunRequest`, its `Temporal` selection, and
-its model-population admission rules remain unchanged.
+its model-population admission rules remain unchanged for snapshot
+positions.
 
 The route SHALL accept the event-position false-extension profile and a
 closed finite trace. A sample's zero-based index is its temporal position.
@@ -92,28 +99,37 @@ the declared record type, or a clause whose declared subject does not match
 the supplied subject, before evaluating the formula. A missing clause SHALL
 be reported at stage `select`. It SHALL reject a temporal clause with no
 trace subject and SHALL not turn a model object into a trace subject.
-Timestamped and lasso traces are outside this route's contract.
+This route takes a closed finite sequence only. A trace-subject clause over a
+lasso, progressed, timestamped or timed trace is run through `run_clause` with
+FR-641 record-sample positions, which bind the subject parameter per position
+as this route does.
 
 ## Outputs
 
 FR-109's `ClauseRunReport`: the disposition, the compiled `package_id` and
-the usage; for a `Timestamped` trace it also returns the updated `ledger`
-(FR-502) and FR-501's result report (basis, decision support, premises and
-result identity); a request refused by FR-502 returns the ledger it supplied,
+the usage; for a `Progressed` or `Timestamped` trace it also returns the
+updated `ledger` (FR-502) and FR-501's result report (basis, decision
+support, premises and result identity) as `ClauseRunReport::finite_window`,
+whose `basis` is FR-504's or FR-501's and may differ from the report's
+top-level FR-266 `basis`; a request refused by FR-502 returns the ledger it supplied,
 unchanged. Its `category` adds `pending` (a pending result, with the pending clause ids in its body)
 and `unsupported` (a missing fairness premise). Its `disposition` for a
 `violation` (`Completed(false)` or an `Undefined` that is a violation)
 carries the failing `TemporalPosition` and the refutation's
-`TemporalCounterexample`, QSpec FR-364's observed arm, which the entry
-builds from what it ran: one `{document}` step per represented position
-from the identities of the trace's `DocumentRef`s (the `Finite`
+`TemporalCounterexample`, FSpec FR-364's observed arm, which the entry
+builds from what it ran: one `{document}` step per represented snapshot
+position from the identities of the trace's `DocumentRef`s, and one
+`{"sample": I}` step per represented record-sample position (FR-641), `I`
+the position's zero-based index in the request trace's position list as a
+`U64String` (prefix positions first, then loop positions), as FSpec FR-364's
+observed arm defines it (the `Finite`
 trace as `prefix` with an empty `loop`, or the `Lasso`'s `prefix` and
 `loop`; for an `Undefined` result, the positions 0 to the failing position
 as `prefix` and an empty `loop`), the checked clause's fairness set, the
 interval of its first interval-carrying operator in pre-order (`null` when
 it has none, and for an `Undefined` result), the trace position, and for
 an `Undefined` result the undefined-evaluation envelope whose `where`
-carries the position, that position's document identity and the undefined
+carries the position, that position's document identity (its `sample` index for a record-sample position) and the undefined
 atom's locus. A refused condition's disposition carries its position. The
 FR-267 writer writes these as the report holds them and derives none.
 
@@ -128,7 +144,7 @@ decides) and the FR-207 value path, all read by evaluating the atom over the
 observation at `decisive.position`. When no collection quantifier decides it,
 `quantifier` and `index` are absent, `element` is `false` and `value_path` is
 the empty path at the observation's root. `decisive` is not a member of the
-`TemporalCounterexample`, whose shape stays QSpec FR-364's, and FR-267 does
+`TemporalCounterexample`, whose shape stays FSpec FR-364's, and FR-267 does
 not write it. The report's violation position stays the failing activation's
 position (FR-327); `decisive.position` may be later or earlier than it.
 
@@ -136,10 +152,14 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 
 - The entry SHALL take a `Timestamped` trace's cover from the trace input.
 - The entry SHALL treat a `Timestamped` input that omits the cover as `Exact`.
-- The entry SHALL accept `TraceInput::Timestamped` from a library caller only.
-- The request reader SHALL refuse a `timestamped` trace, because FR-312's request
-  file has no member that carries a stamp, an order key, a progress assertion or
-  a cover.
+- The entry SHALL accept every `TraceInput` variant from a library caller and
+  from FR-312's request reader alike: FR-641 gives each variant, record samples
+  and the progress ledger a request-file form, so a request file reaches every
+  evaluator this entry reaches.
+- The entry SHALL evaluate a clause under the timed profile once over
+  `TraceInput::Timed` (FR-642), with record-sample or snapshot positions.
+- Every refusal of a trace's shape or profile fit SHALL carry FR-645's
+  `reason`, `profile`, message and clause locus.
 - The entry SHALL compile and report
   compile results exactly as FR-109 states.
 - The entry SHALL resolve the name in the compiled package's temporal
@@ -188,11 +208,11 @@ position (FR-327); `decisive.position` may be later or earlier than it.
   FR-109 reports a state clause that evaluates undefined;
   `InsufficientData` to `undefined` (exit 10, FR-285) with its position,
   `count` and `min_count`, no `truth` and no counterexample, as the trace
-  lacks the data to decide the claim (QSpec FR-414);
+  lacks the data to decide the claim (FSpec FR-414);
   `Pending` to `pending` (exit 0, completed without violation) with the status and the pending clause ids in the report;
   `MissingFairnessPremise` to `unsupported` (exit 21) with cause
   `unsupported_projection`/`missing-fairness-premise`; and `Incomplete` to
-  `incomplete` (exit 22), by QSpec FR-301's exit contract. Every
+  `incomplete` (exit 22), by FSpec FR-301's exit contract. Every
   `violation`, an undefined evaluation included, exits with the violation
   exit, 10.
 
@@ -275,7 +295,7 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-330-AC-1 | From source, the `Counter` unit's clause `Bounded` (`eventually[0,1] holds(c.value = 2)`, event-position false-extension) over `Finite` snapshots with `c.value` 0, 1, 2 reports stage `evaluate`, `violation`, position 0, exit 10. | Test (TC-840) |
-| FR-330-AC-2 | The unit's infinite-trace clause `Reaches` (`eventually holds(c.value = 2)`) over the same `Finite` trace reports `pending`, exit 0, with no `truth` and the clause id in the report's pending ids; over `Lasso` with an empty prefix and loop 0, 1 it reports `violation` at position 0; over `Lasso` with loop 0, 1, 2 it reports `success`, exit 0. | Test (TC-840) |
+| FR-330-AC-2 | The unit's infinite-trace clause `Reaches` (`eventually holds(c.value = 2)`) over the same `Finite` trace reports `success` with `truth` `true`, exit 0, because the prefix 0, 1, 2 is a good prefix (FR-328); over `Lasso` with an empty prefix and loop 0, 1 it reports `violation` at position 0; over `Lasso` with loop 0, 1, 2 it reports `success`, exit 0. | Test (TC-840) |
 | FR-330-AC-3 | A selection naming `Absent` reports stage `select`, `missing_declaration`/`missing-name`; `Bounded` over a `Lasso` reports stage `admit`, `invalid_runtime_input`/`invalid-value`; an `over` naming key `ghost` reports stage `admit`, `invalid_runtime_input`/`wrong-role-mapping`; a `Lasso` with an empty loop reports stage `evaluate`, `refusal`, `invalid_runtime_input`/`invalid-value`. | Test (TC-840) |
 | FR-330-AC-4 | `Reaches` over the `Lasso` with loop 0, 1, 2 and a work budget of zero reports `incomplete`, exit 22; running any request of AC-1 to AC-3 twice gives equal reports. | Test (TC-840) |
 | FR-330-AC-5 | From source, FR-327-AC-5's first clause, `always[0,2] holds(3 mod (2 - c.value) >= 0)` in the `Counter` unit, which compiles, over the `Finite` snapshots with `c.value` 0, 1, 2 reports `violation`, exit 10, position 2 and cause `UndefinedEvaluation` with `division-by-zero`. | Test (TC-847) |
@@ -291,6 +311,7 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 | FR-330-AC-15 | Over the closed `Counter` trace `c.value` 0, 1, 2 under event-position false-extension, `always[0,3] holds(c.value <= 2)` `on origin` is violated at position 0 and carries no `decisive`, because it is false only at position 3, past the last position; `holds(c.value = 1) until[1,2] holds(c.value = 3)` `on origin` is violated at position 0 with a `decisive` of `position` 2 (the left operand is not required at the anchor, and is false at position 2 where the right operand is also false). | Test (TC-840) |
 | FR-330-AC-16 | Over `Model` whose initial state and steps reconstruct `c.value` 0, then the loop states 1, 2, `always holds(c.value <= 1)` is violated at position 0 with a `decisive` of `position` 2, the atom evaluated over the reconstructed state of position 2. | Test (TC-840) |
 | FR-330-AC-17 | From source, `run_trace_subject_clause` on FR-327-AC-7's non-model subject `c: Counter` and its `level` samples 0, 1, 2 runs `always[0,2] A` `on origin` and reports category `undefined`, exit 10, `InsufficientData{where: 2, atom: A, count: 0, min_count: 1}`, with no `truth` or counterexample; running `always[0,0] B` `on origin`, where `B` is `count where holds(c.level > 9) over past[0,0] min_count 0 >= 1`, reports `violation` at position 0 with a `decisive` naming `B`'s aggregate occurrence at position 0. An empty sample sequence, a sample whose record does not conform to `Counter`, a clause declared over another record type, and a model-subject clause without aggregate terms each refuse before formula evaluation; the existing `run_clause` request and model-population behavior are unchanged. | Test |
+| FR-330-AC-18 | Through `command::run`, the infinite-trace clause `always holds(r.level < 2)` over a `lasso` of record samples with prefix levels 0, 0 and loop level 2 reports `violated` with a counterexample whose `prefix` is `[{"sample": "0"}, {"sample": "1"}]` and whose `loop` is `[{"sample": "2"}]`: the two equal samples have distinct steps, no step carries a `document` member or the sample's value, no ledger in the report spells a sample's text or value (a covered entry may carry the sample's FR-993 integrity fingerprint, which is not an identity), and the counterexample replays through FSpec FR-364 against the same request. A violated finite sample trace of an event-position clause carries a counterexample of the same form. | Test (TC-2295) |
 
 ## Dependencies
 
@@ -301,7 +322,7 @@ position (FR-327); `decisive.position` may be later or earlier than it.
   [FR-327](FR-327-evaluate-a-temporal-clause-over-a-finite-trace.md),
   [FR-328](FR-328-evaluate-an-infinite-trace-clause-over-a-finite-prefix.md),
   [FR-329](FR-329-evaluate-an-infinite-trace-clause-exactly-over-a-lasso.md).
-- QSpec FR-301 (exit codes), FR-362 (the missing fairness premise).
+- FSpec FR-301 (exit codes), FR-362 (the missing fairness premise).
 
 ## References
 

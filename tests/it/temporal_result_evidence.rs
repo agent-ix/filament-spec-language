@@ -4,15 +4,15 @@
 //! emitter produced and the reader admitted. Expected values are read from
 //! the package and the request, never from the evaluator's own output.
 
-use ix_trace_rs::trace;
-use qsl_eval::temporal::evidence::{
+use fsl_eval::temporal::evidence::{
     EvidenceCounter, EvidenceIncomplete, EvidencePackage, EvidenceRef, EvidenceRequest,
     EvidenceResult, ResultSubject, TemporalEvidenceLimits, Truth,
 };
-use qsl_eval::temporal::Valuation;
-use qsl_package::{
+use fsl_eval::temporal::Valuation;
+use fsl_package::{
     AdmittedPackageRead, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageV2,
 };
+use ix_trace_rs::trace;
 
 use super::checked_handoff::KINDS;
 use super::temporal_package_route::{
@@ -29,7 +29,7 @@ fn claim(ordinal: u64) -> CheckedOccurrence {
 fn read_back<'a>(read: &'a AdmittedPackageRead<'a>) -> EvidencePackage<'a> {
     EvidencePackage::from_read(
         read,
-        &mut qsl_package::V2ReadLimits::fixture().native_join_budget(),
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
     )
     .expect("the read-back package")
 }
@@ -52,7 +52,7 @@ fn expected_subject(
         .clone();
     ResultSubject {
         package_identity: package.name().to_owned(),
-        package_version: quire_contract_model::CHECKED_PACKAGE_V2.to_owned(),
+        package_version: filament_contract_model::CHECKED_PACKAGE_V2.to_owned(),
         clause: clause.clone(),
         occurrence: claim(occurrence),
         source_map,
@@ -202,7 +202,7 @@ fn both_request(package: &EvidencePackage<'_>, clause: &CheckedNodeId) -> Eviden
         position.valuations = [(0, value.clone()), (1, value)].into();
     }
     asked.completeness.as_mut().expect("a record").state =
-        qsl_eval::temporal::ProgressCompleteness::Complete { through: 1 };
+        fsl_eval::temporal::ProgressCompleteness::Complete { through: 1 };
     asked
 }
 
@@ -212,14 +212,14 @@ fn both_request(package: &EvidencePackage<'_>, clause: &CheckedNodeId) -> Eviden
 #[test]
 fn issued_full_result_borrows_preserve_outputs_and_do_not_evaluate_again() {
     use super::temporal_package_route::unlimited;
-    use qsl_eval::temporal::evidence::{Relation, Settlement};
+    use fsl_eval::temporal::evidence::{Relation, Settlement};
 
     let built = both();
     let read = built.read(&built.emission);
     let package = read_back(&read);
     let [clause] = clause_ids(&package).try_into().expect("one clause");
     let mut asked = both_request(&package, &clause);
-    asked.decision_closure = Some(qsl_eval::temporal::ProgressClosure::Open);
+    asked.decision_closure = Some(fsl_eval::temporal::ProgressClosure::Open);
     let mut meter = unlimited();
     let original = package
         .evaluate_temporal_evidence(&clause, &asked, &mut meter)
@@ -241,7 +241,7 @@ fn issued_full_result_borrows_preserve_outputs_and_do_not_evaluate_again() {
     assert!(std::ptr::eq(original.result(), original.result()));
 
     let mut correction = asked.clone();
-    correction.decision_closure = Some(qsl_eval::temporal::ProgressClosure::Closed);
+    correction.decision_closure = Some(fsl_eval::temporal::ProgressClosure::Closed);
     for position in &mut correction.positions {
         position
             .valuations

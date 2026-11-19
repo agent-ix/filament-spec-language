@@ -3,7 +3,7 @@ id: TC-1002
 title: "Replay decodes a child at an ancestor slot and no kernel check refuses a conforming value"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-359
+  - target: ix://agent-ix/filament-spec-language/FR-359
     type: verifies
 ---
 # TC-1002: Replay decodes a child at an ancestor slot and no kernel check refuses a conforming value

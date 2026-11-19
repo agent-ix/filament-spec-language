@@ -3,7 +3,7 @@ id: TC-1319
 title: "Create one temporal instance per semantic trigger or execution origin with immutable captures, and name every activation fault"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-524
+  - target: ix://agent-ix/filament-spec-language/FR-524
     type: verifies
 ---
 # TC-1319: Create one temporal instance per semantic trigger or execution origin with immutable captures, and name every activation fault

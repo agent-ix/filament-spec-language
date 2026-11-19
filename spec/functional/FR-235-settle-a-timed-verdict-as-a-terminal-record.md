@@ -3,40 +3,40 @@ id: FR-235
 title: "Settle a timed verdict as an FR-331 terminal record"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-026
+  - target: ix://agent-ix/filament-spec-language/US-026
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-026
+  - target: ix://agent-ix/filament-spec-language/ADR-026
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-069
+  - target: ix://agent-ix/filament-spec-language/FR-069
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-127
+  - target: ix://agent-ix/filament-spec-language/FR-127
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-232
+  - target: ix://agent-ix/filament-spec-language/FR-232
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-236
+  - target: ix://agent-ix/filament-spec-language/FR-236
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-237
+  - target: ix://agent-ix/filament-spec-language/FR-237
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-245
+  - target: ix://agent-ix/filament-spec-language/FR-245
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-239
+  - target: ix://agent-ix/filament-spec-language/FR-239
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-249
+  - target: ix://agent-ix/filament-spec-language/FR-249
     type: depends_on
-  - target: ix://agent-ix/quire-specification/FR-331
+  - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
 ---
 # FR-235: Settle a timed verdict as an FR-331 terminal record
 
 ## Description
 
-QSL SHALL settle every item over a timed subject as exactly one FR-331
+FSL SHALL settle every item over a timed subject as exactly one FR-331
 terminal record, extending FR-127's map with ADR-026's bases and causes
-(ADR-026 TV-1, CF-4, OV-14). `qsl-replay` owns the additions to
+(ADR-026 TV-1, CF-4, OV-14). `fsl-replay` owns the additions to
 `TerminalValue`; the zone engine's outcome (FR-239), its counterexample's
 replay (FR-237) and its certificate's check (FR-245) map to it through one
 function.
@@ -81,7 +81,7 @@ refuted, with its trap evidence.
 - The map SHALL be exhaustive, with no `_` arm, and give each input
   exactly one row:
 
-| Verdict | Input | QSpec FR-360 label | QSpec FR-243 basis | `TerminalValue` | O-16 category |
+| Verdict | Input | FSpec FR-360 label | FSpec FR-243 basis | `TerminalValue` | O-16 category |
 | --- | --- | --- | --- | --- | --- |
 | V-1 | `Holds(certificate)` and the checker accepts | `proved` | `closed-scope` | `Proved{basis: ZoneCertified, certification: Certified}` | success |
 
@@ -90,7 +90,7 @@ refuted, with its trap evidence.
 | V-10 | `Violated` with `kind: TimeLock` whose replay reproduces | `refuted` | `closed-scope` | `Refuted` | violation |
 | V-6 | `Holds(certificate)` and the checker rejects | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected)` | inconclusive |
 | V-6 | `Undecided(NoAdmittedBehaviour)` or `Undecided(LassoNotConcretized)`; a replay that settles `inconclusive` or refuses | `inconclusive` | `unsettled` | `Inconclusive(cause)` | inconclusive |
-| V-7 | `Stopped(cause, limit)`; for task automata this is a bounded search stopped before its proof or counterexample is checked | `failed`, execution `resource-incomplete` for generic stops; `incomplete`, execution `resource-incomplete` for task-search stops | `unavailable` | `Incomplete(LimitReached{limit, value, setting})`, or `Incomplete(Cancelled{source})`; a bounded task search additionally carries QSpec FR-331 `task_search` evidence | incomplete |
+| V-7 | `Stopped(cause, limit)`; for task automata this is a bounded search stopped before its proof or counterexample is checked | `failed`, execution `resource-incomplete` for generic stops; `incomplete`, execution `resource-incomplete` for task-search stops | `unavailable` | `Incomplete(LimitReached{limit, value, setting})`, or `Incomplete(Cancelled{source})`; a bounded task search additionally carries FSpec FR-331 `task_search` evidence | incomplete |
 | V-8 | `PunctualInterval` disposition; no candidate | `unsupported` | `unavailable` | `Unsupported(PunctualInterval)` | unsupported |
 
 - A `Holds(certificate)` outcome SHALL settle `proved` only after
@@ -99,9 +99,9 @@ refuted, with its trap evidence.
   does.
 - A `Violated` outcome SHALL settle `refuted` only through its replay.
 - For a task-automaton `Stopped` outcome, the terminal-record writer SHALL
-  use QSpec FR-331's `incomplete` mapping and include its `task_search`
+  use FSpec FR-331's `incomplete` mapping and include its `task_search`
   evidence. Generic stops continue to use FR-127's generic mapping. The
-  QSpec reader owns frontier validation; the evidence justifies the
+  FSpec reader owns frontier validation; the evidence justifies the
   incomplete status and SHALL NOT settle `proved`.
 - `TerminalValue::category` SHALL map `ZoneCertified`, `ClosedForm`,
   `BoundedSolver` and `InductiveSolver` to success, and `InsufficientHorizon`
@@ -109,9 +109,34 @@ refuted, with its trap evidence.
 - A counterexample's length SHALL be its number of discrete steps, so V-5's
   definition is unchanged.
 - The record SHALL carry the method: `zone-certified`,
-  `digitized-explicit-state`, or FR-127's methods.
+  `exhaustive`, or FR-127's methods.
 - A verdict SHALL hold for exactly its subject and claim; the record's
   obligation identity binds both (ADR-013 O-09).
+- The record of an item EN-6 decides on its liveness product (FR-240's
+  divergence acceptance set), and of one the digital-clock route decides by
+  EN-1's SCC phase (FR-632), SHALL carry `ZoneCheckRecord::non_zeno`,
+  written as the FSpec FR-416 result-entry member `non_zeno`:
+  `NotRequired` (`not-required`) for a proof whose product has no accepting
+  cycle even without the divergence set; `Assumed` (`assumed`) for a proof
+  whose product has accepting cycles without the divergence set and none
+  with it; `Checked` (`checked`) for a refutation whose lasso loop passes
+  the divergence set and whose delays FR-237's replay reproduces; and
+  `Refuted` (`refuted`) for `Inconclusive(NoAdmittedBehaviour)`. EN-6
+  decides `NotRequired` against `Assumed` by running FR-126's candidate rule
+  on the split graph a second time without the divergence set. A cycle of
+  positive but bounded total delay, such as FR-240-AC-1's `reply` self-loop
+  that resets no clock under `x <= 3 ms`, fails the divergence set, so that
+  proof is `Assumed`. Only the digital-clock route, where delays are integer
+  ticks, decides divergence by a cycle's positive total delay. Every other
+  row of the map carries `None`, the V-4 `refuted` row with cause
+  `UndefinedEvaluation{where, cause}` included, because its finite prefix
+  decides no liveness cycle; so does every TT-1, TT-2, time-lock-freedom and
+  deadlock-freedom record. A zone-certified proof states the value in its
+  certificate's `non_zeno` member (FSpec FR-418), and FR-245's checker
+  recomputes it from its own successors and the certificate's components
+  and rejects a mismatch, `CertificateRejected` with rule
+  `NonZenoMismatch` at `CertificateMember{non_zeno}`, so the value is
+  certified with the verdict and settles from the accepted certificate.
 
 ## Acceptance Criteria
 
@@ -123,6 +148,8 @@ refuted, with its trap evidence.
 | FR-235-AC-4 | FR-232-AC-3's `Stall` claim settles `inconclusive`, `NoAdmittedBehaviour`; FR-234-AC-3's punctual liveness claim settles `unsupported`, `PunctualInterval`; a zone search stopped by `max_symbolic_states` settles `incomplete`, `limit-reached`, naming the limit. | Test (TC-690) |
 | FR-235-AC-5 | FR-239-AC-5's outcome settles `refuted`, `decisive-counterexample`, category violation, cause `UndefinedEvaluation{where, cause: division-by-zero}` with `where` at position 2, time stamp 2, after FR-237's replay reproduces it; the time-locked variant's `Undecided(NoAdmittedBehaviour)` settles `inconclusive`, `NoAdmittedBehaviour`. | Test (TC-710) |
 | FR-235-AC-6 | An interval-demand task product stopped at `max_symbolic_states = 2` settles `incomplete`, `LimitReached{limit: max_symbolic_states, value: 2}` and carries a `task_search` record whose product identity and effective limit match the request; removing a reachable frontier node or changing an edge makes the record fail replay and the item settle `inconclusive`, `ReplayParity`. The incomplete record never settles `proved`. | Test (TC-704) |
+| FR-235-AC-7 | Settled through `settle_zone_check` with the core checker and FR-237's replay: FR-240-AC-1's response claim over `Rpc` with `T = 4 ms` proves with `non_zeno` `NotRequired`; its `reply` self-loop variant proves with `Assumed`; its `echo` variant refutes with `Checked`; FR-240-AC-4's `always eventually holds(true)` over `Stall` settles `Inconclusive(NoAdmittedBehaviour)` with `Refuted`; `NoLateReply` over `Rpc` and FR-239-AC-5's `UndefinedEvaluation` refutation carry `None`. | Test (TC-3021) |
+| FR-235-AC-8 | Through `fsl analyze`, FR-632-AC-2's `Within` proved on the zone route and on the digital-clock route carries the same `non_zeno` in both records, one of `not-required` and `assumed`; `Early`, refuted on both routes, carries `checked` in both. | Test (TC-3021) |
 
 ## Dependencies
 
@@ -137,6 +164,6 @@ refuted, with its trap evidence.
 
 ## References
 
-- QSpec half: QSpec FR-416 and FR-417 (Linear STD-139) own the verdict
-  rows, the new causes and the `TimeLock` kind in QSpec FR-331 (ADR-026
+- FSpec half: FSpec FR-416 and FR-417 (Linear STD-139) own the verdict
+  rows, the new causes and the `TimeLock` kind in FSpec FR-331 (ADR-026
   OV-6).

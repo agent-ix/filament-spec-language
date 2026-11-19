@@ -3,13 +3,13 @@ id: TC-1052
 title: "Write String, UUID, Timestamp and Text constants as literals in the unit language"
 type: TC
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/FR-056"
+  - target: "ix://agent-ix/filament-spec-language/FR-056"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-091"
+  - target: "ix://agent-ix/filament-spec-language/FR-091"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-093"
+  - target: "ix://agent-ix/filament-spec-language/FR-093"
     type: verifies
-  - target: "ix://agent-ix/quire-spec-language/FR-098"
+  - target: "ix://agent-ix/filament-spec-language/FR-098"
     type: verifies
 ---
 # TC-1052: Write String, UUID, Timestamp and Text constants as literals in the unit language

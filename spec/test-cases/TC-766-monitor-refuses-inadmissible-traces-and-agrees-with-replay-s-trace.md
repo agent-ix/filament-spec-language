@@ -3,7 +3,7 @@ id: TC-766
 title: "monitor refuses inadmissible traces and agrees with replay's trace evaluation"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-283
+  - target: ix://agent-ix/filament-spec-language/FR-283
     type: verifies
 ---
 # TC-766: monitor refuses inadmissible traces and agrees with replay's trace evaluation

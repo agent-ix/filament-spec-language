@@ -3,16 +3,16 @@ id: US-013
 title: "Receive a typed family evaluation outcome, never a panic or a conflated refusal"
 type: US
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: exercises
-  - target: ix://agent-ix/quire-spec-language/StR-001
+  - target: ix://agent-ix/filament-spec-language/StR-001
     type: traces_to
 ---
 # US-013: Receive a typed family evaluation outcome, never a panic or a conflated refusal
 
 ## Story
 
-**As a** caller of QSL reference evaluation (the layer-6 `replay` facade, the
+**As a** caller of FSL reference evaluation (the layer-6 `replay` facade, the
 CLI, or a test harness evaluating a checked package)
 **I want** every evaluation of a checked declaration to return the kernel
 evaluation outcome or a family-owned evaluation result that carries its own
@@ -26,13 +26,13 @@ a message, and so that no evaluation path ends in a panic.
 ## Context
 
 ADR-013 O-16 decides three outcome families with one owner each, and places
-the S6a evaluation outcome in a QSL layer-3 `check`-core type,
+the S6a evaluation outcome in an FSL layer-3 `check`-core type,
 `FamilyOutcome { Evaluated(kernel::Outcome), FamilyEvaluated(FamilyResult) }`,
 beside T-4's `InternalFault`. S6a returns it inside an `Evaluation` that also
 carries the evaluation's location and loss records. A family that does not
 evaluate natively (`Relation`) never enters S6a. The kernel
-`Refusal` in `quire-exact` carries kernel causes only (ADR-013 T-6), so a
-refusal or undefined result whose cause is a QSL family concept rides in
+`Refusal` in `filament-exact` carries kernel causes only (ADR-013 T-6), so a
+refusal or undefined result whose cause is an FSL family concept rides in
 `FamilyEvaluated`, not inside the kernel outcome. Every refusal a caller receives maps to
 a catalog code, and F `diagnostic` maps that code to an O-16 category
 (ADR-013 O-17).
@@ -83,10 +83,10 @@ a catalog code, and F `diagnostic` maps that code to an O-16 category
 
 ## Priority and Risk (Informative)
 
-Priority: High. Until the family outcome exists, QSL's own copy of the kernel
+Priority: High. Until the family outcome exists, FSL's own copy of the kernel
 `Outcome`/`Refusal` in `src/value/outcome.rs` is the only place its
 non-kernel refusal causes can live, so that copy cannot be replaced by
-`quire_exact::{Outcome, Refusal}`.
+`filament_exact::{Outcome, Refusal}`.
 
 ## Traceability (Informative)
 

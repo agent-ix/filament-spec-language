@@ -3,7 +3,7 @@ id: TC-424
 title: "An admitted source carries the source reference its caller named, and its node keys follow its labels"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-001
+  - target: ix://agent-ix/filament-spec-language/FR-001
     type: verifies
 ---
 # TC-424: An admitted source carries the source reference its caller named, and its node keys follow its labels
@@ -41,7 +41,7 @@ Scope: FR-001-AC-5 to FR-001-AC-16.
 8. From a caller outside CST, use `SourceIdentity::first_blank_label` for
    the blank-label combinations in steps 2 and 6. Construct the existing
    typed refusal from its public fields, with no region, and project it
-   through `qsl_cst::diagnostic::source_refusal` before offering bytes or
+   through `fsl_cst::diagnostic::source_refusal` before offering bytes or
    admitting a source. Also project an empty-path refusal.
 9. Project each `SourceReadCause`, retaining distinctive source labels,
    path and message. Use no region for blank-label, empty-path,
@@ -51,7 +51,7 @@ Scope: FR-001-AC-5 to FR-001-AC-16.
     refusals reachable through `Source::read_typed`, compare direct
     projection with `read_source` under the same inputs and ceiling.
 11. From outside Foundation, borrow each typed refusal through
-    `qsl_foundation::diagnostic::source_refusal`, using its original offered
+    `fsl_foundation::diagnostic::source_refusal`, using its original offered
     bytes and ceiling. Repeat with distinctive identity, path and message,
     with ceilings below and above 1 MiB, and with no region and an
     unrenderable region. After the native projection, consume the same

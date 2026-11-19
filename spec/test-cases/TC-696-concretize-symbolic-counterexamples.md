@@ -3,7 +3,7 @@ id: TC-696
 title: "Symbolic counterexamples concretize canonically to exact rational delays"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-241
+  - target: ix://agent-ix/filament-spec-language/FR-241
     type: verifies
 ---
 # TC-696: Symbolic counterexamples concretize canonically to exact rational delays

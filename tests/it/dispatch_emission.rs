@@ -2,16 +2,16 @@
 //! FR-494: producer-linked dispatch decisions survive checked-package
 //! emission, and IR's typed dispatch reader refuses substituted witnesses.
 
-use ix_trace_rs::trace;
-use qsl_foundation::SourceIdentity;
-use qsl_replay::spine::{
-    self, CheckedUnit, DependencyInput, PackageLimits, ParseRequest, SpineLimits,
-};
-use quire_contract_model::{
+use filament_contract_model::{
     CheckedEffectiveId, CheckedOccurrence, CheckedPackageEvidence, CheckedPackageReadLimits,
     CheckedPackageV2, CheckedPackageV2ReadResult,
 };
-use quire_exact::{Cancel, EffectiveId, NodeKey};
+use filament_exact::{Cancel, EffectiveId, NodeKey};
+use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{
+    self, CheckedUnit, DependencyInput, PackageLimits, ParseRequest, SpineLimits,
+};
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const PACKAGE: &str = "example/config-version";
@@ -24,14 +24,14 @@ fn operation(owner: &str, name: &str, redefines: Option<&str>) -> Value {
         "name": name,
         "params": [],
         "returns": {
-            "typeRef": "ix://quire/native/Integer",
+            "typeRef": "ix://filament/native/Integer",
             "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
             "nullable": false
         },
         "pre": [], "post": [],
         "origin": {"source": {
             "sourceIdentity": format!("ix://{PACKAGE}/spec"),
-            "path": "spec.qspec", "startLine": 1, "startColumn": 1
+            "path": "spec.fspec", "startLine": 1, "startColumn": 1
         }},
         "frame": {"modifies": [], "creates": [], "deletes": []}
     });
@@ -105,10 +105,10 @@ struct CapturedDecision {
 fn compile(declarations: &str) -> CheckedUnit {
     let document = model();
     let packages =
-        qsl_semantics::model::intake::package_input([document.as_slice()]).expect("model intake");
+        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model intake");
     let source_text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"quire.model.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          model Config = {PACKAGE:?};\n\
          {declarations}\n"
     );
@@ -197,7 +197,7 @@ fn checked_effective_id(identity: &EffectiveId) -> CheckedEffectiveId {
     for original in identity.owner_chain() {
         current = Some(CheckedEffectiveId {
             owner_effective_type: current.map(Box::new),
-            original: quire_contract_model::CheckedOriginalDeclarationId {
+            original: filament_contract_model::CheckedOriginalDeclarationId {
                 package: original.package().into(),
                 node: original.node().into(),
             },
@@ -212,7 +212,7 @@ fn assert_captured_decisions(
     captured: &[CapturedDecision],
 ) {
     let wire: Value = serde_json::from_slice(bytes).unwrap();
-    let wire_graph = qsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
+    let wire_graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
         .expect("wire graph resolves structural identities");
     let rows = wire["checked_term_data"]["dispatch_tables"]
         .as_array()
@@ -289,7 +289,7 @@ fn evidence(wire: &Value) -> CheckedPackageEvidence {
     }
     let document = model();
     for (identity, document) in
-        qsl_semantics::model::intake::package_input([document.as_slice()]).expect("model intake")
+        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model intake")
     {
         evidence
             .insert_domain_package_document(identity.as_str(), document)
@@ -331,7 +331,7 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
         "one exact row for the dispatched call"
     );
     for row in family_rows {
-        let application: quire_contract_model::CheckedNodeId =
+        let application: filament_contract_model::CheckedNodeId =
             serde_json::from_value(row["application"].clone()).unwrap();
         let occurrence: CheckedOccurrence =
             serde_json::from_value(row["occurrence"].clone()).unwrap();
@@ -436,7 +436,7 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
         .any(|candidate| candidate.effective_precondition.is_some()));
     let pre_wire: Value = serde_json::from_slice(&with_precondition).unwrap();
     let pre_row = &pre_wire["checked_term_data"]["dispatch_tables"][0];
-    let pre_application: quire_contract_model::CheckedNodeId =
+    let pre_application: filament_contract_model::CheckedNodeId =
         serde_json::from_value(pre_row["application"].clone()).unwrap();
     let pre_occurrence: CheckedOccurrence =
         serde_json::from_value(pre_row["occurrence"].clone()).unwrap();
@@ -459,7 +459,12 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
 #[trace("TC-1283", "FR-494-AC-2", "FR-494-AC-4")]
 #[test]
 fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
+    // Every redefinition in the called family carries its own body: the typed
+    // reader joins a candidate to the row of its receiver's effective
+    // operation owner, and a body-less redefinition's row is `no_body`.
     let declarations = "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
          body otherSize using v on Config::Other::size() { 9 }\n\
          pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
          pre otherCall using v on Config::Other::probe { self.size() > 0 }\n";
@@ -481,7 +486,7 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
     assert_ne!(original_rows[0]["context"], original_rows[1]["context"]);
     assert_ne!(original_rows[0]["operation"], original_rows[1]["operation"]);
     for row in original_rows {
-        let application: quire_contract_model::CheckedNodeId =
+        let application: filament_contract_model::CheckedNodeId =
             serde_json::from_value(row["application"].clone()).unwrap();
         let occurrence: CheckedOccurrence =
             serde_json::from_value(row["occurrence"].clone()).unwrap();
@@ -498,6 +503,8 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
         "pre otherCall using v on Config::Other::probe { self.size() > 0 }\n\
          body otherSize using v on Config::Other::size() { 9 }\n\
          pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
          body sizeA using v on Config::ConfigVersion::size() { 1 }\n";
     let (permuted_bytes, permuted_capture) = emit_with_capture(permuted_declarations);
     let permuted_package = admitted(&permuted_bytes);
@@ -506,10 +513,10 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
         captured, permuted_capture,
         "checked producer identities are stable"
     );
-    let original_graph = qsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes)
+    let original_graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes)
         .expect("original wire graph");
     let permuted_graph =
-        qsl_semantics::check::wire_id::WireGraph::of_package_bytes(&permuted_bytes)
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&permuted_bytes)
             .expect("permuted wire graph");
     let original_rows = serde_json::from_slice::<Value>(&bytes).unwrap()["checked_term_data"]
         ["dispatch_tables"]
@@ -526,7 +533,7 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
         .unwrap()
         .iter()
         .map(|row| {
-            let id: quire_contract_model::CheckedNodeId =
+            let id: filament_contract_model::CheckedNodeId =
                 serde_json::from_value(row["application"].clone()).unwrap();
             original_graph.key(&id).unwrap()
         })
@@ -570,4 +577,35 @@ fn dispatch_candidate_witness_substitution_refuses_at_candidate_locus() {
             .as_deref(),
         Some("/checked_term_data/dispatch_tables/0/candidates/0/selected_operation")
     );
+}
+
+/// FR-576-AC-4, AC-7: a model with several bodies reads back through the typed
+/// reader, which joins each dispatch candidate to the `operation_bodies` row
+/// of its receiver's effective operation owner and requires them to agree.
+#[trace("FR-576-AC-7", "TC-1011")]
+#[test]
+fn operation_bodies_of_a_multi_body_model_read_back_through_the_typed_reader() {
+    let (bytes, _) = emit_with_capture(
+        "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
+         body sizeB using v on Config::Sub::size() { 2 }\n\
+         body otherSize using v on Config::Other::size() { 9 }\n\
+         body sizeC using v on Config::Leaf::size() { 3 }\n\
+         pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
+         pre otherCall using v on Config::Other::probe { self.size() > 0 }\n",
+    );
+    let package = admitted(&bytes);
+    let rows = package
+        .operation_body_rows()
+        .expect("the package carries operation_bodies");
+    let with_body = rows
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.body,
+                filament_contract_model::OperationBody::Function { .. }
+            )
+        })
+        .count();
+    assert_eq!(with_body, 4, "one body row per authored body: {rows:?}");
+    assert_eq!(rows.len(), 7, "one row per operation: {rows:?}");
 }

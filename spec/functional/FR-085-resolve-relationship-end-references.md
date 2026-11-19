@@ -3,15 +3,15 @@ id: FR-085
 title: "Resolve relationship-end references against the closed declaration set"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-012
+  - target: ix://agent-ix/filament-spec-language/US-012
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-081
+  - target: ix://agent-ix/filament-spec-language/FR-081
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-056
+  - target: ix://agent-ix/filament-spec-language/FR-056
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-086
+  - target: ix://agent-ix/filament-spec-language/FR-086
     type: references
-  - target: ix://agent-ix/quire-specification/AD-006
+  - target: ix://agent-ix/filament-specification/AD-006
     type: depends_on
 ---
 # FR-085: Resolve relationship-end references against the closed declaration set
@@ -27,7 +27,7 @@ whose end names a type absent from the domain package.
 Static navigation over a resolved relationship end — qualified-name
 resolution, `r.name` runtime traversal and the typed
 `Option<Reference<U>>`/`Reference<U>`/`Set<Reference<U>>`/`Bag<Reference<U>>`
-result quire-specification [FR-152](ix://agent-ix/quire-specification/FR-152)'s
+result filament-specification [FR-152](ix://agent-ix/filament-specification/FR-152)'s
 "Navigation" section defines — is out of this requirement's scope; its static
 typing is [FR-363](FR-363-type-navigation-over-a-relationship-end.md)'s. This
 requirement resolves and binds a relationship end's declared type, role and
@@ -64,8 +64,8 @@ If either end's declared type reference names a type absent from the
 admitted domain package, the model binder SHALL refuse that relationship
 record with a `missing_declaration`/`missing-name` cause naming the missing
 type and the end (`source` or `target`), and SHALL admit no binding for that
-relationship record. This is the same cause quire-specification
-[FR-154](ix://agent-ix/quire-specification/FR-154) assigns a relationship
+relationship record. This is the same cause filament-specification
+[FR-154](ix://agent-ix/filament-specification/FR-154) assigns a relationship
 end naming no node of the package, which [FR-056](FR-056-admit-domain-package-model-declarations.md)-AC-5
 already states locally; this requirement does not introduce a second cause
 for the same condition.
@@ -101,7 +101,7 @@ as a Connection is
   [FR-056](FR-056-admit-domain-package-model-declarations.md) builds the
   relationship export and its declared ends from the domain package.
   AD-006's model-view decision keeps relationships in the checked model
-  view. `qsl-semantics/src/model/systems.rs::classify`'s relationship-classification loop
+  view. `fsl-semantics/src/model/systems.rs::classify`'s relationship-classification loop
   is the only place a plain object-to-object relationship's ends
   are resolved. For a relationship where one end resolves to a declared
   object type and the other end resolves to neither a declared object type

@@ -3,7 +3,7 @@ id: TC-652
 title: "Compensations register, activate, attempt, close and end with their recovery status"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-207
+  - target: ix://agent-ix/filament-spec-language/FR-207
     type: verifies
 ---
 # TC-652: Compensations register, activate, attempt, close and end with their recovery status
@@ -12,7 +12,7 @@ relationships:
 
 Verify compensation registration, folded activation, `cattempt` under the authored count and retry relation, the commit cutoff, `cend` and finishing.
 
-Scope: FR-207-AC-1 to FR-207-AC-6.
+Scope: FR-207-AC-1 to FR-207-AC-7.
 
 ## Test Procedure
 
@@ -26,21 +26,34 @@ Scope: FR-207-AC-1 to FR-207-AC-6.
 6. Run FR-207-AC-6's `attempts 2` variant with the retry relation
    `not e.ok`, and with `l.ok`; list the `cattempt` identities at t4 and the
    enabled steps at each retry point.
+7. Run FR-207-AC-7's `on each` variant with a protocol capture read by the
+   template's activation guard, activation capture and recovery predicate,
+   and the activation binder read by its registration capture, for the
+   triggers 3, 2, 1 and 0.
 
 Tag the tests `#[trace("TC-652", "FR-207-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: t0 to t8, nine states, eight transitions; registration and
+- Step 1: 17 states and 22 transitions: t0 to t8 and the eight `cfail`,
+  `ctimeout` and `cexpire` states FR-207-AC-1 names; registration and
   activation in the steps FR-207-AC-1 names; no instance and no registration at t5.
-- Step 2: `finish` disabled at t4; `cend` alone at t6; `recovered`, and
-  `unrecovered` in the variant.
+- Step 2: `finish` disabled at t4, where `cattempt`, `cfail`, `ctimeout` and
+  `cexpire` are enabled; `cend` and `cexpire` only at t6; `recovered` after
+  `cend`, `timed-out` after `cexpire`, and `unrecovered` in the variant.
 - Step 3: the enabled steps FR-207-AC-3 states.
 - Step 4: closed at `Ok`; no activation, no compensation thread, no second
   registration.
-- Step 5: V-8 `unsupported`, cause `RecoveryView{predicate}`, with
-  no state explored.
+- Step 5: `cend` at t6 has two successors, `recovered` at `r.bal` 0 and
+  `unrecovered` at `r.bal` 1; nothing settles `unsupported`; the claim that
+  every finished instance is `recovered` is refuted at `r.bal` 1 and the
+  counterexample replays.
 - Step 6: two `cattempt` identities at t4, differing only in `record`;
   under `not e.ok`, two retry `cattempt` steps and `cend` after `ok` false
   and `cend` alone after `ok` true; under `l.ok`, one retry `cattempt` with
-  `ok` true and `cend` after either first attempt.
+  `ok` true and `cend` after either first attempt (counting `cattempt` and
+  `cend` only); each such point also enables `cfail` and `ctimeout` per
+  record and `cexpire`.
+- Step 7: `recovered` with `seen` true for the trigger 3, `unrecovered` with
+  `seen` false for the trigger 2, and `registered` with `seen` false until
+  `finish` for the triggers 1 and 0.

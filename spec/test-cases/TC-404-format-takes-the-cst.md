@@ -1,26 +1,26 @@
 ---
 id: TC-404
-title: "format takes the qsl-cst ParsedSource, formats complete-V1 source and refuses inadmissible input"
+title: "format takes the fsl-cst ParsedSource, formats complete-V1 source and refuses inadmissible input"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-003
+  - target: ix://agent-ix/filament-spec-language/FR-003
     type: verifies
 ---
-# TC-404: format takes the qsl-cst ParsedSource, formats complete-V1 source and refuses inadmissible input
+# TC-404: format takes the fsl-cst ParsedSource, formats complete-V1 source and refuses inadmissible input
 
 ## Description
 
 Verify that `format` and `format_with_limit` take the S1 output
-`qsl_cst::ParsedSource` (ADR-011 §6.1 layer 1, §7.3 M-6a), that
-`qsl-cst/src/format.rs` does not depend on the arena parse, and that inadmissible
+`fsl_cst::ParsedSource` (ADR-011 §6.1 layer 1, §7.3 M-6a), that
+`fsl-cst/src/format.rs` does not depend on the arena parse, and that inadmissible
 input is refused with a typed cause and no panic.
 
 Scope: FR-003-AC-7, FR-003-AC-8.
 
 ## Test Procedure
 
-1. Resolve every `use` edge and inline path in `qsl-cst/src/format.rs`.
-2. Parse, with `qsl_cst::parse`, complete-V1 source that holds a comment and
+1. Resolve every `use` edge and inline path in `fsl-cst/src/format.rs`.
+2. Parse, with `fsl_cst::parse`, complete-V1 source that holds a comment and
    a nested block. Confirm that the native arena parser refuses the same
    bytes.
 3. Call `format` on the parsed source. Parse the output and format it again.
@@ -32,7 +32,7 @@ Tag the test `#[trace("FR-003-AC-7", "FR-003-AC-8", "TC-404")]`.
 ## Expected Results
 
 - Step 1 finds no edge to the arena `syntax` or native `parser` modules,
-  and `format`'s parameter type is `&qsl_cst::ParsedSource`.
+  and `format`'s parameter type is `&fsl_cst::ParsedSource`.
 - Step 3 keeps every token spelling in order and keeps the comment, and the
   second pass gives identical bytes.
 - Every step-4 call returns a refusal with a typed cause and no string, and

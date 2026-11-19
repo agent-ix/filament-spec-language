@@ -3,23 +3,23 @@ id: TC-875
 title: "The conformance runner executes vectors through public entry points and compares typed results"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-350
+  - target: ix://agent-ix/filament-spec-language/FR-350
     type: verifies
-  - target: ix://agent-ix/quire-specification/FR-336
+  - target: ix://agent-ix/filament-specification/FR-336
     type: verifies
 ---
 # TC-875: The conformance runner executes vectors through public entry points and compares typed results
 
 ## Description
 
-Verify QSL's corpus adapter, dispatch and typed-result settlement through the public entry points. QSpec FR-336 owns the corpus schema, input encodings and expected-result vocabulary; this test uses its contract through a test helper and does not maintain a second schema or vector definition.
+Verify FSL's corpus adapter, dispatch and typed-result settlement through the public entry points. FSpec FR-336 owns the corpus schema, input encodings and expected-result vocabulary; this test uses its contract through a test helper and does not maintain a second schema or vector definition.
 
 Scope: FR-350-AC-1, FR-350-AC-2, FR-350-AC-8, FR-350-AC-9, FR-350-AC-10.
 
 ## Test Procedure
 
-1. Use the shared test helper and QSpec FR-336 contract to prepare QSL-applicable positive vectors for compile, run with object context, replay and format. Include call inputs that exercise scalar and object-context arguments, and a replay input whose byte provisions are available to the vector.
-2. Include a refusal vector for an ill-typed unit operation, one copy whose expected refusal differs from QSL's actual refusal, and one expected refusal over source QSL admits.
+1. Use the shared test helper and FSpec FR-336 contract to prepare FSL-applicable positive vectors for compile, run with object context, replay and format. Include call inputs that exercise scalar and object-context arguments, and a replay input whose byte provisions are available to the vector.
+2. Include a refusal vector for an ill-typed unit operation, one copy whose expected refusal differs from FSL's actual refusal, and one expected refusal over source FSL admits.
 3. Run the qualification entry point over this corpus and inspect each per-vector outcome and the public-operation invocation records.
 4. Run a populated model with inherited reference collections and optional references constrained by `subsets`, then with the target field redefined. Both valid snapshots pass. Change either the subsetting collection or optional reference to an admitted object absent from the target field: native admission refuses `subsetting-violation`. The original snapshot member order is retained. At the exact admission work bound the valid case passes, one unit short stays incomplete; repeating the population for a second parameter consumes the same cumulative admission budget.
 
@@ -30,7 +30,7 @@ Scope: FR-350-AC-1, FR-350-AC-2, FR-350-AC-8, FR-350-AC-9, FR-350-AC-10.
    It reports `failed` with that unchanged oracle, and a repeated run retains
    the same report bytes; it neither aborts nor silently truncates the oracle.
 
-Tag the tests `#[trace("TC-875", "FR-350-AC-1", "FR-350-AC-2", "FR-350-AC-8", "FR-350-AC-9", "FR-350-AC-10", "QSpec-FR-336-AC-4", "QSpec-FR-336-AC-7", "QSpec-FR-336-AC-8")]`.
+Tag the tests `#[trace("TC-875", "FR-350-AC-1", "FR-350-AC-2", "FR-350-AC-8", "FR-350-AC-9", "FR-350-AC-10", "FSpec-FR-336-AC-4", "FSpec-FR-336-AC-7", "FSpec-FR-336-AC-8")]`.
 
 ## Expected Results
 

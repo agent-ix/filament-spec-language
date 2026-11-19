@@ -3,7 +3,7 @@ id: TC-658
 title: "Interval operators over a protocol measure distance in counted steps"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-213
+  - target: ix://agent-ix/filament-spec-language/FR-213
     type: verifies
 ---
 # TC-658: Interval operators over a protocol measure distance in counted steps

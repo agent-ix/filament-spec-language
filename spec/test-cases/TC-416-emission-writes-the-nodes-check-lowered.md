@@ -3,7 +3,7 @@ id: TC-416
 title: "The v2 emission arm writes the nodes check lowered, and each emitted node rebuilds to its key"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-093
+  - target: ix://agent-ix/filament-spec-language/FR-093
     type: verifies
 ---
 # TC-416: The v2 emission arm writes the nodes check lowered, and each emitted node rebuilds to its key
@@ -19,10 +19,10 @@ This catches a second lowering in `package` that drifts from the one `check`
 keyed.
 
 It also verifies each node's `dependencies` against FR-093's Node
-dependencies rules, and the emission against QSpec's v2 positive fixtures by
+dependencies rules, and the emission against FSpec's v2 positive fixtures by
 the members those fixtures fix. This catches a type annotation listed as a
 dependency, a missing `bounded_domain` base or group member, and an operator
-or operation spelling that differs from QSpec's.
+or operation spelling that differs from FSpec's.
 
 Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-093-AC-18, FR-093-AC-19, FR-093-AC-20, FR-093-AC-21, FR-093-AC-22, FR-093-CON-2.
 
@@ -42,21 +42,21 @@ Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-09
 6. Check and emit `record Tree { kids: Sequence<Tree>[0, 3]; }`. For each
    node emitted in steps 1, 5 and 6, rebuild its `dependencies` by rules 1
    to 5 of FR-093's Node dependencies with a test-side walker over the
-   emitted JSON that calls no `qsl-package` function. Read the
+   emitted JSON that calls no `fsl-package` function. Read the
    `dependencies` of E1, F2, E2, T1, L1 and P1 (step 1), of T4 and G4 to G6
    (step 5), and of G7 to G9 (step 6).
 7. Under `make conformance`, read `positive-operation-identities.json` and
-   `positive-control-operations.json` from the `QSPEC_DIR` checkout. For
+   `positive-control-operations.json` from the `FSPEC_DIR` checkout. For
    each application node whose `operation.identity` a row of FR-093's
    application table lowers, check and emit a function whose body holds
    that operation, read the emitted package with IR's v2 reader, and
    compare the emitted node with the fixture node on the members FR-093-AC-13
    names.
 8. Link a graph with imports `test/units` `2` and `test/geometry` `1` of one
-   package, emit it and read it back through QSL's I2 read; link a chain
+   package, emit it and read it back through FSL's I2 read; link a chain
    root -> `test/b` -> `test/c` -> `test/units`; link imports
    `test/\u{1F600}` and `test/\u{FF61}`. Under
-   `make conformance`, read QSpec's `dependency-selection-vectors.json`
+   `make conformance`, read FSpec's `dependency-selection-vectors.json`
    (FR-093-AC-16).
 9. Check and emit a package holding `t` (step 1) and read the wire's
    `diagnostics.catalog` member.
@@ -68,12 +68,12 @@ Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-09
     with only `t`; and `record R { x: Int[0, 9]; }` beside the post clause
     `VersionUnchanged` over `1 < 2` and a protocol attempt naming it. List each enum member
     node's occurrences and the source text of each `generated` source-map
-    region, and read each package back through QSL's I2 read
+    region, and read each package back through FSL's I2 read
     (FR-093-AC-18).
-11. Classify every kind of IR's `CheckedNodeKind::all()` as a family QSL
+11. Classify every kind of IR's `CheckedNodeKind::all()` as a family FSL
     writes (admitted, or one of the two cases of FR-093-AC-19) or as a
-    kind QSL never writes, with its reason. Emit a fixture for each family
-    QSL writes: the packages of steps 1, 5, 6, 7 and 10, `fadd` over
+    kind FSL never writes, with its reason. Emit a fixture for each family
+    FSL writes: the packages of steps 1, 5, 6, 7 and 10, `fadd` over
     `Float32[nearest-even]`, the declared record and tuple, TC-435's spine
     fixtures, `tests/fixtures/spine-model.native`'s unit with a `Population<M::Gadget>[3]`
     parameter, and with `Population<M::Gadget>[N]` parameters for N = 0, N = 1
@@ -82,7 +82,7 @@ Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-09
     unit, TC-440's records, TC-160's `q` and `t`, a unit of quantifiers
     over a set, a bag and an ordered set with a predicate, a decimal
     comparison and record and tuple values, and an equality over the
-    recursive `Tree` of step 6. Read each through QSL's I2 read, and decode
+    recursive `Tree` of step 6. Read each through FSL's I2 read, and decode
     each checked node's (`node_tag`, `semantic_form`) through IR's node
     kinds (FR-093-AC-19).
 12. Check and emit, under owner (`a`, `u`), `record P { x: Int[0, 9]; }`,
@@ -99,7 +99,7 @@ Scope: FR-093-AC-7, FR-093-AC-9, FR-093-AC-12, FR-093-AC-13, FR-093-AC-17, FR-09
     compare it with the owner of the node's preimage; confirm the wire
     `identity_preimage` carries no `identity_projection`; rebuild each structural key and each
     group label from the wire node alone with a test-side key function that
-    calls no `qsl-package` function, and read each package with IR's v2
+    calls no `fsl-package` function, and read each package with IR's v2
     reader (FR-093-AC-21).
 13. Check and emit `record Point { x: Integer; }` and
     `record List { next?: List; }` under (`agent-ix`, `example-a`), then
@@ -111,7 +111,7 @@ Tag the tests `#[trace("FR-093-AC-n", "TC-416")]` with the AC each backs.
 Steps 12 and 13 are not implemented yet (QSL-638): the emitter writes no
 `owner` member until IR-646 adds it to `CheckedSemanticNodeV2`. AC-7 is
 unmet as worded until then: step 2's test supplies the owner (`a`, `u`)
-itself (`qsl-package/src/emit/tests.rs`) instead of reading the node's
+itself (`fsl-package/src/emit/tests.rs`) instead of reading the node's
 `owner` member.
 
 ## Expected Results
@@ -119,7 +119,7 @@ itself (`qsl-package/src/emit/tests.rs`) instead of reading the node's
 - Step 2: every rebuilt preimage equals the node's key.
 - Step 3: no match.
 - Step 4: every node has at least one occurrence; `a`'s parameter node has an
-  `expression` occurrence over its binder site (QSpec FR-341-AC-10) and one
+  `expression` occurrence over its binder site (FSpec FR-341-AC-10) and one
   `expression` occurrence per read; the scalar nodes typing P1's body
   literals have a `generated` occurrence.
 - Step 5: the three members carry the label
@@ -134,13 +134,13 @@ itself (`qsl-package/src/emit/tests.rs`) instead of reading the node's
   the fixture's. The compared members are exactly those FR-093-AC-13
   names.
 - Step 8: the package carries the two entries,
-  `test/geometry` then `test/units`, each with the `package_id` the emitted library carries (a wire member, QSpec FR-322);
+  `test/geometry` then `test/units`, each with the `package_id` the emitted library carries (a wire member, FSpec FR-322);
   the package reads back Verified; the chain's closure is `test/b`, `test/c`, `test/units`,
   with paths `[b]`, `[b, c]` and `[b, c, units]`; `test/\u{FF61}` is
   written before `test/\u{1F600}` and reads back Verified. Each entry mutation refuses at its entry
   and each order vector gets its recorded outcome and locus.
 - Step 9: `diagnostics.catalog` is exactly authority `agent-ix` and
-  identity `quire.native.diagnostics/v1`, with no other member, and IR
+  identity `filament.native.diagnostics/v1`, with no other member, and IR
   admits the package (FR-093-AC-17). The package's `edition` is exactly the catalog row's `authority` and
   `identity`, and a `Float64` addition's `ieee_profile` law `definition` is
   the same two-member row (FR-093-AC-20).
@@ -152,9 +152,9 @@ itself (`qsl-package/src/emit/tests.rs`) instead of reading the node's
   `generated`, region text `1 < 2`. Each function-only package reads back
   Verified (FR-093-AC-18).
 - Step 11: every IR node kind is classified exactly once, and every family
-  a fixture emits is classified as written by QSL. IR admits every fixture
+  a fixture emits is classified as written by FSL. IR admits every fixture
   as emitted with a node of each of its rows' families,
-  the `Tree` equality's `quire.op.structural.eq` node included.
+  the `Tree` equality's `filament.op.structural.eq` node included.
   TC-160's `q` and `t`, over a `metre` unit the fixture unit's own source
   declares, give the `dimension`, `unit` and `compound_unit` rows. No node is
   omitted (FR-093-AC-19).

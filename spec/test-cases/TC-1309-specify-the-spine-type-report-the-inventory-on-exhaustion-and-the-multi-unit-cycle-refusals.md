@@ -3,7 +3,7 @@ id: TC-1309
 title: "Specify the spine type report, the inventory on exhaustion and the multi-unit cycle refusals"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-514
+  - target: ix://agent-ix/filament-spec-language/FR-514
     type: verifies
 ---
 # TC-1309: Specify the spine type report, the inventory on exhaustion and the multi-unit cycle refusals
@@ -30,7 +30,7 @@ x }`, a state `post` clause on an object operation, and a protocol with one
 | 7 | `T0` with formal identities `F1`, `F2`; `Incomplete` and `Complete` outcomes with `F1` | two identities; one identity |
 | 8 | FR-480-AC-6 documents, list `[1, 2]`; list `[2, 1]` | `invalid_package`/`invalid-value` at `z` in document 1; `invalid_package`/`definition-cycle` at `u_self` in document 2, edge `u_self` to `u_self` |
 | 9 | document 1 `unit z : T = z2 * rational(2, 1); unit z2 : T = z * rational(2, 1);`, document 2 `dimension L;` | `invalid_package`/`definition-cycle`, both edges, naming document 1 |
-| 10 | the QSpec TC-187 dimension-cycle vector split across documents 1 and 2 (vector referenced by case ID, not copied) | `invalid_package`/`definition-cycle`, naming the first document in list order |
+| 10 | the FSpec TC-187 dimension-cycle vector split across documents 1 and 2 (vector referenced by case ID, not copied) | `invalid_package`/`definition-cycle`, naming the first document in list order |
 | 11 | the pieces table of FR-514 against FR-480's acceptance criteria | every FR-480-AC id present; only AC-2 in two rows, with disjoint sentences |
 | 12 | `T0` with an `enum` beside the forms, `s3.work_units` one below need | `Incomplete`; one requirement-form row each for `f`, the state clause and the protocol with ordinals 0, 1, 2; no row for the `enum` |
 | 13 | `T0`, sufficient limits | `Complete`; one row per requirement record and per pending obligation; each obligation row's IR identity holds the exact capability kind name, the owning requirement form ordinal, unit 0 and the span |

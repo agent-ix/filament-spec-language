@@ -3,11 +3,11 @@ id: TC-641
 title: "An undefined state reached with positive probability refutes an exact claim"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-196
+  - target: ix://agent-ix/filament-spec-language/FR-196
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-202
+  - target: ix://agent-ix/filament-spec-language/FR-202
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-203
+  - target: ix://agent-ix/filament-spec-language/FR-203
     type: verifies
 ---
 # TC-641: An undefined state reached with positive probability refutes an exact claim

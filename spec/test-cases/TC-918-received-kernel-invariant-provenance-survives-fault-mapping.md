@@ -4,23 +4,23 @@ org: agent-ix
 title: "Received typed kernel invariant provenance survives fault mapping"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-096
+  - target: ix://agent-ix/filament-spec-language/FR-096
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
-  - target: ix://agent-ix/quire-spec-language/FR-121
+  - target: ix://agent-ix/filament-spec-language/FR-121
     type: references
-  - target: ix://agent-ix/quire-exact/FR-369
+  - target: ix://agent-ix/filament-exact/FR-369
     type: references
 ---
 # TC-918: Received typed kernel invariant provenance survives fault mapping
 
 ## Description
 
-Verify the received-kernel route separately from QSL-owned constructors.
+Verify the received-kernel route separately from FSL-owned constructors.
 Scope: FR-096-AC-19 and FR-090-AC-17; existing FR-121 fault terminal mapping
 is a dependency, not a new replay-phase contract. Use the kernel's actual
-typed cause set, without copying or extending its enum in QSL.
+typed cause set, without copying or extending its enum in FSL.
 
 ## Test Procedure
 
@@ -37,7 +37,7 @@ typed cause set, without copying or extending its enum in QSL.
    replay basis and retained typed provenance.
 4. Compare meter events before and after each mapping. Pair with ordinary
    kernel refusal, Undefined and Incomplete stops and a typed family refusal.
-   Include a QSL-owned `boolean-value-expected` fault as a provenance-negative
+   Include an FSL-owned `boolean-value-expected` fault as a provenance-negative
    control, without manufacturing a kernel payload for it.
 
 ## Expected Results
@@ -56,7 +56,7 @@ internal-failure diagnostic and unavailable basis; neither produces an
 ordinary-refusal Inconclusive terminal. Mapping adds no meter event and does
 not erase earlier charges. Ordinary refusal/undefined/incomplete controls
 retain their existing outcomes; an ordinary replay refusal remains
-Inconclusive. The QSL-owned negative control has no synthetic kernel cause.
+Inconclusive. The FSL-owned negative control has no synthetic kernel cause.
 
 ## Native Integer Capacity Vector
 

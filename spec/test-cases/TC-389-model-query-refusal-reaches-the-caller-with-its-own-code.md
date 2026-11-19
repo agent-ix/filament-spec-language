@@ -3,7 +3,7 @@ id: TC-389
 title: "A refused model query reaches the caller with the ModelRefusal's own catalog code, not a kernel refusal"
 type: TC
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-090
+  - target: ix://agent-ix/filament-spec-language/FR-090
     type: verifies
 ---
 # TC-389: A refused model query reaches the caller with the ModelRefusal's own catalog code, not a kernel refusal
@@ -17,15 +17,15 @@ and whose
 `cause.catalog_code()` is that refusal's `ModelRefusal::catalog_code()`, the
 method O-17 requires and which does not exist today. The result is not a
 kernel `Outcome::Refused` inside `FamilyOutcome::Evaluated` and not a panic.
-The carried refusal holds no native-v1 `qsl_foundation::diagnostic::Code`
+The carried refusal holds no native-v1 `fsl_foundation::diagnostic::Code`
 (ADR-013 R-09).
 Scope: FR-090-AC-8.
 
 The fixture is the above-maximum refusal of `all_instances`
-(`qsl-semantics/src/model/population.rs`, `Code::CardinalityOutOfBound` with
+(`fsl-semantics/src/model/population.rs`, `Code::CardinalityOutOfBound` with
 `ModelRefusalCause::AboveMaximum`, cause tag `above-maximum`).
 
-This catches three faults: carrying the refusal as QSL's
+This catches three faults: carrying the refusal as FSL's
 `Refusal::Model(ModelQueryRefusal)` kernel-copy variant, which T-6 removes;
 keeping `ModelQueryRefusal`'s `code: Code` field; and reporting the model
 refusal as kernel `Refusal::CardinalityOutOfBound`, which would conflate a
@@ -52,4 +52,4 @@ Tag the test `#[trace("FR-090-AC-8", "TC-389")]`.
   returns for the same binding.
 - Step 2 does not panic, and its result matches step 3's pattern;
   `e.outcome` is not `FamilyOutcome::Evaluated(Outcome::Refused(_))`.
-- Step 4 finds no field of type `qsl_foundation::diagnostic::Code`.
+- Step 4 finds no field of type `fsl_foundation::diagnostic::Code`.

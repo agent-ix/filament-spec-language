@@ -3,21 +3,21 @@ id: FR-124
 title: "Declare intended terminal states and derive the deadlock-freedom item"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-015
+  - target: ix://agent-ix/filament-spec-language/US-015
     type: implements
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-097
+  - target: ix://agent-ix/filament-spec-language/FR-097
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-104
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-120
+  - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-391
+  - target: ix://agent-ix/filament-spec-language/FR-391
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-382
+  - target: ix://agent-ix/filament-spec-language/FR-382
     type: traces_to
 ---
 # FR-124: Declare intended terminal states and derive the deadlock-freedom item
@@ -42,10 +42,10 @@ so its author writes `terminal any` and gets no deadlock report.
 
 ## Semantic authority and boundary
 
-QSpec owns the surface grammar of the `terminal` declaration, the definition of
+FSpec owns the surface grammar of the `terminal` declaration, the definition of
 a deadlock, and the deadlock-freedom item's wire identity and place in the
-QSpec FR-331 request (ADR-018 QS-12; References). This requirement specifies what
-S3 checks once the shared grammar has parsed the declaration, how QSL classifies
+FSpec FR-331 request (ADR-018 QS-12; References). This requirement specifies what
+S3 checks once the shared grammar has parsed the declaration, how FSL classifies
 terminal states, and what the request writer adds. The spellings `terminal
 when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 
@@ -81,7 +81,7 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
   S2 builds a second declaration for one model alias (FR-382), and S3
   refuses it (FR-124 terminal check): the checker SHALL refuse
   `ambiguous_declaration`/`ambiguous-name` at its span, naming both
-  declarations (QSpec FR-366).
+  declarations (FSpec FR-366).
 - The checker SHALL check the predicate `P` of a `When` declaration as a state
   predicate over the model's state, through the one clause checker that
   invariants use (FR-104). If `P` reads a parameter, a result or a
@@ -115,7 +115,7 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
   object, even when it is `Undefined` for another, and otherwise, when it is
   `Undefined` for some object, as `Undefined`.
 - Where `P` does not read `self`, the deadlock classifier SHALL evaluate `P`
-  once at the terminal state (QSpec FR-366).
+  once at the terminal state (FSpec FR-366).
 - When a state model has no `terminal` declaration, the checker SHALL check it
   to `TerminalDeclaration::None`.
 - The checker SHALL include the `TerminalDeclaration` in the checked
@@ -184,6 +184,6 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 
 ## References
 
-- QSpec FR-366 (deadlock freedom: the `terminal` declaration, the deadlock
-  definition and the deadlock-freedom item), the QSpec half of ADR-018 QS-12
+- FSpec FR-366 (deadlock freedom: the `terminal` declaration, the deadlock
+  definition and the deadlock-freedom item), the FSpec half of ADR-018 QS-12
   (Linear STD-131).

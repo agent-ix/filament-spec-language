@@ -3,19 +3,19 @@ id: US-003
 title: "Evaluate a bounded state with honest outcomes"
 type: US
 relationships:
-  - target: "ix://agent-ix/quire-spec-language/StR-001"
+  - target: "ix://agent-ix/filament-spec-language/StR-001"
     type: traces_to
-  - target: "ix://agent-ix/quire-spec-language/FR-106"
+  - target: "ix://agent-ix/filament-spec-language/FR-106"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-107"
+  - target: "ix://agent-ix/filament-spec-language/FR-107"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-043"
+  - target: "ix://agent-ix/filament-spec-language/FR-043"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-044"
+  - target: "ix://agent-ix/filament-spec-language/FR-044"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-101"
+  - target: "ix://agent-ix/filament-spec-language/FR-101"
     type: exercises
-  - target: "ix://agent-ix/quire-spec-language/FR-120"
+  - target: "ix://agent-ix/filament-spec-language/FR-120"
     type: exercises
 ---
 # US-003: Evaluate a bounded state with honest outcomes

@@ -4,9 +4,9 @@ title: "What a graph path witness carries"
 type: ADR
 status: proposed
 relationships:
-  - target: ix://agent-ix/quire-spec-language/FR-047
+  - target: ix://agent-ix/filament-spec-language/FR-047
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/NFR-009
+  - target: ix://agent-ix/filament-spec-language/NFR-009
     type: depends_on
 ---
 # ADR-009: What a graph path witness carries
@@ -21,7 +21,7 @@ edge-occurrence order, expands each complete storage identity
 (`observation occurrence, model, universe, object type, object identifier`)
 at most once per request, and charges expansion, edge and comparison work
 under [NFR-009](../non-functional/NFR-009-bound-composed-evaluation.md)'s
-`quire.state.evaluation-work/1` accounting.
+`filament.state.evaluation-work/1` accounting.
 
 A future consumer of a `true` reachability result may need to know which path
 the evaluator found, not only that one exists — for diagnostics, replay, or
@@ -30,9 +30,9 @@ output type and interacts with three settled behaviors that any witness
 content must stay consistent with: deterministic first-found order (not
 shortest path), at-most-once expansion per storage identity, and
 charge-before-work accounting. FR-047 excludes a witness rather than defining
-one, and one constraint on witness content already exists upstream: the QSpec
-language standard, resolved from `agent-ix/quire-specification` at
-`proposals/quire-v1/state-contract.md`, states that any returned path witness
+one, and one constraint on witness content already exists upstream: the FSpec
+language standard, resolved from `agent-ix/filament-specification` at
+`proposals/filament-v1/state-contract.md`, states that any returned path witness
 retains the actual typed edge and snapshot identities, and that the Boolean
 reachability predicate adds no shortest-path or canonical-witness guarantee.
 Any answer has to sit inside that sentence, and the candidates below differ

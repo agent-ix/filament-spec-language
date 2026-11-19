@@ -3,25 +3,25 @@ id: FR-172
 title: "Check hyper clauses over behaviours and relations over model executions at S3"
 type: FR
 relationships:
-  - target: ix://agent-ix/quire-spec-language/US-021
+  - target: ix://agent-ix/filament-spec-language/US-021
     type: implements
-  - target: ix://agent-ix/quire-spec-language/FR-125
+  - target: ix://agent-ix/filament-spec-language/FR-125
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-012
+  - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-013
+  - target: ix://agent-ix/filament-spec-language/ADR-013
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-018
+  - target: ix://agent-ix/filament-spec-language/ADR-018
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/ADR-023
+  - target: ix://agent-ix/filament-spec-language/ADR-023
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-103
+  - target: ix://agent-ix/filament-spec-language/FR-103
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-110
+  - target: ix://agent-ix/filament-spec-language/FR-110
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-123
+  - target: ix://agent-ix/filament-spec-language/FR-123
     type: depends_on
-  - target: ix://agent-ix/quire-spec-language/FR-171
+  - target: ix://agent-ix/filament-spec-language/FR-171
     type: depends_on
 ---
 # FR-172: Check hyper clauses over behaviours and relations over model executions at S3
@@ -96,7 +96,7 @@ pub struct CheckedModelRelation {
   one of whose parameters has an empty universe has zero instances and is
   reported `NoInstance` by FR-125 Instancing, the same as a temporal clause or state-graph claim.
 - If an object parameter names a population of an alias the clause does not
-  bind, then S3 SHALL refuse `ill_typed` at the parameter (QSpec FR-395).
+  bind, then S3 SHALL refuse `ill_typed` at the parameter (FSpec FR-395).
 
 ### Indexed atoms and step labels
 
@@ -119,7 +119,7 @@ pub struct CheckedModelRelation {
   `Option<T>` for parameter `p: T` of operation `O` of `t`'s model.
 - The receiver key SHALL be typed `Option<Reference<T>>`, `T` being the one
   object type that declares every operation of `t`'s model that has a
-  receiver (QSpec FR-395 "Step labels"). If those operations are declared by
+  receiver (FSpec FR-395 "Step labels"). If those operations are declared by
   more than one object type, then S3 SHALL refuse a read of
   `t.step.receiver` with `unsupported_construct`/`expression-form` at the
   read, because no single receiver type exists for it
@@ -129,7 +129,7 @@ pub struct CheckedModelRelation {
 
 - S3 SHALL refuse a `match` conjunct that reads state,
   `unsupported_construct`/`expression-form` at the read: `μ` reads step
-  labels only (ADR-023 HS-5, QSpec FR-395).
+  labels only (ADR-023 HS-5, FSpec FR-395).
 - S3 SHALL check a call of a declared function in a `match` conjunct as a
   value call, not as a state read. Each of its arguments SHALL obey the same
   `match` rules, reading step labels, literals and calls only. An argument
@@ -178,7 +178,7 @@ pub struct CheckedModelRelation {
 
 - S3 SHALL check an execution binding whose qualified name resolves to an
   operation of a model alias as a model execution binding. A binding to any
-  other qualified name SHALL keep QSpec FR-191's finite reading.
+  other qualified name SHALL keep FSpec FR-191's finite reading.
 - The body SHALL check under the value profile and MAY read, per execution
   `x`, its arguments `x.p`, its receiver's pre-state `pre(x.self.f)`,
   post-state `x.self.f` and result `x.result` (ADR-023 HS-8).
@@ -231,10 +231,10 @@ pub struct CheckedModelRelation {
   (fairness and interval checking),
   [FR-103](FR-103-admit-model-operations-and-frames-on-the-spine.md),
   [FR-110](FR-110-resolve-header-profile-selections-at-e3.md).
-- QSpec owns the grammar, FR-191's extension to model subjects and the
+- FSpec owns the grammar, FR-191's extension to model subjects and the
   identity members of the checked-package v2 `hyperproperty` node (ADR-023
   QS-1, QS-2, QS-7).
 
 ## References
 
-- ADR-023. QSpec half: QSpec FR-395 and FR-402 (Linear STD-136; ADR-023 QS-1, QS-2, QS-7).
+- ADR-023. FSpec half: FSpec FR-395 and FR-402 (Linear STD-136; ADR-023 QS-1, QS-2, QS-7).
