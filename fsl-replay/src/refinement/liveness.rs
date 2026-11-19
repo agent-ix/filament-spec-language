@@ -152,8 +152,17 @@ impl AbstractClass {
                 .iter()
                 .filter_map(|step| step.transition.as_ref())
                 .any(|transition| self.covers(transition)),
-            Taken::Protocol(_) => false,
-            Taken::ProtocolTraces(_) => false,
+            Taken::Protocol(transitions) => transitions
+                .iter()
+                .filter_map(fsl_eval::simulation::protocol::ProtocolTransition::application)
+                .any(|transition| self.covers(transition)),
+            Taken::ProtocolTraces(traces) => traces.iter().any(|trace| {
+                trace
+                    .transitions
+                    .iter()
+                    .filter_map(fsl_eval::simulation::protocol::ProtocolTransition::application)
+                    .any(|transition| self.covers(transition))
+            }),
         }
     }
 }

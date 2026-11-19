@@ -57,10 +57,10 @@ use fsl_replay::{
     ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
-    Taken, TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation,
-    Undetermined, abstract_classes, candidate_lasso_has_fair_run, check_initial,
-    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    open_protocol_systems, open_systems,
+    Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
+    open_systems,
 };
 use fsl_semantics::check::CheckedRefinement;
 
@@ -149,6 +149,7 @@ struct CandidateNode {
 /// Abstract operations enabled at one hidden-field candidate state.
 struct CandidateEnabled {
     key: Vec<u8>,
+    state: ModelSimState,
     transitions: Vec<ModelTransition>,
 }
 
@@ -409,10 +410,6 @@ fn check_with(
     };
     let liveness = if refinement.abstract_operation_fairness().next().is_none() {
         None
-    } else if run.abstract_protocol.is_some() {
-        Some(LivenessHalf::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness,
-        ))
     } else if matches!(safety, SafetyOutcome::Holds { .. }) {
         Some(LivenessHalf::Checked(run.liveness()?))
     } else {
@@ -2478,6 +2475,7 @@ impl Run<'_, '_> {
                 here.extend(candidate_transitions.iter().cloned());
                 candidate_enabled.push(CandidateEnabled {
                     key,
+                    state: candidate.clone(),
                     transitions: candidate_transitions,
                 });
             }
@@ -2677,15 +2675,19 @@ impl Run<'_, '_> {
                     {
                         let idempotent = self.idempotent_power(&next.candidates)?;
                         if !idempotent_has_fair_candidate(&idempotent, classes, abstract_fairness) {
-                            let fair_candidate = self.candidate_lasso_has_fair_run(
-                                &next_path,
-                                enabled,
-                                classes,
-                                abstract_fairness,
-                                &abstract_numbers,
-                                &abstract_constraints,
-                                None,
-                            )?;
+                            let fair_candidate = if self.abstract_protocol.is_some() {
+                                false
+                            } else {
+                                self.candidate_lasso_has_fair_run(
+                                    &next_path,
+                                    enabled,
+                                    classes,
+                                    abstract_fairness,
+                                    &abstract_numbers,
+                                    &abstract_constraints,
+                                    None,
+                                )?
+                            };
                             if fair_candidate {
                                 return Err(
                                     fault("candidate-summary-agrees-with-lasso-check").into()
@@ -2693,6 +2695,7 @@ impl Run<'_, '_> {
                             }
                             let failing = self.first_unsatisfied_fairness_prefix(
                                 &next_path,
+                                &idempotent,
                                 enabled,
                                 classes,
                                 abstract_fairness,
@@ -2701,15 +2704,19 @@ impl Run<'_, '_> {
                             )?;
                             return self.hidden_counterexample(start, &next_path, failing);
                         }
-                        let fair_candidate = self.candidate_lasso_has_fair_run(
-                            &next_path,
-                            enabled,
-                            classes,
-                            abstract_fairness,
-                            &abstract_numbers,
-                            &abstract_constraints,
-                            None,
-                        )?;
+                        let fair_candidate = if self.abstract_protocol.is_some() {
+                            true
+                        } else {
+                            self.candidate_lasso_has_fair_run(
+                                &next_path,
+                                enabled,
+                                classes,
+                                abstract_fairness,
+                                &abstract_numbers,
+                                &abstract_constraints,
+                                None,
+                            )?
+                        };
                         if !fair_candidate {
                             return Err(fault("candidate-summary-agrees-with-lasso-check").into());
                         }
@@ -2781,16 +2788,13 @@ impl Run<'_, '_> {
     }
 
     fn candidate_edge_relation(
-        &self,
+        &mut self,
         source: usize,
         target: usize,
         taken: &Taken,
         enabled: &[Vec<CandidateEnabled>],
         classes: &[AbstractClass],
     ) -> Result<CandidateRelation, End> {
-        let Taken::CandidateSteps(rows) = taken else {
-            return Err(fault("hidden-product-edge-retains-candidate-steps").into());
-        };
         let source_candidates = enabled
             .get(source)
             .ok_or_else(|| fault("candidate-edge-source-is-retained"))?;
@@ -2798,41 +2802,201 @@ impl Run<'_, '_> {
             .get(target)
             .ok_or_else(|| fault("candidate-edge-target-is-retained"))?;
         let mut relation = CandidateRelation::new();
-        for row in rows {
-            let candidate = source_candidates
-                .iter()
-                .find(|candidate| candidate.key == row.pre_state)
-                .ok_or_else(|| fault("candidate-step-source-is-retained"))?;
-            if !target_candidates
-                .iter()
-                .any(|candidate| candidate.key == row.post_state)
-            {
-                return Err(fault("candidate-step-target-is-retained").into());
-            }
-            let label = classes
-                .iter()
-                .map(|class| {
-                    let is_enabled = candidate
-                        .transitions
+        match taken {
+            Taken::CandidateSteps(rows) => {
+                for row in rows {
+                    let candidate = source_candidates
                         .iter()
-                        .any(|transition| class.is_enabled_in(std::slice::from_ref(transition)));
-                    FairMark {
-                        taken: row
-                            .transition
-                            .as_ref()
-                            .is_some_and(|transition| class.covers(transition)),
-                        enabled_somewhere: is_enabled,
-                        enabled_everywhere: is_enabled,
+                        .find(|candidate| candidate.key == row.pre_state)
+                        .ok_or_else(|| fault("candidate-step-source-is-retained"))?;
+                    if !target_candidates
+                        .iter()
+                        .any(|candidate| candidate.key == row.post_state)
+                    {
+                        return Err(fault("candidate-step-target-is-retained").into());
                     }
-                })
-                .collect();
-            insert_relation_label(
-                &mut relation,
-                (row.pre_state.clone(), row.post_state.clone()),
-                label,
-            );
+                    let label = classes
+                        .iter()
+                        .map(|class| {
+                            let is_enabled = class.is_enabled_in(&candidate.transitions);
+                            FairMark {
+                                taken: row
+                                    .transition
+                                    .as_ref()
+                                    .is_some_and(|transition| class.covers(transition)),
+                                enabled_somewhere: is_enabled,
+                                enabled_everywhere: is_enabled,
+                            }
+                        })
+                        .collect();
+                    insert_relation_label(
+                        &mut relation,
+                        (row.pre_state.clone(), row.post_state.clone()),
+                        label,
+                    );
+                }
+            }
+            Taken::Stutter => {
+                for candidate in source_candidates {
+                    if target_candidates
+                        .iter()
+                        .any(|target| target.key == candidate.key)
+                    {
+                        let label = classes
+                            .iter()
+                            .map(|class| {
+                                let is_enabled = class.is_enabled_in(&candidate.transitions);
+                                FairMark {
+                                    taken: false,
+                                    enabled_somewhere: is_enabled,
+                                    enabled_everywhere: is_enabled,
+                                }
+                            })
+                            .collect();
+                        insert_relation_label(
+                            &mut relation,
+                            (candidate.key.clone(), candidate.key.clone()),
+                            label,
+                        );
+                    }
+                }
+            }
+            Taken::Protocol(transitions) => {
+                for candidate in source_candidates {
+                    for transition in transitions {
+                        let labels = self.protocol_candidate_path_labels(
+                            &candidate.state,
+                            std::slice::from_ref(transition),
+                            classes,
+                        )?;
+                        self.insert_protocol_candidate_endpoints(
+                            &mut relation,
+                            candidate,
+                            target_candidates,
+                            labels,
+                        )?;
+                    }
+                }
+            }
+            Taken::ProtocolTraces(traces) => {
+                for candidate in source_candidates {
+                    let paths = traces
+                        .iter()
+                        .filter(|trace| {
+                            self.abstract_protocol.is_some_and(|protocol| {
+                                protocol.model_state(&trace.start).is_some_and(|state| {
+                                    self.abstract_system
+                                        .state_key_of(state)
+                                        .is_ok_and(|(key, _)| key == candidate.key)
+                                })
+                            })
+                        })
+                        .map(|trace| trace.transitions.clone())
+                        .collect::<Vec<_>>();
+                    for path in paths {
+                        let labels =
+                            self.protocol_candidate_path_labels(&candidate.state, &path, classes)?;
+                        self.insert_protocol_candidate_endpoints(
+                            &mut relation,
+                            candidate,
+                            target_candidates,
+                            labels,
+                        )?;
+                    }
+                }
+            }
+            Taken::Abstract(_) => {
+                return Err(fault("hidden-product-edge-retains-candidate-steps").into());
+            }
         }
         Ok(relation)
+    }
+
+    fn protocol_candidate_path_labels(
+        &mut self,
+        initial: &ModelSimState,
+        path: &[fsl_eval::simulation::protocol::ProtocolTransition],
+        classes: &[AbstractClass],
+    ) -> Result<Vec<(ModelSimState, FairLabel)>, End> {
+        let mut current = vec![(initial.clone(), neutral_label(classes.len()))];
+        for protocol_step in path {
+            self.poll()?;
+            let application = protocol_step.application();
+            let mut next = Vec::new();
+            for (state, label) in current {
+                let expansion = self
+                    .abstract_system
+                    .expand_state(&state)
+                    .map_err(|stop| self.expansion_stop(stop))?;
+                self.transitions = self.transitions.saturating_add(expansion.successors.len());
+                if self.transitions > self.limits.limits.max_transitions {
+                    return Err(Self::stopped(
+                        ModelCheckLimit::MaxTransitions,
+                        widen(self.limits.limits.max_transitions),
+                    ));
+                }
+                if expansion
+                    .findings
+                    .iter()
+                    .any(|finding| matches!(finding, ModelFinding::ContractUndetermined { .. }))
+                {
+                    return Err(End::Undecided(SafetyUndecided::Undetermined(
+                        Undetermined::UndecidedSuccessor,
+                    )));
+                }
+                let enabled = expansion
+                    .successors
+                    .iter()
+                    .map(|(transition, _)| transition.clone())
+                    .collect::<Vec<_>>();
+                let successors = if let Some(application) = application {
+                    expansion
+                        .successors
+                        .into_iter()
+                        .filter(|(transition, _)| transition == application)
+                        .map(|(_, post)| post)
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![state.clone()]
+                };
+                for post in successors {
+                    let label = compose_fair_labels(
+                        &label,
+                        &classes
+                            .iter()
+                            .map(|class| {
+                                let is_enabled = class.is_enabled_in(&enabled);
+                                FairMark {
+                                    taken: application
+                                        .is_some_and(|transition| class.covers(transition)),
+                                    enabled_somewhere: is_enabled,
+                                    enabled_everywhere: is_enabled,
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    next.push((post, label));
+                }
+            }
+            current = next;
+        }
+        Ok(current)
+    }
+
+    fn insert_protocol_candidate_endpoints(
+        &self,
+        relation: &mut CandidateRelation,
+        source: &CandidateEnabled,
+        targets: &[CandidateEnabled],
+        endpoints: Vec<(ModelSimState, FairLabel)>,
+    ) -> Result<(), End> {
+        for (state, label) in endpoints {
+            let (key, _) = Self::encoding(self.abstract_system.state_key_of(&state))?;
+            if targets.iter().any(|target| target.key == key) {
+                insert_relation_label(relation, (source.key.clone(), key), label);
+            }
+        }
+        Ok(())
     }
 
     fn idempotent_power(&mut self, relation: &CandidateRelation) -> Result<CandidateRelation, End> {
@@ -2934,12 +3098,22 @@ impl Run<'_, '_> {
     fn first_unsatisfied_fairness_prefix(
         &self,
         path: &[RetainedPathEdge],
+        summary: &CandidateRelation,
         enabled: &[Vec<CandidateEnabled>],
         classes: &[AbstractClass],
         abstract_fairness: &[FairnessConstraint],
         numbered: &BTreeMap<&ModelTransition, Identity>,
         constraints: &[Constraint],
     ) -> Result<FairnessConstraint, End> {
+        if self.abstract_protocol.is_some() {
+            for (index, constraint) in abstract_fairness.iter().enumerate() {
+                if !idempotent_has_fair_candidate_prefix(summary, classes, abstract_fairness, index)
+                {
+                    return Ok(constraint.clone());
+                }
+            }
+            return Err(fault("an-unsatisfied-protocol-fairness-prefix-exists").into());
+        }
         for (index, constraint) in abstract_fairness.iter().enumerate() {
             if !self.candidate_lasso_has_fair_run(
                 path,
@@ -3345,18 +3519,27 @@ fn idempotent_has_fair_candidate(
     classes: &[AbstractClass],
     fairness: &[FairnessConstraint],
 ) -> bool {
+    idempotent_has_fair_candidate_prefix(
+        relation,
+        classes,
+        fairness,
+        fairness.len().saturating_sub(1),
+    )
+}
+
+fn idempotent_has_fair_candidate_prefix(
+    relation: &CandidateRelation,
+    classes: &[AbstractClass],
+    fairness: &[FairnessConstraint],
+    through: usize,
+) -> bool {
     relation.iter().any(|((_, middle), _)| {
         relation
             .get(&(middle.clone(), middle.clone()))
             .is_some_and(|labels| {
-                labels.iter().any(|label| {
-                    candidate_label_is_fair(
-                        label,
-                        classes,
-                        fairness,
-                        fairness.len().saturating_sub(1),
-                    )
-                })
+                labels
+                    .iter()
+                    .any(|label| candidate_label_is_fair(label, classes, fairness, through))
             })
     })
 }
