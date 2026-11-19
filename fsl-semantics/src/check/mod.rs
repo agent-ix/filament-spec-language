@@ -7416,6 +7416,10 @@ impl PackageDeclarations {
             let index = checked_hyper.len() + finite_index;
             type_spans.insert(hyper_site(index, Site::Claim), clause.span());
             type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
+            site_spans.insert(
+                format!("finite hyper {} body", clause.name()),
+                clause.body_spans().clone(),
+            );
             for slot in 0..clause.body_parameters().len() {
                 type_spans.insert(hyper_site(index, Site::FiniteSlot(slot)), clause.span());
             }
