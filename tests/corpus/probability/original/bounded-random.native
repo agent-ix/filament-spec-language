@@ -2,9 +2,17 @@ language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 profile ev = "filament.temporal.event-position.false-extension/v1";
 profile inf = "filament.temporal.infinite-trace/v1";
-model Systems = "example/architecture";
-random Systems::Service::call(ok) ~ { true: 3, false: 1 };
-workload Traffic on Systems { weight Systems::Service::call = 1; }
-probabilistic Available using ev on Systems over (service: Systems::Service) under Traffic on origin {
-  probability >= 0.5 [ always[0,1] holds(service.up) ]
+model Network = "test/link";
+pre PendingA using v on Network::Msg::send_a { not self.delivered and self.attempts < 2 }
+post OutcomeA using v on Network::Msg::send_a { self.delivered = (not lost) and self.attempts - pre(self.attempts) = 1 }
+pre PendingB using v on Network::Msg::send_b { not self.delivered and self.attempts < 2 }
+post OutcomeB using v on Network::Msg::send_b { self.delivered = (not lost) and self.attempts - pre(self.attempts) = 1 }
+terminal Finished using v on Network when { self.delivered or self.attempts = 2 };
+random Network::Msg::send_a(lost) ~ { true: 1, false: 3 };
+random Network::Msg::send_b(lost) ~ { true: 1, false: 3 };
+workload Traffic on Network { weight Network::Msg::send_a = 1; weight Network::Msg::send_b = 1; }
+reward effort on Network::Msg::send_a = 1;
+reward effort on Network::Msg::send_b = 1;
+probabilistic Available using ev on Network over (packet: Network::Msg) under Traffic on origin {
+ probability >= 0.8 [ eventually[0,2] holds(packet.delivered) ]
 }
