@@ -629,7 +629,10 @@ impl Plan<'_> {
                         (decision, Some(interval))
                     }
                     StatisticalMethod::Sprt => {
-                        return Err(fault("sprt-has-no-fixed-sample-count"));
+                        return Err(fault(InternalFault::new(
+                            "statistical",
+                            "sprt-has-no-fixed-sample-count",
+                        )));
                     }
                 };
                 return Ok(TestEnd::Decided(Decided {
