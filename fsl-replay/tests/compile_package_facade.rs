@@ -109,7 +109,7 @@ fn recursive_records_compile_to_the_spine_bytes() {
 fn a_malformed_source_refuses_as_the_spine_does() {
     let text = format!("{HEADER}record {{ ");
     let expected = spine_run(&text, &BTreeMap::new()).expect_err("the spine refuses the source");
-    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(1 << 20)) else {
+    let Err(ReplayRefusal::Recompile { refusal, .. }) = compile(&text, limits(1 << 20)) else {
         panic!("the facade refuses the source at the recompile");
     };
     assert_eq!(refusal.code(), expected.code());
@@ -149,7 +149,7 @@ fn a_library_with_the_units_owner_refuses() {
 #[test]
 fn stage_limits_refuse_as_the_replay_recompile_does() {
     let text = format!("{HEADER}{LIST}");
-    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(4)) else {
+    let Err(ReplayRefusal::Recompile { refusal, .. }) = compile(&text, limits(4)) else {
         panic!("a 4-byte S1 limit stops the source");
     };
     assert_eq!(refusal.code(), Code::StageLimitExceeded);
@@ -221,7 +221,7 @@ fn a_domain_package_is_the_i1_input_as_in_the_spine() {
     assert_eq!(compiled.bytes(), bytes.as_slice());
 
     let expected = spine_run(&text, &BTreeMap::new()).expect_err("the spine refuses at I1");
-    let Err(ReplayRefusal::Recompile(refusal)) = compile(&text, limits(1 << 20)) else {
+    let Err(ReplayRefusal::Recompile { refusal, .. }) = compile(&text, limits(1 << 20)) else {
         panic!("the facade refuses the unit at the recompile");
     };
     assert_eq!(refusal.code(), expected.code());
