@@ -1421,7 +1421,8 @@ impl<'a> WorkInputs<'_, 'a> {
         let item = &negotiated.item;
         let temporal_kind = match &item.form {
             Some(ItemForm::Temporal(form)) => form.item_kind,
-            Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
+            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            | None => ItemKind::Formula,
         };
         let family = (self.family)(temporal_kind, &item.claim);
         let mut built = match (&item.form, route) {
@@ -1487,7 +1488,8 @@ impl<'a> WorkInputs<'_, 'a> {
                 Some(crate::protocol_analysis::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
-            Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => None,
+            Some(ItemForm::FiniteHyper(_) | ItemForm::Probabilistic(_) | ItemForm::Hybrid(_))
+            | None => None,
         };
         if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =
             (expected, &negotiated.disposition)
