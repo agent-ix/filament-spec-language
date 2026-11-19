@@ -3494,7 +3494,7 @@ fn at_least_as_fair(left: &[FairMark], right: &[FairMark]) -> bool {
     left.iter().zip(right).all(|(left, right)| {
         (!right.taken || left.taken)
             && (!left.enabled_somewhere || right.enabled_somewhere)
-            && (!right.enabled_everywhere || left.enabled_everywhere)
+            && (!left.enabled_everywhere || right.enabled_everywhere)
     })
 }
 
@@ -3674,6 +3674,31 @@ mod tests {
         _: &[ModelTransition],
     ) -> Result<Vec<AbstractClass>, InternalFault> {
         Err(InternalFault::new("refinement-liveness", "injected"))
+    }
+
+    #[trace("FR-899-AC-6")]
+    #[test]
+    fn a_weakly_enabled_everywhere_label_does_not_subsume_a_fair_label() {
+        let enabled_everywhere = vec![FairMark {
+            taken: false,
+            enabled_somewhere: true,
+            enabled_everywhere: true,
+        }];
+        let not_enabled_everywhere = vec![FairMark {
+            taken: false,
+            enabled_somewhere: true,
+            enabled_everywhere: false,
+        }];
+
+        assert!(at_least_as_fair(&not_enabled_everywhere, &enabled_everywhere));
+        assert!(!at_least_as_fair(&enabled_everywhere, &not_enabled_everywhere));
+
+        let mut relation = CandidateRelation::new();
+        let pair = (vec![0], vec![0]);
+        insert_relation_label(&mut relation, pair.clone(), enabled_everywhere);
+        insert_relation_label(&mut relation, pair.clone(), not_enabled_everywhere.clone());
+
+        assert_eq!(relation.get(&pair), Some(&vec![not_enabled_everywhere]));
     }
 
     /// FR-143-AC-7 (TC-548 step 7): an internal fault of the second phase,
