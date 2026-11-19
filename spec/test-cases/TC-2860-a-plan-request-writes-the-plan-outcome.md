@@ -21,5 +21,5 @@ Verify the plan outcome document, its exits and the strict request reader. Scope
 ## Expected Results
 
 - Step 1: `filament.plan-outcome/v1` with its members, exit 0.
-- Step 2: `plan` null, exit 10; `unknown-member` at `/synthesis/<member>`, exit 20.
-- Step 3: no member absent; `objective.value`, `replay` and `bound` `null` on `infeasible`; `{"type": "integer", "value": "1"}` on `optimal`; `unknown-member` at `/synthesis/engines`, exit 20.
+- Step 2: `plan` null, exit 10; `unknown-member` at `/request/synthesis/<member>`, exit 20.
+- Step 3: no member absent; `objective.value`, `replay` and `bound` `null` on `infeasible`; `{"type": "integer", "value": "1"}` on `optimal`; `unknown-member` at `/request/synthesis/engines`, exit 20.
