@@ -134,3 +134,71 @@ fn decimal_narrowing_preserves_values_without_rounding_or_clamping() {
         result.outcome
     );
 }
+
+#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn rational_to_integer_requires_integrality_without_rounding() {
+    let bounded = package(
+        "function f using v(x: Rational[0,20;1,10]): Int[0,9] pure { convert<Int[0,9]>(x) }",
+        CheckMode::Kernel,
+    );
+    match call(
+        &bounded,
+        Value::Rational(Rational::from_integer(Integer::from(5))),
+    )
+    .outcome
+    {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => {
+            assert_eq!(value, Integer::from(5))
+        }
+        other => panic!("expected integer 5: {other:?}"),
+    }
+    let fraction = || Value::Rational(Rational::new(Integer::from(3), Integer::from(2)).unwrap());
+    assert!(matches!(
+        call(&bounded, fraction()).outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain { .. }))
+    ));
+    let unbounded = package(
+        "function f using v(x: Rational[0,20;1,10]): Integer pure { convert<Integer>(x) }",
+        CheckMode::Kernel,
+    );
+    match call(&unbounded, fraction()).outcome {
+        FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Refused(cause)) => {
+            assert_eq!(cause.catalog_code().code(), "undefined_expression");
+            assert_eq!(cause.catalog_code().cause(), "unproved-range");
+        }
+        other => panic!("expected an unmet integrality obligation: {other:?}"),
+    }
+}
+
+#[trace("FR-093", "FR-096-AC-8", "FSpec-FR-149")]
+#[test]
+fn integer_range_narrowing_uses_rational_and_decimal_target_domains() {
+    let rational = package(
+        "function f using v(n: Integer): Rational[0,9;1,1] pure { convert<Rational[0,9;1,1]>(n) }",
+        CheckMode::Kernel,
+    );
+    match call(&rational, Value::Integer(Integer::from(5))).outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Rational(value))) => {
+            assert_eq!(value, Rational::from_integer(Integer::from(5)))
+        }
+        other => panic!("expected exact 5/1: {other:?}"),
+    }
+    assert!(matches!(
+        call(&rational, Value::Integer(Integer::from(10))).outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::RationalOutOfDomain { .. }))
+    ));
+    let decimal = package("function f using v(n: Integer): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(n) }", CheckMode::Kernel);
+    let result = call(&decimal, Value::Integer(Integer::from(5)));
+    assert!(result.losses.is_empty());
+    match result.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Decimal(value))) => {
+            assert_eq!(value.normalized().coefficient(), &Integer::from(5))
+        }
+        other => panic!("expected decimal 5: {other:?}"),
+    }
+    assert!(matches!(
+        call(&decimal, Value::Integer(Integer::from(10))).outcome,
+        FamilyOutcome::Evaluated(Outcome::Refused(Refusal::DecimalOutOfDomain { .. }))
+    ));
+}

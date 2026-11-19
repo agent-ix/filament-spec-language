@@ -3467,6 +3467,16 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     };
                     Value::Quantity(Quantity::new(magnitude, unit_id))
                 } else {
+                    if matches!(target_type, ValueType::Integer)
+                        && matches!(&value, Value::Rational(value) if !value.is_integer())
+                    {
+                        // Integer has no finite domain to put in an
+                        // IntegerOutOfDomain payload. Preserve the unmet
+                        // conversion obligation in the native refusal.
+                        return Err(Halt::Family(FamilyResult::Refused(Box::new(
+                            super::causes::NonintegralNarrowing,
+                        ))));
+                    }
                     let converted = operand_value(
                         self.world.types(),
                         operand,
