@@ -1477,7 +1477,12 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
     assert_eq!(
         slots
             .iter()
-            .map(|slot| literal(target(&wire, slot), "value"))
+            .map(|slot| {
+                target(&wire, slot)["body"]["value"]
+                    .as_u64()
+                    .expect("a literal slot value")
+                    .to_string()
+            })
             .collect::<Vec<_>>(),
         ["0", "1"]
     );
