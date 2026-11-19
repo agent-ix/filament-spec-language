@@ -992,7 +992,12 @@ fn a_node_that_is_no_temporal_clause_is_unresolved_over_the_bare_package() {
     for id in [other, absent] {
         let mut meter = super::temporal_package_route::unlimited();
         let refused = evaluation
-            .evaluate_temporal_evidence(&id, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &id,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         assert_eq!(
             super::temporal_package_route::cause(&refused.expect_err("refused")),
@@ -1367,7 +1372,12 @@ fn bytes_that_differ_from_the_source_drive_the_bare_result() {
     ] {
         let mut meter = super::temporal_package_route::unlimited();
         let refused = source_route
-            .evaluate_temporal_evidence(&clause, &asked, &mut meter)
+            .evaluate_temporal_evidence(
+                &crate::support::observation_producer(),
+                &clause,
+                &asked,
+                &mut meter,
+            )
             .map(|issued| issued.result().clone());
         let refused = refused.expect_err("the source differs from the bytes");
         assert_eq!(

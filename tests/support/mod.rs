@@ -9,6 +9,13 @@ pub mod refinement_cas;
 pub mod spine_model;
 pub mod workspace;
 
+pub(crate) fn observation_producer() -> filament_observation::AdmittedStaticBundle {
+    fsl_eval::temporal::evidence::producer_bundle()
+        .expect("fixed producer selection")
+        .admit()
+        .expect("caller admits producer")
+}
+
 #[path = "admitted_charge.rs"]
 mod admitted_charge;
 pub(crate) use admitted_charge::admitted_charge_points;

@@ -259,7 +259,16 @@ fn incomplete_of(stop: EvidenceStop) -> EvidenceIncomplete {
 /// contradiction (FR-502), a relation refusal (FR-526), a delivery
 /// contradiction (FR-524) or a `trigger-required` / `trigger-unknown`
 /// selection; `CallFailure::Fault` for a broken invariant.
+///
+/// A caller-admitted producer bundle is mandatory:
+/// ```compile_fail
+/// use fsl_eval::temporal::evidence::{evaluate_temporal_evidence, EvidenceSubject, EvidenceRequest};
+/// fn missing_bundle(subject: &EvidenceSubject<'_>, request: &EvidenceRequest, meter: &mut filament_exact::Meter) {
+///     let _ = evaluate_temporal_evidence(subject, request, meter);
+/// }
+/// ```
 pub fn evaluate_temporal_evidence(
+    producer: &filament_observation::AdmittedStaticBundle,
     subject: &EvidenceSubject<'_>,
     request: &EvidenceRequest,
     meter: &mut Meter,
@@ -267,7 +276,7 @@ pub fn evaluate_temporal_evidence(
     let resolved = resolve(subject, request)?;
     let facts = admit(&resolved, request, meter)?;
     let shape = resolved.shape();
-    let outcome = assess(&facts, &shape, meter)?;
+    let outcome = assess(producer, &facts, &shape, meter)?;
     Ok(EvaluatedEvidence {
         result: conclude(&facts, outcome, meter),
     })
@@ -1527,7 +1536,34 @@ fn disposition_outcome(disposition: Disposition) -> Outcome {
     }
 }
 
+fn owner_disposition(
+    view: &filament_observation::authority::activation::ActivationView,
+    scope: TriggerScope,
+    execution: super::activation::ExecutionDisposition,
+) -> Disposition {
+    use filament_observation::authority::activation::{ActivationState as State, EvidenceState};
+    match view.activation() {
+        State::Active => Disposition::Active,
+        State::Inactive => Disposition::Inactive,
+        State::Unknown => Disposition::Unknown {
+            kind: match scope.evidence {
+                super::trigger::TriggerEvidence::Missing => UnknownKind::Missing,
+                super::trigger::TriggerEvidence::Refused => UnknownKind::Refused,
+                super::trigger::TriggerEvidence::Admitted => UnknownKind::Open,
+            },
+            completeness: match view.evidence() {
+                EvidenceState::Complete => super::activation::Completeness::Complete,
+                EvidenceState::Incomplete | EvidenceState::Contradicted => {
+                    super::activation::Completeness::Incomplete
+                }
+            },
+            execution,
+        },
+    }
+}
+
 fn assess(
+    producer: &filament_observation::AdmittedStaticBundle,
     facts: &Facts<'_>,
     shape: &ClauseShape,
     meter: &mut Meter,
@@ -1626,6 +1662,7 @@ fn assess(
         .canonical_package_bytes
         .map(|_| {
             super::owner::admit_trace(
+                producer,
                 facts.subject.package_subject,
                 request,
                 &facts.authenticated,
@@ -1634,6 +1671,15 @@ fn assess(
             )
         })
         .transpose()?;
+    if let Some(owner) = &owner {
+        owner.completeness_view(
+            request
+                .completeness
+                .as_ref()
+                .map_or(ProgressCompleteness::Incomplete, |record| record.state),
+            None,
+        )?;
+    }
     let canonical_anchor = (0..trace.len())
         .find(|index| {
             trace
@@ -1748,8 +1794,39 @@ fn run_instance(
         Err(ActivationStop::Stop(stop)) => return Ok(Outcome::stopped(incomplete_of(stop))),
     };
     let mut instances = activation.instances.clone();
+    let owner_disposition = if let Some(owner) = owner.as_ref() {
+        let selected = request.trigger.as_ref().and_then(|trigger| {
+            instances
+                .iter()
+                .find(|instance| &instance.identity == trigger)
+        });
+        if selected.is_none() || shape.capture_names().next().is_none() {
+            let supplied = trace
+                .supplied_index(TemporalPosition::new(*activation_position as u64))
+                .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+            let anchor = request
+                .positions
+                .get(supplied)
+                .ok_or_else(|| fault("activation-anchor-is-supplied"))?;
+            let view = owner.activation_view(
+                &facts.authenticated,
+                request.cover,
+                anchor,
+                selected.map(|instance| super::owner::ActivationInstance {
+                    identity: &instance.identity,
+                    captures: Vec::new(),
+                }),
+                *scope,
+            )?;
+            Some(owner_disposition(view.payload(), *scope, request.execution))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let mut outcome = match &request.trigger {
-        None => no_instance(*scope, request),
+        None => owner_disposition.map_or_else(|| no_instance(*scope, request), disposition_outcome),
         Some(trigger) => {
             let mut resolved = instances
                 .iter()
@@ -1767,7 +1844,8 @@ fn run_instance(
                 }
             }
             match resolved {
-                None => no_instance(*scope, request),
+                None => owner_disposition
+                    .map_or_else(|| no_instance(*scope, request), disposition_outcome),
                 Some(instance) => match &instance.state {
                     InstanceState::Unavailable(instance_fault) => {
                         Outcome::of(ActivationState::Unavailable).with_non_value(

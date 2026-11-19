@@ -362,6 +362,13 @@ pub(crate) fn unlimited() -> Meter {
     Meter::new(SCALAR_LIMITS_UNLIMITED)
 }
 
+pub(crate) fn producer() -> filament_observation::AdmittedStaticBundle {
+    fsl_eval::temporal::evidence::producer_bundle()
+        .expect("fixed producer selection")
+        .admit()
+        .expect("caller admits producer")
+}
+
 pub(crate) fn scope() -> TriggerScope {
     TriggerScope {
         closure: ProgressClosure::Closed,
@@ -934,8 +941,13 @@ pub(crate) fn call(
     request: &EvidenceRequest,
 ) -> Result<EvidenceResult, CallFailure> {
     let _ = env;
-    evaluate_temporal_evidence(subject, request, &mut unlimited())
-        .map(|issued| issued.result().clone())
+    evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        subject,
+        request,
+        &mut unlimited(),
+    )
+    .map(|issued| issued.result().clone())
 }
 
 pub(crate) fn expect_refusal(result: Result<EvidenceResult, CallFailure>, cause: &str) {
@@ -1047,8 +1059,13 @@ fn deliveries_resolve_instances_and_a_contradiction_is_refused_uncharged() {
     let mut clash = two.clone();
     clash.deliveries[2].payload = Payload::new(b"other".as_slice());
     let mut meter = unlimited();
-    let refused = evaluate_temporal_evidence(&subject, &clash, &mut meter)
-        .map(|issued| issued.result().clone());
+    let refused = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &clash,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone());
     expect_refusal(refused, "delivery-contradiction");
     assert!(meter.admitted_charges().is_empty());
 }
@@ -1237,8 +1254,13 @@ fn a_regressing_watermark_is_refused_and_the_progress_ledger_is_unchanged() {
     asked.progress_ledger = Some(kept.clone());
     asked.decision_progress = Some(50);
     let mut meter = unlimited();
-    let refused = evaluate_temporal_evidence(&subject, &asked, &mut meter)
-        .map(|issued| issued.result().clone());
+    let refused = evaluate_temporal_evidence(
+        &crate::temporal_activation::producer(),
+        &subject,
+        &asked,
+        &mut meter,
+    )
+    .map(|issued| issued.result().clone());
     expect_refusal(refused, "progress-contradiction");
     assert!(meter.admitted_charges().is_empty());
     let binding = {
