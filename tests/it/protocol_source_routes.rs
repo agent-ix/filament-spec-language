@@ -93,10 +93,7 @@ fn original_protocol_declarations_communications_and_refusals() {
 }
 
 #[test]
-#[trace(
-    "FR-218", "FR-219", "FR-220", "FR-223", "FR-224", "FR-225", "FR-226", "FR-227", "FR-228",
-    "FR-229", "FR-230", "FR-231", "FR-232", "FR-233"
-)]
+#[trace("FR-218", "FR-219", "FR-220")]
 fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repository() {
     let directory = tempfile::tempdir().unwrap();
     for file in [
@@ -112,7 +109,7 @@ fn authoritative_parts_saga_protocol_constructs_compile_from_their_own_repositor
 }
 
 #[test]
-#[trace("FR-218", "FR-220", "FR-224", "FR-225", "FR-226", "FR-231", "FR-233")]
+#[trace("FR-218", "FR-220", "FR-224", "FR-226")]
 fn authoritative_parts_saga_rejects_invalid_protocols_at_the_right_boundary() {
     let directory = tempfile::tempdir().unwrap();
     for (file, code, cause) in [
@@ -306,7 +303,7 @@ fn source_projection_preserves_send_receive_direction_and_local_order() {
             "receive Seen via Queue of Sent as (got: Note) { true };",
             "receive Seen via Queue of Sent as (got: Note) { true };\n\
          send Next via Queue as (next: Note) { true };\n\
-         receive After via Queue of Next as (after: Note) { true };",
+         receive Delivered via Queue of Next as (delivered: Note) { true };",
         ),
     )
     .unwrap();
