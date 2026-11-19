@@ -2439,7 +2439,6 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
         match next {
             filament_exact::ValueType::Rational(_) => return Some("Rational"),
             filament_exact::ValueType::Decimal(_) => return Some("Decimal"),
-            filament_exact::ValueType::Float(_) => return Some("Float"),
             filament_exact::ValueType::Quantity(_) => return Some("Quantity"),
             filament_exact::ValueType::BoundedQuantity(_) => return Some("BoundedQuantity"),
             filament_exact::ValueType::CarriedQuantity(_) => return Some("CarriedQuantity"),
@@ -2450,6 +2449,7 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
             filament_exact::ValueType::Boolean
             | filament_exact::ValueType::Integer
             | filament_exact::ValueType::Int(_)
+            | filament_exact::ValueType::Float(_)
             | filament_exact::ValueType::Text(_)
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Uuid
