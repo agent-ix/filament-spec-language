@@ -13,8 +13,9 @@ use fsl_semantics::check::{ArithmeticOp, CompareOp, LogicOp};
 
 use super::expand::{Exp, RangeRole, TermLocus};
 use super::poly::{Poly, RatFunc};
+use super::poly2::{Poly2, RatFunc2};
 use super::real::ExactReal;
-use super::{ExactGap, UndefinedCause};
+use super::{ExactGap, HybridReplayRefusal, UndefinedCause};
 
 /// A capture's value, read throughout its obligation.
 #[derive(Clone, Debug)]
@@ -23,18 +24,144 @@ pub(crate) enum Constant {
     Boolean(bool),
 }
 
-/// What an evaluation reads: each variable as a polynomial in the clock,
-/// each capture, and each activation variable.
-pub(crate) struct Env<'a> {
-    pub(crate) variables: &'a [Poly],
+/// The exact arithmetic an evaluation runs in: one real variable (the
+/// instant of a dwell), or two (the instant and a quantified post-jump
+/// variable).
+pub(crate) trait Algebra {
+    /// What a variable reads as.
+    type Var: Clone;
+    /// An exact numeric value: a rational function.
+    type Value: Clone;
+    /// What a decision's sign is read from.
+    type Poly: Clone;
+    fn variable(var: &Self::Var) -> Self::Value;
+    fn constant(value: &Rational) -> Self::Value;
+    fn add(a: &Self::Value, b: &Self::Value) -> Self::Value;
+    fn sub(a: &Self::Value, b: &Self::Value) -> Self::Value;
+    fn mul(a: &Self::Value, b: &Self::Value) -> Self::Value;
+    /// `a / b`, `b` not the zero function.
+    fn div(a: &Self::Value, b: &Self::Value) -> Self::Value;
+    fn neg(a: &Self::Value) -> Self::Value;
+    /// The polynomial that is zero exactly where `value` is zero.
+    fn numerator(value: &Self::Value) -> Self::Poly;
+    /// The polynomial whose sign is `value`'s sign wherever it is defined.
+    fn sign_poly(value: &Self::Value) -> Self::Poly;
+}
+
+/// A point at which an evaluation reads the sign of a polynomial.
+pub(crate) trait Probe<A: Algebra> {
+    fn sign(&self, poly: &A::Poly) -> Ordering;
+}
+
+/// Evaluation in one real variable: the instant along a dwell.
+pub(crate) struct Uni;
+
+impl Algebra for Uni {
+    type Var = Poly;
+    type Value = RatFunc;
+    type Poly = Poly;
+
+    fn variable(var: &Poly) -> RatFunc {
+        RatFunc::poly(var.clone())
+    }
+
+    fn constant(value: &Rational) -> RatFunc {
+        RatFunc::constant(value.clone())
+    }
+
+    fn add(a: &RatFunc, b: &RatFunc) -> RatFunc {
+        a.add(b)
+    }
+
+    fn sub(a: &RatFunc, b: &RatFunc) -> RatFunc {
+        a.sub(b)
+    }
+
+    fn mul(a: &RatFunc, b: &RatFunc) -> RatFunc {
+        a.mul(b)
+    }
+
+    fn div(a: &RatFunc, b: &RatFunc) -> RatFunc {
+        a.div(b)
+    }
+
+    fn neg(a: &RatFunc) -> RatFunc {
+        a.neg()
+    }
+
+    fn numerator(value: &RatFunc) -> Poly {
+        value.numerator.clone()
+    }
+
+    fn sign_poly(value: &RatFunc) -> Poly {
+        value.sign_poly()
+    }
+}
+
+impl Probe<Uni> for ExactReal {
+    fn sign(&self, poly: &Poly) -> Ordering {
+        self.sign_of(poly)
+    }
+}
+
+/// Evaluation in two real variables: the instant `t` of a dwell and a
+/// quantified post-jump variable `x`.
+pub(crate) struct Bi;
+
+impl Algebra for Bi {
+    type Var = Poly2;
+    type Value = RatFunc2;
+    type Poly = Poly2;
+
+    fn variable(var: &Poly2) -> RatFunc2 {
+        RatFunc2::of(var.clone())
+    }
+
+    fn constant(value: &Rational) -> RatFunc2 {
+        RatFunc2::constant(value.clone())
+    }
+
+    fn add(a: &RatFunc2, b: &RatFunc2) -> RatFunc2 {
+        a.add(b)
+    }
+
+    fn sub(a: &RatFunc2, b: &RatFunc2) -> RatFunc2 {
+        a.sub(b)
+    }
+
+    fn mul(a: &RatFunc2, b: &RatFunc2) -> RatFunc2 {
+        a.mul(b)
+    }
+
+    fn div(a: &RatFunc2, b: &RatFunc2) -> RatFunc2 {
+        a.div(b)
+    }
+
+    fn neg(a: &RatFunc2) -> RatFunc2 {
+        a.neg()
+    }
+
+    fn numerator(value: &RatFunc2) -> Poly2 {
+        value.numerator.clone()
+    }
+
+    fn sign_poly(value: &RatFunc2) -> Poly2 {
+        value.sign_poly()
+    }
+}
+
+/// What an evaluation reads: each variable, each capture, and each
+/// activation variable.
+pub(crate) struct Env<'a, A: Algebra = Uni> {
+    pub(crate) variables: &'a [A::Var],
     pub(crate) captures: &'a [Constant],
-    pub(crate) activation: &'a [Rational],
+    pub(crate) activation: &'a [A::Var],
 }
 
 /// An exact value at one instant.
 #[derive(Clone, Debug)]
-pub(crate) enum Ev {
-    Number(RatFunc),
+pub(crate) enum Ev<V = RatFunc> {
+    Number(V),
     Boolean(bool),
     /// The expression has no value there.
     Undefined {
@@ -51,9 +178,19 @@ pub(crate) fn eval(
     at: &ExactReal,
     decisions: &mut Vec<Poly>,
 ) -> Result<Ev, ExactGap> {
+    eval_in::<Uni, ExactReal>(exp, env, at, decisions)
+}
+
+/// [`eval`] in the arithmetic `A`, at the point `at`.
+pub(crate) fn eval_in<A: Algebra, P: Probe<A>>(
+    exp: &Exp,
+    env: &Env<'_, A>,
+    at: &P,
+    decisions: &mut Vec<A::Poly>,
+) -> Result<Ev<A::Value>, ExactGap> {
     macro_rules! number {
         ($e:expr) => {
-            match eval($e, env, at, decisions)? {
+            match eval_in::<A, P>($e, env, at, decisions)? {
                 Ev::Number(value) => value,
                 undefined @ Ev::Undefined { .. } => return Ok(undefined),
                 Ev::Boolean(_) => return Err(ExactGap::IllKindedTerm),
@@ -62,49 +199,43 @@ pub(crate) fn eval(
     }
     macro_rules! truth {
         ($e:expr) => {
-            match eval($e, env, at, decisions)? {
+            match eval_in::<A, P>($e, env, at, decisions)? {
                 Ev::Boolean(value) => value,
                 undefined @ Ev::Undefined { .. } => return Ok(undefined),
                 Ev::Number(_) => return Err(ExactGap::IllKindedTerm),
             }
         };
     }
-    let sign = |value: &RatFunc, decisions: &mut Vec<Poly>| {
-        let poly = value.sign_poly();
-        let sign = at.sign_of(&poly);
+    let sign = |value: &A::Value, decisions: &mut Vec<A::Poly>| {
+        let poly = A::sign_poly(value);
+        let sign = at.sign(&poly);
         decisions.push(poly);
         sign
     };
     Ok(match exp {
-        Exp::Variable(i) => Ev::Number(RatFunc::poly(
-            env.variables
-                .get(*i)
-                .cloned()
-                .ok_or(ExactGap::IllKindedTerm)?,
+        Exp::Variable(i) => Ev::Number(A::variable(
+            env.variables.get(*i).ok_or(ExactGap::IllKindedTerm)?,
         )),
-        Exp::Activation(i) => Ev::Number(RatFunc::constant(
-            env.activation
-                .get(*i)
-                .cloned()
-                .ok_or(ExactGap::ActivationState)?,
+        Exp::Activation(i) => Ev::Number(A::variable(
+            env.activation.get(*i).ok_or(ExactGap::ActivationState)?,
         )),
         Exp::Capture(i) => match env.captures.get(*i).ok_or(ExactGap::ActivationState)? {
-            Constant::Number(value) => Ev::Number(RatFunc::constant(value.clone())),
+            Constant::Number(value) => Ev::Number(A::constant(value)),
             Constant::Boolean(value) => Ev::Boolean(*value),
         },
         Exp::Parameter(_) | Exp::Recursive(_) => return Err(ExactGap::RecursiveCall),
-        Exp::Number(value) => Ev::Number(RatFunc::constant(value.clone())),
+        Exp::Number(value) => Ev::Number(A::constant(value)),
         Exp::Boolean(value) => Ev::Boolean(*value),
-        Exp::Negate(a) => Ev::Number(number!(a).neg()),
+        Exp::Negate(a) => Ev::Number(A::neg(&number!(a))),
         Exp::Arithmetic(op, a, b, locus) => {
             let (a, b) = (number!(a), number!(b));
             Ev::Number(match op {
-                ArithmeticOp::Add => a.add(&b),
-                ArithmeticOp::Sub => a.sub(&b),
-                ArithmeticOp::Mul => a.mul(&b),
+                ArithmeticOp::Add => A::add(&a, &b),
+                ArithmeticOp::Sub => A::sub(&a, &b),
+                ArithmeticOp::Mul => A::mul(&a, &b),
                 ArithmeticOp::Div => {
-                    let divisor = b.numerator.clone();
-                    let zero = at.sign_of(&divisor) == Ordering::Equal;
+                    let divisor = A::numerator(&b);
+                    let zero = at.sign(&divisor) == Ordering::Equal;
                     decisions.push(divisor);
                     if zero {
                         return Ok(Ev::Undefined {
@@ -112,12 +243,12 @@ pub(crate) fn eval(
                             cause: UndefinedCause::DivisionByZero,
                         });
                     }
-                    a.div(&b)
+                    A::div(&a, &b)
                 }
             })
         }
         Exp::Compare(op, a, b) => {
-            let difference = number!(a).sub(&number!(b));
+            let difference = A::sub(&number!(a), &number!(b));
             let s = sign(&difference, decisions);
             Ev::Boolean(match op {
                 CompareOp::Eq => s == Ordering::Equal,
@@ -139,9 +270,9 @@ pub(crate) fn eval(
         }
         Exp::Conditional(c, a, b) => {
             if truth!(c) {
-                eval(a, env, at, decisions)?
+                eval_in::<A, P>(a, env, at, decisions)?
             } else {
-                eval(b, env, at, decisions)?
+                eval_in::<A, P>(b, env, at, decisions)?
             }
         }
         Exp::Ranged {
@@ -153,12 +284,10 @@ pub(crate) fn eval(
             let value = number!(value);
             let mut inside = true;
             if let Some(lower) = &range.lower {
-                inside &= sign(&value.sub(&RatFunc::constant(lower.clone())), decisions)
-                    != Ordering::Less;
+                inside &= sign(&A::sub(&value, &A::constant(lower)), decisions) != Ordering::Less;
             }
             if let Some(upper) = &range.upper {
-                inside &= sign(&RatFunc::constant(upper.clone()).sub(&value), decisions)
-                    != Ordering::Less;
+                inside &= sign(&A::sub(&A::constant(upper), &value), decisions) != Ordering::Less;
             }
             if !inside {
                 return Ok(Ev::Undefined {
@@ -209,13 +338,28 @@ fn ceiling_bound(x: &ExactReal) -> Rational {
     }
 }
 
-fn eval_all(exps: &[Exp], env: &Env<'_>, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), ExactGap> {
-    let mut decisions = Vec::new();
-    let values = exps
-        .iter()
-        .map(|exp| eval(exp, env, at, &mut decisions))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok((values, decisions))
+/// What `cells` splits a stretch for: the values of some expressions at an
+/// instant and every polynomial whose sign the evaluation read.
+pub(crate) trait Evaluate {
+    fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal>;
+}
+
+/// The expressions `exps` evaluated directly in `env`.
+struct Direct<'a> {
+    exps: &'a [Exp],
+    env: &'a Env<'a>,
+}
+
+impl Evaluate for Direct<'_> {
+    fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
+        let mut decisions = Vec::new();
+        let values = self
+            .exps
+            .iter()
+            .map(|exp| eval(exp, self.env, at, &mut decisions))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((values, decisions))
+    }
 }
 
 /// The cells of `[low, high]` (`[low, high)` when `!high_closed`), in
@@ -226,29 +370,46 @@ pub(crate) fn cells(
     low: &ExactReal,
     high: &ExactReal,
     high_closed: bool,
-) -> Result<Vec<Cell>, ExactGap> {
+) -> Result<Vec<Cell>, HybridReplayRefusal> {
+    cells_of(&mut Direct { exps, env }, low, high, high_closed)
+}
+
+/// The instant `at` as a cell of its own.
+fn point_cell(
+    evaluator: &mut impl Evaluate,
+    at: &ExactReal,
+    done: &mut Vec<Cell>,
+) -> Result<(), HybridReplayRefusal> {
+    let (values, _) = evaluator.at(at)?;
+    done.push(Cell {
+        low: at.clone(),
+        high: at.clone(),
+        point: true,
+        values,
+    });
+    Ok(())
+}
+
+/// The cells of `[low, high]` (`[low, high)` when `!high_closed`), in
+/// order, over which `evaluator`'s values are constant.
+pub(crate) fn cells_of(
+    evaluator: &mut impl Evaluate,
+    low: &ExactReal,
+    high: &ExactReal,
+    high_closed: bool,
+) -> Result<Vec<Cell>, HybridReplayRefusal> {
     let mut done = Vec::new();
-    let point = |at: &ExactReal, done: &mut Vec<Cell>| -> Result<(), ExactGap> {
-        let (values, _) = eval_all(exps, env, at)?;
-        done.push(Cell {
-            low: at.clone(),
-            high: at.clone(),
-            point: true,
-            values,
-        });
-        Ok(())
-    };
-    point(low, &mut done)?;
+    point_cell(evaluator, low, &mut done)?;
     let mut pending = Vec::new();
     if low < high {
         if high_closed {
-            point(high, &mut done)?;
+            point_cell(evaluator, high, &mut done)?;
         }
         pending.push((low.clone(), high.clone()));
     }
     while let Some((a, b)) = pending.pop() {
         let sample = ExactReal::Rational(a.between(&b));
-        let (values, decisions) = eval_all(exps, env, &sample)?;
+        let (values, decisions) = evaluator.at(&sample)?;
         let mut splits: Vec<ExactReal> = Vec::new();
         for decision in &decisions {
             for root in decision.roots_in(&floor_bound(&a), &ceiling_bound(&b)) {
@@ -270,7 +431,7 @@ pub(crate) fn cells(
         splits.dedup();
         let mut from = a;
         for split in splits {
-            point(&split, &mut done)?;
+            point_cell(evaluator, &split, &mut done)?;
             pending.push((from, split.clone()));
             from = split;
         }
