@@ -83,3 +83,5 @@ exactly (FND-003). Each is a small fix inside this PR. Not mergeable until they 
 | FND-004 | fixed | - |
 | FND-005 | fixed | - |
 | FND-006 | rejected | withdrawn by the reviewer. Until QSL-2511 wires these items, `pub` is what keeps them clean under `-D warnings` without `#[allow]`; the `pub(crate)` fix produced FND-007 |
+| FND-007 | fixed | - |
+| FND-008 | fixed | - |
