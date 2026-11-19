@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile e = "filament.temporal.event-position.false-extension/v1";
+model Fleet = "example/rover";
+temporal Fraction using e over (r: Fleet::Rover) clock "events" on origin {
+  always[0,2] (fraction holds(r.stopped) over past[0,2] min_count 1 >= rational(0,1))
+}
