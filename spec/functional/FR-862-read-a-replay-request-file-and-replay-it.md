@@ -89,6 +89,13 @@ result; the exit code is FR-285's for its category.
   error.
 - The analyze reader SHALL refuse a `native-replay/1` file, and the replay
   reader an analyze document, with `invalid-request` naming `format`, as FR-620 refuses a mismatched analyze document.
+- If a row of the replay's FSpec FR-323 `results` document cannot be
+  serialized, the replay verb SHALL report FR-301 internal-failure, exit 30,
+  from S8's output step: the outcome document carries one diagnostic with
+  code `output-failure` naming the row's zero-based position, `last_stage`
+  `null` because no stage refused, and no `results` document, partial or
+  whole, is written, so a caller never reads a results document missing a
+  row.
 
 ## Acceptance Criteria
 
@@ -96,6 +103,7 @@ result; the exit code is FR-285's for its category.
 |----|----------|--------------|
 | FR-862-AC-1 | Through `command::run`, a `native-replay/1` request whose `R` is a complete FSpec FR-336 replay request with an added member `clocks` refuses at stage `request`, `invalid-request`, exit 20, naming `clocks`, with no result on stdout; the same request with an added member `extra` refuses naming `extra`; a `native-replay/1` request with an empty `R` refuses naming the first required member. None is refused as an unknown request format. | Test (TC-2443) |
 | FR-862-AC-2 | Through `command::run`, the `native-replay/1` request carrying FR-640-AC-11's replay of the function `entry` (its package with `test/plant` as its one `dependencies` entry and its sources in `byte_provision` files) settles `reproduced-without-witness` with the value the in-process `fsl_replay::replay` gives, exit 0; the same request with the package's `lib-ms` `dependency_clock_selections` entry removed refuses `missing-clock-selection` as FR-640-AC-11 states. | Test (TC-2443) |
+| FR-862-AC-3 | A replay whose results row at position 0 fails to encode writes an outcome document with `category` `internal-failure`, exit 30, `last_stage` `null` and one `output-failure` diagnostic naming position 0, and writes no `results` document. | Test (TC-2443) |
 
 ## Dependencies
 
