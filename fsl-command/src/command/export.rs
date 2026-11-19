@@ -14,18 +14,16 @@ use super::{
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
-use request::{EffectiveLimits, Request};
+use request::Request;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-
-/// The generator identity the `package` member records (FSpec FR-817).
-const GENERATOR_IDENTITY: &str = "filament-spec-language/export";
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Disposition {
     Preserved,
     Unrepresented,
+    Refused,
 }
 
 impl Disposition {
@@ -33,6 +31,7 @@ impl Disposition {
         match self {
             Self::Preserved => "preserved",
             Self::Unrepresented => "unrepresented",
+            Self::Refused => "refused",
         }
     }
 }
@@ -63,7 +62,10 @@ impl Record {
     fn fails(&self, floor: request::Floor) -> bool {
         match floor {
             request::Floor::Any => false,
-            request::Floor::Conditional => self.disposition == Disposition::Unrepresented,
+            request::Floor::Conditional => matches!(
+                self.disposition,
+                Disposition::Unrepresented | Disposition::Refused
+            ),
             request::Floor::Preserved => self.disposition != Disposition::Preserved,
         }
     }
@@ -76,9 +78,19 @@ pub(super) enum Mapped {
         text: String,
         name_map: Vec<Value>,
         records: Vec<Record>,
+        /// The first obligation the target can state and this build does
+        /// not lower.
+        unlowered: Option<Unlowered>,
     },
-    /// A denied export charge: the setting that stopped it.
-    Incomplete { setting: &'static str },
+    /// A denied export charge: the setting that stopped it and its bound.
+    Incomplete { setting: &'static str, bound: u64 },
+}
+
+/// An obligation the mapper met and does not lower (FSpec FR-811: a mapper
+/// failure, never a record).
+pub(super) struct Unlowered {
+    pub(super) obligation: String,
+    pub(super) construct: String,
 }
 
 /// The facts of the compiled program the outcome's `package` member names.
@@ -129,7 +141,7 @@ pub(super) fn run_bytes(
     let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
     let compile: wire::CompileRequest = super::request(&compile)?;
     let mapped = compile_and_map(directory, &compile, &request, limits, overrides)?;
-    finish(&request, &mapped.0, mapped.1, output.as_deref())
+    finish(&request, &mapped.0, &mapped.1, output.as_deref())
 }
 
 /// The file the export writes: the member's, the caller's, or none. A path
@@ -187,10 +199,19 @@ fn compile_and_map(
         .as_deref()
         .map(|file| {
             let bytes = intake.file(file, intake.remaining)?;
-            serde_json::from_slice::<Value>(&bytes).map_err(|error| RunCause::ClauseRequest {
+            let refuse = |reason: String| RunCause::ClauseRequest {
                 member: "/request/export/initial".to_owned(),
-                reason: format!("`{file}` is not a JSON document: {error}"),
-            })
+                reason,
+            };
+            let document = serde_json::from_slice::<Value>(&bytes)
+                .map_err(|error| refuse(format!("`{file}` is not a JSON document: {error}")))?;
+            if document.get("format").and_then(Value::as_str) != Some("filament.state.snapshot/v1")
+            {
+                return Err(refuse(format!(
+                    "`{file}` is not a filament.state.snapshot/v1 document"
+                )));
+            }
+            Ok(document)
         })
         .transpose()?;
     let spine_limits = overrides.limits.copied().unwrap_or_default();
@@ -203,7 +224,16 @@ fn compile_and_map(
         spine_limits,
         None,
         None,
-        |checked, selections, _points, packages, _, _libraries, _models, _inventory, failure| {
+        |_intake,
+         checked,
+         selections,
+         _points,
+         packages,
+         _,
+         _libraries,
+         _models,
+         _inventory,
+         failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
@@ -223,34 +253,34 @@ fn compile_and_map(
                 member: "program".to_owned(),
                 reason: format!("the compiled package is not admitted: {refusal:?}"),
             })?;
-            let _ = (&admitted, &initial);
-            let clauses: Vec<map::ClauseFact> = checked
-                .package()
-                .graph()
+            let _ = &initial;
+            let graph = checked.package().graph();
+            let clauses: Vec<map::ClauseFact> = graph
                 .state_clauses()
                 .iter()
                 .map(|clause| map::ClauseFact {
                     name: clause.name().to_owned(),
-                    kind: match clause.kind() {
-                        fsl_forms::StateClauseKind::Invariant => "invariant",
-                        fsl_forms::StateClauseKind::Constraint => "constraint",
-                        fsl_forms::StateClauseKind::Precondition => "precondition",
-                        fsl_forms::StateClauseKind::Postcondition => "postcondition",
-                    },
+                    obligation: (clause.kind() == fsl_forms::StateClauseKind::Invariant)
+                        .then(|| clause.identity()),
+                    construct: "state/state_clause",
                 })
+                .chain(graph.temporal_clauses().iter().map(|node| map::ClauseFact {
+                    name: node.clause().name().to_owned(),
+                    obligation: Some(node.identity()),
+                    construct: "temporal/temporal_clause",
+                }))
                 .chain(
-                    checked
-                        .package()
-                        .graph()
-                        .temporal_clauses()
+                    graph
+                        .hybrid_claim_sites()
                         .iter()
-                        .map(|node| map::ClauseFact {
-                            name: node.clause().name().to_owned(),
-                            kind: "temporal",
+                        .map(|site| map::ClauseFact {
+                            name: site.name.clone(),
+                            obligation: Some(site.identity.clone()),
+                            construct: "temporal/temporal_clause",
                         }),
                 )
                 .collect();
-            map::run(&program.identity, &clauses, request, &effective)
+            map::run(&admitted, &program.identity, &clauses, request, &effective)
         },
     )?;
     Ok((mapped, program))
@@ -259,56 +289,47 @@ fn compile_and_map(
 fn finish(
     request: &Request,
     mapped: &Mapped,
-    program: Program,
+    program: &Program,
     output: Option<&Path>,
 ) -> Result<Option<RunResult>> {
-    let effective = request.limits.effective();
     let mut export = json!({
         "format": "filament.export-outcome/v1",
         "mapping_profile_id": request.target.profile(),
         "target_family": request.target.family(),
     });
-    let (status, category) = match mapped {
+    let category = match mapped {
         Mapped::Assembled {
             text,
             name_map,
             records,
+            unlowered,
         } => assembled(
             &mut export,
             request,
+            program,
             records,
             text,
             name_map,
-            &program,
-            effective,
-        ),
-        Mapped::Incomplete { setting } => {
-            export["status"] = json!("incomplete");
-            export["incomplete"] = json!({"limit": setting});
-            export["records"] = json!([]);
-            ("incomplete", Category::Incomplete)
+            unlowered.as_ref(),
+        )?,
+        Mapped::Incomplete { setting, bound } => {
+            incomplete(&mut export, setting, *bound);
+            Category::Incomplete
         }
     };
-    debug_assert!(!status.is_empty());
-    if let (Some(path), Mapped::Assembled { text, .. }) = (output, mapped) {
-        if category == Category::Success {
-            output_file::write_new_file(path, text.as_bytes())?;
+    let written = match (mapped, category) {
+        (Mapped::Assembled { text, .. }, Category::Success) => {
+            if let Some(path) = output {
+                output_file::write_new_file(path, text.as_bytes())?;
+            }
+            text.len()
         }
-    }
+        _ => 0,
+    };
     if let Some(named) = &request.output {
-        export["output"] = json!({
-            "path": named,
-            "bytes_written": if category == Category::Success {
-                mapped_len(mapped)
-            } else {
-                0
-            },
-        });
+        export["output"] = json!({"path": named, "bytes_written": written});
     } else if let Some(path) = output {
-        export["output"] = json!({
-            "path": path.display().to_string(),
-            "bytes_written": if category == Category::Success { mapped_len(mapped) } else { 0 },
-        });
+        export["output"] = json!({"path": path.display().to_string(), "bytes_written": written});
     }
     let document = OutcomeDocument::new(
         fsl_replay::Operation::Export,
@@ -325,36 +346,34 @@ fn finish(
     }))
 }
 
-fn mapped_len(mapped: &Mapped) -> usize {
-    match mapped {
-        Mapped::Assembled { text, .. } => text.len(),
-        Mapped::Incomplete { .. } => 0,
-    }
+/// A denied charge: the setting and its bound, and no records, text or package.
+fn incomplete(export: &mut Value, setting: &str, bound: u64) {
+    export["status"] = json!("incomplete");
+    export["incomplete"] = json!({"limit": setting, "bound": bound});
+    export["records"] = json!([]);
 }
 
-/// Fill `export` for an assembled mapping, applying the floor: below it the
-/// request is `refused` with no package and no text.
+/// Fill `export` for an assembled mapping. The stop order is admission,
+/// classification, the floor, then the text (FR-1015): below the floor the
+/// request is `refused` with no package and no text; a representable
+/// obligation this build does not lower is a mapper failure; a text over
+/// `export.output_bytes` is `incomplete`.
 fn assembled(
     export: &mut Value,
     request: &Request,
+    program: &Program,
     records: &[Record],
     text: &str,
     name_map: &[Value],
-    program: &Program,
-    effective: EffectiveLimits,
-) -> (&'static str, Category) {
-    if u64::try_from(text.len()).map_or(true, |length| length > effective.output_bytes) {
-        export["status"] = json!("incomplete");
-        export["incomplete"] = json!({"limit": "export.output_bytes"});
-        export["records"] = json!([]);
-        return ("incomplete", Category::Incomplete);
-    }
+    unlowered: Option<&Unlowered>,
+) -> Result<Category> {
+    let effective = request.limits.effective();
+    export["records"] = json!(records.iter().map(Record::value).collect::<Vec<_>>());
     let failing: Vec<Value> = records
         .iter()
         .filter(|record| record.fails(request.floor))
         .map(Record::value)
         .collect();
-    export["records"] = json!(records.iter().map(Record::value).collect::<Vec<_>>());
     if !failing.is_empty() {
         export["status"] = json!("refused");
         export["refusal"] = json!({
@@ -362,13 +381,28 @@ fn assembled(
             "cause": "below-fidelity-floor",
             "failing": failing,
         });
-        return ("refused", Category::Unsupported);
+        return Ok(Category::Unsupported);
     }
+    if let Some(unlowered) = unlowered {
+        return Err(RunCause::ExportMapper {
+            construct: unlowered.construct.clone(),
+            reason: format!(
+                "obligation `{}` is representable in {} and this build has no lowering for it",
+                unlowered.obligation,
+                request.target.profile()
+            ),
+        });
+    }
+    if u64::try_from(text.len()).map_or(true, |length| length > effective.output_bytes) {
+        incomplete(export, "export.output_bytes", effective.output_bytes);
+        return Ok(Category::Incomplete);
+    }
+    let application = fsl_replay::build_inventory(&fsl_route::Registry::new()).application;
     export["status"] = json!("assembled");
     export["package"] = json!({
         "source_package": {"identity": program.identity, "version": program.version},
         "target_profile": request.target.profile(),
-        "generator": {"identity": GENERATOR_IDENTITY, "version": env!("CARGO_PKG_VERSION")},
+        "generator": {"identity": application.name, "version": application.version},
         "limits": {
             "export.output_bytes": effective.output_bytes,
             "export.nodes": effective.nodes,
@@ -379,5 +413,5 @@ fn assembled(
     export["target_text"] = json!(text);
     export["name_map"] = json!(name_map);
     export["observer"] = Value::Null;
-    ("assembled", Category::Success)
+    Ok(Category::Success)
 }

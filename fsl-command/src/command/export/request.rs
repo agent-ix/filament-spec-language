@@ -191,11 +191,26 @@ pub(super) fn read(member: &Value, given: &fsl_replay::spine::ExportLimits) -> R
 }
 
 fn obligations(object: &Map<String, Value>) -> Result<Vec<String>> {
-    let Some(Value::Array(names)) = object.get("obligations") else {
-        return Err(refuse(
-            "/obligations",
-            "expected an array of obligation names",
-        ));
+    let names = match object.get("obligations") {
+        None | Some(Value::Null) => {
+            return Err(refuse(
+                "/obligations",
+                "missing-member: the obligations member is required",
+            ))
+        }
+        Some(Value::Array(names)) if names.is_empty() => {
+            return Err(refuse(
+                "/obligations",
+                "invalid-value: name at least one obligation",
+            ))
+        }
+        Some(Value::Array(names)) => names,
+        Some(_) => {
+            return Err(refuse(
+                "/obligations",
+                "invalid-value: expected an array of obligation names",
+            ))
+        }
     };
     let mut seen = std::collections::BTreeSet::new();
     let mut result = Vec::with_capacity(names.len());

@@ -705,7 +705,7 @@ pub enum RunCause {
     )]
     OutputGivenTwice,
     /// FR-810: a file or directory already exists at the output path.
-    #[error("invalid request: output {path} already exists; a compile never overwrites it", path = path.display())]
+    #[error("invalid request: output {path} already exists; FSL never overwrites an existing path", path = path.display())]
     OutputExists {
         /// The existing output path.
         path: PathBuf,
