@@ -1794,9 +1794,7 @@ fn rational_value_type_schema_diagnostic(
     let Some(position) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
         return false;
     };
-    let Some(member) = segments.next() else {
-        return false;
-    };
+    let member = segments.next();
     let Some(type_value) = document
         .tree
         .get("types")
@@ -1823,8 +1821,9 @@ fn rational_value_type_schema_diagnostic(
         return false;
     }
     if scalar == Some("decimal") {
-        return member == "unit";
+        return type_value.get("unit").is_some() && matches!(member, None | Some("unit"));
     }
+    let Some(member) = member else { return false };
     match member {
         "scalar" | "unit" => true,
         "constraints" => segments
