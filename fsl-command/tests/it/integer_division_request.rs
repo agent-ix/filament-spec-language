@@ -136,7 +136,6 @@ fn returned(path: &Path) -> String {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-1", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn request_member_selects_each_law_for_compile_and_run() {
     for (law, quotient, remainder) in [
         ("truncating", "-2", "-1"),
@@ -277,7 +276,6 @@ fn native_run_package_and_integer_division_refuse_before_reading_files() {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-2", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn request_member_and_header_agree_or_conflict() {
     let directory = tempfile::tempdir().unwrap();
     let program = format!("{HEADER}{FLOOR_HEADER}{BODY}");
@@ -308,7 +306,6 @@ fn request_member_and_header_agree_or_conflict() {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-3", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn malformed_or_unknown_member_refuses_before_any_file_is_read() {
     for (law, code, cause) in [
         (json!(null), "invalid-request", ""),
@@ -425,7 +422,6 @@ fn library_entry_takes_its_own_law() {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-6")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn member_over_a_unit_without_div_or_rem_leaves_the_package_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     let program = format!("{HEADER}{MOD_ONLY}");
@@ -448,7 +444,6 @@ fn member_over_a_unit_without_div_or_rem_leaves_the_package_unchanged() {
 
 #[test]
 #[trace("TC-2196", "FR-767-AC-8")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn top_level_law_reaches_every_unit_of_a_multi_unit_program() {
     let directory = tempfile::tempdir().unwrap();
     let units = [
@@ -477,7 +472,21 @@ fn top_level_law_reaches_every_unit_of_a_multi_unit_program() {
         body(Some("floor")),
     );
     let bytes = command::compile(&path).expect("every unit compiles under floor");
-    assert_eq!(division_laws(&bytes), vec![law_identity("floor"); 2]);
+    // The package graph shares the identical `a div b` node of the two units, so
+    // every `div` it holds, whichever unit it came from, binds floor.
+    let laws = division_laws(&bytes);
+    assert!(!laws.is_empty(), "the package holds a div");
+    assert!(
+        laws.iter().all(|law| *law == law_identity("floor")),
+        "{laws:?}"
+    );
+    let text = String::from_utf8(bytes).unwrap();
+    for function in ["qa", "qb"] {
+        assert!(
+            text.contains(&format!("\"{function}\"")),
+            "{function} is in the package"
+        );
+    }
 
     let path = request(directory.path(), None, "native-compile/1", body(None));
     let error = command::compile(&path).expect_err("no unit has a law");

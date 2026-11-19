@@ -356,6 +356,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         clocks: Default::default(),
         output: None,
         handoff: None,
+        integer_division: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(

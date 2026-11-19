@@ -4252,7 +4252,7 @@ impl<'a> Resolution<'a> {
         for source in &source_units {
             selected = fsl_semantics::check::resolve_integer_division(
                 &source.unit().selections().profiles,
-                selected.map(|law| (law, "caller selection")),
+                selected.map(|law| (law, "integer_division selection")),
             )
             .map_err(|refusal| {
                 Box::new(CompileRefusal::Profile {

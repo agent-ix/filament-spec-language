@@ -57,6 +57,10 @@ pub(super) struct CompileRequest {
     /// FR-665: checked-package handoff written after compilation succeeds.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub handoff: Option<Handoff>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     /// FR-952: the mode every function body of the unit is checked under;
     /// `Linked` when absent.
     #[serde(default = "linked", deserialize_with = "check_mode")]

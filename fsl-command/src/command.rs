@@ -2259,6 +2259,8 @@ fn compile_outcome_inner(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        // FR-767: a malformed or unknown law refuses before any file is read.
+        let integer_division = request_integer_division(request.integer_division.clone())?;
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -2307,7 +2309,13 @@ fn compile_outcome_inner(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        let mut outcome = complete(&request, &mut intake, &sources, overrides.limits)?;
+        let mut outcome = complete(
+            &request,
+            &mut intake,
+            &sources,
+            overrides.limits,
+            integer_division,
+        )?;
         outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
             let compiled =
@@ -2510,12 +2518,13 @@ fn complete(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
     let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0], limits);
+        return complete_single(request, intake, &sources[0], limits, integer_division);
     }
-    complete_units(request, intake, sources, limits)
+    complete_units(request, intake, sources, limits, integer_division)
 }
 
 fn complete_single(
@@ -2523,8 +2532,16 @@ fn complete_single(
     intake: &mut Intake<'_>,
     source: &FormalSource,
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, std::slice::from_ref(source), false, limits)
+    complete_sources(
+        request,
+        intake,
+        std::slice::from_ref(source),
+        false,
+        limits,
+        integer_division,
+    )
 }
 
 /// Compile FR-480's ordered program-unit list as one checked package.
@@ -2533,8 +2550,9 @@ fn complete_units(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true, limits)
+    complete_sources(request, intake, sources, true, limits, integer_division)
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -2546,6 +2564,7 @@ fn complete_sources(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
@@ -2553,7 +2572,7 @@ fn complete_sources(
         sources,
         unit_list,
         limits,
-        None,
+        integer_division,
         None,
         |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
