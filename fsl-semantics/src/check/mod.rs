@@ -3638,6 +3638,11 @@ impl PackageDeclarations {
         // family's own contract once every function signature is known (a
         // clause body may call a function), against the same package-wide
         // node total and contract meter.
+        let state_clause_names: Vec<(String, fsl_foundation::Span)> = self
+            .state_clauses
+            .iter()
+            .map(|clause| (clause.name.clone(), clause.name_span))
+            .collect();
         let mut state_clause_forms = self.state_clauses;
         let mut typed_clauses: Vec<(usize, state_clause::TypedStateClause)> =
             Vec::with_capacity(state_clause_forms.len());
@@ -5099,30 +5104,58 @@ impl PackageDeclarations {
         // family's contract once every function signature is known, against
         // the same package-wide node total and contract meter.
         let mut checked_state_graph_claims = Vec::with_capacity(self.state_graph_claims.len());
-        for (position, claim) in self.state_graph_claims.iter().enumerate() {
-            let location = root(Origin::Expression);
-            // FR-940 "Claim names": a claim name names one declaration, so the
-            // later of two claim-bearing declarations that share a name is
-            // refused at its name, naming both.
-            let earlier = self
-                .temporal_clauses
+        // FR-940 "Claim names": a claim name names one declaration of any
+        // kind, so the later of two declarations that share a name, one of
+        // them a state-graph claim, is refused at its name, naming both; the
+        // later is the one that follows in source order.
+        let mut named: Vec<(&str, fsl_foundation::Span, Option<usize>)> = Vec::new();
+        named.extend(
+            self.temporal_clauses
                 .iter()
-                .map(|temporal| &temporal.form.name)
-                .chain(
-                    self.state_graph_claims[..position]
-                        .iter()
-                        .map(|earlier| &earlier.form.name),
-                )
-                .find(|earlier| earlier.name == claim.form.name.name);
-            if let Some(earlier) = earlier {
+                .map(|temporal| (temporal.form.name.name.as_str(), temporal.form.name.span, None)),
+        );
+        named.extend(
+            state_clause_names
+                .iter()
+                .map(|(name, span)| (name.as_str(), *span, None)),
+        );
+        named.extend(self.probabilistic.iter().filter_map(|declaration| match declaration {
+            ProbabilisticDeclaration::Claim(claim) => {
+                Some((claim.name.name.as_str(), claim.name.span, None))
+            }
+            _ => None,
+        }));
+        named.extend(
+            self.state_graph_claims
+                .iter()
+                .enumerate()
+                .map(|(position, claim)| {
+                    (claim.form.name.name.as_str(), claim.form.name.span, Some(position))
+                }),
+        );
+        named.sort_by_key(|(_, span, _)| span.start);
+        let mut collided = BTreeSet::new();
+        for (index, (name, span, graph)) in named.iter().enumerate() {
+            let earlier = named[..index].iter().find(|(earlier, _, earlier_graph)| {
+                earlier == name && (graph.is_some() || earlier_graph.is_some())
+            });
+            if let Some((_, earlier_span, _)) = earlier {
                 refusals.push(CheckRefusal {
-                    location,
+                    location: root(Origin::Expression),
                     cause: CheckCause::StateGraph(Box::new(StateGraphCause::AmbiguousName {
-                        name: claim.form.name.name.clone(),
-                        earlier: earlier.span,
-                        span: claim.form.name.span,
+                        name: (*name).to_owned(),
+                        earlier: *earlier_span,
+                        span: *span,
                     })),
                 });
+                if let Some(position) = graph {
+                    collided.insert(*position);
+                }
+            }
+        }
+        for (position, claim) in self.state_graph_claims.iter().enumerate() {
+            let location = root(Origin::Expression);
+            if collided.contains(&position) {
                 continue;
             }
             let declarations = state_clause::ClauseDeclarations {

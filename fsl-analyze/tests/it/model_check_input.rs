@@ -109,7 +109,8 @@ fn the_package_route_input_builds_the_source_route_model_system() {
 /// FR-940: a package with a `terminal` declaration, a form the package route
 /// does not read yet, refuses the package-route input at that node, naming
 /// the form; no input that leaves the declaration out is built. Its state
-/// clauses and operation frames are read.
+/// clauses and operation frames are read. QSL-2521 reads the `terminal` rows
+/// and lifts this refusal.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_input_refuses_a_form_it_does_not_read() {

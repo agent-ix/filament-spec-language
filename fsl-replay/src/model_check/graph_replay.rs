@@ -438,6 +438,33 @@ pub(super) fn replay_evidence(
     max_states: usize,
     max_transitions: usize,
 ) -> Result<GraphReplayResult, ReplayRefusal> {
+    let unique_path = matches!(claim.form(), StateGraphForm::UniquePath { .. });
+    replay_claim_evidence(
+        system,
+        timed,
+        state_graph_truth,
+        loci,
+        claim,
+        evidence,
+        max_states,
+        max_transitions,
+    )
+    .map(|replayed| GraphReplayResult {
+        unique_path,
+        ..replayed
+    })
+}
+
+fn replay_claim_evidence(
+    system: &ModelSystem<'_>,
+    timed: Option<&TimedSystem<'_, '_>>,
+    state_graph_truth: Option<bool>,
+    loci: Loci<'_>,
+    claim: &CheckedStateGraphClaim,
+    evidence: &GraphEvidence,
+    max_states: usize,
+    max_transitions: usize,
+) -> Result<GraphReplayResult, ReplayRefusal> {
     let over = graph_over(system, claim, evidence)?;
 
     let mut evaluated = Vec::new();
@@ -1299,6 +1326,7 @@ pub(super) fn result(
         evaluated_predicates,
         closure_nodes,
         first_target,
+        unique_path: false,
     }
 }
 
@@ -1347,7 +1375,8 @@ impl Loci<'_> {
 
     /// The model of the `terminal when` predicate whose body is at `locus`.
     /// The package route reads no terminal declaration: a package that holds
-    /// one is refused when its model-check input is built.
+    /// one is refused when its model-check input is built (QSL-2521 adds the
+    /// package form of a terminal row).
     fn terminal_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,

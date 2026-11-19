@@ -18,12 +18,12 @@ use filament_checked::node::NodeKind;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::footprint::{
-    derive_attempt_footprint_fallback_with_reference_literals,
-    derive_selected_footprint_with_reference_literals, FootprintObject, FootprintRefusal,
-    SymbolicFootprint, SymbolicLocation,
-};
 use fsl_semantics::check::CheckedNode;
+use fsl_semantics::check::footprint::{
+    FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
+    derive_attempt_footprint_fallback_with_reference_literals,
+    derive_selected_footprint_with_reference_literals,
+};
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
 use fsl_semantics::model::observation::AdmittedObservations;
@@ -33,7 +33,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, ModelSimState, ModelSystem, ReferenceBinding, BROKEN};
+use super::{Application, BROKEN, ModelSimState, ModelSystem, ReferenceBinding};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 
@@ -776,9 +776,13 @@ impl<'a> ModelSystem<'a> {
         let parameter = (over.name.clone(), ValueType::Reference(over.object.clone()));
         match predicate {
             None => Ok(BTreeSet::new()),
-            Some(predicate) if predicate.package().is_some() => Err(FootprintRefusal::Unresolved {
-                what: "package-form state-graph predicate footprint",
-            }),
+            Some(predicate) if predicate.package().is_some() => {
+                let occurrence = claim.occurrence().ok_or(FootprintRefusal::Unresolved {
+                    what: "package-form state-graph claim occurrence",
+                })?;
+                self.evaluator()
+                    .state_graph_reads(&self.model, occurrence, role)
+            }
             Some(predicate) => match predicate.body() {
                 Some(body) => self.atom_reads(&parameter, body),
                 None => Ok(BTreeSet::new()),

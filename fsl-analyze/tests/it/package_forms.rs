@@ -1101,3 +1101,90 @@ fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
         }
     }
 }
+
+/// FR-940-AC-11 (clause): at each state the Counter explores (`value` 0
+/// through 3), the keyed evaluator port gives the package route's predicate
+/// of each role of each state-graph claim the source route's value and location,
+/// and the same symbolic reads (the footprint a partial-order reduction takes
+/// of each predicate).
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn the_port_evaluates_each_state_graph_role_alike_at_each_explored_state() {
+    use fsl_eval::simulation::model::ModelEvaluator;
+    use fsl_semantics::check::PredicateRole;
+    let (_ws, handoff, mut budget) = handoff_of("package-forms-port-roles", STATE_GRAPH_CLAIMS);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let selections = fsl_package::AnalysisView::model_selections(&bare);
+    let model = fsl_semantics::model::state::StateModel::new(
+        fsl_semantics::model::observation::ModelSelections::new(&selections, &[]),
+        world.types(),
+        handoff.compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the supplied domain package admits");
+    let source: &dyn ModelEvaluator = handoff.compiled.checked();
+    let package: &dyn ModelEvaluator = &bare;
+    let mut compared = 0;
+    for claim in handoff.compiled.checked().graph().state_graph_claims() {
+        let name = claim.name();
+        let occurrence = claim.occurrence().expect("an assembled claim");
+        let (from, target) = claim.node_predicates();
+        let roles = [
+            (PredicateRole::From, from),
+            (PredicateRole::Target, Some(target)),
+        ];
+        for (role, predicate) in roles {
+            let Some(predicate) = predicate.filter(|predicate| !predicate.is_constant_true())
+            else {
+                continue;
+            };
+            assert!(predicate.body().is_some(), "{name} {role:?}");
+            assert_eq!(
+                package.state_graph_reads(&model, occurrence, role),
+                source.state_graph_reads(&model, occurrence, role),
+                "{name} {role:?}"
+            );
+            for value in 0..=3 {
+                let objects = objects(&handoff, value);
+                let over = Some(counter(&objects));
+                let (mut at_source, mut at_package) =
+                    (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+                let from_source = source
+                    .evaluate_state_graph_predicate(
+                        occurrence,
+                        role,
+                        &objects,
+                        over.clone(),
+                        Vec::new(),
+                        &mut at_source,
+                    )
+                    .expect("the source predicate evaluates");
+                let from_package = package
+                    .evaluate_state_graph_predicate(
+                        occurrence,
+                        role,
+                        &objects,
+                        over,
+                        Vec::new(),
+                        &mut at_package,
+                    )
+                    .expect("the package predicate evaluates");
+                let at = format!("{name} {role:?} at {value}");
+                assert_eq!(outcome(&from_package), outcome(&from_source), "{at}");
+                assert_eq!(from_package.location, from_source.location, "{at}");
+                compared += 1;
+            }
+        }
+    }
+    // ReachThree and Back (target), FromOne and Straight (from and target).
+    assert_eq!(compared, 6 * 4);
+}

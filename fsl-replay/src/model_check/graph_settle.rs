@@ -60,6 +60,9 @@ pub struct GraphReplayResult {
     pub closure_nodes: Option<u64>,
     /// The first target state's key in a replayed trap closure.
     pub first_target: Option<StateKey>,
+    /// Whether the claim is a unique-path claim, whose end predicate FR-323
+    /// names `to` in `evaluated_predicates` where other forms name `target`.
+    pub unique_path: bool,
 }
 
 /// The method parameters of the run that decided the outcome: what every

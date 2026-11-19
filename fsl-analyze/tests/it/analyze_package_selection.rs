@@ -6,11 +6,11 @@
 //! `a_package_selection_analyzes_as_its_source`.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, package_selection,
-    request_members, Run, Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, below_three, bounded, clause, counter_request, label,
+    package_selection, request_members,
 };
 
 fn at_most_two() -> String {
@@ -449,7 +449,7 @@ fn state_graph_claims() -> &'static str {
     "FSpec-FR-322-AC-457"
 )]
 #[test]
-#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the first-party graph is re-pinned to contract-ir 1356555c"]
+#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the contract-ir re-pin"]
 fn package_claims_resolve_through_the_claim_name_table() {
     let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
     let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
@@ -597,34 +597,56 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
     }
 }
 
-/// FR-940-AC-8 and FSpec FR-322-AC-459: claim names and temporal clause
-/// names are one namespace. A source unit declaring the temporal clause
-/// `Bounded` and the state-graph claim `Bounded` is refused
-/// `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; a
-/// package whose `claim_names` row is renamed to a `temporal_clause_names`
-/// row's name is refused the same at that row before any engine runs; with
-/// distinct names both resolve.
+/// FR-940-AC-8, FR-940-AC-12 and FSpec FR-322-AC-459: claim names and every
+/// other declaration's name are one namespace, and the later declaration in
+/// source order is the one refused. A source unit declaring the temporal
+/// clause `Bounded` and the state-graph claim `Bounded`, in either order, is
+/// refused `ambiguous_declaration`/`ambiguous-name` at the later name before
+/// any item is analyzed (exit 20, category `refusal`, last stage `S3`).
 #[trace("TC-2970", "FR-940-AC-8", "FSpec-TC-2012", "FSpec-FR-322-AC-459")]
 #[trace("TC-3034", "FR-940-AC-12")]
 #[test]
-#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the first-party graph is re-pinned to contract-ir 1356555c"]
-fn a_name_in_both_name_tables_is_refused() {
-    let items = json!([{"claim": "Bounded"}]);
-    let ws = Workspace::new("claim-name-namespace-source");
-    let colliding = format!(
-        "{}possible Bounded using v over (c: M::Counter) {{ c.value = 3 }}\n",
-        bounded()
-    );
-    let run = analyze(&counter_request(&ws, &colliding, items.clone()));
-    let diagnostic = first_diagnostic(&run);
-    assert_eq!(
-        diagnostic["code"],
-        "ambiguous_declaration",
-        "{}",
-        run.document()
-    );
-    assert_eq!(diagnostic["cause"], "ambiguous-name", "{}", run.document());
+fn a_name_in_both_name_tables_is_refused_at_the_source_route() {
+    let claim = "possible Bounded using v over (c: M::Counter) { c.value = 3 }\n";
+    let orders = [
+        ("temporal-first", format!("{}{claim}", bounded())),
+        ("claim-first", format!("{claim}{}", bounded())),
+    ];
+    for (name, body) in orders {
+        let ws = Workspace::new(&format!("claim-name-namespace-source-{name}"));
+        let run = analyze(&counter_request(&ws, &body, json!([{"claim": "Bounded"}])));
+        let document = run.document();
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(
+            diagnostic["code"], "ambiguous_declaration",
+            "{name}: {document}"
+        );
+        assert_eq!(diagnostic["cause"], "ambiguous-name", "{name}: {document}");
+        assert_eq!(run.exit, 20, "{name}: {document}");
+        assert_eq!(document["category"], "refusal", "{name}: {document}");
+        assert_eq!(document["last_stage"], "S3", "{name}: {document}");
+        assert_eq!(document["items"], json!([]), "{name}: {document}");
+        let text = std::fs::read_to_string(ws.path("program.fsl")).expect("the unit");
+        let later = text.rfind("Bounded").expect("the later name");
+        assert_eq!(
+            (
+                diagnostic["locus"]["start"].as_u64(),
+                diagnostic["locus"]["end"].as_u64()
+            ),
+            (Some(later as u64), Some((later + "Bounded".len()) as u64)),
+            "{name}: located at the later declaration's name: {document}"
+        );
+    }
+}
 
+/// FR-940-AC-12, package half: a package whose `claim_names` row is renamed
+/// to a `temporal_clause_names` row's name is refused the same at that row
+/// (`details.path` `/claim_names/{i}/name`) before any engine runs; with
+/// distinct names both resolve.
+#[trace("TC-3034", "FR-940-AC-12")]
+#[test]
+#[ignore = "QSL-2545: the reader returns invalid_package/ambiguous-name until the contract-ir re-pin"]
+fn a_name_in_both_name_tables_is_refused_at_the_package_route() {
     let items = json!([{"claim": "Bounded"}, {"claim": "ReachThree"}]);
     let ws = Workspace::new("claim-name-namespace-package");
     let body = format!("{}{}", bounded(), reach_three());
@@ -655,6 +677,11 @@ fn a_name_in_both_name_tables_is_refused() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+    let path = diagnostic["details"]["path"].as_str().unwrap_or_default();
+    assert!(
+        path.starts_with("/claim_names/") && path.ends_with("/name"),
+        "{diagnostic}"
+    );
     assert_eq!(run.document()["items"], json!([]));
 }
 
