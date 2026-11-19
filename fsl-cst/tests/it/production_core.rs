@@ -490,7 +490,7 @@ fn powers_and_grouping_keep_their_authored_operand_spans() {
         } else {
             formula
         };
-        let power = one(&source, &parsed, Production::Power, power_text);
+        let power = one(&source, &parsed, Production::Unary, power_text);
         assert_eq!(
             children(&source, &parsed, power, Production::Postfix),
             [base]
