@@ -191,7 +191,6 @@ fn parts_saga_observations_distinguish_tracked_untracked_and_third_rework() {
         let output = command::run(
             &write(directory.path(), &request),
             &crate::negotiation::Fr290,
-            &Cancel::new(),
         )
         .unwrap_or_else(|error| panic!("{name}: {error}"));
         let native = output.value.as_value();
@@ -478,4 +477,22 @@ fn source_projection_names_each_construct_outside_bounded_static() {
             "{file}: the refusal names the actual source construct"
         );
     }
+}
+
+#[test]
+#[trace("FR-570", "FR-574")]
+fn source_projection_refutes_a_choice_hidden_from_the_target() {
+    use fsl_replay::protocol_analysis::AnalysisOutcome;
+    let directory = tempfile::tempdir().unwrap();
+    let package = handoff(directory.path(), &corpus("original/hidden-choice.native"));
+    let target = project(&package, "Target");
+    assert!(
+        matches!(target.outcome, AnalysisOutcome::Refuted(_)),
+        "{target:?}"
+    );
+    let owner = project(&package, "Picker");
+    let AnalysisOutcome::Proved(witness) = owner.outcome else {
+        panic!("the deciding role knows its own choice: {owner:?}");
+    };
+    assert_eq!(witness.merge_evidence.len(), 1, "{witness:?}");
 }
