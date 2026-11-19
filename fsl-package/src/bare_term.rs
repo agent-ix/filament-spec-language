@@ -455,9 +455,15 @@ impl BarePackage<'_> {
             let Some(CheckedTerm::Reference { target: receiver }) = members.first() else {
                 return Err(malformed());
             };
-            let context = nodes
+            // `self` is typed `Reference<T>`; its type projection names `T`.
+            let context = self
+                .exact_type_projections()
                 .get(receiver)
-                .and_then(|parameter| object(&parameter.semantic_type))
+                .and_then(|projected| projected.as_ref().ok())
+                .and_then(|projected| match projected.value_type() {
+                    filament_exact::ValueType::Reference(object) => Some(object.clone()),
+                    _ => None,
+                })
                 .ok_or_else(malformed)?;
             let anchor = nodes.get(anchor).copied().ok_or_else(malformed)?;
             let operation = if anchor.semantic_form.as_ref() == "operation_anchor" {
