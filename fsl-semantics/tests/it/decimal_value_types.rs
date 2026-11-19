@@ -457,6 +457,7 @@ fn decimal_policy_defects_refuse_once() {
     let mut cash = type_mut(&mut document, "Soc").clone();
     let object = cash.as_object_mut().expect("Cash");
     object.remove("scalar");
+    object.insert("kind".to_owned(), Value::String("alias".to_owned()));
     object.insert("identity".to_owned(), "ix://test/decimal/Cash".into());
     object.insert("displayName".to_owned(), "Cash".into());
     object.insert("target".to_owned(), "ix://test/decimal/Soc".into());
