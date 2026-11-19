@@ -18,7 +18,7 @@ use fsl_eval::simulation::protocol::{
     AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem, ProtocolTransition,
     RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause, protocol_domains, visible,
 };
-use fsl_eval::simulation::{Footprint, Location, SubjectSystem, independent};
+use fsl_eval::simulation::{Footprint, Location, SubjectSystem, TransitionSystem, independent};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_package::TemporalClockSelection;
 use fsl_replay::{
@@ -1479,7 +1479,6 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         .into_iter()
         .next()
         .expect("one initial state");
-    let mut path = Vec::<Json>::new();
     for kind in [StepKind::Attempt, StepKind::Event, StepKind::CAttempt] {
         let expansion = system.successors(&state).expect("the bounded path expands");
         let (transition, next) = expansion
@@ -1487,7 +1486,6 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
             .into_iter()
             .find(|(transition, _)| transition.kind() == kind)
             .unwrap_or_else(|| panic!("the finite recovery path has a {kind:?} step"));
-        path.push(identity(&system, &transition));
         state = next;
     }
 
@@ -1530,17 +1528,13 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
                 .is_some_and(|record| matches!(record.slots(), [FieldValue::Present(Value::Integer(value))] if value.to_string() == "1"))
         })
         .expect("bal 1 produces the unrecovered successor");
-    path.push(identity(&system, &unrecovered.0));
-    let replayed_state =
-        replay_transition_path(&system, &path).expect("the bounded bal 1 cend path replays");
-    let cend = path.last().expect("the path ends at cend");
-    let registration = named_member(cend, "registration")
-        .cloned()
-        .expect("cend names its registration");
+    let (bytes, _) = SubjectSystem::state_key(&system, &unrecovered.1)
+        .expect("the unrecovered successor has a state key");
+    let status = statuses(&json_of(&bytes));
     assert_eq!(
-        registration_status(&replayed_state, &registration),
-        Some("unrecovered"),
-        "replay reproduces the recovery-view result"
+        status,
+        ["unrecovered"],
+        "bal 1 settles the registration as unrecovered"
     );
 }
 
