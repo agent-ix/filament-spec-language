@@ -36,7 +36,10 @@ mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub(crate) use evaluate::reader_source::projection_atom_reads;
+pub(crate) use evaluate::reader_source::{
+    package_constraint_reads, package_guard_reads, package_operation_footprint, package_term_reads,
+    ProjectedClause,
+};
 pub(crate) use bare::{
     evaluate_state_graph_predicate as evaluate_bare_state_graph_predicate, StateGraphOver,
 };

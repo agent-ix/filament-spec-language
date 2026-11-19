@@ -371,9 +371,10 @@ impl ClauseLetters<'_, '_> {
     }
 }
 
-/// The footprint refusal of a package-form clause: its reads are derived
-/// from source checked bodies the package route does not hold, so a reduction
-/// that needs them is not applied to it.
+/// The footprint refusal of a package-form clause whose activation holds
+/// captures: the package form reads no capture initializer yet (the
+/// evaluation faults at it too), so a reduction that needs its reads is not
+/// applied to it.
 const PACKAGE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
     what: "package-form clause footprint",
 };
@@ -650,8 +651,20 @@ impl ModelLetters for ClauseLetters<'_, '_> {
     }
 
     fn activation_reads(&self) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let ClauseSource::Source(node) = self.node else {
-            return Err(PACKAGE_FOOTPRINT);
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { clause, key } => {
+                if clause.captures().len() > 0 {
+                    return Err(PACKAGE_FOOTPRINT);
+                }
+                let mut binders = vec![clause.over().clone()];
+                binders.extend(
+                    clause
+                        .trigger()
+                        .map(|(name, value_type)| (name.to_owned(), value_type.clone())),
+                );
+                return self.system.activation_guard_reads(key, &binders);
+            }
         };
         let clause = node.clause();
         let mut reads = BTreeSet::new();
@@ -677,15 +690,16 @@ impl ModelLetters for ClauseLetters<'_, '_> {
     }
 
     fn reads(&self, atom: FormulaNodeId) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        let ClauseSource::Source(node) = self.node else {
-            return Err(PACKAGE_FOOTPRINT);
+        let node = match self.node {
+            ClauseSource::Source(node) => node,
+            ClauseSource::Package { key, .. } => {
+                return self.system.holds_reads(key, atom.index());
+            }
         };
         let (condition, _) = node
             .condition(atom)
             .ok_or(FootprintRefusal::Unresolved { what: "holds atom" })?;
-        let mut reads = self
-            .system
-            .atom_reads(node.clause().over(), condition)?;
+        let mut reads = self.system.atom_reads(node.clause().over(), condition)?;
         self.add_reference_literal_reads(condition, &mut reads);
         Ok(reads)
     }
