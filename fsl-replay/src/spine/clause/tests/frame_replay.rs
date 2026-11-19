@@ -736,7 +736,7 @@ fn an_envelope_clause_node_other_than_the_frame_refuses_before_recompiling() {
     assert!(
         matches!(
             refusal,
-            ReplayRefusal::Recompile(_)
+            ReplayRefusal::Recompile { .. }
                 | ReplayRefusal::RecompileWithProtocolResults { .. }
         ),
         "{refusal:?}"

@@ -2908,7 +2908,7 @@ fn replay_row_output_failure(
 
 fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
     match refusal {
-        ReplayRefusal::Recompile(refusal) => Some(refusal.stage().into()),
+        ReplayRefusal::Recompile { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
         | ReplayRefusal::RefinementInternals { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::Fault(_)
@@ -3009,9 +3009,14 @@ mod tests {
         assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
         assert!(!run_message.contains("stage_limits"), "{run_message}");
 
-        let replay_refusal = ReplayRefusal::Recompile(Box::new(CompileRefusal::Limit(
-            LimitExceeded::new(Setting::S1Tokens, 3, 4),
-        )));
+        let replay_refusal = ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Limit(LimitExceeded::new(
+                Setting::S1Tokens,
+                3,
+                4,
+            ))),
+            pointer: None,
+        };
         let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
         let replay_message = replay.diagnostics()[0].message();
         assert!(replay_message.contains("stage_limits"), "{replay_message}");
