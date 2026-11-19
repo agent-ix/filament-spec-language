@@ -18,10 +18,10 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject, ProtocolSubject};
+use fsl_eval::model_subject::{ModelLetters, ModelSubject, ProtocolSubject};
 use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
 };
 use fsl_eval::simulation::protocol::{PackageProtocolProgram, ProtocolTransition};
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
@@ -1136,11 +1136,9 @@ impl<'a> PackageProtocolWork<'a> {
                     max_live_instances: None,
                 };
                 let constraint = self.form.reductions.constraint.clone();
-                let replay = Box::new(
-                    move |payload: &TemporalCounterexample<ProtocolTransition>| {
-                        self.replay(&trace, letters, payload)
-                    },
-                );
+                let replay = Box::new(|payload: &TemporalCounterexample<ProtocolTransition>| {
+                    self.replay(&trace, letters, payload)
+                });
                 settle_protocol_item(
                     ProtocolItem {
                         request,
