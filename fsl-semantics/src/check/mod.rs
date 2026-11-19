@@ -6650,13 +6650,21 @@ impl PackageDeclarations {
         let mut lowered_syntheses = Vec::with_capacity(checked_syntheses.len());
         for (index, checked) in checked_syntheses.iter().enumerate() {
             let location = lowering::synthesis_location(index, &checked.form.name.name);
-            type_spans.insert(
-                match &location.origin {
-                    Origin::TypeDeclaration { name } => name.clone(),
-                    _ => continue,
-                },
-                checked.form.span,
-            );
+            let Origin::TypeDeclaration { name } = &location.origin else {
+                continue;
+            };
+            type_spans.insert(name.clone(), checked.form.span);
+            let satisfies = lowering::synthesis_satisfies_location(index, &checked.form.name.name);
+            if let Origin::TypeDeclaration { name } = satisfies.origin {
+                site_spans.insert(name, checked.form.satisfies.spans.clone());
+            }
+            if let Some(objective) = &checked.form.objective {
+                let objective_site =
+                    lowering::synthesis_objective_location(index, &checked.form.name.name);
+                if let Origin::TypeDeclaration { name } = objective_site.origin {
+                    site_spans.insert(name, objective.expression.spans.clone());
+                }
+            }
             match lowering.synthesis_request(index, checked) {
                 Ok(key) => lowered_syntheses.push(key),
                 Err(refusal) => refusals.push(refusal),

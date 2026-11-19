@@ -125,7 +125,9 @@ pub(crate) use state::{
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
-pub(crate) use synthesis::synthesis_location;
+pub(crate) use synthesis::{
+    synthesis_location, synthesis_objective_location, synthesis_satisfies_location,
+};
 pub(crate) use temporal::{
     temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
     TemporalSite,

@@ -3,9 +3,7 @@
 
 use filament_exact::ValueType;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
-use filament_semantic_value::location::{
-    ExpressionLocation as Location, ExpressionOwner as Origin,
-};
+use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::ir::CheckedBody;
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
@@ -35,8 +33,12 @@ pub(crate) fn check_forms(
     signatures: &Signatures,
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
     let mut checked = Vec::with_capacity(forms.len());
-    for form in forms {
-        let location = Location::root(Origin::Expression);
+    for (index, form) in forms.iter().enumerate() {
+        let location = super::lowering::synthesis_location(index, &form.name.name);
+        let satisfies_location =
+            super::lowering::synthesis_satisfies_location(index, &form.name.name);
+        let objective_location =
+            super::lowering::synthesis_objective_location(index, &form.name.name);
         let Some(domain) = named_type(scope, &form.domain.name) else {
             return Err(vec![CheckRefusal {
                 location,
@@ -62,6 +64,7 @@ pub(crate) fn check_forms(
             &form.satisfies.expression,
             &parameters,
             &ValueType::Boolean,
+            &satisfies_location,
         )
         .map_err(|refusal| vec![refusal])?;
         let objective = if let Some(objective) = &form.objective {
@@ -72,6 +75,7 @@ pub(crate) fn check_forms(
                     &objective.expression.expression,
                     &parameters,
                     &domain,
+                    &objective_location,
                 )
                 .map_err(|refusal| vec![refusal])?
                 .0,
@@ -104,8 +108,8 @@ fn check_expression(
     expression: &fsl_forms::Expression,
     parameters: &[(String, ValueType)],
     expected: &ValueType,
+    location: &Location,
 ) -> Result<(CheckedBody, Vec<String>), CheckRefusal> {
-    let location = Location::root(Origin::Expression);
     let limits = super::CheckingLimits::default();
     let mut nodes = 0;
     let typer = Typer::new(
@@ -128,11 +132,11 @@ fn check_expression(
         &mut diagnostics,
         &mut scopes,
     ));
-    super::bind_parameters(&mut typer, parameters, &location)?;
-    let body = typer.infer(expression, Some(expected), &location)?;
+    super::bind_parameters(&mut typer, parameters, location)?;
+    let body = typer.infer(expression, Some(expected), location)?;
     if expected == &ValueType::Boolean && body.root().value_type() != expected {
         return Err(CheckRefusal {
-            location,
+            location: location.clone(),
             cause: CheckCause::NonBooleanRoot,
         });
     }

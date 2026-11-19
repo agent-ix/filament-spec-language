@@ -106,8 +106,26 @@ impl Lowering<'_> {
 /// The type-declaration origin that locates the source span of this claim.
 pub(crate) fn synthesis_location(index: usize, name: &str) -> Location {
     Location::root(Origin::TypeDeclaration {
-        name: format!("synthesis {index} {name}"),
+        name: synthesis_site(index, name),
     })
+}
+
+/// The site key of the block's source-bearing expression spans.
+pub(crate) fn synthesis_satisfies_location(index: usize, name: &str) -> Location {
+    Location::root(Origin::TypeDeclaration {
+        name: format!("{} satisfies", synthesis_site(index, name)),
+    })
+}
+
+/// The site key of the objective's source-bearing expression spans.
+pub(crate) fn synthesis_objective_location(index: usize, name: &str) -> Location {
+    Location::root(Origin::TypeDeclaration {
+        name: format!("{} objective", synthesis_site(index, name)),
+    })
+}
+
+fn synthesis_site(index: usize, name: &str) -> String {
+    format!("synthesis {index} {name}")
 }
 
 fn objective_text(
