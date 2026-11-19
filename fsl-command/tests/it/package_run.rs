@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -326,7 +326,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     unit.push_str(
         "enum Mode { On, Off }\n\
          record Pair { left: Integer; right: Integer; }\n\
-         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { once[0,2] (holds(if library::positive(2) then Mode::On = Mode::On else Mode::Off = Mode::Off) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { once[0,2] (holds(if library::positive(2) then Mode::On = Mode::On else Mode::Off = Mode::Off) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2}) and holds(x.versionNumber <= 2)) }\n",
     );
     std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
     std::fs::write(
@@ -362,6 +362,10 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     assert_eq!(
         value["tl_lowering"]["atoms"]["p1"],
         "holds(ix://test:package-run:unit.native/Pair { left: 1, right: 2 } = ix://test:package-run:unit.native/Pair { left: 1, right: 2 })",
+        "{value}"
+    );
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p2"], "holds(x.versionNumber <= 2)",
         "{value}"
     );
 
