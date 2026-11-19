@@ -16,15 +16,19 @@ use filament_contract_model::{
     CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
     CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
+use std::collections::HashMap;
+
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
-    CheckedGraph, Delay, DelayDistribution, ProbabilisticFeature, RandomParameter, Reward, Workload,
+    CheckedGraph, Delay, DelayDistribution, ProbScheduler, ProbabilisticFeature, RandomParameter,
+    Reward, Workload,
 };
 
 use super::{
     body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
-    node_id, push_scalar_type, source_artifact, CheckedNodeTag, EmitRefusal, Location, GRAPH_V2,
+    node_id, push_scalar_type, source_artifact, CheckedNodeTag, ClaimWorkload, EmitRefusal,
+    Location, GRAPH_V2,
 };
 
 /// A written node with its declaration occurrence's `region`.
@@ -586,4 +590,76 @@ fn reward_node(
         node: node(graph, ids, "reward", operand, body)?,
         region,
     })
+}
+
+/// The emitted `workload` nodes of `nodes`, by the name their `name` binding
+/// carries (a workload name is unique in the package).
+fn workload_nodes_by_name(nodes: &[CheckedSemanticNodeV2]) -> HashMap<&str, &CheckedNodeId> {
+    nodes
+        .iter()
+        .filter(|node| {
+            CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::Probabilistic)
+                && &*node.semantic_form == "workload"
+        })
+        .filter_map(|node| {
+            let CheckedTerm::Aggregate { members } = &node.body else {
+                return None;
+            };
+            let name = members.iter().find_map(|member| match member {
+                CheckedTerm::Binding { name, value } if &**name == "name" => {
+                    match value.literal_read()?.value {
+                        CheckedLiteralValue::Text(text) => Some(text),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })?;
+            Some((name, &node.node_id))
+        })
+        .collect()
+}
+
+/// FSpec FR-640 "Emission": each claim `under W` resolved to the emitted
+/// `workload` node named `W` (a workload name is unique in the package), in
+/// ascending claim-node order. A claim `under every scheduler` names no
+/// workload and resolves to none.
+///
+/// TEMPORARY (QSL-2441, spec W77): this mapping is in memory only. Neither the claim
+/// node (empty body, FSL FR-498) nor any row carries it on the wire until arch
+/// rules how a claim references its workload and rewards (QSL-2546).
+///
+/// # Errors
+///
+/// A claim that is not keyed, or whose workload has no emitted node.
+pub(super) fn claim_workloads(
+    graph: &CheckedGraph,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    nodes: &[CheckedSemanticNodeV2],
+) -> Result<Vec<ClaimWorkload>, EmitRefusal> {
+    let by_name = workload_nodes_by_name(nodes);
+    let mut resolved = Vec::new();
+    for claim in graph.probabilistic_model().claims() {
+        let ProbScheduler::Workload(name) = &claim.scheduler else {
+            continue;
+        };
+        let claim_id = claim
+            .occurrence()
+            .and_then(|occurrence| emitted_node_ids.get(occurrence.node()))
+            .ok_or_else(|| EmitRefusal::UnkeyedProbabilisticClaim {
+                claim: claim.name.clone(),
+            })?;
+        let workload =
+            by_name
+                .get(name.as_str())
+                .ok_or_else(|| EmitRefusal::UnresolvedClaimWorkload {
+                    claim: claim.name.clone(),
+                    workload: name.clone(),
+                })?;
+        resolved.push(ClaimWorkload {
+            claim: claim_id.clone(),
+            workload: (*workload).clone(),
+        });
+    }
+    resolved.sort_by(|left, right| left.claim.cmp(&right.claim));
+    Ok(resolved)
 }
