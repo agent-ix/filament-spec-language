@@ -982,7 +982,9 @@ fn assert_values_corpus_counts() {
 
 #[test]
 fn corpus_collections() {
-    run_area("collections");
+    let directory = corpus_root().join("collections");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
 }
 
 #[test]
