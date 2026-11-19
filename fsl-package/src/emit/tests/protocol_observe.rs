@@ -14,7 +14,12 @@ fn domain_document() -> &'static [u8] {
 
 /// `declarations` over the ConfigVersion model, emitted and read back by IR's
 /// strict reader; returns both the wire and the admitted package.
-fn admitted_with_package(declarations: &str) -> (Value, filament_contract_model::CheckedPackageV2) {
+fn admitted_with_package(
+    declarations: &str,
+) -> (
+    Value,
+    std::sync::Arc<filament_contract_model::CheckedPackageV2>,
+) {
     let packages = fsl_semantics::model::intake::package_input([domain_document()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -49,7 +54,9 @@ fn admitted_with_package(declarations: &str) -> (Value, filament_contract_model:
         V2ReadLimits::fixture(),
         &evidence,
     )
-    .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure:?}"));
+    .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure:?}"))
+    .into_value()
+    .admitted;
     (wire, checked)
 }
 
