@@ -211,10 +211,12 @@ pub use hybrid::{
 };
 pub use hybrid_replay::{
     ExactCheck, ExactGap, ExactInterval, ExactReal, ExactRecord, ExactReplay, ExpansionGap,
+    HybridCertificateCheck, HybridCertificateRefusal,
     ExpressionLocus, ExpressionSite, HybridCounterexample, HybridCounterexampleKind,
     HybridReplayMeter, HybridReplayRefusal, HybridTrace, JsonPointer, ReplayRecord, Root,
     StaticCheck, StaticReplay, TermLocus, TraceBefore, TraceFault, TraceJump, TraceRefusal,
-    TraceState, UndefinedCause, UndefinedInstant, admit as admit_hybrid_trace, exact_replay,
+    TraceState, UndefinedCause, UndefinedInstant, admit as admit_hybrid_trace,
+    check_hybrid_certificate, exact_replay,
     static_replay,
 };
 pub use identity::{

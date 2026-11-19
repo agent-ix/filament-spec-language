@@ -21,6 +21,7 @@ mod exact;
 mod expand;
 mod flow;
 mod interval;
+mod certificate;
 mod poly;
 mod real;
 mod signal;
@@ -41,6 +42,7 @@ pub use real::{ExactReal, Root};
 pub use trace::{
     admit, ExactInterval, HybridTrace, TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState,
 };
+pub use certificate::{check_hybrid_certificate, HybridCertificateCheck, HybridCertificateRefusal};
 
 /// The outcome of static replay (FR-450 "Outputs").
 #[derive(Clone, Debug, Eq, PartialEq)]
