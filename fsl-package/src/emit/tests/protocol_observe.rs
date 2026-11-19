@@ -13,8 +13,8 @@ fn domain_document() -> &'static [u8] {
 }
 
 /// `declarations` over the ConfigVersion model, emitted and read back by IR's
-/// strict reader; returns the wire.
-fn admitted(declarations: &str) -> Value {
+/// strict reader; returns both the wire and the admitted package.
+fn admitted_with_package(declarations: &str) -> (Value, filament_contract_model::CheckedPackageV2) {
     let packages = fsl_semantics::model::intake::package_input([domain_document()]).unwrap();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -43,14 +43,14 @@ fn admitted(declarations: &str) -> Value {
             domain_document().to_vec(),
         )
         .expect("a fresh evidence key");
-    crate::checked_v2::read_checked_package_v2(
+    let checked = crate::checked_v2::read_checked_package_v2(
         emission.package.bytes(),
         library(),
         V2ReadLimits::fixture(),
         &evidence,
     )
     .unwrap_or_else(|failure| panic!("the I2 read admits the package: {failure:?}"));
-    wire
+    (wire, checked)
 }
 
 fn flow(observe: &str) -> String {
@@ -99,7 +99,14 @@ fn argument_names(node: &Value) -> Vec<&str> {
 )]
 #[test]
 fn the_package_records_the_observe_boundary() {
-    let marked = admitted(&flow("observe "));
+    let (marked, checked_marked) = admitted_with_package(&flow("observe "));
+    let role_id: filament_contract_model::CheckedNodeId =
+        serde_json::from_value(node(&marked, &["Flow", "role", "Auditor"])["node_id"].clone())
+            .expect("the emitted role node has a checked identity");
+    assert_eq!(
+        checked_marked.protocol_role_boundary(&role_id),
+        Some(filament_contract_model::CheckedProtocolBoundary::ObserveOnly)
+    );
     for path in [
         &["Flow", "role", "Auditor"][..],
         &["Flow", "run", "Review"][..],
@@ -137,7 +144,11 @@ fn the_package_records_the_observe_boundary() {
         ]
     );
 
-    let plain = admitted(&flow(""));
+    let (plain, checked_plain) = admitted_with_package(&flow(""));
+    let plain_role_id: filament_contract_model::CheckedNodeId =
+        serde_json::from_value(node(&plain, &["Flow", "role", "Auditor"])["node_id"].clone())
+            .expect("the unmarked role node has a checked identity");
+    assert_eq!(checked_plain.protocol_role_boundary(&plain_role_id), None);
     assert!(
         nodes(&plain)
             .iter()
