@@ -959,6 +959,9 @@ pub struct OutcomeItem {
     /// internally to the FR-286 item writer and nested under `certificate`.
     #[serde(skip_serializing_if = "Option::is_none")]
     certificate_document: Option<serde_json::Value>,
+    /// FSpec FR-652's hybrid provider certificate and the core check result.
+    #[serde(rename = "certificate", skip_serializing_if = "Option::is_none")]
+    hybrid_certificate: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1337,6 +1340,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            hybrid_certificate: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1426,6 +1430,13 @@ impl OutcomeItem {
         self
     }
 
+    /// Attach a hybrid provider certificate and the core's check result.
+    #[must_use]
+    pub fn with_hybrid_certificate(mut self, certificate: Option<serde_json::Value>) -> Self {
+        self.hybrid_certificate = certificate;
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1456,6 +1467,7 @@ impl OutcomeItem {
             witness: None,
             evidence: None,
             certificate_document: None,
+            hybrid_certificate: None,
             count: None,
             min_count: None,
             clause: None,
@@ -1515,6 +1527,7 @@ impl OutcomeItem {
             witness: record.witness,
             evidence: None,
             certificate_document: None,
+            hybrid_certificate: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,

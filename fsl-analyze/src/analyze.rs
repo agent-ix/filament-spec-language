@@ -1721,6 +1721,8 @@ pub struct AnalyzeRecord {
     /// The replayed hybrid counterexample of a `refuted` hybrid item
     /// (FR-750), with its FR-286 spelling.
     pub hybrid_counterexample: Option<Spelled<fsl_replay::HybridCounterexample>>,
+    /// The provider's FR-652 certificate and the core's check outcome.
+    pub hybrid_certificate: Option<serde_json::Value>,
     /// FR-898's reproduced false-tuple witness.
     pub finite_hyper_counterexample: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
@@ -1765,6 +1767,7 @@ impl AnalyzeRecord {
             closed_form: None,
             schedule_miss: None,
             hybrid_counterexample: None,
+            hybrid_certificate: None,
             finite_hyper_counterexample: None,
             state_graph: None,
         }
@@ -1948,9 +1951,12 @@ impl AnalyzeRecord {
         Some(
             wire.map_err(OutcomeItemError::from)
                 .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined))
-                .map(|item| match &self.protocol_conformance {
-                    Some(output) => item.with_protocol_conformance(output.clone()),
-                    None => item,
+                .map(|item| {
+                    let item = match &self.protocol_conformance {
+                        Some(output) => item.with_protocol_conformance(output.clone()),
+                        None => item,
+                    };
+                    item.with_hybrid_certificate(self.hybrid_certificate.clone())
                 }),
         )
     }
@@ -2620,6 +2626,7 @@ fn settle(
                 value,
                 counterexample,
                 wire,
+                certificate,
             } = *report;
             // A refuted value without its replayed counterexample is an
             // engine fault, never a verdict.
@@ -2629,6 +2636,7 @@ fn settle(
             );
             AnalyzeRecord {
                 hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
+                hybrid_certificate: certificate,
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

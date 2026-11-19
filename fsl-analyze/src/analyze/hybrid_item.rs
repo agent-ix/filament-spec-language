@@ -32,6 +32,8 @@ pub(crate) struct HybridReport {
     pub(crate) value: TerminalValue,
     pub(crate) counterexample: Option<Box<HybridCounterexample>>,
     pub(crate) wire: Result<Value, fsl_replay::CounterexampleWireError>,
+    /// The provider certificate and the core check result, when supplied.
+    pub(crate) certificate: Option<Value>,
 }
 
 /// The package and request context a hybrid item reads to spell a locus.
@@ -128,6 +130,7 @@ pub(super) fn hybrid_item<'a>(
                             value: settled.value,
                             counterexample: settled.counterexample.map(Box::new),
                             wire,
+                            certificate: None,
                         }))
                     }
                     Err(refusal) => fault_of(&refusal, work_units),
