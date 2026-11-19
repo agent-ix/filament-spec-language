@@ -1,25 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-754: bounded candidate enumeration for value synthesis.
 
-use filament_exact::{Integer, IntegerInterval, ScalarLimits, ValueType};
+use filament_exact::{Integer, IntegerInterval, ValueType};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 const DEFAULT_MAX_CANDIDATES: u64 = 10_000_000;
 const DEFAULT_MAX_WORK: u64 = 100_000_000;
-const SYNTHESIS_SCALAR_LIMITS: ScalarLimits = ScalarLimits {
-    integer_bits: u64::MAX,
-    decimal_digits: u64::MAX,
-    scale_expansion: u64::MAX,
-    text_input_bytes: u64::MAX,
-    text_scalars: u64::MAX,
-    normalized_scalars: u64::MAX,
-    unit_edges: u64::MAX,
-    value_occurrences: u64::MAX,
-    work_units: u64::MAX,
-    result_units: u64::MAX,
-};
 
 /// The two independent limits applied while enumerating a bounded integer
 /// domain. Each candidate consumes one unit from each counter.
@@ -27,6 +16,7 @@ const SYNTHESIS_SCALAR_LIMITS: ScalarLimits = ScalarLimits {
 pub(super) struct SearchLimits {
     pub(super) max_candidates: Option<u64>,
     pub(super) max_work: Option<u64>,
+    deadline: Option<Instant>,
 }
 
 impl Default for SearchLimits {
@@ -34,6 +24,7 @@ impl Default for SearchLimits {
         Self {
             max_candidates: Some(DEFAULT_MAX_CANDIDATES),
             max_work: Some(DEFAULT_MAX_WORK),
+            deadline: None,
         }
     }
 }
@@ -233,6 +224,19 @@ pub(super) fn search_integer_domain(
                 work: visited,
             };
         }
+        if limits
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return SearchResult {
+                disposition: SearchDisposition::Incomplete {
+                    cause: "deadline_ms",
+                    value: 0,
+                },
+                visited,
+                work: visited,
+            };
+        }
 
         visited = visited.saturating_add(1);
         if satisfies(&candidate) {
@@ -331,6 +335,7 @@ pub(super) fn run_bytes(
     run_limits: super::RunLimits,
     _overrides: &super::RequestOverrides<'_>,
 ) -> super::Result<Option<super::RunResult>> {
+    let started = Instant::now();
     let mut document: Value = serde_json::from_slice(bytes).map_err(super::RunCause::Json)?;
     if document.get("format").and_then(Value::as_str)
         != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
@@ -343,9 +348,12 @@ pub(super) fn run_bytes(
     let Some(member) = body.remove("synthesis") else {
         return Ok(None);
     };
-    let selection = read_selection(member)?;
+    let mut selection = read_selection(member)?;
     let request_bytes = serde_json::to_vec(&document).map_err(super::RunCause::Output)?;
     let request: super::wire::Request = super::request(&request_bytes)?;
+    selection.limits.deadline = request
+        .deadline_ms
+        .and_then(|milliseconds| started.checked_add(Duration::from_millis(milliseconds)));
     if request.package.is_some() {
         return Err(refused("/request/synthesis", "requires a source program"));
     }
@@ -474,6 +482,7 @@ pub(super) fn run_bytes(
     }
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
     let checked_package = compiled.checked.package();
+    let mut meter = filament_exact::Meter::new(super::call_accounting(&request.accounting));
     let mut evaluation_error = None;
     let (mut outcome, exit_code) = search_integer_outcome(
         &package_name,
@@ -481,7 +490,12 @@ pub(super) fn run_bytes(
         node,
         domain,
         selection.limits,
-        |candidate| match evaluate_integer_body(checked_package, checked.satisfies(), candidate) {
+        |candidate| match evaluate_integer_body(
+            checked_package,
+            checked.satisfies(),
+            candidate,
+            &mut meter,
+        ) {
             Ok(filament_exact::Value::Boolean(value)) => value,
             Ok(value) => {
                 evaluation_error = Some(format!("satisfies expression returned {value:?}"));
@@ -505,21 +519,27 @@ pub(super) fn run_bytes(
     }
     if exit_code == 0 {
         if let Some(objective) = checked.objective() {
-            if selection
+            let work_exhausted = selection
                 .limits
                 .max_work
-                .is_some_and(|maximum| outcome.explored.work >= maximum)
-            {
-                let maximum = selection.limits.max_work.expect("limit was checked");
+                .filter(|maximum| outcome.explored.work >= *maximum);
+            let deadline_expired = selection
+                .limits
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline);
+            if work_exhausted.is_some() || deadline_expired {
                 outcome.status = "incomplete".to_owned();
                 outcome.check = Some("unchecked".to_owned());
                 outcome.optimal = Some(false);
-                outcome.cause = Some(serde_json::json!({
-                    "kind": "limit-reached",
-                    "limit": "max_work",
-                    "value": maximum,
-                    "setting": "synthesis.max_work"
-                }));
+                outcome.cause = Some(match work_exhausted {
+                    Some(maximum) => serde_json::json!({
+                        "kind": "limit-reached",
+                        "limit": "max_work",
+                        "value": maximum,
+                        "setting": "synthesis.max_work"
+                    }),
+                    None => serde_json::json!({"kind": "deadline"}),
+                });
                 return Ok(Some(super::RunResult {
                     exit_code: 22,
                     value: super::output::NativeResult::synthesis_document(serde_json::json!({
@@ -542,7 +562,7 @@ pub(super) fn run_bytes(
                         "objective candidate is not an integer",
                     )
                 })?;
-            let value = evaluate_integer_body(checked_package, objective, &candidate)
+            let value = evaluate_integer_body(checked_package, objective, &candidate, &mut meter)
                 .map_err(|error| refused("/request/synthesis", error))?;
             outcome.explored.work = outcome.explored.work.saturating_add(1);
             outcome.optimal = Some(checked.objective_is_candidate());
@@ -720,14 +740,14 @@ fn evaluate_integer_body(
     package: &fsl_package::CheckedPackage,
     body: &fsl_semantics::check::CheckedBody,
     candidate: &Integer,
+    meter: &mut filament_exact::Meter,
 ) -> Result<filament_exact::Value, String> {
-    let mut meter = filament_exact::Meter::new(SYNTHESIS_SCALAR_LIMITS);
     let evaluation = fsl_eval::value::evaluate_protocol_slot(
         package,
         body,
         vec![Some(filament_exact::Value::Integer(candidate.clone()))],
         &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        &mut meter,
+        meter,
     )
     .map_err(|fault| format!("checked synthesis expression fault: {fault:?}"))?;
     match evaluation.outcome {
@@ -750,8 +770,8 @@ fn refused(member: &str, reason: impl Into<String>) -> super::RunCause {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_MAX_WORK, SearchDisposition, SearchLimits, SynthesisOutcomeDocument,
-        search_integer_domain, select_claim_rows,
+        search_integer_domain, select_claim_rows, SearchDisposition, SearchLimits,
+        SynthesisOutcomeDocument, DEFAULT_MAX_WORK,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;
@@ -826,6 +846,7 @@ mod tests {
             SearchLimits {
                 max_candidates: Some(3),
                 max_work: None,
+                deadline: None,
             },
             |_| false,
         );
@@ -837,6 +858,31 @@ mod tests {
             }
         );
         assert_eq!(result.visited, 3);
+    }
+
+    /// FR-823: an elapsed request deadline stops before another candidate is
+    /// evaluated and produces an incomplete result.
+    #[test]
+    #[trace("TC-3017", "FR-1037-AC-1")]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
+    fn elapsed_deadline_stops_before_the_first_candidate() {
+        let result = search_integer_domain(
+            &digit_domain(),
+            SearchLimits {
+                deadline: Some(std::time::Instant::now() - std::time::Duration::from_millis(1)),
+                ..SearchLimits::default()
+            },
+            |_| panic!("no candidate is evaluated after the deadline"),
+        );
+        assert_eq!(
+            result.disposition,
+            SearchDisposition::Incomplete {
+                cause: "deadline_ms",
+                value: 0,
+            }
+        );
+        assert_eq!(result.visited, 0);
+        assert_eq!(result.work, 0);
     }
 
     #[test]
@@ -871,6 +917,7 @@ mod tests {
             SearchLimits {
                 max_candidates: Some(3),
                 max_work: Some(DEFAULT_MAX_WORK),
+                deadline: None,
             },
             |_| false,
             |_| Ok(()),

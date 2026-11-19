@@ -162,10 +162,18 @@ fn source(file: &str) -> Value {
 /// Runs `unit` through the command adapter with `synthesis` as the
 /// request's `synthesis` member, returning its exit code and document.
 fn run(unit: &str, synthesis: Value) -> (u8, Value) {
+    run_with_options(unit, synthesis, json!({}))
+}
+
+fn run_with_options(unit: &str, synthesis: Value, options: Value) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    let request = json!({"format": "native-run/1", "request": {
+    let mut request = json!({"format": "native-run/1", "request": {
         "models": [], "program": {"source": source("unit.native")}, "synthesis": synthesis}});
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .extend(options.as_object().unwrap().clone());
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
@@ -276,6 +284,22 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
     assert_eq!(exit, 22, "{limited}");
     assert_eq!(limited["synthesis"]["status"], "incomplete", "{limited}");
     names(&limited["synthesis"]["cause"], "synthesis.max_candidates");
+    let (exit, deadline) = run_with_options(
+        &pick("Pick = 7", ""),
+        json!({"declaration": "Pick"}),
+        json!({"accounting": {}, "deadline_ms": 0}),
+    );
+    assert_eq!(exit, 22, "{deadline}");
+    assert_eq!(deadline["synthesis"]["status"], "incomplete", "{deadline}");
+    assert_eq!(
+        deadline["synthesis"]["explored"]["visited"], 0,
+        "{deadline}"
+    );
+    assert_eq!(deadline["synthesis"]["explored"]["work"], 0, "{deadline}");
+    assert_eq!(
+        deadline["synthesis"]["cause"]["kind"], "deadline",
+        "{deadline}"
+    );
 }
 
 /// FR-1037-AC-2, FSpec FR-823-AC-3/AC-4: selection by declared name, an
