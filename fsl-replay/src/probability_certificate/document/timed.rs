@@ -21,7 +21,9 @@ pub(super) fn check(
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
-    let document = read_document_profile(bytes, limits, cancel, &mut meter, false, None, &mut 0)?;
+    let mut storage = 0;
+    let document =
+        read_document_profile(bytes, limits, cancel, &mut meter, false, None, &mut storage)?;
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
@@ -62,6 +64,26 @@ pub(super) fn check(
     if document.optimization != optimization || !document.ranking.is_empty() {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
+    if document.cyclic_dtmc
+        || document.event.is_some()
+        || !document.failures.is_empty()
+        || document.reward.is_some()
+        || !claim.fairness.is_empty()
+    {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every) {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    if system
+        .input()
+        .probabilistic
+        .delays()
+        .iter()
+        .any(|delay| delay.operation().model() == claim.subject.alias.as_str())
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
@@ -75,6 +97,8 @@ pub(super) fn check(
         scale,
         limits,
         cancel,
+        &mut meter,
+        &mut storage,
     )?;
     if target_keys(&graph) != document.targets {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
@@ -82,14 +106,9 @@ pub(super) fn check(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let mut checked = super::super::check_exact_reachability(
-        &graph,
-        &certificate,
-        optimization,
-        &bound,
-        cancel,
-    )
-    .map_err(ProbabilityDocumentError::Graph)?;
+    let mut checked =
+        super::super::check_exact_reachability(&graph, &certificate, optimization, &bound, cancel)
+            .map_err(ProbabilityDocumentError::Graph)?;
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut checked {
         accepted.document = Some(bytes.into());
     }
@@ -154,6 +173,8 @@ fn enumerate_region_deadline(
     scale: u64,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
     let deadline = time_bound(claim, key_scale)?;
@@ -205,11 +226,20 @@ fn enumerate_region_deadline(
         key_scale,
         deadline,
     )?;
+    reserve_storage(
+        storage,
+        first_key
+            .as_bytes()
+            .len()
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState)>()),
+        limits,
+    )?;
     let mut pending = VecDeque::from([first_key.clone()]);
     let mut reached = BTreeMap::from([(first_key.clone(), first)]);
     let mut states = BTreeMap::new();
     let mut edges = 0_u64;
     while let Some(key) = pending.pop_front() {
+        charge_work(meter, cancel, 1)?;
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityDocumentError::Cancelled(cause));
         }
@@ -219,23 +249,29 @@ fn enumerate_region_deadline(
             .ok_or(ProbabilityDocumentError::Malformed)?;
         match current.phase {
             Phase::Accepted => {
-                states.insert(
+                insert_checker_state(
                     key,
                     CheckerState {
                         terminal: Some(true),
                         choices: Vec::new(),
                     },
-                );
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
                 continue;
             }
             Phase::Rejected => {
-                states.insert(
+                insert_checker_state(
                     key,
                     CheckerState {
                         terminal: Some(false),
                         choices: Vec::new(),
                     },
-                );
+                    &mut states,
+                    storage,
+                    limits,
+                )?;
                 continue;
             }
             Phase::Pending => {}
@@ -268,12 +304,14 @@ fn enumerate_region_deadline(
                 &mut reached,
                 &mut pending,
                 limits,
+                storage,
             )?;
             choices.push(vec![ProbabilityEdge {
                 target: delayed_key,
                 probability: one(),
             }]);
             edges = edges.saturating_add(1);
+            charge_work(meter, cancel, 1)?;
         }
         let clocked_steps = timed
             .steps(&current.timed)
@@ -283,6 +321,7 @@ fn enumerate_region_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         for action in actions {
+            charge_work(meter, cancel, 1)?;
             let mut choice = Vec::new();
             let mut enabled = true;
             for draw in action.draws {
@@ -335,6 +374,7 @@ fn enumerate_region_deadline(
                     &mut reached,
                     &mut pending,
                     limits,
+                    storage,
                 )?;
                 if let Some(edge) = choice.iter_mut().find(|edge| edge.target == target) {
                     edge.probability = edge.probability.add(&draw.probability);
@@ -345,6 +385,7 @@ fn enumerate_region_deadline(
                     });
                 }
                 edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
             }
             if enabled && !choice.is_empty() {
                 choices.push(choice);
@@ -357,13 +398,16 @@ fn enumerate_region_deadline(
                 actual: edges,
             });
         }
-        states.insert(
+        insert_checker_state(
             key,
             CheckerState {
                 terminal: choices.is_empty().then_some(false),
                 choices,
             },
-        );
+            &mut states,
+            storage,
+            limits,
+        )?;
     }
     Ok(CheckerGraph {
         initial: first_key,
@@ -658,6 +702,7 @@ fn admit_region_state(
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
     limits: ProbabilityDocumentLimits,
+    storage: &mut u64,
 ) -> Result<(), ProbabilityDocumentError> {
     if reached.contains_key(&key) {
         return Ok(());
@@ -672,9 +717,74 @@ fn admit_region_state(
             actual: required,
         });
     }
+    reserve_storage(
+        storage,
+        key.as_bytes()
+            .len()
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, RegionState)>()),
+        limits,
+    )?;
     reached.insert(key.clone(), state);
     pending.push_back(key);
     Ok(())
+}
+
+fn reserve_storage(
+    storage: &mut u64,
+    bytes: usize,
+    limits: ProbabilityDocumentLimits,
+) -> Result<(), ProbabilityDocumentError> {
+    let actual = storage.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+    if actual > limits.storage_bytes {
+        return Err(exceeded(
+            ProbabilityDocumentLimit::StorageBytes,
+            limits.storage_bytes,
+            actual,
+        ));
+    }
+    *storage = actual;
+    Ok(())
+}
+
+fn insert_checker_state(
+    key: ProbabilityProductKey,
+    state: CheckerState,
+    states: &mut BTreeMap<ProbabilityProductKey, CheckerState>,
+    storage: &mut u64,
+    limits: ProbabilityDocumentLimits,
+) -> Result<(), ProbabilityDocumentError> {
+    let edge_count = state.choices.iter().map(Vec::len).sum::<usize>();
+    let bytes = key
+        .as_bytes()
+        .len()
+        .saturating_add(std::mem::size_of::<(ProbabilityProductKey, CheckerState)>())
+        .saturating_add(
+            state
+                .choices
+                .len()
+                .saturating_mul(std::mem::size_of::<Vec<ProbabilityEdge>>()),
+        )
+        .saturating_add(edge_count.saturating_mul(std::mem::size_of::<ProbabilityEdge>()));
+    reserve_storage(storage, bytes, limits)?;
+    states.insert(key, state);
+    Ok(())
+}
+
+fn charge_work(
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+    units: u64,
+) -> Result<(), ProbabilityDocumentError> {
+    poll(cancel)?;
+    meter
+        .charge(
+            filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                .work(Integer::from(units)),
+        )
+        .map_err(|error| match cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(error)),
+        })
 }
 
 fn one() -> Rational {
