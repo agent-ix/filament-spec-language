@@ -1100,6 +1100,7 @@ fn the_emitted_nodes_count_against_the_node_ceiling_exactly() {
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default().with_nodes(nodes),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
             )
     };
     let needed = (1..200)

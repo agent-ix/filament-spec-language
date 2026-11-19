@@ -112,7 +112,11 @@ fn compile_in_mode(
         .expect("the unit assembles");
     let pending = assembled.link_dispatch(Default::default())?;
     let graph = assembled
-        .check(mode, CheckingLimits::default())
+        .check(
+            mode,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .map_err(|refusals| pending.report(refusals))?;
     Ok(emit_checked(&CheckedPackage::link(graph)).expect("the package emits"))
 }

@@ -1042,6 +1042,7 @@ fn checked_protocols_with_budget(
         .check_with_protocol_results(
             CheckMode::Linked,
             CheckingLimits::default().with_work_budget(work_budget),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
 }
 

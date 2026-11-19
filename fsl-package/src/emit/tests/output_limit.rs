@@ -67,6 +67,7 @@ fn nested_not_package(depth: usize) -> CheckedPackage {
             CheckingLimits::new(u64::MAX)
                 .with_input_bytes(u64::MAX)
                 .with_work_budget(u64::MAX),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("nested-not source checks: {refusals:?}"));
     CheckedPackage::link(graph)

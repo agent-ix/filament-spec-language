@@ -131,6 +131,7 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                         CheckingLimits::new(u64::MAX)
                             .with_input_bytes(u64::MAX)
                             .with_work_budget(u64::MAX),
+                        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
                     )
                     .unwrap_or_else(|refusals| panic!("{label}: checks: {refusals:?}"));
                 let package = CheckedPackage::link(graph);
@@ -194,6 +195,7 @@ fn a_100000_term_sum_reads_back_verifies_clones_compares_and_drops_on_a_small_st
                     CheckingLimits::new(u64::MAX)
                         .with_input_bytes(u64::MAX)
                         .with_work_budget(u64::MAX),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
                 )
                 .unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
             let package = CheckedPackage::link(graph);
@@ -386,6 +388,7 @@ fn emitted_sum_node_ids(terms: usize) -> (usize, usize, usize) {
             CheckingLimits::new(u64::MAX)
                 .with_input_bytes(u64::MAX)
                 .with_work_budget(u64::MAX),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("{terms}: checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph))

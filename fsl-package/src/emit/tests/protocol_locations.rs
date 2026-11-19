@@ -1043,6 +1043,7 @@ fn deep_projection(
                     CheckingLimits::new(u64::MAX)
                         .with_input_bytes(u64::MAX)
                         .with_work_budget(u64::MAX),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
                 )
                 .expect("the deep unit checks");
             let package = CheckedPackage::link(graph);
