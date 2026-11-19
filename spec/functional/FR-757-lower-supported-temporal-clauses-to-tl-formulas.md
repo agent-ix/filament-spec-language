@@ -32,7 +32,8 @@ selection, and, for cross-evaluation, a finite trace of the clause's subject.
 
 The lowered `tl-syntax` formula with the correspondence identity (for
 example `mltl.closed-trace/v1`) and its atom table mapping each TL atom to
-the clause's `holds` leaf identity; or the classification's own
+the atom text of the clause's `holds` leaf (FR-931 "Atom text", printed from
+the leaf's checked expression, never sliced from source); or the classification's own
 unsupported disposition, unchanged.
 
 ## Behavior

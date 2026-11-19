@@ -159,8 +159,8 @@ at their respective entry states.
   is an observable divergence. The first such cycle in canonical order
   SHALL refute with a lasso and `RefinementFailure::Divergence` naming that
   abstract step class (FSpec FR-379). This check reads no `F_A`, so it runs
-  with hidden abstract fields; FR-147's `unsupported` liveness half is the
-  `F_A` half only.
+  with hidden abstract fields; FR-147's liveness half, decided by FR-899's
+  hidden-field rule, is the `F_A` half only.
 - **Refusal sets and terminal success.** The product SHALL apply FSpec
   FR-177's refusal-set and terminal-success checks to each reachable product
   state whose incoming step rules passed. At each state it SHALL first check

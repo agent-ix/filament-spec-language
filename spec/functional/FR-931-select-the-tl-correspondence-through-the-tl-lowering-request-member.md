@@ -101,7 +101,7 @@ The run result document's `tl_lowering` record, or a request refusal.
   states, and the record SHALL carry `disposition: "supported"`,
   `correspondence` the target, `formula` the lowered `tl-syntax` formula in its
   display form and `atoms` the atom table (each TL atom name mapped to the
-  identity text of its `holds` leaf). The run exits 0 unless cross-evaluation
+  atom text of its `holds` leaf, "Atom text" below). The run exits 0 unless cross-evaluation
   reports a fault.
 - A supported record SHALL also carry `classification`, as "Classification
   is preserved by lowering" below states.
@@ -241,6 +241,93 @@ The lowering is one-way and needs no inverse: each side is classified
 directly, so "the lowered form has the clause's classification" is checked
 without reconstructing the native clause from the TL formula.
 
+### Atom text
+
+The `atoms` entry of an atom SHALL be its **atom text**: the canonical
+text of the atom's `holds(e)` leaf, printed from the leaf's checked
+expression `e` by one canonical printer. The source route and the package
+route (FR-1039) SHALL call the same printer on the same checked expression,
+so the two routes give byte-equal `atoms`. The printer reads the checked
+expression and the names the checked package records for it, and never
+reads source text or a source span: a package carries no source bytes, and
+an atom text sliced from source would differ from the package route's
+whenever the author's spacing or grouping differs from the canonical form.
+Atom names (`p0`, `p1`, ...) keep their order of first occurrence in the
+formula.
+
+The atom text is `holds(` + `T(e)` + `)`, one line, with no line break,
+tab or comment, where `T` prints a checked expression as follows.
+
+**Tokens and spacing.** `T` writes the source tokens of the shared
+grammar's complete-V1 expression productions, spaced by FR-003's canonical
+style ("Canonical style": parentheses, brackets, type arguments,
+separators, operators and words), with one change: where FR-003 ends a line
+(after `{` and `;`, before `}`), `T` writes one space, so a record value is
+`Q::R { a: 1, b: 2 }` and a case is `case x { A: 1; B: 2; }`. No space
+follows `(` or `[` or precedes `)` or `]`; every binary operator, `implies`,
+`in` and `=` has one space on each side; unary `-` touches its operand;
+`not` is followed by one space.
+
+**Operator spelling.** Each checked operation prints as the one source
+spelling that denotes it: `implies`, `or`, `and`; `=`, `!=`, `<`, `<=`,
+`>`, `>=`; `+`, `-`; `*`, `/`, `div`, `rem`, `mod`; prefix `not` and `-`;
+`^` with its signed-integer exponent; `.` for a field or member read and
+for an operation call `x.f(a)`; `[i]` for an index or key; each built-in
+form by its keyword (`present`, `value`, `deref`, `ref`, `pre`, `size`,
+`contains`, `forall`, `exists`, `filter`, `map`, `collect`, `flatMap`,
+`flatten`, `dropFirst`, `removeOne`, `fold`, `reduce`, `count`, `sum`,
+`only`, `seq`, `reaches`, `lookup`, `allInstances`, `convert`, `Text`);
+`let x = e in b` (`let x: T = e in b` when the checked `let` records an
+annotation), `if c then a else b` and `case`. A checked node with two
+source spellings prints the first one this list gives, so `!=` is never
+spelled another way.
+
+**Parenthesisation.** `T` writes a pair of grouping parentheses exactly
+where the checked tree needs one to parse back to the same tree under the
+shared grammar's "Precedence and bindings" (lowest to highest: `let`/`if`/
+`case`; `implies`; `or`; `and`; comparison; `+`/`-`; product; prefix `not`/
+`-`; `^`; postfix selection, calls and primaries), and nowhere else:
+
+- an operand whose operator binds less tightly than its position is
+  parenthesised;
+- for the left-associative `or`, `and`, `+`/`-` and product levels, a right
+  operand at the same level is parenthesised and a left operand is not
+  (`a - (b - c)`, `a - b - c`);
+- for the right-associative `implies`, a left operand that is an `implies`
+  is parenthesised and a right one is not;
+- a comparison operand of a comparison, and a `^` base that is a `^`, are
+  parenthesised, because neither chains;
+- a `let`, `if` or `case` that is an operand of any operator or postfix
+  form is parenthesised;
+- the operand of prefix `not` or `-` that is a binary operation is
+  parenthesised (`not (a = b)`, `-(a + b)`), and a `^` operand of prefix
+  `-` is not (`-x ^ 2`);
+- a grouping the author wrote and the tree does not need is not kept, and
+  an argument list, a quantifier body, a bracket or a record field value is
+  a delimited position that adds no parentheses of its own.
+
+**Names.** A local binder or parameter prints as its declared name; a field,
+operation or relationship-end member as its member name; a declaration (a
+function, a type, an enumeration value, a model declaration) as the
+qualified spelling the checked package records for it
+(`declaration.qualified_name`, the model alias and `::` path of a
+model-owned declaration), which both routes read from the same checked
+record.
+
+**Literals.** An integer prints in decimal with no leading zero, `0` for
+zero and a leading `-` for a negative value; `true`, `false`, `null`,
+`none`, `absent` as written; a rational as `rational(n, d)` in lowest terms
+with `d > 0`; a decimal as `decimal(c, s)` with its checked coefficient and
+scale; a float as `float32(bits: 0x…)` or `float64(bits: 0x…)` with 8 or 16
+lowercase hex digits; a quantity as its magnitude, one space and its unit's
+qualified spelling (`3 ms`); a text as a JSON string serialized as RFC 8785
+serializes a string (`"` and `\` escaped, U+0000 to U+001F as `\b`, `\t`,
+`\n`, `\f`, `\r` or `\u00xx` with lowercase hex, every other scalar written
+as itself), whatever escapes the source used; a collection value as
+`sequence[…]`, `set[…]`, `bag[…]` or `orderedSet[…]` with its elements in
+checked order; a record value with its fields in the record's effective
+field order; a reference literal as `Q#"key"`.
+
 ### Placement
 
 - The lowering and the cross-evaluation SHALL be served by the command adapter
@@ -261,6 +348,7 @@ without reconstructing the native clause from the TL formula.
 | FR-931-AC-8 | Over every trace of FR-932's corpus, each past case's supported record carries `classification` `{"correspondence": "mltl.origin-complete-history/v1", "fragment": "bounded-past"}` and each future case's `{"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"}`, equal to the native classification of the clause (its record's `correspondence` and its operators' direction); the future clause `always[0,3] holds(c.level <= 2)` over FR-932's `Counter` record under `"correspondence": "mltl.online-prefix/v1"` carries `{"correspondence": "mltl.online-prefix/v1", "fragment": "bounded-future"}`; the mixed case `eventually[1,1] once[1,1] not p` returns `unsupported` with no `classification`. A lowered formula stamped with the wrong correspondence (the future clause `always[0,2] holds(c.level = 1)` lowered with its formula's profile replaced by `mltl.origin-complete-history/v1`, supplied at the `fsl-command` library entry and never through the request) yields a record with no `classification` and a `classification_fault` of kind `classification-loss` naming the clause `C`, the native classification `{"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"}` and the lowered one `{"correspondence": "mltl.origin-complete-history/v1", "fragment": "bounded-future"}`, exit 30; the same entry with no replacement gives the native classification, exit 0. | Test (TC-2979) |
 | FR-931-AC-9 | For the infinite-trace clause `C` (`filament.temporal.infinite-trace/v1`, `on each { once[1,1] not holds(c.level = 0) }` over FR-932's `Counter` record), `tl_lowering` `{"clause": "C"}` and `{"clause": "C", "correspondence": "mltl.infinite-trace/v1"}` each return `supported`, `correspondence` `mltl.infinite-trace/v1`, a formula of the `tl-syntax.formula-unbounded/v1` edition with one closed past node `[1,1]`, and `classification` `{"correspondence": "mltl.infinite-trace/v1", "fragment": "bounded-past"}`, exit 0; with `cross_evaluate` `{"trace": {"lasso": {"prefix": [], "loop": [L0]}}}` (`L0` the sample `level` 0) the record's `cross_evaluation` has `traces` 1, `positions` equal to FR-329's unrolled position count, `agree` true and `faults` `[]`, exit 0. `"correspondence": "mltl.origin-complete-history/v1"` for `C` returns `unsupported`, `classified` `mltl.infinite-trace/v1`, `dimensions` `["profile"]`, exit 21, and `"correspondence": "mltl.infinite-trace/v1"` for the event-position clause `historically [0, 2] holds(c.versionNumber <= 2)` returns `unsupported`, `classified` `mltl.origin-complete-history/v1`, `dimensions` `["profile"]`, exit 21. The infinite-trace clauses `once holds(c.level = 0)` and `eventually[0,2] holds(c.level = 0)` return `unsupported`, `dimensions` `["infinite-trace"]`, with no `classified`, exit 21. | Test (TC-3023) |
 | FR-931-AC-10 | A `lasso` trace beside `"correspondence": "mltl.closed-trace/v1"`, and a `finite` trace or the `initial` form beside `"correspondence": "mltl.infinite-trace/v1"`, each refuse `invalid-request` at stage `request`, exit 20, naming `tl_lowering.cross_evaluate.trace` (or `tl_lowering.cross_evaluate.initial`), before the unit is compiled; `C` with no named correspondence and a `finite` trace refuses the same way after classification; a lasso with an empty loop refuses as FR-329 refuses it; the infinite-trace `C` with a weak fairness constraint over an observed lasso settles `MissingFairnessPremise`, exit 21, with no `cross_evaluation`; none of the refusals writes a result document. Through the `fsl-command` library entry, FR-757-AC-2's mis-mapped atom table (`p0` mapped to the negated leaf) over `C` and the lasso of AC-9 gives exactly one `correspondence-loss` fault, naming `C`, trace 0, position 1, native `false` and `tl` `true`, exit 30, and the faithful table agrees. | Test (TC-3023) |
+| FR-931-AC-11 | Over the `Low` fixture written `on origin { always [0, 3] holds( ( c.versionNumber<=2 ) ) }`, the `atoms` entry of `p0` is exactly `holds(c.versionNumber <= 2)`, the same bytes as for FR-931-AC-1's spelling. Over a variant whose `c` also has Boolean fields `a`, `b`, `p`, `q`, Integer fields `x`, `y` and a Text field `name`, a leaf written `holds(not(c.a=c.b) and ((c.x+1)-(c.y-2))>=0 implies c.p implies c.q)` prints `holds(not (c.a = c.b) and c.x + 1 - (c.y - 2) >= 0 implies c.p implies c.q)`, and a leaf written `holds(c.name = "aA\t")` prints `holds(c.name = "aA\t")`; and the same requests over the unit's checked package selected as `package` (FR-1039) give byte-equal `atoms`, with the source file removed. | Test (TC-2601) |
 
 ## Dependencies
 

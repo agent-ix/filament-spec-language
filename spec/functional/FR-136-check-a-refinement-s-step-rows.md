@@ -52,7 +52,7 @@ pub enum StepClass {
     Operation(DeclarationKey),
     AttemptNode(NodeKey),            // takes precedence over its operation's row
     CompensationTemplate(NodeKey),   // `cattempt` and `cend`
-    ProtocolNode { kind: ProtocolStepKind, node: NodeKey }, // event, send, receive, fork, join, timeout, finish
+    ProtocolNode { kind: ProtocolStepKind, node: NodeKey }, // recommend, event, send, receive, fork, join, timeout, finish
     Channel { kind: ChannelStepKind, channel: NodeKey },    // duplicate, lose
     Role { kind: RoleStepKind, role: NodeKey },             // spawn, retire
     Trigger(NodeKey),                                       // activate
@@ -216,6 +216,9 @@ subject until the checked clause is available meets the same rule.
   - a `cattempt` step SHALL be covered by its operation's row or by a row
     naming its compensation template, and a `cend` step by the template's
     row;
+  - each `recommend` node SHALL have its own node row: a row of the
+    recommended operation does not cover it, because a `recommend` step
+    applies no operation and changes no state (FSpec FR-432, FR-822);
   - each `event`, `send`, `receive`, `fork`, `join`, `timeout` and `finish`
     node SHALL have a node row;
   - each channel whose delivery policy admits `duplicate` or `lose` SHALL

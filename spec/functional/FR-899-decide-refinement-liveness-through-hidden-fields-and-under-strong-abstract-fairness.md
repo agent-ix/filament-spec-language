@@ -64,8 +64,40 @@ A refutation SHALL be a concrete lasso that is fair under `F_C`, with its
 **candidate graph**: the finite graph whose nodes are (lasso position,
 hidden valuation) and whose edges follow the step rows, over one unrolled
 loop iteration closed back to its start. No cycle of that graph satisfies
-`F_A`. The lasso's failure is `HiddenUnfair{constraint}`, naming the first
-`F_A` constraint, in source order, that every candidate cycle violates.
+`F_A`. A candidate run is judged on its own steps: a class is enabled at a
+candidate node when the abstract subject has a successor of the class from
+that candidate's abstract state, and taken on a candidate edge when that
+edge's own step row takes a transition of the class. Taken and enabled are
+judged per run, never per product edge or per product state: enabledness or
+taking by another candidate at the same product state does not count, and
+`F_A` is satisfied by a run only when the run satisfies every constraint of
+`F_A` together. The lasso's failure is `HiddenUnfair{constraint}`, naming
+the first `F_A` constraint, in source order, that every candidate cycle
+violates; when no single constraint is violated by every candidate cycle, it
+names constraint `F_A[j]` for the least `j` such that no candidate cycle
+satisfies `F_A[0..=j]` together.
+
+**Timed subjects.** The two rules above apply unchanged when either subject
+is timed (FR-430, FR-900), on EN-6's symbolic product. With a hidden field,
+a candidate node is (lasso position, hidden valuation) of a timed lasso,
+and a class is enabled at a candidate node at an instant when the abstract
+subject has a successor of the class from that candidate at that instant,
+read exactly on the graph split by the guards of the `F_A` classes as
+FR-430 "Strong fairness over time" splits by strong constraints. A
+refutation is a timed lasso with positive total delay (ADR-026 EZ-6) whose
+candidate graph has no cycle satisfying `F_A`; a loop of total delay 0
+refutes nothing. A strong `F_A` constraint over a timed subject is read as
+FR-430 reads strong fairness over time. Neither case is settled
+`unsupported`.
+
+**Abstract protocol subjects.** When the abstract side is a protocol
+(FR-147, FR-148), the abstract control state (rest points, binders, queues
+and instances, FSpec FR-432) is hidden: the candidate set FR-148 keeps is
+the hidden valuation, and the hidden-field rule above decides the `F_A` half
+over it, a class being enabled at a candidate when the abstract protocol has
+a step of that class from that candidate's configuration. The half is
+decided whenever `F_A` is non-empty and the safety half holds, and is never
+settled `unsupported`.
 
 **Replay.** FR-145 SHALL reproduce each refutation from the counterexample
 alone:
@@ -73,7 +105,10 @@ alone:
 - a strong-fairness lasso, by re-walking it and checking that the class is
   enabled at some loop state and taken at none;
 - a hidden-field lasso, by rebuilding its candidate graph from the row
-  semantics and checking that no cycle of it satisfies `F_A`.
+  semantics and checking that no cycle of it satisfies `F_A`, and that the
+  named constraint is the one the rule above selects. The candidate set
+  after one loop iteration must equal the set at loop entry; otherwise the
+  replay is inconclusive, not reproduced.
 
 A counterexample whose loop is edited so that a candidate cycle becomes
 fair does not reproduce.
@@ -102,6 +137,11 @@ replay gives the same assurance as for a functional mapping.
 | FR-899-AC-3 | FR-143-AC-6's `Pair` with `ensure fair strong whole Spec::Pair::flipB` settles `Checked(Violated)` with failure `AbstractUnfair{flipB}`, the loop visiting `a = 0` at some state and taking no `flipB`. The same refinement with `weak` holds. A refinement that is only weakly fair, where strong fairness is needed, is therefore refuted. | Test (TC-2537) |
 | FR-899-AC-4 | With `assume fair strong each Impl::Pair::flipB` in `F_C`, the AC-3 loop is not fair under `F_C` (concrete `flipB` is enabled at `a = 0` and never taken), so it is removed. The refinement then holds. | Test (TC-2537) |
 | FR-899-AC-5 | FR-145 reproduces the AC-1 and AC-3 refutations, and refuses each with one loop step edited so that the cycle takes the constraint's class. | Test (TC-2537) |
+| FR-899-AC-6 | A hidden-field refinement whose abstract `fire` is enabled at every candidate and taken only on a candidate step that leaves the candidate run's loop settles `Checked(Violated)` with failure `HiddenUnfair{fire}`, stem `[tick, tick]` and loop `[tick]`, although the loop's product edge takes `fire` for some candidate. Fixture: abstract `Spec::M` with visible `v: Int` mapped from concrete `v`, hidden `h` in `{0, 1, 2}`, initial `v = 0, h = 0`; `advance` with pre `h = 0` and post `h' = 1, v' = v`; `fire`, enabled at every `h`, with post `h' = 2, v' = v` from `h = 1` and `v' = v + 1, h' = h` otherwise; no operation returns to `h = 1` or `h = 0`; `ensure fair weak Spec::M::fire`; concrete `Impl::C` with `v` fixed at 0 and one always-enabled operation `tick` that changes nothing, `F_C` empty, `step Impl::C::tick -> any`. FR-145 replays it to `Reproduced`. With `fire` also mapping `h = 2` to `h' = 1` keeping `v`, so that `1 -> 2 -> 1` is a fair candidate cycle, the check holds and the earlier counterexample does not reproduce. | Test (TC-2536) |
+| FR-899-AC-7 | A hidden-field refinement with hidden `h` in `{A, B}`, both initial and never changed, `fire1` keeping `v` only at `A` and `fire2` only at `B` (each otherwise `v' = v + 1`), both enabled everywhere, `ensure fair weak Spec::M::fire1` declared before `ensure fair weak Spec::M::fire2`, over AC-6's `tick` loop mapped `-> any`, settles `Checked(Violated)` with failure `HiddenUnfair{fire2}`: no single candidate run is fair for both, although each constraint alone is satisfied by some run, so no constraint is violated by every candidate cycle and the least `j` with `F_A[0..=j]` unsatisfiable is 1. FR-145 reproduces it, and refuses the same counterexample naming `HiddenUnfair{fire1}`. Without the `fire2` row the check holds. | Test (TC-2536) |
+| FR-899-AC-8 | A hidden-field refinement with hidden `h` in `{A, B}`, both initial and constant, `fire` enabled only at `A` (and changing `v` there), and `ensure fair weak Spec::M::fire`, over AC-6's `tick` loop mapped `-> any`, settles `Checked(HoldsReduced{reductions: []})`, because the `B` run never enables `fire`. A hand-built counterexample naming `HiddenUnfair{fire}` for that loop does not reproduce. | Test (TC-2536) |
+| FR-899-AC-9 | Over FR-430-AC-5's `Req` refined by `TReq` without the time invariant, with `Req` given a hidden `h: Boolean` free at the initial state (no row maps it) and `send`'s precondition `not self.sent and not self.h`: the liveness half settles `Checked(HoldsReduced{reductions: []})`, because the `h = true` run never enables `send` along the `poll` loop; with `h` initially `false` only, it settles `Checked(Violated)` with failure `HiddenUnfair{send}` and a timed lasso whose loop is one `poll` step of positive delay, which FR-145 reproduces through FR-241. FR-430-AC-5's refinement with `ensure fair strong Req::send` in place of `weak` settles `Checked(Violated)` without the time invariant and `Checked(HoldsReduced{reductions: []})` with it. None of the four settles `unsupported`. | Test (TC-2536) |
+| FR-899-AC-10 | FR-147's `CasTwice` (with `peek` removed) and `ensure fair weak Spec::Counter::inc`, whose safety half holds (FR-148-AC-2), settles its liveness half `Checked(HoldsReduced{reductions: []})`, decided over the abstract protocol's candidate configurations, never `unsupported`; the same refinement with `peek` kept and mapped `-> stutter` refutes its safety half by divergence (FR-148-AC-5) and its `liveness` is `None`. | Test (TC-2536) |
 
 ## Dependencies
 
@@ -112,3 +152,8 @@ replay gives the same assurance as for a functional mapping.
   the liveness half.
 - [FR-145](FR-145-replay-a-refinement-counterexample.md): replay.
 - FSpec FR-377 and FR-378.
+- [FR-430](FR-430-check-refinement-reductions-and-strong-fairness-over-timed-subjects.md)
+  and [FR-900](FR-900-check-a-refinement-whose-abstract-model-is-timed.md):
+  timed subjects; [FR-147](FR-147-check-a-refinement-whose-abstract-side-is-a-protocol.md)
+  and [FR-148](FR-148-decide-steps-against-an-abstract-protocol.md): an
+  abstract protocol subject.

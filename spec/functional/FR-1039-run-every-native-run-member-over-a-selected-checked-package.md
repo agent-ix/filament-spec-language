@@ -51,7 +51,12 @@ request member that would restate one of them (a `program`, `libraries`,
   file (FR-945), or `{"directory": D}`, the path of an FR-517 handoff
   directory holding `checked-package.json`, `identities.json` and, when
   present, `equality.json` (FR-850), resolved against the request file's
-  directory, each file read counted toward `dependent_bytes`.
+  directory, each file read counted toward `dependent_bytes`. Beside `file`
+  or `directory` the selection MAY carry `source_package`, the closed object
+  `{"identity": I, "version": V}` with `I` and `V` non-empty strings: the
+  source package reference the caller states for the package ("The source
+  package reference of a package export" below). An `export` over a package
+  requires it; every other member ignores it after its shape is read.
 - `models`: entries in the run request's admitted formats,
   `semantic-ir/2.0.0` documents and `native-model-unit/1` units compiled to
   their documents (FR-710), each matched by identity to one of the package's
@@ -102,6 +107,52 @@ none falls back to source:
 | a `models` entry matches no recorded model selection | `invalid-request` | `/request/models/<i>`, naming its identity |
 | the member's target is absent from the package's name rows | the member's own refusal (FR-945, FR-850, FR-1037, FSpec FR-824) | the member's pointer |
 
+### The source package reference of a package export
+
+FSpec FR-817's export outcome, and FSpec FR-299's package key, carry
+`package.source_package`, the identity and version of the source package
+the export was made from. A source export takes it from the source: the
+identity the program source declares and the program selection's
+`formal_revision` (FR-1015). A checked package does not record the program
+selection's `document` or `formal_revision` (FR-027), so the package route
+cannot derive the version, and it SHALL NOT invent one, reread or compile
+source to find one, or take one from any other member of the package.
+
+- An `export` request over a package SHALL carry
+  `package.source_package`. The package route SHALL write the outcome's
+  `package.source_package` equal to that pair as given, byte for byte, and
+  read nothing else for it. FSpec FR-299, FSpec FR-817 and the FR-027 wire
+  are unchanged: the reference has the same shape on both routes, and only
+  its origin differs.
+- The request reader SHALL check `source_package` whenever it is present,
+  before it opens any selected file, and refuse at stage `request`, exit
+  20, disposition `invalid-request`, with code `invalid_runtime_input`, the
+  cause given and `details` `{"path": P}`:
+
+| Defect | Cause | `P` |
+| --- | --- | --- |
+| an `export` request over a package with no `source_package` (or `"source_package": null`) | `missing-member` | `/request/package/source_package` |
+| `source_package` not an object | `wrong-value-kind` | `/request/package/source_package` |
+| `identity` or `version` absent | `missing-member` | `/request/package/source_package/identity` or `/version` |
+| `identity` or `version` not a string | `wrong-value-kind` | that member's pointer |
+| `identity` or `version` the empty string | `invalid-value` | that member's pointer |
+| any other member | `unknown-member` | that member's pointer |
+
+- A request over a package whose run member is not `export` runs as
+  before whether or not it carries `source_package`; a well-formed one is
+  echoed in the request echo and read by nothing else.
+
+### Decision: the caller states the source reference of a package
+
+The export outcome needs a source version that the package does not hold.
+Adding the program selection's labels to the checked package would change
+the FR-027 wire, which FR-027 keeps free of them so that two compiles that
+differ only in those labels write identical bytes. Deriving a version from
+a digest or from the package identity would put a value in the outcome that
+no one stated. The caller who selects a package knows which source it came
+from, so the request carries that pair, and the outcome repeats exactly what
+was stated.
+
 ### Decision: a wrong document type keeps the I2 reader's code
 
 The package route reads the selected bytes through the same I2 reader as
@@ -122,6 +173,7 @@ reader refusal in the table.
 | FR-1039-AC-1 | A unit declaring `function half using v(): Integer pure { -7 div 2 }`, compiled with `integer_division` `floor` and selected as `package` `{file}` with the `call` `half`, completes with `-4`, the source route's value under the recorded law, with the source file removed before the run; the same request with `integer_division` refuses `invalid-request` naming `integer_division` before any selected file is opened; a request with neither `program` nor `package` refuses `invalid-request` naming `program`. | Test (TC-3019) |
 | FR-1039-AC-2 | The FR-517 handoff of FR-754-AC-3's `Pick` unit selected as `package` `{directory}`, and its package file selected as `{file}`, each run the `synthesis` member `{"declaration": "Pick"}` to the source route's `candidate` 7; a `clause` member over a `{file}` selection refuses `invalid-request` with `details` `{"member": "clause", "requires": "directory"}`, exit 20. | Test (TC-3019) |
 | FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1` (`unknown_wire`/`unsupported-wire` with `actual` `filament.checked-package/v1` at `/request/package/contract_version`, never `invalid_package`); a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
+| FR-1039-AC-4 | FR-1015-AC-4's counter compiled to a package file and exported over `package` `{"file": P, "source_package": {"identity": "example/counter-unit", "version": "7"}}`, with the source file removed, writes `package.source_package` `{"identity": "example/counter-unit", "version": "7"}` and otherwise the source export's `records` and `target_text`; the same request without `source_package`, and with `"source_package": null`, refuses `invalid-request` with `invalid_runtime_input`/`missing-member` at `/request/package/source_package`, exit 20, before the package file is opened (a request naming a missing file gives this refusal, not the missing-file one); `"source_package": "x"` refuses `wrong-value-kind` at `/request/package/source_package`, `{"identity": "a"}` `missing-member` at `/request/package/source_package/version`, `{"identity": 7, "version": "1"}` `wrong-value-kind` at `/request/package/source_package/identity`, `{"identity": "", "version": "1"}` `invalid-value` there, and an extra member `digest` `unknown-member` at `/request/package/source_package/digest`, each exit 20; FR-1039-AC-1's `call` request over the package runs to `-4` with and without a well-formed `source_package`. | Test (TC-3019) |
 
 ## Dependencies
 

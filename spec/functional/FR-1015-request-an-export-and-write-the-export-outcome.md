@@ -73,7 +73,13 @@ writes no target bytes of its own, so the two give byte-identical files.
   charge for its bytes.
 - An assembled export SHALL write FSpec FR-817's `package` member: the
   source package reference, the target profile, the generator identity and
-  version, and the effective value of each of the three export limits.
+  version, and the effective value of each of the three export limits. The
+  source package reference is `{"identity", "version"}`: over a `program`,
+  the identity the program source declares and the program selection's
+  `formal_revision`; over a `package` (FR-1039), the request's
+  `package.source_package` exactly as given, which an export over a package
+  must carry (FR-1039 "The source package reference of a package export").
+  FSL never derives the reference from a package's bytes.
 - FSL SHALL write the target file only for an `assembled` status, after the
   text is complete, with no partial file. A file or directory already at the
   path refuses `invalid-request` naming the path, exit `20`, with

@@ -12,7 +12,7 @@ relationships:
 
 Verify the abstract protocol side: resolution of the protocol, node targets,
 the refinement's internal list (its shape, spellings, resolution, locus and refusal), the
-single `temporal-satisfaction` requirement record (FR-144's) and the unsupported liveness half.
+single `temporal-satisfaction` requirement record (FR-144's) and the liveness half, decided by FR-899 and never `unsupported`.
 
 Scope: FR-147-AC-1 to FR-147-AC-16. Builds: **built** is a build whose
 support set holds `protocol-abstract-side` and `refinement-internal-list`;
@@ -81,8 +81,8 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   [Twice::Done]`, one `temporal-satisfaction` record and no `refinement` record;
   the node row checks naming `a1`.
 - Step 2: each variant refuses with FR-147-AC-2's code and subcode.
-- Step 3: liveness half `unsupported`, `unsupported-requested-capability`,
-  naming hidden abstract fields.
+- Step 3: liveness half `Checked(HoldsReduced{reductions: []})` beside a
+  holding safety half; never `unsupported`.
 - Step 4: checks with `finish` visible and `abstract_internal` empty; checks
   with `finish` internal; `invalid_model_binding`/`conflicting-binding`.
 - Step 5: the fixture value gives `abstract_internal = [Twice::Done]`; the

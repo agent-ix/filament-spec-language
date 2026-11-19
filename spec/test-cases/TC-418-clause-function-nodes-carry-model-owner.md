@@ -20,7 +20,7 @@ for, a key that merges two members' equal clauses, a key that changes
 across a version-only change of the domain package, and a key that changes
 when the synthesized name's spelling does.
 
-Scope: FR-094-AC-5, FR-094-CON-1, FR-094-CON-2.
+Scope: FR-094-AC-5, FR-094-AC-16, FR-094-CON-1, FR-094-CON-2.
 
 ## Test Procedure
 
@@ -43,8 +43,12 @@ The receiver parameter of each candidate is `self: Reference<M::Order>`.
    functions from both runs, and `Order.size`'s authored function.
 5. Rebuild step 1 with the synthesized labels changed, and read the keys.
 6. Scan the `DeclaredClauseKind` spelling `match` for a `_` arm.
+7. Lower `Service` (FR-185-AC-1) and read the `duration` reward's clause
+   function: its owner, `declaration`, `parameters`, result type, check mode
+   and `clause` binding, and the clause kinds of every other clause function
+   of `Server::attempt` (FR-094-AC-16).
 
-Tag the tests `#[trace("FR-094-AC-5", "TC-418")]`.
+Tag the tests `#[trace("FR-094-AC-5", "TC-418")]`, and step 7 `#[trace("TC-418", "FR-094-AC-16")]`.
 
 ## Expected Results
 
@@ -62,3 +66,8 @@ Tag the tests `#[trace("FR-094-AC-5", "TC-418")]`.
   keys to C1.
 - Step 5: the keys equal step 1's.
 - Step 6: no `_` arm.
+- Step 7: the function is owned by the `Server/attempt` operation member, has
+  `declaration` `null`, the operation's parameters in declared order, result
+  type `Millis`, check mode `Linked` and `clause` `"reward"`; no
+  `precondition` or `body` function was built for the reward, and the spelling
+  `match` has the four arms.
