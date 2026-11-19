@@ -297,6 +297,7 @@ impl FailedStep {
             Self::Fails(
                 RefinementFailure::Divergence { .. }
                 | RefinementFailure::AbstractUnfair { .. }
+                | RefinementFailure::HiddenUnfair { .. }
                 | RefinementFailure::RefusalNotPermitted { .. }
                 | RefinementFailure::TerminalSuccessMismatch { .. },
             ) => return Err("a step check fails with a safety kind".to_owned()),

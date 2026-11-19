@@ -279,10 +279,16 @@ fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
     );
     let outcome = check_aux(&unit.world(&refinement));
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
+    let counterexample = match outcome.liveness {
+        Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { counterexample, .. })) => {
+            counterexample
+        }
+        other => panic!("a hidden liveness counterexample: {other:?}"),
+    };
     assert!(matches!(
-        outcome.liveness,
-        Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { .. }))
-    ), "{:?}", outcome.liveness);
+        counterexample.refinement,
+        Some(RefinementFailure::HiddenUnfair { .. })
+    ));
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
