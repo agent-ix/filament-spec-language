@@ -297,10 +297,15 @@ fn a_hidden_field_with_an_always_enabled_abstract_write_refutes_a_peek_loop() {
 #[trace("TC-2536", "FR-899-AC-2")]
 #[test]
 fn one_fair_hidden_candidate_run_is_sufficient() {
-    let unit = Unit::register();
-    // A mapped write may stutter in the candidate run or take the abstract
-    // write; one fair candidate suffices for the existential inclusion.
-    holds(&check_aux(&unit.world(&hidden_register_history())));
+    let unit = Unit::registers(&["r"], &["r"], AuxShape::Peeker);
+    let refinement = hidden_register_history().replace(
+        "step Impl::Register::write -> Spec::Register::write(self, x);",
+        "step Impl::Register::write -> Spec::Register::write(self, x);\n\
+         step Impl::Register::peek -> stutter;",
+    );
+    // `peek` supplies a concrete transition whose candidate omits the
+    // abstract write; a fair candidate that takes the mapped write remains.
+    holds(&check_aux(&unit.world(&refinement)));
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,

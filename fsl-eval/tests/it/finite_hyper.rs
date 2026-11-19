@@ -2,10 +2,9 @@
 //! FR-898's finite trace population quantifier core.
 
 use fsl_eval::hyper::{
-    FiniteFalseTuple, FiniteHyperOutcome,
+    evaluate_finite_hyper, replays_finite_refutation, FiniteFalseTuple, FiniteHyperOutcome,
     FiniteQuantifier::{Exists, Forall},
     FiniteTrace, FiniteTraceClosure, FiniteTracePopulation, FiniteTupleOutcome,
-    evaluate_finite_hyper, replays_finite_refutation,
 };
 use ix_trace_rs::trace;
 
@@ -115,7 +114,7 @@ fn three_trace_determinism_proves_and_names_a_violating_pair() {
 
 #[trace("TC-1786", "FR-739-AC-1")]
 #[test]
-fn finite_population_rejects_empty_and_duplicate_trace_identities() {
+fn finite_population_folds_identical_identities_and_rejects_conflicts() {
     let row = |identity: &str| FiniteTrace {
         identity: identity.into(),
         records: vec![1],
@@ -129,15 +128,30 @@ fn finite_population_rejects_empty_and_duplicate_trace_identities() {
         ),
         Err(fsl_eval::hyper::FinitePopulationError::EmptyTraceIdentity)
     );
+    let folded = FiniteTracePopulation::new(
+        "population-1",
+        "example/Obs",
+        FiniteTraceClosure::Closed,
+        vec![row("a"), row("a")],
+    )
+    .expect("identical repeated identities fold");
+    assert_eq!(folded.traces, vec![row("a")]);
+
     assert_eq!(
         FiniteTracePopulation::new(
             "population-1",
             "example/Obs",
             FiniteTraceClosure::Closed,
-            vec![row("a"), row("a")],
+            vec![
+                row("a"),
+                FiniteTrace {
+                    identity: "a".into(),
+                    records: vec![2]
+                }
+            ],
         ),
         Err(
-            fsl_eval::hyper::FinitePopulationError::DuplicateTraceIdentity {
+            fsl_eval::hyper::FinitePopulationError::ConflictingTraceIdentity {
                 identity: "a".into(),
             }
         )
