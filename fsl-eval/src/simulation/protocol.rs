@@ -31,6 +31,7 @@ mod fairness;
 mod footprint;
 mod identity;
 mod memory;
+mod package_program;
 mod program;
 mod ra;
 mod race;
@@ -91,6 +92,9 @@ pub use identity::{
 pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
     MemoryStep, MemoryStepId, Read, ReadChoice, Sc, ScComponent, SharedCell, Written,
+};
+pub use package_program::{
+    PackageControl, PackageProgramRefusal, PackageProtocolProgram, PackageRole,
 };
 use program::{Program, Rest};
 pub use ra::{CarriedView, Ra, RaComponent};
@@ -2192,7 +2196,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     Verdict::Undecided(outcome) => {
                         if let Some(cause) = outcome.undefined_cause() {
                             TerminalClass::Undefined {
-                                model: super::model::TerminalModel::named(self.protocol.name.clone()),
+                                model: super::model::TerminalModel::named(
+                                    self.protocol.name.clone(),
+                                ),
                                 cause,
                             }
                         } else if let ClauseOutcome::Incomplete(incomplete) = outcome {
@@ -2205,7 +2211,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                             });
                         } else {
                             TerminalClass::Undecided {
-                                model: super::model::TerminalModel::named(self.protocol.name.clone()),
+                                model: super::model::TerminalModel::named(
+                                    self.protocol.name.clone(),
+                                ),
                             }
                         }
                     }

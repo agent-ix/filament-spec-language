@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
+    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -44,8 +44,8 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets,
-    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, QualifiedName, WrittenCollection,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, ProtocolSlot,
+    ProtocolSlotEvaluation, ProtocolSupply, QualifiedName, WrittenCollection,
 };
 
 /// The reads a body derivation reports, and the reference literals the body
@@ -293,7 +293,11 @@ impl<'a> ModelCheckInput<'a> {
         self.evaluator
             .protocol(name)
             .map(ProtocolDefinition::Source)
-            .or_else(|| self.evaluator.package_protocol(name).map(ProtocolDefinition::Package))
+            .or_else(|| {
+                self.evaluator
+                    .package_protocol(name)
+                    .map(ProtocolDefinition::Package)
+            })
     }
 
     /// The packages an admission of this package's observations
@@ -646,8 +650,11 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: super::TerminalModel::new(terminal.model.clone(), terminal.model.clone())
-                        .with_ordinal(terminal.ordinal),
+                    model: super::TerminalModel::new(
+                        terminal.model.clone(),
+                        terminal.model.clone(),
+                    )
+                    .with_ordinal(terminal.ordinal),
                     node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
@@ -1039,6 +1046,11 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         _member: &str,
         _index: Option<usize>,
     ) -> Option<ProtocolSlot> {
+        None
+    }
+
+    /// FR-531: the exact identity row for one admitted package node.
+    fn package_node_key(&self, _node: &CheckedNodeId) -> Option<NodeKey> {
         None
     }
 
@@ -1920,6 +1932,10 @@ impl ModelEvaluator for BarePackage<'_> {
         })
     }
 
+    fn package_node_key(&self, node: &CheckedNodeId) -> Option<NodeKey> {
+        self.node_key(node)
+    }
+
     fn protocol_node_keys(&self, _name: &str) -> Option<&CheckedProtocolNodeKeys> {
         None
     }
@@ -2209,7 +2225,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClauseBinder, receiver_slots};
+    use super::{receiver_slots, ClauseBinder};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders
