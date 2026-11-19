@@ -285,7 +285,7 @@ pub(super) struct Program<'a> {
     /// Each binder slot's declared type.
     binder_types: Vec<ValueType>,
     /// The protocol's `terminal` member.
-    pub(super) terminal: &'a CheckedTerminalMember,
+    pub(super) terminal: Option<&'a CheckedTerminalMember>,
     /// The `compensate` templates, in source order.
     pub(super) templates: Vec<Template<'a>>,
     /// Each `effect` node's attempt, from the `Effect` edges (ST-2).
@@ -471,7 +471,7 @@ impl<'a> Program<'a> {
     /// The structure of `protocol`, or the refusal of a construct this
     /// system does not step.
     pub(super) fn new(
-        model: &ModelSystem<'_>,
+        _model: &ModelSystem<'_>,
         protocol: &'a CheckedProtocol,
         capacities: &Capacities,
     ) -> Result<Self, ProtocolRefusal> {
@@ -862,7 +862,7 @@ impl<'a> Program<'a> {
                 .iter()
                 .map(|binder| binder.value_type.clone())
                 .collect(),
-            terminal: &protocol.slots.terminal,
+            terminal: Some(&protocol.slots.terminal),
             templates,
             effects: protocol
                 .edges
@@ -903,6 +903,126 @@ impl<'a> Program<'a> {
                 finish: readers.contains(&program.finish.node),
             })
             .collect();
+        Ok(program)
+    }
+
+    /// Build the sequence/parallel/attempt program directly from the admitted
+    /// package form. Package execution keeps expression slots out of the
+    /// source `CheckedBody` fields; callers evaluate them through the package
+    /// evaluator.
+    pub(super) fn new_package(
+        model: &ModelSystem<'_>,
+        package: &super::PackageProtocolProgram<'_>,
+    ) -> Result<Self, ProtocolRefusal> {
+        let mut controls = BTreeMap::new();
+        for control in package.controls.values() {
+            let step = match control.operation {
+                fsl_package::protocol_view::ControlOperation::Sequence => ControlStep::Sequence,
+                fsl_package::protocol_view::ControlOperation::Parallel => ControlStep::Parallel,
+                fsl_package::protocol_view::ControlOperation::Attempt => ControlStep::Attempt,
+                _ => return Err(ProtocolRefusal::fault("a-package-control-is-supported")),
+            };
+            controls.insert(
+                control.id,
+                Control {
+                    step,
+                    name: control.name.clone(),
+                    text: control.path.join("/"),
+                    parent: control.parent,
+                    children: control.children.clone(),
+                },
+            );
+        }
+
+        let mut attempts = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Attempt
+        }) {
+            let operation = package
+                .operation_ref(control.id)
+                .map_err(|_| ProtocolRefusal::fault("a-package-attempt-resolves"))?;
+            attempts.insert(
+                control.id,
+                Attempt {
+                    declaring: operation.declaring,
+                    operation: operation.name.to_owned(),
+                    receiver: operation.receiver,
+                    contracts: std::sync::Arc::new(control.contract_keys.iter().cloned().collect()),
+                    constraint: None,
+                    binds: None,
+                },
+            );
+        }
+
+        let mut joins = BTreeMap::new();
+        for control in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+        }) {
+            joins.insert(
+                control.id,
+                Join {
+                    policy: CheckedJoinPolicy::All,
+                    joined: control
+                        .branches
+                        .iter()
+                        .map(|(label, _)| label.clone())
+                        .collect(),
+                    outstanding: None,
+                    branches: control.branches.clone(),
+                },
+            );
+        }
+
+        let finish_node = ProtocolNodeId(
+            package
+                .controls
+                .keys()
+                .map(|node| node.0)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1),
+        );
+        let finish = Finish {
+            node: finish_node,
+            text: format!("{}::finish", package.name),
+            constraint: None,
+            binder: (1, ValueType::Boolean),
+        };
+        let mut program = Self {
+            root: package.root,
+            controls,
+            attempts,
+            joins,
+            loops: BTreeMap::new(),
+            choices: BTreeMap::new(),
+            awaits: BTreeMap::new(),
+            checks: BTreeMap::new(),
+            fences: BTreeMap::new(),
+            events: BTreeMap::new(),
+            messages: BTreeMap::new(),
+            channels: Vec::new(),
+            finish,
+            slots: vec![None, None],
+            readers: vec![BTreeSet::new(), BTreeSet::new()],
+            binder_of: BTreeMap::new(),
+            binder_types: vec![ValueType::Boolean, ValueType::Boolean],
+            terminal: None,
+            templates: Vec::new(),
+            effects: BTreeMap::new(),
+            spans: BTreeMap::new(),
+            reader_positions: Vec::new(),
+            loop_of: BTreeMap::new(),
+            replicated: Vec::new(),
+            acting: BTreeMap::new(),
+            activation: None,
+            activation_slot: None,
+            trigger_read: false,
+            captures: Vec::new(),
+            capture_slots: Vec::new(),
+        };
+        program.spans = program.spans()?;
+        program.loop_of = program.enclosing_loops()?;
+        program.reader_positions = vec![ReaderPositions::default(), ReaderPositions::default()];
         Ok(program)
     }
 
