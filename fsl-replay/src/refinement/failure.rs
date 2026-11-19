@@ -171,9 +171,7 @@ impl RefinementFailure {
             | Self::Undefined { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),
-            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => {
-                None
-            }
+            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => None,
         }
     }
 }

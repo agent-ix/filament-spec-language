@@ -1698,7 +1698,7 @@ pub fn check_protocol_state_relations(
                     }
                 }
             }
-            Taken::Stutter | Taken::Abstract(_) => {}
+            Taken::Stutter | Taken::Abstract(_) | Taken::CandidateSteps(_) => {}
         }
     }
     let mut stable_candidates = Vec::new();
