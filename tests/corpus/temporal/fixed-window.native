@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile sampled = "filament.temporal.fixed-sample.false-extension/v1";
+record Pulse { ok: Boolean; }
+temporal SampledPulse using sampled over (p: Pulse) clock "sensor" on origin {
+  always[0,2] holds(p.ok)
+}

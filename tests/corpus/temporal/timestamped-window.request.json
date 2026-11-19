@@ -1,0 +1,11 @@
+{
+  "format": "native-compile/1",
+  "request": {
+    "models": [],
+    "program": {"source": {
+      "file": "timestamped-window.native", "authority": "agent-ix",
+      "identity": "test:temporal-corpus-stamped", "document": "StampedPulse", "formal_revision": 1
+    }},
+    "clocks": {"sensor": {"kind": "timestamped_event", "timestamp_unit": "ms"}}
+  }
+}
