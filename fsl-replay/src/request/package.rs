@@ -114,6 +114,28 @@ impl ReplayPackage {
                 members.entry(name.to_owned()).or_insert(clock);
             }
         }
+
+        // FR-640-AC-11: a dependency's clock selection belongs to the
+        // proving package's lock, not to its program `temporal_bindings`.
+        // The dependency rows take precedence if the same role is also used
+        // by the program; replay uses one configuration per role across the
+        // checked closure.
+        const DEPENDENCY_ROWS: &str = "/package/lock/dependency_clock_selections";
+        if let Some(lock) = member(self.document.root(), "lock") {
+            if let Some(rows) = member(lock, "dependency_clock_selections") {
+                for (index, row) in array(rows, DEPENDENCY_ROWS)?.enumerate() {
+                    let pointer = format!("{DEPENDENCY_ROWS}/{index}");
+                    let name = string(
+                        required(row, "clock_name", &pointer)?,
+                        &format!("{pointer}/clock_name"),
+                    )?;
+                    let clock_at = format!("{pointer}/clock");
+                    let clock = serde_json::from_value(json_value(required(row, "clock", &pointer)?))
+                        .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
+                    members.insert(name.to_owned(), clock);
+                }
+            }
+        }
         crate::spine::RequestClocks::new(members).map_err(|invalid| {
             field_refusal(
                 &format!("{ROWS}/{}", invalid.clock),
