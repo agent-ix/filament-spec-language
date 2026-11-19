@@ -3367,22 +3367,24 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
-    if let (Some(checker), Some(identity), Some("proved")) = (
+    if let (Some(checker), Some(identity), Some(result)) = (
         detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
-        let mut certificate = json!({
-            "identity": identity,
-            "checker": checker.as_str(),
-            "accepted": true
-        });
-        if let Some(document) = certificate_document {
-            if let Some(certificate) = certificate.as_object_mut() {
-                certificate.insert("document".to_owned(), document);
+        if matches!(result, "proved" | "refuted") {
+            let mut certificate = json!({
+                "identity": identity,
+                "checker": checker.as_str(),
+                "accepted": result == "proved"
+            });
+            if let Some(document) = certificate_document {
+                if let Some(certificate) = certificate.as_object_mut() {
+                    certificate.insert("document".to_owned(), document);
+                }
             }
+            item.insert("certificate".to_owned(), certificate);
         }
-        item.insert("certificate".to_owned(), certificate);
     }
     let mut spelled = None;
     if let Some(mut counterexample) = counterexample {

@@ -2563,12 +2563,10 @@ impl<O> Checker<'_, '_, O> {
             StateGraphForm::UniquePath { .. } => {
                 let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
                 let from_values = self.predicate_values(from, state_graph.over)?;
-                let mut memo = vec![None; self.states.len()];
-                let mut visiting = vec![false; self.states.len()];
                 for (node, state) in self.states.iter().enumerate() {
                     if state.is_some()
                         && from_values[node]
-                        && self.path_count(node, &target_values, &ef, &mut memo, &mut visiting) != 1
+                        && self.transition_path_count(node, &target_values) != 1
                     {
                         return reject(CertificateRule::CountBroken, at_node(node));
                     }
@@ -2635,38 +2633,13 @@ impl<O> Checker<'_, '_, O> {
         }
     }
 
-    fn path_count(
-        &self,
-        node: usize,
-        target: &[bool],
-        can_reach: &[bool],
-        memo: &mut [Option<u8>],
-        visiting: &mut [bool],
-    ) -> u8 {
-        if !can_reach[node] {
-            return 0;
-        }
-        if let Some(count) = memo[node] {
-            return count;
-        }
-        if visiting[node] {
-            return 2;
-        }
-        visiting[node] = true;
-        let mut count = u8::from(target[node]);
-        for (index, edge) in self.certificate.edges.iter().enumerate() {
-            if edge.from == node && self.covers[index].is_some() {
-                count = count
-                    .saturating_add(self.path_count(edge.to, target, can_reach, memo, visiting))
-                    .min(2);
-                if count == 2 {
-                    break;
-                }
-            }
-        }
-        visiting[node] = false;
-        memo[node] = Some(count);
-        count
+    fn transition_path_count(&self, start: usize, target: &[bool]) -> u8 {
+        transition_sequence_count(
+            start,
+            target,
+            &self.certificate.edges,
+            &self.covers,
+        )
     }
 
     /// `admitted`: a path of valid edges from an initial node to a
@@ -3108,6 +3081,117 @@ fn computed_bounds(
 /// component numbering, at their integers' magnitudes. It bounds the certificate's in-memory reading,
 /// not an encoding: FR-418's byte encoding of the certificate does not
 /// exist yet (spec gap STD-493).
+fn transition_sequence_count(
+    start: usize,
+    target: &[bool],
+    edges: &[CertEdge],
+    active: &[Option<usize>],
+) -> u8 {
+    let mut subsets = vec![vec![start]];
+    let mut transitions = vec![Vec::<(ModelTransition, usize)>::new()];
+    let mut accepting = vec![false];
+    let mut at = 0;
+    while at < subsets.len() {
+        for &node in &subsets[at] {
+            accepting[at] |= target.get(node).copied().unwrap_or(false);
+        }
+        let mut symbols = BTreeMap::<ModelTransition, BTreeSet<usize>>::new();
+        for (edge_index, edge) in edges.iter().enumerate() {
+            if active.get(edge_index).is_none_or(Option::is_none)
+                || !subsets[at].contains(&edge.from)
+            {
+                continue;
+            }
+            if let Some(symbol) = &edge.transition {
+                symbols.entry(symbol.clone()).or_default().insert(edge.to);
+            }
+        }
+        for (symbol, destinations) in symbols {
+            let next = destinations.into_iter().collect::<Vec<_>>();
+            let next_state = if let Some(existing) = subsets.iter().position(|old| *old == next) {
+                existing
+            } else {
+                let index = subsets.len();
+                subsets.push(next);
+                transitions.push(Vec::new());
+                accepting.push(false);
+                index
+            };
+            transitions[at].push((symbol, next_state));
+        }
+        at += 1;
+    }
+    count_accepted_words(&transitions, &accepting)
+}
+
+fn count_accepted_words(
+    transitions: &[Vec<(ModelTransition, usize)>],
+    accepting: &[bool],
+) -> u8 {
+    let mut can_accept = accepting.to_vec();
+    loop {
+        let mut changed = false;
+        for (from, outgoing) in transitions.iter().enumerate() {
+            if !can_accept[from] && outgoing.iter().any(|(_, to)| can_accept[*to]) {
+                can_accept[from] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    fn count(
+        node: usize,
+        transitions: &[Vec<(ModelTransition, usize)>],
+        accepting: &[bool],
+        can_accept: &[bool],
+        memo: &mut [Option<u8>],
+        visiting: &mut [bool],
+    ) -> u8 {
+        if !can_accept[node] {
+            return 0;
+        }
+        if let Some(count) = memo[node] {
+            return count;
+        }
+        if visiting[node] {
+            return 2;
+        }
+        visiting[node] = true;
+        let mut total = u8::from(accepting[node]);
+        for (_, next) in &transitions[node] {
+            if can_accept[*next] {
+                total = total
+                    .saturating_add(count(
+                        *next,
+                        transitions,
+                        accepting,
+                        can_accept,
+                        memo,
+                        visiting,
+                    ))
+                    .min(2);
+                if total == 2 {
+                    break;
+                }
+            }
+        }
+        visiting[node] = false;
+        memo[node] = Some(total);
+        total
+    }
+    let mut memo = vec![None; transitions.len()];
+    count(
+        0,
+        transitions,
+        accepting,
+        &can_accept,
+        &mut memo,
+        &mut vec![false; transitions.len()],
+    )
+}
+
 fn certificate_bytes<O>(certificate: &ZoneCertificate<O>) -> u64 {
     let integer = |value: &Integer| value.magnitude_bits() / 8 + 1;
     let mut bytes = integer(&certificate.scale);
@@ -3249,4 +3333,35 @@ fn numbering_ok(components: &Components, nodes: usize) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod state_graph_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn split_zone_edges_with_one_transition_count_as_one_sequence() {
+        let transition = ModelTransition::new(
+            r#"{"name":"go"}"#.to_owned(),
+            None,
+            Vec::new(),
+            quire_canonical::Limits::new(u64::MAX),
+        )
+        .expect("canonical transition");
+        let edge = |to| CertEdge {
+            from: 0,
+            transition: Some(transition.clone()),
+            part: Some(to - 1),
+            horizon: None,
+            to,
+            silent: None,
+        };
+        let count = transition_sequence_count(
+            0,
+            &[false, true, true],
+            &[edge(1), edge(2)],
+            &[Some(0), Some(1)],
+        );
+        assert_eq!(count, 1);
+    }
 }

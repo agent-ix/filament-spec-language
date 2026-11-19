@@ -41,6 +41,12 @@ fn run(name: &str, reset: bool, items: Value) -> Run {
     ))
 }
 
+fn rpc_empty_snapshot() -> Vec<u8> {
+    let mut snapshot: Value = serde_json::from_slice(&rpc_snapshot()).expect("snapshot JSON");
+    snapshot["populations"][0]["objects"] = json!([]);
+    snapshot.to_string().into_bytes()
+}
+
 /// FR-852-AC-1, FSpec FR-712-AC-1: `Replied` proves on `en-6` with a
 /// replayed, certified witness `send` then `reply`; `Late` is unreachable
 /// within the server deadline and refutes.
@@ -93,6 +99,12 @@ fn a_timed_always_possible_claim_proves_and_refutes() {
     let item = refuted.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert_eq!(item["certificate"]["accepted"], false, "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["state_graph"]["form"],
+        "always-possible",
+        "{item}"
+    );
 }
 
 /// A state-graph certificate establishes reachability and the claim's graph
@@ -288,6 +300,65 @@ fn digital_clocks_decide_always_possible_and_unique_path() {
     let item = unique_refuted.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// FR-243: EN-1 refuses an open timed state-graph subject before search.
+#[trace("TC-2412", "FR-852-AC-6")]
+#[test]
+fn digital_clocks_decline_a_strict_timed_subject() {
+    let strict = unit(true).replace(
+        "self.inflight and self.x >= 1 ms",
+        "self.inflight and self.x > 1 ms",
+    );
+    let run = analyze(&request_over(
+        &Workspace::new("timed-sg-digital-strict"),
+        &strict,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "ReplyPossible",
+            "options": {"method": "digital-clocks"}}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(item["record"]["settled_by"], "result", "{item}");
+    assert!(item["record"].to_string().contains("strict-clock-constraint"), "{item}");
+    assert!(item.get("exploration").is_none(), "no search runs: {item}");
+}
+
+/// FR-125: timed state-graph items settle NoInstance or NoInitialState
+/// before exploring, through either timed route.
+#[trace("TC-2412")]
+#[trace("FSpec-FR-125-AC-7")]
+#[test]
+fn timed_state_graph_items_report_empty_instance_and_initial_causes() {
+    for options in [json!({}), json!({"method": "digital-clocks"})] {
+        let empty_universe = analyze(&request_over(
+            &Workspace::new("timed-sg-no-instance"),
+            &unit(true),
+            &crate::zone_search::rpc_document(),
+            &[rpc_empty_snapshot()],
+            json!({"items": [{"claim": "ReplyPossible", "options": options.clone()}]}),
+        ));
+        let item = empty_universe.item(0);
+        assert_eq!(label(&item), "inconclusive", "{item}");
+        assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
+        assert_eq!(item["exploration"]["states"], "0", "{item}");
+
+        let start = json!({"authority": "test", "identity": "s0"});
+        let no_initial = analyze(&request_over(
+            &Workspace::new("timed-sg-no-initial"),
+            &unit(true),
+            &crate::zone_search::rpc_document(),
+            &[rpc_snapshot()],
+            json!({"items": [{"claim": "ReplyPossible", "options": options}],
+                "subject": {"initial_states": [], "universes": [start], "proof_bounds": []}}),
+        ));
+        let item = no_initial.item(0);
+        assert_eq!(label(&item), "inconclusive", "{item}");
+        assert_eq!(item["record"]["cause"]["kind"], "no-initial-state", "{item}");
+        assert_eq!(item["exploration"]["states"], "0", "{item}");
+    }
 }
 
 /// The Zeno-only `Rpc` variant of FR-244-AC-7: the time invariant

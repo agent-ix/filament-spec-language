@@ -270,6 +270,22 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         Ok(timed) => timed,
         Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
     };
+    if let Some(refusal) = digital_closed_refusal(&timed) {
+        return EngineReport::Refused(refusal);
+    }
+    let instances = match read.claim.over() {
+        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
+            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        },
+        None => vec![None],
+    };
+    if instances.is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
+    }
+    if timed.initial().is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+    }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
         u64::try_from(read.form.limits.limits.max_states).unwrap_or(u64::MAX),
@@ -309,13 +325,6 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             }
             None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         },
-    };
-    let instances = match read.claim.over() {
-        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
-            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
-        None => vec![None],
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -846,6 +855,62 @@ fn digital_model_steps(
     Ok(steps)
 }
 
+fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
+    let constraint = crate::exact_probabilistic::model_constraints(timed)
+        .into_iter()
+        .find(|constraint| {
+            matches!(
+                constraint.op(),
+                fsl_semantics::check::ClockOp::Less | fsl_semantics::check::ClockOp::Greater
+            )
+        })?;
+    let span = constraint.span();
+    let mut detail = serde_json::Map::new();
+    detail.insert(
+        "strict_constraint".to_owned(),
+        serde_json::json!({"start": span.start, "end": span.end}),
+    );
+    Some(Refusal::DeclinedWithDetail(
+        fsl_replay::ProofRefusalCause::InvalidInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        filament_semantic_value::catalog::CatalogCode::new(
+            "invalid_runtime_input",
+            "strict-clock-constraint",
+        ),
+        detail,
+    ))
+}
+
+fn no_timed_graph_decision(
+    read: &Run<'_, '_>,
+    cause: fsl_replay::InconclusiveCause,
+) -> EngineReport {
+    let record = StateGraphRecord {
+        value: TerminalValue::Inconclusive(cause),
+        label: fsl_replay::ResultLabel::Inconclusive,
+        basis: fsl_replay::SettlementBasis::Unsettled,
+        execution: fsl_replay::Execution::Completed,
+        truth: fsl_replay::Truth::Pending,
+        method: fsl_replay::EXPLICIT_STATE,
+        max_depth: read.form.max_depth.and_then(|depth| u64::try_from(depth).ok()),
+        limits: read.form.limits.used(),
+        limit_reached: None,
+        seed: read.form.seed.unwrap_or_default(),
+        witness_samples: read.form.witness_samples.unwrap_or(1),
+        walks_stopped: 0,
+        end: None,
+        undefined: None,
+    };
+    EngineReport::StateGraph(Box::new(GraphReport {
+        record,
+        exploration: fsl_replay::RunStats::default(),
+        counterexample: None,
+        evidence: None,
+        certificate_document: None,
+        checker: None,
+    }))
+}
+
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = super::timed_item::timed_model(read.package) else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
@@ -863,6 +928,19 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         Ok(timed) => timed,
         Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
+    let instances = match read.claim.over() {
+        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
+            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+        },
+        None => vec![None],
+    };
+    if instances.is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
+    }
+    if timed.initial().is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+    }
     let graph = match explore_timed_state_graph(
         &timed,
         super::timed_item::zone_limits(read.form),
@@ -900,13 +978,6 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         },
         Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-    };
-    let instances = match read.claim.over() {
-        Some(parameter) => match system.instances(&ValueType::Reference(parameter.object.clone())) {
-            Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
-        },
-        None => vec![None],
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
@@ -988,7 +1059,9 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
                 Ok(replay)
                     if replay.settlement == GraphReplaySettlement::Reproduced => {}
-                _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
+                _ => {
+                    return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
+                }
             }
         }
         let wire = evidence
@@ -1044,7 +1117,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             end: None,
             undefined: None,
         };
-        let certificate_document = accepted.then(|| {
+        let certificate_document = (accepted || refuted).then(|| {
             serde_json::json!({
                 "state_graph": {
                     "form": form.as_str(),
@@ -1062,7 +1135,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             counterexample: (!held).then(|| wire.clone()).flatten(),
             evidence: held.then(|| wire.clone()).flatten(),
             certificate_document,
-            checker: accepted.then_some(CertificateChecker::Zone),
+            checker: (accepted || refuted).then_some(CertificateChecker::Zone),
         };
         if selected.is_none() || !held {
             selected = Some(report);
