@@ -346,11 +346,11 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
 #[trace("TC-2536", "FR-899-AC-6")]
 #[test]
 fn cx1_refutes_when_fire_only_leaves_the_candidate_cycle() {
-    let contracts = "pre Advance using v on Spec::M::advance { self.h = 0 }\n\
-        post Advance using v on Spec::M::advance { self.h = 1 and self.v = pre(self.v) }\n\
-        post Fire using v on Spec::M::fire {\n\
+    let contracts = "pre AdvanceEnabled using v on Spec::M::advance { self.h = 0 }\n\
+        post AdvanceStep using v on Spec::M::advance { self.h = 1 and self.v = pre(self.v) }\n\
+        post FireStep using v on Spec::M::fire {\n\
           (pre(self.h) = 1 and self.h = 2 and self.v = pre(self.v)) or\n\
-          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = pre(self.v) + 1)\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
         }\n";
     let unit = Unit::hidden_fairness_model(2, 0, &["advance", "fire"], contracts);
     let refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
@@ -368,15 +368,15 @@ fn cx1_refutes_when_fire_only_leaves_the_candidate_cycle() {
 #[trace("TC-2536", "FR-899-AC-7")]
 #[test]
 fn cx2_requires_one_candidate_run_to_satisfy_all_fairness_constraints() {
-    let contracts = "post Fire1 using v on Spec::M::fire1 {\n\
+    let contracts = "post Fire1Step using v on Spec::M::fire1 {\n\
           (pre(self.h) = 0 and self.h = 0 and self.v = pre(self.v)) or\n\
-          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = pre(self.v) + 1)\n\
+          (pre(self.h) != 0 and self.h = pre(self.h) and self.v = 1)\n\
         }\n\
-        post Fire2 using v on Spec::M::fire2 {\n\
+        post Fire2Step using v on Spec::M::fire2 {\n\
           (pre(self.h) = 1 and self.h = 1 and self.v = pre(self.v)) or\n\
-          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = pre(self.v) + 1)\n\
+          (pre(self.h) != 1 and self.h = pre(self.h) and self.v = 1)\n\
         }\n";
-    let unit = Unit::hidden_fairness_model(1, 0, &["fire1", "fire2"], contracts)
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire1", "fire2"], contracts)
         .with_hidden_initials(&[1]);
     let refinement = hidden_tick_refinement(
         "ensure fair weak Spec::M::fire1;\nensure fair weak Spec::M::fire2;\n",
@@ -393,9 +393,9 @@ fn cx2_requires_one_candidate_run_to_satisfy_all_fairness_constraints() {
 #[trace("TC-2536", "FR-899-AC-8")]
 #[test]
 fn cx3_holds_when_one_candidate_never_enables_fire() {
-    let contracts = "pre Fire using v on Spec::M::fire { self.h = 0 }\n\
-        post Fire using v on Spec::M::fire { self.h = 0 and self.v = pre(self.v) }\n";
-    let unit = Unit::hidden_fairness_model(1, 0, &["fire"], contracts)
+    let contracts = "pre FireEnabled using v on Spec::M::fire { self.h = 0 }\n\
+        post FireStep using v on Spec::M::fire { self.h = 0 and self.v = pre(self.v) }\n";
+    let unit = Unit::hidden_fairness_model(2, 0, &["fire"], contracts)
         .with_hidden_initials(&[1]);
     let refinement = hidden_tick_refinement("ensure fair weak Spec::M::fire;\n");
     let outcome = check_aux(&unit.world(&refinement));
