@@ -95,6 +95,7 @@ impl Body for ActionBody {
                     location: None,
                     losses: vec![],
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 })),
                 Ok(true) => panic!("the mismatched value was admitted"),
                 Err(failure) => Err(BodyFailure::fsv_environment(failure, None)),

@@ -2128,6 +2128,7 @@ fn tc_744_an_undefined_step_maps_to_undefined_evaluation() {
         location: Some(at.clone()),
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     };
     let reason = stopped_reason(
         evaluation,

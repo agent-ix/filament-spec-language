@@ -1444,6 +1444,7 @@ fn evaluation(outcome: FamilyOutcome<Value>) -> filament_eval::Evaluation {
         location: Some(fixture_f_location()),
         losses: Vec::new(),
         frame_depth: 0,
+        peak_live_occurrences: 0,
     }
 }
 
