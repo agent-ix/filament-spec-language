@@ -136,8 +136,9 @@ write the `count<Int[0, 0]>` atom in a called function body checked under
 cannot reach the run-time refusal under either mode: its unproved count
 refuses at check (FR-495). Such a fixture SHALL move the `count` into a
 function body the clause calls, as FR-268-AC-3's refused separating-witness
-domain does with `function z using v(x: Integer): Int[0, 0] pure {
-count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }`.
+domain does with `type Zero = Int[0, 0];` and
+`function z using v(x: Integer): Zero pure {
+count<Zero>(m in ints(sequence[x]): m > 0) }`.
 This composes with FR-495: a called function's body is checked under
 the mode of its own declaration, and its unproved range is an obligation of
 that body, not of the declared clause. The clause sees the call typed by the

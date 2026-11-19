@@ -2983,7 +2983,8 @@ fn tc_743_the_separation_check_names_its_failing_step() {
 #[test]
 fn count_refusal_in_a_called_kernel_function_fails_the_domain_step() {
     let (base, packages) = config_version_unit_and_packages();
-    let text = base + "function z using v(x: Integer): Int[0, 0] pure { count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }\n\
+    let text = base + "type Zero = Int[0, 0];\n\
+        function z using v(x: Integer): Zero pure { count<Zero>(m in ints(sequence[x]): m > 0) }\n\
         function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
         invariant RefusedDomain using v on Config::ConfigVersion at current { forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n";
     let compiled = crate::spine::lifecycle::compose_in_mode(
