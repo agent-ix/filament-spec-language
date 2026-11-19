@@ -3,7 +3,7 @@ profile p = "filament.protocol.finite-global/v1";
 object Job { ready: Boolean; population jobs; }
 object Worker { alive: Boolean; population workers; }
 protocol Empty using p over (job: Job) on origin {
-  role Worker on Worker;
+  role Agent on Worker;
   run sequence Start {}
   finish Done as (done: Boolean) { done };
 }
