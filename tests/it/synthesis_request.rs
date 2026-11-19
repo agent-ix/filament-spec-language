@@ -201,6 +201,7 @@ const OUTCOME_MEMBERS: [&str; 13] = [
 /// validated, an exhausted, an optimal and a limited run.
 #[test]
 #[trace("TC-3017", "FR-1037-AC-1")]
+#[trace("TC-2104", "FR-754-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
 fn the_synthesis_member_writes_the_synthesis_outcome() {
