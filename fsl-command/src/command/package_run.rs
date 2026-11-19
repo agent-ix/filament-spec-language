@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{FileCounts, Result, RunCause, RunResult, output, wire};
+use super::{output, wire, FileCounts, Result, RunCause, RunResult};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -151,10 +151,10 @@ pub(super) fn prepare(
     if call.requirements.is_some() {
         return Err(invalid(
             "call.requirements",
-            "settling requirement items over a selected checked package is not implemented yet",
+            "checked-package requirement items need the V2 requirement record from QSL-2543",
         ));
     }
-    let spine_call = super::read_call(call, request)?;
+    let mut spine_call = super::read_call(call, request)?;
     let admitted = admit(
         directory,
         request,
@@ -324,7 +324,7 @@ pub(super) fn admit(
         equality,
         budget,
         packages: supplied,
-        model_limits: request.limits.normalization.resolve(),
+        model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
         snapshot,
         selection,
         models: documents

@@ -9,13 +9,13 @@ mod map;
 mod request;
 
 use super::{
-    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
-    intake_with_bytes, output::NativeResult, output_file, wire,
+    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
+    RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
@@ -173,7 +173,7 @@ pub(super) fn run_bytes(
             &request,
             &request.limits.effective(),
         )?;
-        return finish(&request, &mapped, &program, output.as_deref()).map(Some);
+        return finish(&request, &mapped, &program, output.as_deref());
     }
     document["format"] = json!(fsl_foundation::wire_format::WireFormat::CompileRequest.as_str());
     let compile = serde_json::to_vec(&document).map_err(RunCause::Output)?;
@@ -249,18 +249,16 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![
-            fsl_replay::OutcomeDiagnostic::new(
-                Some("unsupported-requested-capability"),
-                "unsupported_projection",
-                None,
-                reason,
-            )
-            .with_details(Some(serde_json::Map::from_iter([(
-                "path".to_owned(),
-                Value::String(path.to_owned()),
-            )]))),
-        ]);
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unsupported-requested-capability"),
+            "unsupported_projection",
+            None,
+            reason,
+        )
+        .with_details(Some(serde_json::Map::from_iter([(
+            "path".to_owned(),
+            Value::String(path.to_owned()),
+        )])))]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
