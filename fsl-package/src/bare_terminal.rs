@@ -110,7 +110,10 @@ impl BarePackage<'_> {
             // The selection that owns the type names the model, as the source
             // route's `model.selection().identity` does; a model with no
             // population falls back to the selection that declares the type.
-            let model = match self.selection_of_object(&context) {
+            let model = match self
+                .selection_of_object(&context)
+                .map_err(crate::protocol_selection::SlotSelectionFailure::Fault)?
+            {
                 Some(identity) => identity.to_owned(),
                 None => {
                     let declaring = context.original().package();
