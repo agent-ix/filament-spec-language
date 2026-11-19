@@ -20,7 +20,7 @@ Scope: FR-1040-AC-1 to FR-1040-AC-7.
 
 Fixture: FSpec FR-415-AC-15's `Call` model under `time dense unit ms`, with
 the fields `v: Option<Clock>`, `q: Sequence<Option<Clock>>[0, 2]`,
-`ts: Sequence<Timer>[0, 2]` (`Timer { x: Clock; n: Int }`), `peer: Reference<Call>` and
+`ts: Sequence<Timer>[0, 2]` (`Timer { x: Clock; n: Int }`), `m: Map<Text, Timer>[0, 2]`, `peer: Reference<Call>` and
 `n: Int[0, 9]` added, a population `calls`, and a
 refinement whose subject admits `calls = {c1, c2}`.
 
