@@ -3043,7 +3043,8 @@ fn graph_order<'c, 'g>(kept: &[&'c Candidate<'g>]) -> Vec<&'c Candidate<'g>> {
                 let group = recursion.anchor().clone();
                 if emitted_groups.insert(group.clone()) {
                     if let Some(members) = recursion_groups.remove(&group) {
-                        let members: Vec<_> = members.into_iter().flatten().collect();
+                        let mut members: Vec<_> = members.into_iter().flatten().collect();
+                        members.sort_by(|left, right| left.key.cmp(&right.key));
                         if let Some(first) = members.iter().map(|member| &member.key).min() {
                             units.push((first.clone(), members));
                         }

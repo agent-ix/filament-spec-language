@@ -61,7 +61,7 @@ pub(crate) struct AttemptNodes {
     /// The operation's `operation_anchor` node.
     pub(crate) anchor: NodeKey,
     /// The state clauses the attempt lists.
-    pub(crate) contracts: Vec<NodeKey>,
+    pub(crate) contracts: Vec<NodeRef>,
 }
 
 /// The operation anchor of a checked compensation template.
@@ -410,7 +410,7 @@ impl Lowering<'_> {
                         MemberTerm::binding("ordering", ordering),
                         MemberTerm::binding(
                             "contracts",
-                            BindingValue::Group(GroupTerm::references(sorted(
+                            BindingValue::Group(GroupTerm::references_nodes(sorted_node_refs(
                                 nodes.contracts.iter().cloned(),
                             ))),
                         ),
@@ -985,6 +985,13 @@ impl Lowering<'_> {
         let mut binders = Binders::new(slot_names, &scope);
         self.expression(body.body.root(), &mut binders)
     }
+}
+
+fn sorted_node_refs(nodes: impl IntoIterator<Item = NodeRef>) -> Vec<NodeRef> {
+    let mut nodes: Vec<_> = nodes.into_iter().collect();
+    nodes.sort();
+    nodes.dedup();
+    nodes
 }
 
 /// Each control's declaration path (FR-464 "Control tree"): the root's is

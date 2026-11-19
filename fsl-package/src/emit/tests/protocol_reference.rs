@@ -482,6 +482,17 @@ fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
     let [carrier] = carriers.as_slice() else {
         panic!("one shared protocol-reference carrier: {carriers:?}");
     };
+    let single_text = selecting(&format!("{REFERS_TO_FILL}{}", protocol("Fill")));
+    let (_, single_wire, single_read) = emit_model_unit(&single_text, None);
+    assert!(
+        matches!(single_read, Read::Verified { .. }),
+        "{single_read:?}"
+    );
+    let single_carrier = node_of(&single_wire, "protocol", "protocol_reference");
+    assert_eq!(
+        carrier["node_id"], single_carrier["node_id"],
+        "adding another occurrence preserves the one-reference carrier key"
+    );
     assert_eq!(
         carrier["body"],
         json!({"term": "reference", "target": clauses[0]["node_id"]})
@@ -499,6 +510,29 @@ fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
         .map(|occurrence| occurrence["ordinal"].as_u64().expect("ordinal"))
         .collect();
     assert_eq!(ordinals, [0, 1]);
+    let source_rows: Vec<&Value> = wire["source_map"]
+        .as_array()
+        .expect("source map rows")
+        .iter()
+        .filter(|row| row["node_id"] == carrier["node_id"])
+        .collect();
+    assert_eq!(source_rows.len(), 2, "each occurrence has a source-map row");
+    for (ordinal, row) in source_rows.iter().enumerate() {
+        assert_eq!(row["role"], "expression");
+        assert_eq!(row["ordinal"].as_u64(), Some(ordinal as u64));
+        let regions = row["regions"].as_array().expect("source regions");
+        let [region] = regions.as_slice() else {
+            panic!("one occurrence region: {regions:?}");
+        };
+        let start =
+            usize::try_from(region["start"].as_u64().expect("start")).expect("start fits usize");
+        let end = usize::try_from(region["end"].as_u64().expect("end")).expect("end fits usize");
+        assert_eq!(&text[start..end], "protocol Fill");
+    }
+    assert_ne!(
+        source_rows[0]["regions"][0]["start"], source_rows[1]["regions"][0]["start"],
+        "the two source-map rows point to distinct occurrences"
+    );
 }
 
 /// FR-092-AC-16, FR-092-AC-18: an `each` trigger, a nested `run` tree, two
