@@ -796,6 +796,7 @@ pub enum TemporalRecord {
         /// The limit's name.
         limit: String,
         /// The limit's value in the run.
+        #[serde(deserialize_with = "limit_value")]
         value: u64,
         /// The setting that raises it.
         setting: String,
@@ -805,6 +806,7 @@ pub enum TemporalRecord {
         /// The limit's name.
         limit: String,
         /// The capacity in the run.
+        #[serde(deserialize_with = "limit_value")]
         value: u64,
         /// The setting that raises it.
         setting: String,
@@ -1406,6 +1408,21 @@ where
     Option::<T>::deserialize(decoder)
 }
 
+/// A limit value is a canonical unsigned decimal string, not a JSON number.
+fn limit_value<'de, D>(decoder: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(decoder)?;
+    let parsed = value.parse::<u64>().map_err(serde::de::Error::custom)?;
+    if parsed.to_string() != value {
+        return Err(serde::de::Error::custom(
+            "expected a canonical unsigned decimal",
+        ));
+    }
+    Ok(parsed)
+}
+
 /// Read `disposition.temporal`: select the row by its `kind`, then read the
 /// row's other members as one closed object, naming any failing member by
 /// its path.
@@ -1428,9 +1445,12 @@ pub(super) fn decode(value: &serde_json::Value) -> Result<TemporalRecord, Native
     serde_path_to_error::deserialize(tagged).map_err(|error| {
         let path = error.path().to_string();
         // The first segment is the row's kind, which selected the variant.
-        let member = path
-            .split_once('.')
-            .map_or_else(String::new, |(_, rest)| format!(".{rest}"));
+        let member = if path == "." {
+            ".kind".to_owned()
+        } else {
+            path.split_once('.')
+                .map_or_else(String::new, |(_, rest)| format!(".{rest}"))
+        };
         NativeRunReadError::MalformedMember {
             member: format!("disposition.temporal{member}"),
             source: error.into_inner(),

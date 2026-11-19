@@ -8,7 +8,8 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::spine::{
-    read_native_run_result, write_clause_run_result, NativeRunResult, TemporalIndeterminateReason,
+    read_native_run_result, write_clause_run_result, NativeRunReadError, NativeRunResult,
+    TemporalIndeterminateReason,
 };
 
 fn document(report: &ClauseRunReport) -> Value {
@@ -127,6 +128,7 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
         (category, truth, outcome, basis),
         (json!("incomplete"), false, false, json!("unavailable"))
     );
+    read(&activation).expect("the activation row reads");
 
     let limited = document(&with_disposition(ClauseDisposition::Temporal(
         TemporalVerdict::ProgressLimitReached(crate::spine::ProgressLimitReached {
@@ -150,6 +152,10 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
             json!("unavailable")
         )
     );
+    // Reader vector: the writer still emits a numeric limit value.
+    let mut limited = limited;
+    limited["disposition"]["temporal"]["value"] = json!("4");
+    read(&limited).expect("the decimal-string progress limit reads");
 }
 
 /// FR-267-AC-20, FSpec FR-352-AC-17: a `temporal` whose `kind` is outside
@@ -158,7 +164,6 @@ fn the_indeterminate_and_incomplete_rows_match_their_fspec_rows() {
 #[trace("TC-1980", "FR-267-AC-20")]
 #[trace("FSpec-TC-1485", "FSpec-FR-352-AC-17")]
 #[test]
-#[ignore = "QSL-1610: an unregistered kind is refused naming `disposition.temporal.`, not `disposition.temporal.kind`"]
 fn an_unregistered_temporal_kind_refuses() {
     let pending = document(&with_disposition(ClauseDisposition::Temporal(
         TemporalVerdict::Pending,
@@ -166,11 +171,262 @@ fn an_unregistered_temporal_kind_refuses() {
     for kind in ["pending-forever", "held"] {
         let mut edited = pending.clone();
         edited["disposition"]["temporal"]["kind"] = json!(kind);
-        let error = read(&edited).expect_err("an unregistered kind refuses");
-        assert!(error.contains("disposition.temporal.kind"), "`{error}`");
+        refuses_at(&edited, "disposition.temporal.kind");
     }
     let mut inconclusive = pending.clone();
     inconclusive["disposition"]["category"] = json!("inconclusive");
-    let error = read(&inconclusive).expect_err("a pending row is category pending");
-    assert!(error.contains("category"), "`{error}`");
+    refuses_at(&inconclusive, "disposition.category");
+}
+
+fn refuses_at(value: &Value, expected: &str) {
+    let error = read_native_run_result(&serde_json::to_vec(value).expect("JSON"))
+        .err()
+        .expect("the malformed row refuses");
+    match error {
+        NativeRunReadError::Invalid { member, .. } => assert_eq!(member, expected),
+        NativeRunReadError::MalformedMember { member, .. } => assert_eq!(member, expected),
+        other => panic!("expected a located refusal at {expected}, got {other}"),
+    }
+}
+
+/// Each finite-window/progress verdict restores its exact typed value and
+/// rejects a category, basis, truth or outcome that belongs to another row.
+#[trace(
+    "FSpec-TC-1485",
+    "FSpec-FR-352-AC-11",
+    "FSpec-FR-352-AC-16",
+    "FSpec-FR-352-AC-17"
+)]
+#[test]
+fn temporal_rows_restore_verdicts_and_refuse_mismatched_members() {
+    let guard = filament_semantic_value::location::ExpressionLocation::at(
+        filament_semantic_value::location::ExpressionOwner::StateClause {
+            clause: "Window".to_owned(),
+            index: 0,
+        },
+        &[1, 0],
+    );
+    let mut verdicts = vec![
+        TemporalVerdict::Pending,
+        TemporalVerdict::PendingWindow { at: 0, deadline: 5 },
+        TemporalVerdict::PendingNextEvent { at: 3 },
+        TemporalVerdict::ActivationIncomplete { at: 1, guard },
+        TemporalVerdict::ProgressLimitReached(crate::spine::ProgressLimitReached {
+            limit: "node count",
+            value: 4,
+            setting: "progress.covered_positions",
+        }),
+    ];
+    for reason in [
+        TemporalIndeterminateReason::MissingValuation {
+            position: 0,
+            atom: "holds(c.value > 0)".to_owned(),
+            instance: Some("c1".to_owned()),
+            also_held_by: vec!["c2".to_owned()],
+        },
+        TemporalIndeterminateReason::ConflictingValuation {
+            position: 0,
+            atom: "holds(c.value > 0)".to_owned(),
+        },
+        TemporalIndeterminateReason::IncompleteInput,
+        TemporalIndeterminateReason::MissingHistory,
+        TemporalIndeterminateReason::StraddlesBound,
+    ] {
+        verdicts.push(TemporalVerdict::Indeterminate { at: 0, reason });
+    }
+    for verdict in verdicts {
+        let mut value = document(&with_disposition(ClauseDisposition::Temporal(
+            verdict.clone(),
+        )));
+        if matches!(verdict, TemporalVerdict::ProgressLimitReached(_)) {
+            value["disposition"]["temporal"]["value"] = json!("4");
+        }
+        let NativeRunResult::Clause(record) =
+            read_native_run_result(&serde_json::to_vec(&value).expect("JSON"))
+                .expect("the specified row reads")
+        else {
+            panic!("a clause record");
+        };
+        assert_eq!(
+            record.temporal().expect("temporal row").verdict(),
+            Some(verdict)
+        );
+        for (member, wrong, path) in [
+            ("category", json!("success"), "disposition.category"),
+            ("truth", json!(false), "disposition.truth"),
+            (
+                "outcome",
+                json!({"kind": "incomplete", "limit": "node count"}),
+                "disposition.outcome",
+            ),
+        ] {
+            let mut edited = value.clone();
+            edited["disposition"][member] = wrong;
+            refuses_at(&edited, path);
+        }
+        let mut edited = value.clone();
+        edited["basis"] = if value["basis"] == "unsettled" {
+            json!("unavailable")
+        } else {
+            json!("unsettled")
+        };
+        refuses_at(&edited, "basis");
+        let members = value["disposition"]["temporal"].as_object().expect("row");
+        for member in members.keys().filter(|member| member.as_str() != "kind") {
+            let mut edited = value.clone();
+            edited["disposition"]["temporal"][member] = Value::Null;
+            refuses_at(&edited, &format!("disposition.temporal.{member}"));
+            let mut edited = value.clone();
+            edited["disposition"]["temporal"]
+                .as_object_mut()
+                .expect("row")
+                .remove(member);
+            let error = read(&edited).expect_err("an assigned member is required");
+            assert!(error.contains(member), "{error}");
+        }
+        let mut edited = value.clone();
+        edited["disposition"]["temporal"]["extra"] = json!(true);
+        let error = read(&edited).expect_err("the row is closed");
+        assert!(error.contains("extra"), "{error}");
+        if value["disposition"]["temporal"]["reason"]["kind"] == "missing-valuation" {
+            let mut edited = value.clone();
+            edited["disposition"]["temporal"]["reason"]
+                .as_object_mut()
+                .expect("reason")
+                .remove("also_held_by");
+            refuses_at(&edited, "disposition.temporal.reason.also_held_by");
+        }
+        if value["disposition"]["temporal"]["kind"] == "progress-limit-reached" {
+            let mut edited = value.clone();
+            edited["disposition"]["temporal"]["setting"] = json!("progress.positions");
+            refuses_at(&edited, "disposition.temporal.limit");
+        }
+    }
+}
+
+/// Limit values use canonical decimal strings, including the full u64 range.
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-22")]
+#[test]
+fn limit_values_read_decimal_strings_and_refuse_other_encodings() {
+    for verdict in [
+        TemporalVerdict::WindowLimitReached {
+            limit: "max_window_values",
+            value: 2,
+            setting: "monitor.max_window_values",
+        },
+        TemporalVerdict::ProgressLimitReached(crate::spine::ProgressLimitReached {
+            limit: "node count",
+            value: 4,
+            setting: "progress.covered_positions",
+        }),
+    ] {
+        let mut value = document(&with_disposition(ClauseDisposition::Temporal(verdict)));
+        for count in [0, 2, 4, u64::MAX] {
+            value["disposition"]["temporal"]["value"] = json!(count.to_string());
+            let NativeRunResult::Clause(record) =
+                read_native_run_result(&serde_json::to_vec(&value).expect("JSON"))
+                    .expect("canonical decimal reads")
+            else {
+                panic!("clause record");
+            };
+            let restored = record
+                .temporal()
+                .expect("temporal row")
+                .verdict()
+                .expect("verdict");
+            let restored_value = match restored {
+                TemporalVerdict::WindowLimitReached { value, .. } => value,
+                TemporalVerdict::ProgressLimitReached(limit) => limit.value,
+                other => panic!("a limit verdict, got {other:?}"),
+            };
+            assert_eq!(restored_value, count);
+        }
+        for wrong in [
+            json!(2),
+            json!(4),
+            json!("02"),
+            json!("04"),
+            json!(""),
+            json!("-1"),
+            json!("+4"),
+            json!(" 4"),
+            json!("4.0"),
+            json!("18446744073709551616"),
+            Value::Null,
+        ] {
+            value["disposition"]["temporal"]["value"] = wrong;
+            refuses_at(&value, "disposition.temporal.value");
+        }
+    }
+}
+
+/// A progress contradiction retains its refusal and fields; changing either
+/// the category or the refusal's code, cause or fields is invalid.
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-16", "FSpec-FR-352-AC-17")]
+#[test]
+fn progress_contradictions_read_exact_refusals() {
+    use crate::spine::{
+        ContradictedDimension, ProgressContradiction, ProgressRefusal, ProgressValue,
+    };
+
+    let contradiction = ProgressContradiction {
+        dimension: ContradictedDimension::Watermark,
+        clock: "event-time".to_owned(),
+        retained: ProgressValue::Watermark(100),
+        asserted: ProgressValue::Watermark(60),
+    };
+    let value = document(&with_disposition(ClauseDisposition::ProgressContradiction(
+        Box::new(ProgressRefusal::from(contradiction.clone())),
+    )));
+    assert_eq!(value["disposition"]["category"], "refusal");
+    assert_eq!(value["basis"], "unavailable");
+    assert!(value["disposition"].get("truth").is_none());
+    assert_eq!(
+        value["disposition"]["outcome"]["code"],
+        "invalid_runtime_input"
+    );
+    assert_eq!(value["disposition"]["outcome"]["cause"], "invalid-value");
+    let NativeRunResult::Clause(record) =
+        read_native_run_result(&serde_json::to_vec(&value).expect("JSON"))
+            .expect("the contradiction reads")
+    else {
+        panic!("a clause record");
+    };
+    assert_eq!(
+        record.temporal().expect("temporal row").contradiction(),
+        Some(contradiction)
+    );
+    for category in ["pending", "indeterminate", "incomplete", "violation"] {
+        let mut edited = value.clone();
+        edited["disposition"]["category"] = json!(category);
+        refuses_at(&edited, "disposition.category");
+    }
+    for (member, wrong) in [
+        ("code", json!("unsupported_projection")),
+        ("cause", json!("missing-fairness-premise")),
+        ("fields", json!({"asserted": "61"})),
+    ] {
+        let mut edited = value.clone();
+        edited["disposition"]["outcome"][member] = wrong;
+        refuses_at(&edited, "disposition.outcome");
+    }
+}
+
+#[trace("FSpec-TC-1485", "FSpec-FR-352-AC-17")]
+#[test]
+fn incomplete_and_violated_rows_refuse_temporal_category_mismatches() {
+    let mut incomplete = document(&with_disposition(ClauseDisposition::Temporal(
+        TemporalVerdict::Pending,
+    )));
+    incomplete["disposition"] = json!({
+        "stage": "evaluate", "category": "pending", "temporal": {"kind": "incomplete"},
+        "outcome": {"kind": "incomplete", "limit": "node count"},
+    });
+    incomplete["basis"] = json!("unavailable");
+    refuses_at(&incomplete, "disposition.category");
+
+    let mut violated = document(&report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1])));
+    assert_eq!(violated["disposition"]["temporal"]["kind"], "violated");
+    violated["disposition"]["category"] = json!("indeterminate");
+    refuses_at(&violated, "disposition.category");
 }
