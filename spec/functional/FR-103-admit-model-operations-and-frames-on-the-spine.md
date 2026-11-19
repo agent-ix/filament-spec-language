@@ -11,6 +11,8 @@ relationships:
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/ADR-012
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-086
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-154
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-154
@@ -131,8 +133,19 @@ operation `pre`/`post` text is shape-checked and not kept (QSL-726).
   `record_value_type` node, including a record field named by a frame's
   `modifies` entry under FSpec FR-340. The record node SHALL keep its
   `ModelOwner`; it is never an object-reference target.
-- The assembler SHALL still refuse systems parts, ports and allocations as
-  `UnsupportedModelMember`.
+- The assembler SHALL admit each systems part, port and allocation record of
+  the selected package. These records are model structure, not value types:
+  each is retained in the selected model view under its own declaration key
+  and its FR-086 kind, and none adds a type-environment declaration. A Part
+  keeps its owner, declared type and multiplicity; a Port keeps its owning
+  part, direction, interface type and multiplicity (FR-056 "Meaning
+  binding"); an Allocation keeps its source and target elements. FR-086
+  classifies each record by its meaning id and end kinds and admits an
+  Allocation only when its target is a Part. A protocol role names a Port as
+  its model member (FR-218, FR-383-AC-62), resolved through the declaring
+  unit's own `model` alias (FR-480), and a channel between two Port roles
+  travels over a Connection (FR-897). A model that declares parts, ports or
+  allocations is therefore usable by a unit like any other admitted model.
 ### A domain package operation's own requires and ensures
 
 Target design (FSpec TC-235 M06 run 7 and M15 run 6 are the reference rows;
@@ -222,11 +235,15 @@ evaluates it; it is not discarded and it is not shape-checked only.
 | FR-103-AC-8 | K2 with `OrderLifecycle` given field `cancelled`, and `place` given `requires` `pre(self.placed) = false`, refuses `wrong_snapshot`/`forbidden-pre-read` naming `ix://test/orders/OrderLifecycle/place` at `Operation.pre[0]`, with no checked package. A kept clause is checked under no profile: integer `div` in it refuses `profile_prohibited_operator`. The same package with `requires` `not self.placed` and `ensures` `self.placed and not self.cancelled` checks, and an `ensures` that reads `pre(self.placed)` checks. | Test (TC-993) |
 | FR-103-AC-9 | A domain operation's `requires` and `ensures` texts do not become unit clauses or bodies: with domain texts `false` on `A.size` and `B.size` and unit `pre`/`post` clauses `true`, the retained unit clauses are `true`, and `has_body` is set only by the unit `operation-body` declarations. | Test (TC-986) |
 | FR-103-AC-10 | Intake reads an operation's inline `redefines` property as the key of the operation it redefines: in a package where `Sub.size` declares `redefines` `ConfigVersion/size`, the admitted record of `Sub.size` names `ConfigVersion/size`, and `ConfigVersion.size`, which declares none, redefines nothing. | Test |
+| FR-103-AC-11 | A package declaring interface `Flow`, object types `Sys` and `Pump`, part `SysPump` (owner `Sys`, declared type `Pump`, multiplicity `[1, 1]`), port `PumpOut` (owner `SysPump`, interface type `Flow`, direction `out`, multiplicity `[1, 1]`) and allocation `PumpAlloc` (source `PumpOut`, target `SysPump`) admits and assembles with no `UnsupportedModelMember` refusal and no type-environment declaration for the three records. Intake reads `SysPump` as a Part record with that owner, type and multiplicity, `PumpOut` as a Port record with that owning part, interface type, direction and multiplicity, and `PumpAlloc` as an Allocation record with that source and target. A unit `model N` over it whose protocol declares `role r on N::PumpOut` checks, and the role's model member is `PumpOut`'s declaration key with `N`'s package selection. | Test (TC-3013) |
 
 ## Dependencies
 
 - FR-056 (intake and assembler), FR-081 (effective view), FR-084
   (population records).
+- FR-086 (systems classification and allocation admission), FR-218 and
+  FR-897 (Port roles and Connection channels), FR-480 (per-unit alias
+  resolution of a Port role).
 - FSpec FR-154, FR-340 and `model-complete.md`'s Frames row.
 - filament-core-data's Semantic IR reader already validates an operation's
   `frame` shape
