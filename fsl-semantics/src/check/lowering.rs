@@ -2151,7 +2151,7 @@ impl<'a> Lowering<'a> {
     /// refinement population read and `allInstances` use this same operation
     /// and member construction.
     fn all_instances_operation(
-        &self,
+        &mut self,
         result_type: &ValueType,
         location: &Location,
     ) -> Result<Operation, CheckRefusal> {
