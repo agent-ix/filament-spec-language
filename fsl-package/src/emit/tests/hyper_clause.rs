@@ -758,7 +758,7 @@ fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
     assert!(rows.iter().all(|row| row["clock_name"] == "model-steps"));
     assert_eq!(
         rows[0]["clock"]["sequence_authority"],
-        "{\"node\":\"ix://test/vault/ConfigVersion\",\"package\":\"test/vault\"}"
+        "test-hyper-events"
     );
     let package = admitted(&built);
     assert_eq!(
