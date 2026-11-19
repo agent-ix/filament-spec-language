@@ -662,7 +662,6 @@ pub(crate) fn refining_from(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
-            &fsl_eval::value::S6aRewardEvaluator,
         )
         .map_err(|refusals| {
             refusals
