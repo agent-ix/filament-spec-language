@@ -70,10 +70,10 @@ trigger's own observations (filament-observation FR-008): a scope is
 observation of the trigger, and it refuses a required binding with no trigger
 and a claimed absence that the history contradicts. The trace positions are
 not activation observations; they are the states the clause is evaluated
-over, and every one of them is required. The evaluator therefore admits a
-second history per clause occurrence, the activation request, whose records
-are exactly the instance-creating deliveries or origin of the clause
-(FR-524) and their captures, under an optional binding. A scope with no
+over, and every one of them is required. The evaluator therefore admits activation
+histories beside the trace, under an optional binding: one per instance,
+holding exactly its instance-creating delivery or origin (FR-524) and its
+captures, and one empty history for a trigger scope with no instance. A scope with no
 instance then has an empty activation history, and the owner's own rule
 gives `Inactive` or `Unknown` for it unchanged; the trace request keeps its
 required binding. Every activation and capture
@@ -556,67 +556,105 @@ profile identity.
 ### Activation
 
 - Each clause occurrence's activation SHALL be admitted through
-  `filament_observation::admit` as its own request, the activation request,
-  once per request alongside the trace request. It is built as the trace
-  request is, with these differences:
+  `filament_observation::admit` as activation requests separate from the
+  trace request: one per instance of the occurrence, and exactly one empty
+  request for a trigger scope that creates no instance. One request per
+  instance is required because the owner's capture environment covers the
+  complete record set of its history at one anchor, and an instance's
+  captures are taken once at its own delivery's anchor (FR-524). Each
+  activation request is built as the trace request is, with these
+  differences:
   - binding `identity`: the RFC 8785 text of the trace binding's identity
-    object with the added member `"role": "activation"`;
+    object with the added members `"role": "activation"` and, for an
+    instance's request, `"instance": X`, `X` the lowercase hexadecimal of
+    the FR-524 per-instance trigger identity's bytes; the empty request has
+    no `instance` member;
   - `schema_identity`: `fsl-eval/activation/1`;
   - `signal_identity` and `trigger_identity`: the trace binding's
     `trigger_identity` (the clause node's text followed by `/activation`);
   - `required`: `false`. A clause's activation may correctly never fire, and
     the owner classifies a scope as `Inactive` only over an optional
     binding;
-  - `records`: for each instance-creating delivery, or the origin of an
-    `on origin` clause (FR-524), one trigger record and one capture record
-    per capture the instance holds. A delivery whose guard is `Some(false)`,
-    and a delivery refused at admission, contributes no record. Every record
-    carries the binding members above, the expected subject, visibility
-    `Internal`, and the anchor, event time, ingestion time, clock and
-    uncertainty of the position that delivered the trigger, built as for
-    the trace request. A trigger record's value is `ValueState::Present {
-    value_type: "fsl-eval/activation-trigger/1", canonical_value }`,
-    `canonical_value` the RFC 8785 text of `{"instance": X}`, `X` the
-    lowercase hexadecimal of the FR-524 per-instance trigger identity's
-    bytes. A capture record's value is `ValueState::Present { value_type:
-    "fsl-eval/capture/1", canonical_value }`, `canonical_value` the RFC 8785
-    text of `{"capture": N, "instance": X, "type": T, "value": W}`, `N` the
-    capture's declared name, `T` its declared type's canonical text and `W`
-    the retained capture fact (FR-524): `{"value": J}` for
-    `CaptureFact::Value`, `J` the value as the semantic-value canonical JSON
-    FR-106's reader admits, or `{"fault": F}` for a faulted capture, `F` one
-    of `"missing"`, `"null"`, `"wrong-type"` and `"stale"`, so a faulted
-    instance's captures are recorded as faithfully as a sound one's. Naming
-    the instance in
-    every value keeps two instances' equal captured values distinct records,
-    as the owner requires of equal captures under distinct triggers;
+  - `records`: for an instance's request, the instance's trigger record and
+    one capture record per declared capture; the empty request has none.
+    The instance-creating deliveries and the origin of an `on origin`
+    clause (FR-524) are the instances; a delivery whose guard is
+    `Some(false)`, and a delivery refused at admission, makes no request
+    and no record. Every record carries the binding members above, the
+    expected subject, visibility `Internal`, and the anchor, event time,
+    ingestion time, clock and uncertainty of the position that delivered
+    the trigger, built as for the trace request, so every record of one
+    request shares one anchor. A trigger record's value is
+    `ValueState::Present { value_type: "fsl-eval/activation-trigger/1",
+    canonical_value }`, `canonical_value` the RFC 8785 text of
+    `{"instance": X}`. A capture record's value is `ValueState::Present {
+    value_type: "fsl-eval/capture/1", canonical_value }`, `canonical_value`
+    the RFC 8785 text of `{"capture": N, "instance": X, "type": T,
+    "value": W}`, `N` the capture's declared name, `T` its declared type's
+    canonical text and `W` the retained capture fact (FR-524): `{"value":
+    J}` for `CaptureFact::Value`, `J` the value as the semantic-value
+    canonical JSON FR-106's reader admits, or `{"fault": F}` for a faulted
+    capture, `F` one of `"missing"`, `"null"`, `"wrong-type"` and
+    `"stale"`, so a faulted instance's captures are recorded as faithfully
+    as a sound one's. Naming the instance in every value keeps two
+    instances' equal captured values distinct records, as the owner
+    requires of equal captures under distinct triggers;
   - `scope`: derived over these records exactly as the trace request's
-    scope, except that `range` is the trace request's range, so an
-    activation history with no record still has the clause's range, and
-    `membership_complete` is `true` only when FR-524's trigger evidence is
-    `Admitted` and its trigger record is complete; otherwise `false`;
+    scope, with `membership_complete` `true` (the request carries every
+    record the evaluator admitted for it), except that `range` is the trace
+    request's range, so the empty request still has the clause's range;
   - `limits`: the trace request's rule over this request's record count.
-- An instance SHALL map to an `activation::Selection` over the activation
-  request's `Context`: `ActivationSelection::new` with the activation
-  binding's identity, its trigger identity, the instance's trigger record
-  identity as the trigger observation, the activation interval and the
-  instance's captures, sorted by identity: one `Capture` with identity
-  `fsl-eval/capture/<N>` per declared capture, sourced from its capture
-  record, of value type `fsl-eval/capture/1` and that record's canonical
-  value, and the instance capture `fsl-eval/instance`, sourced from the
-  trigger record, of value type `fsl-eval/activation-trigger/1` and that
-  record's canonical value. Each capture's provenance is the binding's
+- Every activation selection SHALL take as `obligation_identity` the trace
+  binding's identity text: the obligation is the clause occurrence, and its
+  instances are told apart by their trigger observations and bindings.
+- Over each activation request's `Context` the evaluator SHALL derive these
+  owner views and pass them to `AuthorityProofs`:
+  - closure: `closure::derive` with `closure::Selection::new(C, P, [C],
+    boundary, state)`, `boundary` the trace request's range as the clock
+    family's `TemporalBoundary` (lower the range's first stamp, upper and
+    watermark its last), and `state` the scope's FR-524 closure
+    (`OpenClosed::Open` or `OpenClosed::Closed`);
+  - completeness: when FR-524's trigger evidence is `Admitted` and its
+    trigger record is complete, `completeness::derive` with
+    `completeness::Selection::new` over the same boundary (its identity the
+    boundary's RFC 8785 text) and one `Available` fact per required member
+    naming its record, giving `Complete` (and `Complete` over no fact for
+    the empty request). When the trigger evidence is `Missing` or `Refused`,
+    or the trigger record is incomplete, no completeness view is passed:
+    the owner then holds the evidence `Incomplete`, which an empty history
+    cannot otherwise state, since a completeness selection covers exactly
+    the required members and the empty request has none;
+  - capture, for an instance's request only: `capture::derive` with
+    `capture::Selection::new(trigger identity, the delivery's anchor,
+    bindings)`, one `capture::Binding` per record of the request (identity
+    `fsl-eval/capture/<N>` for a capture record, `fsl-eval/instance` for the
+    trigger record, the request's binding identity, the record's identity),
+    sorted by capture identity, so the environment covers the complete
+    record set;
+  - no progress view: the evaluator reads no progress or silence axis from
+    an activation view.
+  An instance's proofs are `AuthorityProofs::new(capture, None, closure,
+  completeness)`; the empty request's are
+  `AuthorityProofs::without_capture(binding identity, None, closure,
+  completeness)`.
+- An instance SHALL map to `ActivationSelection::new(obligation, its
+  request's binding identity, trigger identity, its trigger record
+  identity, activation interval, captures)` over its request's `Context`,
+  the captures sorted by identity and equal to the capture view's bindings:
+  one `Capture` `fsl-eval/capture/<N>` per declared capture, sourced from
+  its capture record, of value type `fsl-eval/capture/1` and that record's
+  canonical value, and the instance capture `fsl-eval/instance`, sourced
+  from the trigger record, of value type `fsl-eval/activation-trigger/1`
+  and value `{"instance": X}`. Each capture's provenance is the binding's
   source `C`. The instance capture is a real capture: an instance's identity
   is fixed at activation like any captured value, and it gives an instance
   that declares no capture the nonempty capture set the owner requires of an
-  admitted trigger.
+  admitted trigger. The owner gives `Active`.
 - A trigger scope with no instance SHALL map to
-  `ActivationSelection::without_trigger` with the activation binding's
-  identity and trigger identity over the activation request's `Context`,
-  whose history then holds no record. The scope's closure is the closure
-  authority (`OpenClosed`) and the activation request's completeness is the
-  evidence authority, so the owner's rule gives `Inactive` for a closed
-  scope with complete evidence and `Unknown` otherwise; the owner refuses
+  `ActivationSelection::without_trigger(obligation, the empty request's
+  binding identity, trigger identity, activation interval)` over the empty
+  request's `Context`. The owner's rule gives `Inactive` for a closed scope
+  with a `Complete` completeness view and `Unknown` otherwise, and refuses
   none of these scopes. The evaluator SHALL NOT derive activation over the
   trace request's `Context`.
 - FR-524's disposition SHALL be read from the view: `Active`, `Inactive` and
@@ -728,7 +766,7 @@ SHALL carry `None` and this interim rule is removed.
 | FR-944-AC-11 | Over FR-516-AC-9's request through `evaluate_temporal_evidence` (positions carried as `EvidenceRef`s with arbitrary, including empty, `contract`, `schema_digest`, `digest` and `authority_digest`), with one position carrying a `Value` aggregate sample of 1/3, one an `Undefined` valuation of kernel reason division by zero, one an `Undefined` aggregate sample of `InsufficientData { count: 1, min_count: 2 }`, and one an instance-bound valuation under a trigger whose identity bytes are `0x00 0xff`: each record's value is the RFC 8785 text of `{"aggregate_samples", "instance_aggregate_samples", "instance_valuations", "interval", "observation", "order_key", "valuations"}` whose `observation` is `{"authority_digest", "contract", "digest", "schema_digest"}` with the bytes in lowercase hexadecimal (`""` for empty) and no `identity`, `authority_identity`, `authority_revision`, `scope` or `population`; the sample is `{"value": {"kind": "rational", "numerator": "1", "denominator": "3"}}`, the valuation `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}`, the sample `{"undefined": {"cause": "insufficient-data", "count": "1", "min_count": "2"}}`, and the instance valuation keyed by `"00ff"`; a sample of 18446744073709551616/3 writes those unbounded components; `admit` returns `Available`. Changing one content member, one valuation, one aggregate sample or one instance-bound valuation, each alone, changes exactly that record's identity, and changing only an `EvidenceRef` label does not; two positions equal in all but their `EvidenceRef` identity map to one record whose reports name both identities, and the relabelling check refuses such a position at or before a retained `through` whose identity the covered set does not hold. Over FR-501-AC-13's spine request the position keeps its admitted FR-106 document and `observation` is that document's canonical JSON without `identity`, with `valuations` the valuations read from it. | Test (TC-3036) |
 | FR-944-AC-12 | Over FR-327-AC-5's closed `Counter` trace (`c.value` 0, 1, 2) and `always[0,2] holds(3 mod (2 - c.value) >= 0)` `on origin`, the atom `p` is undefined at position 2: that position's record value carries `p`'s valuation `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}`, no partial fact is derived for `p` at that position, the evaluator reports its own undefined outcome (FR-327) at that position unchanged, and no owner answer for it carries reason `Missing` or `Conflicting` or is `Indeterminate`, and no owner read consumes `p`'s possibility set there: the clause outcome is FR-327-AC-5's `Undefined{where: 2, cause: division-by-zero}`. Positions 0 and 1 have their partial facts derived and read back as AC-2 states. | Test (TC-3036) |
 | FR-944-AC-13 | FR-501-AC-13's request under clock unit `ms` admits with binding `unit` `ms/4`, every record `unit` `ms/4` and every quarter-tick `EventTimeInterval` unit `ms/4`, and `partial::derive` succeeds for every atom of every position; every FSL report names the clock unit `ms`. An event-position clause's request uses `position/4` for all three owner-side labels and derives every partial fact. | Test (TC-3036) |
-| FR-944-AC-14 | For FR-524-AC-10's closed scope whose every delivery has a false guard, with `Admitted` evidence and a complete trigger record: the activation request has binding `required` false, schema `fsl-eval/activation/1`, the trace binding's trigger identity as signal and trigger, the identity text with `"role": "activation"`, the trace request's range and no record, and `admit` returns `Available`; `activation::derive` with `without_trigger` over its `Context` gives `Inactive` and no refusal, while the trace request for the same clause keeps `required` true and one record per position. The same scope open gives `Unknown(open)`, with an incomplete trigger record `Unknown(open)` with incomplete completeness, and with `Missing` and `Refused` trigger evidence `Unknown(missing)` and `Unknown(refused)`, each from `derive` without a refusal. A scope with one instance-creating delivery and no declared capture gives one trigger record whose value is `{"instance": X}` and an `Active` view whose captures are exactly `fsl-eval/instance`; one declaring captures `a` and `b` gives three records and captures `fsl-eval/capture/a`, `fsl-eval/capture/b`, `fsl-eval/instance` in that order, each with the value text `{"capture", "instance", "type", "value"}` of the instance's FR-524 capture, and a capture faulted `Missing` gives `{"fault": "missing"}`; a delivery with guard `Some(false)` beside it adds no record. Two instances capturing equal values give distinct capture record identities and distinct activation identities. No `activation::derive` call of a run is made over the trace request's `Context`. | Test (TC-2624) |
+| FR-944-AC-14 | For FR-524-AC-10's closed scope whose every delivery has a false guard, with `Admitted` evidence and a complete trigger record: exactly one activation request is built, with binding `required` false, schema `fsl-eval/activation/1`, the trace binding's trigger identity as signal and trigger, the trace identity text with `"role": "activation"` and no `instance` member, the trace request's range, `membership_complete` true and no record; `admit` returns `Available`; the closure view is `Closed`, the completeness view `Complete` over no fact, and `activation::derive` with `without_trigger`, obligation the trace binding's identity text and `AuthorityProofs::without_capture` gives `Inactive` and no refusal, while the trace request for the same clause keeps `required` true and one record per position. The same scope open gives `Unknown(open)`; with an incomplete trigger record, and with `Missing` and `Refused` trigger evidence, the request still admits `Available` with `membership_complete` true, no completeness view is passed, and `derive` gives `Unknown` with evidence `Incomplete`, reported as `Unknown(open)` with incomplete completeness, `Unknown(missing)` and `Unknown(refused)`, each without a refusal. A scope with one instance-creating delivery and no declared capture gives one request with one trigger record whose value is `{"instance": X}`, a capture view binding exactly that record as `fsl-eval/instance`, and an `Active` view whose captures are exactly `fsl-eval/instance` with value `{"instance": X}`; one declaring captures `a` and `b` gives one request of three records at one anchor and captures `fsl-eval/capture/a`, `fsl-eval/capture/b`, `fsl-eval/instance` in that order, the two declared captures with value text `{"capture", "instance", "type", "value"}` of the instance's FR-524 capture, and a capture faulted `Missing` gives `{"fault": "missing"}`; a delivery with guard `Some(false)` beside it makes no request. Two instances of one clause occurrence capturing equal values give two requests with distinct binding identities, each `capture::derive` and `activation::derive` succeeds and gives `Active`, and the capture record identities and the activation identities differ. No `activation::derive` call of a run is made over the trace request's `Context`. | Test (TC-2624) |
 | FR-944-AC-7 | Scaling is exact at the domain's edge: a reading `18446744073709551615` under `Counter { uncertainty: 18446744073709551615 }` maps to `[0, 147573952589676412923]`, reading 0 under the same cover to `[-73786976294838206460, 73786976294838206463]`, and the bounds `9223372036854775807` and `-9223372036854775808` scale to `36893488147419103228` and `-36893488147419103232`; `within_bound` and `definitely_before` over these readings and bounds equal `ClockCover`'s answers. | Test (TC-2624) |
 
 ## Dependencies
