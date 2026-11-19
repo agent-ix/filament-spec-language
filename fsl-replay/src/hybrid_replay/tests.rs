@@ -745,7 +745,8 @@ fn expanding_a_deep_term_uses_caller_fuel() {
 mod settlement {
     use super::*;
     use crate::hybrid::{
-        BoundDimension, SolverCoverage, SolverHorizon, SolverMethod, SolverOutcome, SolverResult,
+        BoundDimension, HybridSettlement, SolverCoverage, SolverHorizon, SolverMethod,
+        SolverOutcome, SolverResult,
     };
     use crate::model_check::limits::ModelCheckLimit;
     use crate::proof_result::{
@@ -757,6 +758,8 @@ mod settlement {
     use crate::result::{DisagreementCause, HybridTraceDisagreement};
     use filament_exact::LimitKind;
     use fsl_foundation::{BackendId, RequestIndex};
+    use fsl_semantics::check::wire_id::WireGraph;
+    use fsl_semantics::check::VariableIndex;
     use serde_json::{json, Value};
     use std::collections::BTreeSet;
 
@@ -1410,13 +1413,20 @@ mod settlement {
     fn read_entry_reads_exact_numbers_only_as_rational_objects() {
         use crate::hybrid::{HybridAnswer, HybridEntryRefusal};
         let unit = braking_unit(FLOW, "v = 0");
-        let model = &unit.graph.hybrid_models()[0];
         let proved = |horizon: Value| {
             json!({"result": "proved", "certification": "uncertified",
                 "basis": {"type": "bounded-solver", "method": "delta-complete",
                     "horizon": horizon, "jumps": 1, "exhaustive": ["time"]}})
         };
-        let read = |entry: &Value| HybridAnswer::read_entry(entry, &[], model);
+        let read = |entry: &Value| {
+            HybridAnswer::read_entry(
+                entry,
+                &[],
+                &unit.graph,
+                claim(&unit, "SlowEnough"),
+                &WireGraph::default(),
+            )
+        };
         let answer = read(&proved(rational_json(10))).expect("the object form is read");
         assert_eq!(
             solved_horizon(&answer),
@@ -1442,7 +1452,7 @@ mod settlement {
         );
     }
 
-    /// FR-750-AC-11: `read_entry(entry, counterexamples, model)` reads a
+    /// FR-750-AC-11: `read_entry(entry, counterexamples, graph, claim, wire)` reads a
     /// `refuted` entry's position in `counterexamples` into `Refuted`; a
     /// position outside the array, and a trace naming a mode the model lacks,
     /// refuse `invalid-value` at their pointers; an entry that is not a
@@ -1452,12 +1462,18 @@ mod settlement {
     fn read_entry_reads_refuted_entries_against_the_frames_counterexamples() {
         use crate::hybrid::{HybridAnswer, HybridEntryRefusal, HybridVerdict};
         let unit = braking_unit(FLOW, "v = 0");
-        let model = &unit.graph.hybrid_models()[0];
+        let the_claim = claim(&unit, "SlowEnough");
         let counterexamples = vec![json!({"type": "hybrid-counterexample",
             "kind": "formula", "trace": trace_json()})];
         let refuted = |position: u64| json!({"result": "refuted", "counterexample": position});
         assert_eq!(
-            HybridAnswer::read_entry(&refuted(0), &counterexamples, model),
+            HybridAnswer::read_entry(
+                &refuted(0),
+                &counterexamples,
+                &unit.graph,
+                the_claim,
+                &WireGraph::default()
+            ),
             Ok(HybridAnswer {
                 verdict: HybridVerdict::Refuted(Box::new(HybridCounterexample {
                     kind: HybridCounterexampleKind::Formula,
@@ -1467,7 +1483,13 @@ mod settlement {
             })
         );
         assert_eq!(
-            HybridAnswer::read_entry(&refuted(1), &counterexamples, model),
+            HybridAnswer::read_entry(
+                &refuted(1),
+                &counterexamples,
+                &unit.graph,
+                the_claim,
+                &WireGraph::default()
+            ),
             Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
                 pointer: "/counterexample".to_owned(),
                 cause: ValueFault::InvalidValue,
@@ -1479,7 +1501,9 @@ mod settlement {
             HybridAnswer::read_entry(
                 &json!({"result": "inconclusive", "cause": cause_json(halted)}),
                 &[],
-                model
+                &unit.graph,
+                the_claim,
+                &WireGraph::default()
             ),
             Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
                 pointer: "/cause/trace/start/mode".to_owned(),
@@ -1492,7 +1516,13 @@ mod settlement {
         ] {
             let name = entry["result"].as_str().expect("a result").to_owned();
             assert_eq!(
-                HybridAnswer::read_entry(&entry, &counterexamples, model),
+                HybridAnswer::read_entry(
+                    &entry,
+                    &counterexamples,
+                    &unit.graph,
+                    the_claim,
+                    &WireGraph::default()
+                ),
                 Err(HybridEntryRefusal::NotRead(name))
             );
         }
@@ -1551,7 +1581,10 @@ mod settlement {
             "{written}"
         );
         assert_eq!(kind["where"]["locus"], locus, "{written}");
-        assert_eq!(written["trace"], found.trace.to_wire(&unit.hybrid_models()[0]));
+        assert_eq!(
+            written["trace"],
+            found.trace.to_wire(&unit.hybrid_models()[0])
+        );
 
         // The flow `v' = -a` of `Moving` is a term node too; a mode the model
         // lacks and a term path past a leaf are not.
@@ -1576,5 +1609,169 @@ mod settlement {
             },
         };
         assert_eq!(hybrid_locus_wire(&unit, &wire, defined, &past_a_leaf), None);
+    }
+
+    /// The graph of the package emitted for `text`, which spells a `Locus`.
+    fn emitted_wire(text: &str) -> fsl_semantics::check::wire_id::WireGraph {
+        let package = crate::compile_package(
+            crate::CompileUnit {
+                source: SourceIdentity::new("test", "hybrid-locus"),
+                package_name: "fixture".into(),
+                path: "unit.native",
+                bytes: text.as_bytes(),
+            },
+            std::iter::empty::<&[u8]>(),
+            &crate::spine::DependencyInput::default(),
+            crate::StageLimits::default(),
+            crate::ReplayLimits::default(),
+        )
+        .expect("the unit compiles");
+        fsl_semantics::check::wire_id::WireGraph::of_package_bytes(package.bytes())
+            .expect("the emitted graph")
+    }
+
+    /// FR-750-AC-13: `read_entry` resolves an `unsupported`
+    /// `expression-form` entry's `locus` through the graph to the flow site
+    /// of `v` in `Moving` and the division's term path, never `NotRead`; a
+    /// locus naming another expression, or a node outside the model, refuses
+    /// at `/diagnostic/detail/locus` and a `mode` the model lacks at
+    /// `/diagnostic/detail/mode`; another diagnostic is not a solver answer.
+    #[trace("TC-3037", "FR-750-AC-13")]
+    #[test]
+    fn read_entry_resolves_an_unsupported_entrys_locus_through_the_graph() {
+        use crate::hybrid::{
+            hybrid_locus_wire, HybridAnswer, HybridEntryRefusal, HybridVerdict,
+            UnsupportedConstruct,
+        };
+        let flow = "v' = -a / (1 + v); a' = 0; t' = 1;";
+        let unit = braking_unit(flow, "v = 0");
+        let text = format!("{HEADER}{FUNCTIONS}{}{CLAIMS}", braking(flow, "v = 0"));
+        let emitted = emitted_wire(&text);
+        let found = claim(&unit, "SlowEnough");
+        let position = 0;
+        let node = |site: ExpressionSite| {
+            hybrid_locus_wire(
+                &unit,
+                &emitted,
+                position,
+                &ExpressionLocus {
+                    site,
+                    term: TermLocus::default(),
+                },
+            )
+            .expect("the site is a term node of the package")
+        };
+        let division = node(ExpressionSite::Rate {
+            mode: 0,
+            variable: 0,
+        });
+        let entry = |mode: &str, locus: &Value| {
+            json!({"result": "unsupported", "diagnostic": {
+                "code": "unsupported_construct", "cause": "expression-form",
+                "detail": {"form": "division", "declaration": "Braking",
+                    "mode": mode, "variable": "v", "locus": locus}}})
+        };
+        let read =
+            |entry: &Value| HybridAnswer::read_entry(entry, &[], &unit.graph, found, &emitted);
+        assert_eq!(
+            read(&entry("Moving", &division)),
+            Ok(HybridAnswer {
+                verdict: HybridVerdict::Unsupported(UnsupportedConstruct {
+                    form: "division".to_owned(),
+                    site: ExpressionSite::Rate {
+                        mode: 0,
+                        variable: 0,
+                    },
+                    term: TermLocus::default(),
+                    mode: ModeIndex::new(0),
+                    variable: Some(VariableIndex::new(0)),
+                }),
+                certificate: None,
+            })
+        );
+        let refused = |member: &str| {
+            Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                pointer: format!("/diagnostic/detail/{member}"),
+                cause: ValueFault::InvalidValue,
+            }))
+        };
+        let guard = node(ExpressionSite::Guard {
+            mode: 0,
+            transition: 0,
+        });
+        assert_eq!(read(&entry("Moving", &guard)), refused("locus"));
+        let outside = node(ExpressionSite::ClaimAtom { atom: 0 });
+        assert_eq!(read(&entry("Moving", &outside)), refused("locus"));
+        assert_eq!(read(&entry("Halted", &division)), refused("mode"));
+        let tool = json!({"result": "unsupported", "diagnostic": {
+            "code": "unsupported_projection", "cause": "tool-unavailable"}});
+        assert_eq!(
+            read(&tool),
+            Err(HybridEntryRefusal::NotRead("unsupported".to_owned()))
+        );
+    }
+
+    /// FR-750 "Replay refusals", FR-750-AC-14 (comparison half): a provider's
+    /// `undefined-evaluation` claim agrees with the reproduced one only at
+    /// the reproduced position, locus and cause with a `time` that contains
+    /// the reproduced instant; any other claim is `NotReproduced`.
+    #[trace("TC-3037", "FR-750-AC-14")]
+    #[test]
+    fn an_undefined_evaluation_claim_agrees_only_with_the_reproduced_one() {
+        let unit = braking_unit(FLOW, "v = 0");
+        let defined = claim(&unit, "Defined");
+        let Ok(ExactReplay::Reproduced(found)) =
+            exact_replay(&unit, defined, &braking_trace(10, 0))
+        else {
+            panic!("the trace reproduces the undefined evaluation");
+        };
+        let settle = |claimed: &HybridCounterexample| {
+            HybridSettlement::from_provider_counterexample(
+                &unit,
+                defined,
+                claimed.clone(),
+                &mut HybridReplayMeter::new(u64::MAX),
+            )
+            .expect("the claim replays")
+        };
+        assert_eq!(settle(&found).value, TerminalValue::Refuted);
+        let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = &found.kind else {
+            panic!("the kind is undefined-evaluation");
+        };
+        let claim_with = |at: UndefinedInstant, cause: UndefinedCause| HybridCounterexample {
+            kind: HybridCounterexampleKind::UndefinedEvaluation {
+                at: Box::new(at),
+                cause,
+            },
+            trace: found.trace.clone(),
+        };
+        let disagrees = |claimed: HybridCounterexample| {
+            assert!(
+                matches!(
+                    settle(&claimed).value,
+                    TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+                        DisagreementCause::HybridTrace(
+                            HybridTraceDisagreement::NotReproduced { .. }
+                        )
+                    ))
+                ),
+                "{claimed:?}"
+            );
+        };
+        disagrees(claim_with(
+            (**at).clone(),
+            UndefinedCause::OutsideCaptureRange { capture: 0 },
+        ));
+        let mut later = (**at).clone();
+        later.time = ExactReal::Rational(q(8, 1));
+        disagrees(claim_with(later, *cause));
+        let mut elsewhere = (**at).clone();
+        elsewhere.state = 1;
+        disagrees(claim_with(elsewhere, *cause));
+        // A claimed formula counterexample against an undefined one.
+        disagrees(HybridCounterexample {
+            kind: HybridCounterexampleKind::Formula,
+            trace: found.trace.clone(),
+        });
     }
 }

@@ -1374,6 +1374,9 @@ pub(crate) enum Refusal {
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
+    /// `failed` with the refusal's diagnostic and its detail (FR-750
+    /// "Replay refusals": the invariant a checked package broke).
+    FailedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
     /// FR-750: `unsupported`, `unsupported_construct`/`expression-form`, the
     /// detail of a hybrid provider's construct outside its class, which the
     /// record completes with the backend.
@@ -2643,6 +2646,10 @@ fn settle(
         ),
         EngineReport::Refused(Refusal::Failed(code)) => record(
             terminal(TerminalRecord::failed_with(index, backend, code)),
+            None,
+        ),
+        EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
+            terminal(TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail)),
             None,
         ),
         EngineReport::Refused(Refusal::UnsupportedConstruct(mut detail)) => {

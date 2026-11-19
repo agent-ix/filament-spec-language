@@ -167,8 +167,14 @@ pub(crate) fn entry_answer(entry: Value) -> impl Fn(&HybridSolveRequest<'_>) -> 
         let counterexamples = entry["counterexamples"]
             .as_array()
             .map_or(&[][..], Vec::as_slice);
-        HybridAnswer::read_entry(&entry, counterexamples, request.model)
-            .unwrap_or_else(|refusal| panic!("the fixture entry is read: {refusal}"))
+        HybridAnswer::read_entry(
+            &entry,
+            counterexamples,
+            request.graph,
+            request.claim,
+            request.wire,
+        )
+        .unwrap_or_else(|refusal| panic!("the fixture entry is read: {refusal}"))
     }
 }
 
@@ -741,4 +747,36 @@ fn a_process_failed_entry_settles_failed_by_fr_290() {
 #[ignore = "QSL-2234: the plan's validation items over the reference provider land with the reference solver"]
 fn a_plan_validation_item_carries_rational_objects() {
     todo!("QSL-2234: FR-1021-AC-3");
+}
+
+/// FR-750-AC-12 (exact-replay half): over `Shuttle`, a lasso trace for an
+/// `on each` claim that reads its activation state, and for `fair` claims
+/// over a transition with a non-deterministic reset, reproduces or does not
+/// reproduce by exact replay instead of refusing.
+#[test]
+#[trace("TC-3037", "FR-750-AC-12")]
+#[ignore = "QSL-2234: exact replay of activation-state and non-deterministic-reset claims (tau as a second real variable, quantifier elimination) is not implemented; those gaps still settle `NotExact`"]
+fn exact_replay_decides_activation_state_and_nondeterministic_reset_claims() {
+    todo!("QSL-2234: FR-450 exact replay of the Shuttle claims");
+}
+
+/// FR-750-AC-12 (replay-request half): the same refusals on FR-098's replay
+/// path: `ReplayRefusal::HybridTrace` at `/loop` and exit 30 with no row for
+/// the three package faults.
+#[test]
+#[trace("TC-3037", "FR-750-AC-12")]
+#[ignore = "QSL-2234: FR-098's hybrid replay path is not implemented yet"]
+fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
+    todo!("QSL-2234: replay path of FR-750 'Replay refusals'");
+}
+
+/// FR-750-AC-14 (wire half): `to_wire` writes the four undefined causes and
+/// the reader reads each back to the same variant with its payload taken from
+/// the term `locus` names; `undefined` refuses at `/kind/cause`; an
+/// irrational instant is claimed through its isolating interval.
+#[test]
+#[trace("TC-3037", "FR-750-AC-14")]
+#[ignore = "QSL-2234: the plugin reader does not read an undefined-evaluation counterexample back yet"]
+fn the_four_undefined_causes_round_trip_through_the_wire() {
+    todo!("QSL-2234: undefined-evaluation read-back");
 }

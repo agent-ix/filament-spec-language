@@ -5,14 +5,15 @@
 //! by FR-450's exact replay, and an unsupported construct as a located
 //! `unsupported` record.
 
+use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
-    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, TerminalValue,
-    UnsupportedConstruct,
+    hybrid_locus_wire, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
+    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
+    ModelCheckLimit, TerminalValue, UnsupportedConstruct,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -83,7 +84,10 @@ pub(super) fn hybrid_item<'a>(
                         .and_then(|bounds| bounds.max_solver_steps)
                         .unwrap_or(u64::MAX),
                 );
+                let wire = wire_graph(package, spelling).unwrap_or_default();
                 let request = HybridSolveRequest {
+                    graph,
+                    wire: &wire,
                     claim: checked,
                     model,
                     budget,
@@ -98,9 +102,11 @@ pub(super) fn hybrid_item<'a>(
                 let mut meter = HybridReplayMeter::new(work_units);
                 let settled = match answer.verdict {
                     HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
-                    HybridVerdict::Refuted(claimed) => HybridSettlement::from_provider_counterexample(
-                        graph, checked, *claimed, &mut meter,
-                    ),
+                    HybridVerdict::Refuted(claimed) => {
+                        HybridSettlement::from_provider_counterexample(
+                            graph, checked, *claimed, &mut meter,
+                        )
+                    }
                     HybridVerdict::Unsupported(construct) => {
                         return unsupported_construct(
                             package, graph, spelling, position, model, &construct,
@@ -122,7 +128,7 @@ pub(super) fn hybrid_item<'a>(
                             certificate,
                         }))
                     }
-                    Err(refusal) => EngineReport::Refused(Refusal::Failed(fault_of(&refusal))),
+                    Err(refusal) => fault_of(&refusal, work_units),
                 }
             },
         )
@@ -130,21 +136,56 @@ pub(super) fn hybrid_item<'a>(
     )
 }
 
-/// The `failed` diagnostic of a replay refusal. A trace that breaks FSpec
-/// FR-193 "Hybrid trace" is the provider's fault, `invalid_result`/
-/// `invalid-value`, as the reader refuses it. FR-750 gives no settlement for
-/// the other refusals (a claim form exact replay does not decide, a
-/// counterexample kind the replay does not admit, an unreadable model or
-/// function), so they keep the conservative `runtime_invariant`.
-fn fault_of(refusal: &HybridReplayRefusal) -> CatalogCode {
+/// The settlement of a replay refusal, by FR-750 "Replay refusals" (analyze
+/// path). A trace that breaks FSpec FR-193 "Hybrid trace" is the provider's
+/// fault, `invalid_result`/`invalid-value`. A claim whose model is missing, a
+/// call whose function cannot be expanded and an ill-kinded term are checked
+/// package faults, `failed`, `runtime_invariant`/`established-invariant-broken`
+/// naming the invariant. An exhausted `work_units` meter is `incomplete`.
+fn fault_of(refusal: &HybridReplayRefusal, work_units: u64) -> EngineReport {
+    let invariant = |name: &str, extra: Vec<(&str, Value)>| {
+        let mut detail = Map::new();
+        detail.insert("invariant".to_owned(), name.into());
+        for (member, value) in extra {
+            detail.insert(member.to_owned(), value);
+        }
+        EngineReport::Refused(Refusal::FailedWithDetail(
+            CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+            detail,
+        ))
+    };
     match refusal {
-        HybridReplayRefusal::Trace(_) => CatalogCode::new("invalid_result", "invalid-value"),
-        HybridReplayRefusal::UnknownModel(_)
-        | HybridReplayRefusal::Expansion(_)
-        | HybridReplayRefusal::Exact(_)
-        | HybridReplayRefusal::UnsupportedCounterexampleKind
-        | HybridReplayRefusal::ResourceExhausted { .. } => {
-            CatalogCode::new("runtime_invariant", "established-invariant-broken")
+        HybridReplayRefusal::Trace(trace) => {
+            let mut detail = Map::new();
+            detail.insert("pointer".to_owned(), trace.pointer.to_string().into());
+            EngineReport::Refused(Refusal::FailedWithDetail(
+                CatalogCode::new("invalid_result", "invalid-value"),
+                detail,
+            ))
+        }
+        HybridReplayRefusal::UnknownModel(model) => {
+            invariant("hybrid-claim-model", vec![("model", model.get().into())])
+        }
+        HybridReplayRefusal::Expansion(gap) => invariant(
+            "hybrid-call-expansion",
+            vec![("gap", format!("{gap}").into())],
+        ),
+        HybridReplayRefusal::Exact(gap) => match gap {
+            ExactGap::IllKindedTerm => invariant("hybrid-term-kind", Vec::new()),
+            // `exact_replay` settles the other gaps `NotExact`, so none
+            // reaches here.
+            other => invariant(
+                "hybrid-exact-replay",
+                vec![("gap", format!("{other}").into())],
+            ),
+        },
+        HybridReplayRefusal::ResourceExhausted { .. } => {
+            EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: LimitKind::WorkUnits,
+                },
+                value: work_units,
+            }))
         }
     }
 }
@@ -227,5 +268,80 @@ fn counterexample_wire(
             let locus = hybrid_locus_wire(graph, &wire, claim, &at.locus).ok_or_else(unspelled)?;
             Ok(found.to_wire(model, &|_| locus.clone()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fsl_replay::{ExpansionGap, TraceFault, TraceRefusal};
+    use fsl_semantics::check::{CheckedFunctionRef, HybridModelIndex};
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    fn failed(report: EngineReport) -> (CatalogCode, Map<String, Value>) {
+        match report {
+            EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => (code, detail),
+            _ => panic!("expected a failed refusal with detail"),
+        }
+    }
+
+    /// FR-750-AC-12 (analyze path): a missing claim model, an unexpandable
+    /// call and an ill-kinded term settle `failed`, `runtime_invariant`/
+    /// `established-invariant-broken` naming `hybrid-claim-model`,
+    /// `hybrid-call-expansion` and `hybrid-term-kind`; a trace that breaks
+    /// FSpec FR-193 is `invalid_result`/`invalid-value` at its pointer; an
+    /// exhausted meter is `incomplete`, `LimitReached` on `work_units`.
+    #[trace("TC-3037", "FR-750-AC-12")]
+    #[test]
+    fn each_replay_refusal_settles_by_its_row() {
+        let broken = CatalogCode::new("runtime_invariant", "established-invariant-broken");
+        for (refusal, invariant) in [
+            (
+                HybridReplayRefusal::UnknownModel(HybridModelIndex::new(3)),
+                "hybrid-claim-model",
+            ),
+            (
+                HybridReplayRefusal::Expansion(ExpansionGap::UnreachableFunction(
+                    CheckedFunctionRef::new(7),
+                )),
+                "hybrid-call-expansion",
+            ),
+            (
+                HybridReplayRefusal::Exact(ExactGap::IllKindedTerm),
+                "hybrid-term-kind",
+            ),
+        ] {
+            let (code, detail) = failed(fault_of(&refusal, 10));
+            assert_eq!(code, broken, "{refusal:?}");
+            assert_eq!(detail["invariant"], invariant, "{refusal:?}");
+        }
+        let (code, detail) = failed(fault_of(
+            &HybridReplayRefusal::Trace(TraceRefusal {
+                pointer: "/loop".parse().expect("a pointer"),
+                fault: TraceFault::LoopNotBeforeLast,
+            }),
+            10,
+        ));
+        assert_eq!(code, CatalogCode::new("invalid_result", "invalid-value"));
+        assert_eq!(detail["pointer"], "/loop");
+        let exhausted = fault_of(
+            &HybridReplayRefusal::ResourceExhausted {
+                counter: LimitKind::WorkUnits,
+            },
+            10,
+        );
+        assert!(
+            matches!(
+                exhausted,
+                EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
+                    limit: ModelCheckLimit::EvaluationMeter {
+                        counter: LimitKind::WorkUnits
+                    },
+                    value: 10,
+                }))
+            ),
+            "work_units is the limit"
+        );
     }
 }

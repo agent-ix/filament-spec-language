@@ -198,7 +198,7 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
-    hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
+    hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,

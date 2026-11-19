@@ -14,7 +14,8 @@ use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 
 use crate::hybrid_replay::{
-    exact_replay, static_replay, ExactRecord, ExactReplay, HybridCounterexample, HybridReplayMeter,
+    exact_replay, static_replay, ExactReal, ExactRecord, ExactReplay, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter,
     HybridReplayRefusal, HybridTrace, ReplayRecord,
 };
 use crate::model_check::limits::ModelCheckLimit;
@@ -29,7 +30,7 @@ use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, Hybrid
 mod process_request;
 mod locus;
 mod provider;
-pub use locus::hybrid_locus_wire;
+pub use locus::{hybrid_locus_site, hybrid_locus_wire};
 pub use provider::{
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
     UnsupportedConstruct,
@@ -465,12 +466,6 @@ impl HybridSettlement {
         counterexample: HybridCounterexample,
         meter: &mut HybridReplayMeter,
     ) -> Result<Self, HybridReplayRefusal> {
-        if !matches!(
-            counterexample.kind,
-            crate::hybrid_replay::HybridCounterexampleKind::Formula
-        ) {
-            return Err(HybridReplayRefusal::UnsupportedCounterexampleKind);
-        }
         let exhausted = |meter: &HybridReplayMeter| {
             Self::without_counterexample(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter {
@@ -480,7 +475,7 @@ impl HybridSettlement {
             }))
         };
         match exact_replay(graph, claim, &counterexample.trace, meter) {
-            Ok(ExactReplay::Reproduced(replayed)) if replayed.kind == counterexample.kind => {
+            Ok(ExactReplay::Reproduced(replayed)) if agrees(&counterexample.kind, &replayed.kind) => {
                 Ok(Self {
                     value: TerminalValue::Refuted,
                     counterexample: Some(counterexample),
@@ -505,6 +500,31 @@ impl HybridSettlement {
             Err(HybridReplayRefusal::ResourceExhausted { .. }) => Ok(exhausted(meter)),
             Err(refusal) => Err(refusal),
         }
+    }
+}
+
+/// FR-750 "Replay refusals": a provider's claimed counterexample kind agrees
+/// with the reproduced one when both are `formula`, or both are
+/// `undefined-evaluation` with equal position, locus and cause and a claimed
+/// time interval that contains the reproduced instant (FSpec FR-364 step 6).
+fn agrees(claimed: &HybridCounterexampleKind, replayed: &HybridCounterexampleKind) -> bool {
+    match (claimed, replayed) {
+        (HybridCounterexampleKind::Formula, HybridCounterexampleKind::Formula) => true,
+        (
+            HybridCounterexampleKind::UndefinedEvaluation { at: claim, cause: claim_cause },
+            HybridCounterexampleKind::UndefinedEvaluation { at: found, cause: found_cause },
+        ) => {
+            let (lower, upper) = match &claim.time {
+                ExactReal::Rational(point) => (point, point),
+                ExactReal::Root(root) => (root.lower(), root.upper()),
+            };
+            claim.state == found.state
+                && claim.locus == found.locus
+                && claim_cause == found_cause
+                && ExactReal::Rational(lower.clone()) <= found.time
+                && found.time <= ExactReal::Rational(upper.clone())
+        }
+        _ => false,
     }
 }
 

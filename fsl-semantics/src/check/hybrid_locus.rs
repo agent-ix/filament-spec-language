@@ -14,7 +14,9 @@ use filament_exact::{NodeKey, Origin};
 
 use super::family::OccurrenceRole;
 use super::lowering::{hybrid_location, HybridSite};
-use super::node_key::{BindingValue, BodyTerm, GroupMember, LeafTerm, MemberTerm, NodeRef, TupleMember};
+use super::node_key::{
+    BindingValue, BodyTerm, GroupMember, LeafTerm, MemberTerm, NodeRef, TupleMember,
+};
 use super::CheckedGraph;
 
 /// The expression of a checked hybrid model or claim a term path starts at.
@@ -123,8 +125,35 @@ impl CheckedGraph {
         Some(HybridTermNode { node, origin })
     }
 
+    /// A term path from `home`'s root to the node `target`, the inverse of
+    /// [`Self::hybrid_term_node`]: the first path in operand order, or `None`
+    /// when no term of that expression is `target`.
+    pub fn hybrid_term_path(&self, home: HybridTermHome, target: &NodeKey) -> Option<Vec<usize>> {
+        let (root, _) = self.hybrid_term_root(home)?;
+        let mut path = Vec::new();
+        self.find_term(&root, target, &mut path).then_some(path)
+    }
+
+    fn find_term(&self, node: &NodeKey, target: &NodeKey, path: &mut Vec<usize>) -> bool {
+        if node == target {
+            return true;
+        }
+        let mut position = 0;
+        while let Some(operand) = self.operand(node, position) {
+            path.push(position);
+            if self.find_term(&operand, target, path) {
+                return true;
+            }
+            path.pop();
+            position += 1;
+        }
+        false
+    }
+
     fn body_of(&self, key: &NodeKey) -> Option<&BodyTerm> {
-        self.semantic_graph().node(key.clone()).map(|node| node.body())
+        self.semantic_graph()
+            .node(key.clone())
+            .map(|node| node.body())
     }
 
     /// The node at `site` whose `semantic_form` is `form`.

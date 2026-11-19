@@ -7,7 +7,7 @@ use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{CheckedGraph, HybridTermHome};
 use serde_json::Value;
 
-use crate::hybrid_replay::{ExpressionLocus, ExpressionSite};
+use crate::hybrid_replay::{ExpressionLocus, ExpressionSite, TermLocus};
 
 /// The `{node, occurrence}` locus of the term node `locus` names in the
 /// claim at position `claim` of `graph`, with the node spelled by `wire`.
@@ -54,4 +54,90 @@ pub fn hybrid_locus_wire(
             "ordinal": found.origin.ordinal(),
         },
     }))
+}
+
+/// The inverse of [`hybrid_locus_wire`]: the expression site and term path of
+/// the term node the FSpec FR-331 `Locus` `locus` names, among the
+/// expressions of mode `mode` of the model the claim at position `claim`
+/// ranges over: the rate of `variable` when it is given, and otherwise the
+/// mode's invariant, guards, reset values and the initial conditions that
+/// name it. `None` when the locus names no term node of those expressions.
+pub fn hybrid_locus_site(
+    graph: &CheckedGraph,
+    wire: &WireGraph,
+    claim: usize,
+    mode: usize,
+    variable: Option<usize>,
+    locus: &Value,
+) -> Option<ExpressionLocus> {
+    let model_index = graph.hybrid_claims().get(claim)?.model.get();
+    let model = graph.hybrid_models().get(model_index)?;
+    let target = wire.key_of_value(locus.get("node")?).ok()?;
+    let checked = model.modes.get(mode)?;
+    let mut homes = Vec::new();
+    if let Some(variable) = variable {
+        homes.push((
+            HybridTermHome::Rate {
+                model: model_index,
+                mode,
+                variable,
+            },
+            ExpressionSite::Rate { mode, variable },
+        ));
+    } else {
+        homes.push((
+            HybridTermHome::Invariant {
+                model: model_index,
+                mode,
+            },
+            ExpressionSite::Invariant { mode },
+        ));
+        for (transition, jump) in checked.transitions.iter().enumerate() {
+            homes.push((
+                HybridTermHome::Guard {
+                    model: model_index,
+                    mode,
+                    transition,
+                },
+                ExpressionSite::Guard { mode, transition },
+            ));
+            for constraint in 0..jump.resets.len() {
+                homes.push((
+                    HybridTermHome::Reset {
+                        model: model_index,
+                        mode,
+                        transition,
+                        constraint,
+                    },
+                    ExpressionSite::Reset {
+                        mode,
+                        transition,
+                        constraint,
+                    },
+                ));
+            }
+        }
+        for (entry, initial) in model.initial.iter().enumerate() {
+            if initial.mode.get() == mode {
+                homes.push((
+                    HybridTermHome::Initial {
+                        model: model_index,
+                        entry,
+                    },
+                    ExpressionSite::Initial { entry },
+                ));
+            }
+        }
+    }
+    homes.into_iter().find_map(|(home, site)| {
+        graph
+            .hybrid_term_path(home, &target)
+            .map(|term| ExpressionLocus {
+                site,
+                term: TermLocus {
+                    term,
+                    body: Vec::new(),
+                },
+            })
+    })
 }

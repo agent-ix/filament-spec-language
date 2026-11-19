@@ -353,11 +353,9 @@ pub enum UndefinedCause {
 }
 
 impl UndefinedCause {
-    /// The reason the native evaluator gives the same undefined value outside
-    /// a hybrid model (FSpec FR-193 "Continuous values and expressions"):
-    /// `division-by-zero` for a division by 0. The catalogue names no other
-    /// reason for a hybrid expression, so a range cause is spelled by its
-    /// variant, kebab-cased, until it does.
+    /// The FSpec FR-193 catalogued hybrid undefined reason, one-to-one over
+    /// the variants: `division-by-zero`, `outside-parameter-range`,
+    /// `outside-result-range` and `outside-capture-range`.
     pub const fn spelling(&self) -> &'static str {
         match self {
             Self::DivisionByZero => "division-by-zero",
@@ -409,9 +407,6 @@ pub enum HybridReplayRefusal {
     /// Exact replay does not decide this claim form.
     #[error(transparent)]
     Exact(#[from] ExactGap),
-    /// The provider counterexample kind is outside the currently admitted wire arm.
-    #[error("the provider's hybrid counterexample kind is not admitted")]
-    UnsupportedCounterexampleKind,
     /// The caller's accounting work limit denied the next replay step.
     #[error("hybrid replay exhausted the caller's accounting counter {counter:?}")]
     ResourceExhausted {
@@ -492,5 +487,22 @@ pub fn exact_replay(
     let model = model_of(graph, claim)?;
     admit(model, trace)?;
     let mut expander = expand::Expander::new(graph);
-    exact::replay(model, claim, &mut expander, trace, meter)
+    match exact::replay(model, claim, &mut expander, trace, meter) {
+        // FR-750 "Replay refusals": a recursive call is not a refusal. Exact
+        // replay returns `NotExact` for it, as for a trace that is not a
+        // point trace or that dwells in a mode without a polynomial flow.
+        //
+        // TEMPORARY (QSL-2234, later slice): `ActivationState` and
+        // `NondeterministicReset` are gaps FR-750 deletes, because exact
+        // replay decides those claims (tau as a second real variable,
+        // quantifier elimination for reset enabledness). Until that replay
+        // exists they also settle `NotExact`, the only honest answer short of
+        // a verdict; the ignored QSL-2234 tests name each case.
+        Err(HybridReplayRefusal::Exact(
+            ExactGap::RecursiveCall
+            | ExactGap::ActivationState
+            | ExactGap::NondeterministicReset { .. },
+        )) => Ok(ExactReplay::NotExact),
+        other => other,
+    }
 }
