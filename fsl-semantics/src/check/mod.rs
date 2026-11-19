@@ -1939,7 +1939,12 @@ fn verification_plan_refusal(
                 span: step.span,
             });
         }
-        if !package.declared_type_spans.contains_key(&step.domain.name) {
+        if !package.declared_type_spans.contains_key(&step.domain.name)
+            && !package
+                .models
+                .iter()
+                .any(|model| model.object_type_named(&step.domain).is_some())
+        {
             return Some(CheckCause::MissingQualifiedName(step.domain.clone()));
         }
         if step.bound.as_deref() == Some("0") {
