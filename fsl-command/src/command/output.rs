@@ -198,6 +198,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
         ),
         RunCause::ClauseRequest { .. }
+        | RunCause::VerificationPlanRequest(_)
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. }
@@ -367,6 +368,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 _ => None,
             },
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
+            RunCause::VerificationPlanRequest(refusal) => Some(refusal.cause),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
             }

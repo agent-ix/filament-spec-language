@@ -1223,7 +1223,6 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
-            | RunCause::VerificationPlanRequest(_)
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
