@@ -277,6 +277,18 @@ the `requirements` hook, and no source clause refers to it.
   occurrence key (node id, role, ordinal) to regions only, and FSpec FR-322
   allows the regions of different occurrences to nest or overlap. The derived node is not a name in the in-process table: `run` selects by authored
   clause name only (FR-109).
+  The package writer SHALL give each `claim` occurrence of a derived node one
+  `claim_names` row carrying the contributing declaration's name,
+  `qualified_name` and whole-declaration `declaration_region`, the values of
+  that declaration's row on its own node. FSpec FR-322 requires a row for
+  every `claim` occurrence. Rows with one `declaration_region` are one
+  declaration, so they are not duplicate names. A derived node holds a row
+  for every declaration of each clause it conjoins, so its declaration set
+  (the declaration keys of its rows) strictly contains the set of each
+  contributing clause's node. That clause's node is then the name's own node,
+  and a request naming the clause resolves to it. The strict reader refuses
+  a name whose nodes' sets do not nest (FSpec FR-322 "Rows of one
+  declaration").
 - **Transition node.** `anchor` is the no-point operation anchor, `subject` is
   the `expression`/`query` node FR-093 lowers `deref(self).F` to, `inputs`
   are the operation's parameters in declared order, and the application
@@ -310,6 +322,7 @@ the `requirements` hook, and no source clause refers to it.
 | FR-105-AC-16 | Each of these gives no `state`/`transition` node, no derived node and no refusal, and leaves every authored clause node as before, and each carries a postcondition that would constrain the field were the variant eligible: `Switch.set2(n: Integer)` (a non-Boolean parameter) with `post { self.on }`; an operation whose frame does not modify `on`, with `post { self.on }`; `armed: Option<Boolean>`, a `Sequence<Boolean>` field `seq` and an `Integer` field `count`, each with a postcondition that reads it; a postcondition `{ self.peer.on }`, `{ let s = self in s.on }` or `{ result.on }`, or `{ pre(self.on) }`, alone (not constraining `on`); a `pre` or `post` of the operation carrying an execution point; a postcondition `post QS on M::SubSwitch::set { self.on }` on a proper subtype (AC-13's unit gains no transition for `on` once `QS` is added); a package whose header selects no protocol profile. FR-105-AC-1's ConfigVersion package (no Boolean field) holds no `state`/`transition` node. | Test (TC-1271); covered |
 | FR-105-AC-17 | Compiling AC-14's unit twice gives identical bytes; two eligible subjects `on` and `lit` with the same preconditions share one derived `precondition` node and give two transitions with different `post` and `subject`; each transition occurrence carries the region of a contributing postcondition declaration. A fault injected on the transition node or a derived node refuses the compile and emits no state node. | Test (TC-1271); covered |
 | FR-105-AC-18 | Passes now: over TC-1408 fixture S, `pre Q using P on Order::bump` and `post R using P on Order::bump` check against one operation whose declaring type is the source-declared `Order`, a clause on `Sub::bump` resolves to `Order`'s `bump`, the source route evaluates `Q` and `R` (TC-1408 V2, V3), and S4 emits S per FR-995 and FR-996 (FR-569-AC-11). Target emission: `Q` and `R` share one `state`/`operation_anchor` whose `context` is the source-declared `Order` node (`declaration` `["Order"]`, the unit's `SourceOwner`, body binding `total` and `note`), whose `operation` is `"bump"` and whose frame node has `semantic_type` `Order`'s node and the `receiver` `modifies` entry for `total`; a clause on `Sub::bump` anchors at `Order`; IR's strict reader admits the package. Over fixture D the anchor's context is the model-owned `Order` node and the anchor is otherwise the same in shape | Test (TC-1408) |
+| FR-105-AC-19 | In FR-105-AC-14's unit, the derived `postcondition` node has two `claim_names` rows, carrying `Q1`'s and `Q2`'s names, `qualified_name`s and `declaration_region`s, equal to the rows on `Q1`'s and `Q2`'s own nodes. The derived `precondition` node likewise has rows for `P1` and `P2`. The strict reader admits the package, and the package lookup of `Q1` returns the row on `Q1`'s own node, never the row on the derived node. | Test (TC-3014) |
 
 ## Dependencies
 

@@ -164,18 +164,35 @@ and `FR-621`'s outcome document is unchanged.
   `temporal_clause_names` for temporal clauses and `claim_names` for state
   clauses, refinements and every non-temporal claim. `AnalysisView` SHALL
   expose `claim_name(name) -> Option<ClaimOccurrence>`, which resolves a bare
-  or qualified claim name to the (`declaration`, `occurrence`) of exactly one
-  row of those tables, and `claim_names()`, the admitted rows in package
+  or qualified claim name to the (`declaration`, `occurrence`) of the claim
+  row of exactly one declaration in those tables (FSpec FR-322 "Rows of one
+  declaration": the declaration's row on its own node, its `claim`
+  occurrence row first), and `claim_names()`, the admitted rows in package
   order; the claim-name lookup, the default-item rule and counterexample
   replay of both routes read claim names through these accessors only.
 - The two tables SHALL be one claim namespace (FSpec FR-322 "One claim
   namespace"): a request's `{"claim": name}` names no table, and a temporal
   clause row carries only its bare name, so a name in both tables could not
-  resolve to exactly one row. S3 SHALL refuse a unit that declares a temporal
-  clause and a state clause, refinement or non-temporal claim with the same
-  declared name `ambiguous_declaration`/`ambiguous-name` at the later
-  declaration's name, naming both, and the strict reader refuses a package
-  that carries such a pair, so `claim_name` never sees one.
+  resolve to exactly one row. Every claim-bearing declaration of a unit (a
+  temporal clause, a hyper clause, a state clause, a refinement, a step
+  relation, and a state-graph, probabilistic, schedulability or other
+  non-temporal claim) is one name in that namespace. When a unit declares two
+  such declarations with one declared name, of any kinds (two probabilistic
+  claims included), S3 SHALL refuse the later
+  `ambiguous_declaration`/`ambiguous-name` at its name, naming both. The
+  exception is two state clauses, or a state clause and a function, which
+  FR-104 refuses at every declaration of the name. A request names one
+  declaration, and two declarations of one name would leave the package with
+  two rows of one `qualified_name`, which the strict reader refuses (FSpec
+  FR-322 "Claim declaration names"), so `claim_name` never sees one.
+- The writer SHALL give every occurrence a declaration introduces the
+  declaration's name, `qualified_name` and whole-declaration
+  `declaration_region`. A step relation has a row for its `declaration` and
+  for its `claim` occurrence. A derived conjunction node has a row for each of
+  its `claim` occurrences, carrying the contributing clause's name, path and
+  region (FR-105). A hyper clause has rows on its `hyperproperty` node, and
+  its body wrapper has none (FR-488). Rows of one declaration are one name,
+  never a duplicate.
 - On the source route the `AdmittedPackageRead` SHALL read the same tables
   from its own S4 emission, so both routes resolve a name to the same
   occurrence. A claim that the source declares and the tables do not name is
@@ -205,6 +222,7 @@ and `FR-621`'s outcome document is unchanged.
 | FR-940-AC-6 | For each item family whose evaluator FR-531's inventory lists as taking a source-checked value (the temporal clauses `Bounded` and `AtMostTwo`, the invariant `NotAboveThree`, the deadlock-freedom item and the `SB` litmus claim under `tso`), a `program` request and a `package` request over the handoff directory of the same compiled unit give equal item records, counterexamples and replays, and no package-route record is `unsupported`; a handoff directory whose `checked-package.json` the strict reader refuses, or that holds no `identities.json`, settles no item and compiles no source (FR-850-AC-3, FR-850-AC-6). | Test (TC-2958) |
 | FR-940-AC-7 | For AC-4's Counter unit, `claim_name("NotAboveThree")`, `claim_name("Bounded")` and `claim_name("AtMostTwo")` return equal occurrences over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, the first from a `claim_names` row and the others from `temporal_clause_names` rows; `claim_name("Missing")` returns `None` on both. | Test (TC-2967) |
 | FR-940-AC-8 | AC-4's Counter unit declaring the temporal clause `Bounded` and the state-graph claim `possible Bounded` is refused `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; with the claim named `ReachThree` both items settle with equal records over source and over the package, and that package with its `ReachThree` `claim_names` row renamed `Bounded` is refused `ambiguous_declaration`/`ambiguous-name` with no item settled (FSpec FR-322-AC-459). | Test (TC-2970) |
+| FR-940-AC-9 | A unit declaring `probabilistic Stable ... { probability >= 0.5 [ holds(true) ] }` and `probabilistic Stable ... { probability >= 0.25 [ holds(true) ] }` is refused `ambiguous_declaration`/`ambiguous-name` at the second `Stable`, naming both; with the second named `Other` it checks, and its package carries one `claim_names` row per claim. The package of a unit whose operation has two postconditions `Q1` and `Q2` constraining one field (a derived conjunction, FR-105-AC-14) is admitted by the strict reader, and `claim_name("Q1")` returns `Q1`'s own node, never the derived node, over the source route and over the package. A step relation's package carries rows for its `declaration` and `claim` occurrences under one name and region, is admitted, and `claim_name` returns the `claim` occurrence. A hyper clause's package is admitted with its name on its `hyperproperty` node's `claim_names` row, and `claim_name` returns that node. | Test (TC-3015) |
 
 ## Dependencies
 
