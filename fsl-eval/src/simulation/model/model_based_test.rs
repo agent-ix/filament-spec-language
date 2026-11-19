@@ -765,7 +765,6 @@ fn partition_coverage(partitions: &[ModelBoundaryPartition]) -> ModelBasedPartit
                 ModelPartitionUncoveredReason::Unreachable => "unreachable",
                 ModelPartitionUncoveredReason::UnreachableWithinBound => "unreachable-within-bound",
                 ModelPartitionUncoveredReason::NotGenerated => "not-generated",
-                ModelPartitionUncoveredReason::NoCheckPoint => "no-check-point",
                 ModelPartitionUncoveredReason::Undetermined { .. } => "undetermined",
             },
             None => "not-generated",

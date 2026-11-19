@@ -546,8 +546,6 @@ pub enum ModelPartitionUncoveredReason {
     UnreachableWithinBound,
     /// A state exists, but the partition did not receive a generated case.
     NotGenerated,
-    /// A generated trace did not reach a check point for the selected clause.
-    NoCheckPoint,
     /// Reachability stopped at the named exploration limit.
     Undetermined {
         /// The FR-461 limit that stopped exploration.
