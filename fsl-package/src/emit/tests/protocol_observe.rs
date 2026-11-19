@@ -80,9 +80,9 @@ fn node<'w>(wire: &'w Value, path: &[&str]) -> &'w Value {
 fn argument_names(node: &Value) -> Vec<&str> {
     node["body"]["arguments"]
         .as_array()
-        .expect("arguments")
-        .iter()
-        .map(|argument| argument["name"].as_str().expect("a name"))
+        .into_iter()
+        .flatten()
+        .filter_map(|argument| argument["name"].as_str())
         .collect()
 }
 
@@ -90,7 +90,13 @@ fn argument_names(node: &Value) -> Vec<&str> {
 /// the last argument `boundary` `observe-only`; `Advise` is a `recommend`
 /// control with FSpec FR-466's layout; the unmarked clause has the same node
 /// ids and no `boundary` argument.
-#[trace("TC-2991", "FR-383-AC-69", "FSpec-TC-2018", "FSpec-FR-822-AC-4", "FSpec-FR-322-AC-462")]
+#[trace(
+    "TC-2991",
+    "FR-383-AC-69",
+    "FSpec-TC-2018",
+    "FSpec-FR-822-AC-4",
+    "FSpec-FR-322-AC-462"
+)]
 #[test]
 fn the_package_records_the_observe_boundary() {
     let marked = admitted(&flow("observe "));
@@ -132,9 +138,11 @@ fn the_package_records_the_observe_boundary() {
     );
 
     let plain = admitted(&flow(""));
-    assert!(nodes(&plain)
-        .iter()
-        .all(|node| !argument_names(node).contains(&"boundary")));
+    assert!(
+        nodes(&plain)
+            .iter()
+            .all(|node| !argument_names(node).contains(&"boundary"))
+    );
     let ids = |wire: &Value| -> Vec<Value> {
         nodes(wire)
             .iter()
