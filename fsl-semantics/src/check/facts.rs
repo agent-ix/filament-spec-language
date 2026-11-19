@@ -2318,6 +2318,11 @@ fn rekey(facts: &Facts, parameters: usize, shift: usize) -> Facts {
             }
         }
     }
+    for (key, literals) in facts.map_literals.entries() {
+        if let Some(key) = path(key) {
+            kept.map_literals.insert(key, literals);
+        }
+    }
     for ((upper, lower), bound) in facts.differences.entries() {
         if let (Some(upper), Some(lower)) = (path(upper), path(lower)) {
             kept.differences.insert((upper, lower), bound);
@@ -2353,6 +2358,14 @@ fn conjoin(into: &mut Facts, other: &Facts) -> bool {
             None => (*incoming).clone(),
         };
         into.members.insert(key, Rc::new(merged));
+    }
+    for (key, incoming) in other.map_literals.entries() {
+        let mut merged = into
+            .map_literals
+            .get(&key)
+            .map_or_else(Vec::new, |held| Vec::clone(held));
+        merged.extend(incoming.iter().cloned());
+        into.map_literals.insert(key, Rc::new(merged));
     }
     for (key, incoming) in other.differences.entries() {
         let merged = match into.differences.get(&key) {
