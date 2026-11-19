@@ -18,12 +18,11 @@ use super::*;
 use crate::protocol_view::{
     attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_connection,
     channel_endpoints, channel_ordering, choice_visibility, control_operation, declaration,
-    delivery, dependency, fifo_key, locus, operation_identity, owner_model, protocol_view,
-    protocol_execution_view, queue_capacity, queue_channel, queue_overflow, relation_over,
-    selection, source, temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
-    ControlBody,
-    ControlOperation, Delivery, FifoKey, LossSelector, Overflow, QueueCapacity, Scheduling,
-    ViewRefusal,
+    delivery, dependency, fifo_key, locus, operation_identity, owner_model,
+    protocol_execution_view, protocol_view, queue_capacity, queue_channel, queue_overflow,
+    relation_over, selection, source, temporal_binding, AwaitAnchor, AwaitAnchorKind,
+    ChannelOrdering, ChoiceVisibility, ControlBody, ControlOperation, Delivery, FifoKey,
+    LossSelector, Overflow, QueueCapacity, Scheduling, ViewRefusal,
 };
 
 /// The TC-134 workflow plus an `await` anchored at an event, so every edge
@@ -1127,8 +1126,16 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
     let package = lowered.ir.as_ref().expect("the package is admitted");
     let execution = protocol_execution_view(package, &clause(package).node_id)
         .expect("the admitted protocol has an execution view");
-    assert_eq!(execution.protocol.controls().len(), execution.controls.len());
-    for (id, control) in execution.protocol.controls().iter().zip(&execution.controls) {
+    assert_eq!(
+        execution.protocol.controls().len(),
+        execution.controls.len()
+    );
+    for (id, control) in execution
+        .protocol
+        .controls()
+        .iter()
+        .zip(&execution.controls)
+    {
         assert_eq!(*id, &control.node.node_id);
         assert_eq!(control.operation, control_operation(control.node).unwrap());
     }
@@ -1156,12 +1163,14 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
 #[trace("FR-519", "TC-1314")]
 #[test]
 fn the_execution_view_reads_attempt_facts_from_package_nodes() {
-    let fixture = fixture_over(&tc134_source());
+    let source = tc134_source().replace("parallel Shipments {", "parallel Shipments memory tso {");
+    let fixture = fixture_over(&source);
     let package = &fixture.admitted;
     let execution = protocol_execution_view(package, &clause(package).node_id).unwrap();
-    let via_analysis_view = crate::AnalysisView::protocol_execution_named(&fixture.fsl_read, "OrderFlow")
-        .unwrap()
-        .expect("AnalysisView resolves the declared protocol name");
+    let via_analysis_view =
+        crate::AnalysisView::protocol_execution_named(&fixture.fsl_read, "OrderFlow")
+            .unwrap()
+            .expect("AnalysisView resolves the declared protocol name");
     assert_eq!(
         via_analysis_view.protocol.clause(),
         execution.protocol.clause()
@@ -1187,6 +1196,10 @@ fn the_execution_view_reads_attempt_facts_from_package_nodes() {
     assert!(!contracts.is_empty());
     assert!(node(package, binder).semantic_form == "parameter");
     assert_eq!(*ordering, None);
+    assert!(execution.controls.iter().any(|control| {
+        control.operation == ControlOperation::Parallel
+            && control.memory == Some(fsl_foundation::MemoryModelName::Tso)
+    }));
 }
 
 /// FR-519-AC-5, locus: the package source-map entry of a node; and the clock

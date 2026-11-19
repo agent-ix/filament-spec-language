@@ -102,7 +102,8 @@ pub trait AnalysisView: sealed::Sealed {
     fn protocol_execution(
         &self,
         protocol: &CheckedNodeId,
-    ) -> Result<crate::protocol_view::ProtocolExecutionView<'_>, crate::protocol_view::ViewRefusal> {
+    ) -> Result<crate::protocol_view::ProtocolExecutionView<'_>, crate::protocol_view::ViewRefusal>
+    {
         crate::protocol_view::protocol_execution_view(self.package(), protocol)
     }
 
