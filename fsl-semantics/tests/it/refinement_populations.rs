@@ -261,6 +261,58 @@ fn only_over_a_population_lowers() {
     assert_eq!(only_body.semantic_type(), Some(result_type.clone()));
 }
 
+/// FR-998-AC-1: without `where`, `only` takes the population's
+/// `all_instances` application directly as its source.
+#[trace("TC-2822", "FR-998-AC-1", "FSpec-FR-376-AC-3")]
+#[test]
+fn only_without_where_uses_all_instances_as_its_source() {
+    let checked = checked(&ring_is_queue("lone = only(s in R::slots: s.value);"));
+    let graph = checked.graph.semantic_graph();
+    let only_nodes: Vec<&ApplicationTerm> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.collection.only" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [only] = only_nodes.as_slice() else {
+        panic!("one collection.only application: {only_nodes:?}");
+    };
+    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    assert_eq!(
+        only.operation.member(),
+        Some(&fsl_semantics::value::Member::TypeArgument {
+            declaration: result_type.clone(),
+        })
+    );
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
+        name,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: body }),
+    })] = only.arguments.as_slice()
+    else {
+        panic!("collection.only has a source and one value binder");
+    };
+    assert_eq!(name, "s");
+    let source = graph
+        .node(source.admitted().expect("the source is resolved").clone())
+        .expect("the source node exists");
+    let BodyTerm::Application(source) = source.body() else {
+        panic!("the source is the all_instances application");
+    };
+    assert_eq!(
+        source.operation.identity(),
+        "filament.op.model.all_instances"
+    );
+    let body = graph
+        .node(body.admitted().expect("the body is resolved").clone())
+        .expect("the body node exists");
+    assert_eq!(body.semantic_type(), Some(result_type.clone()));
+}
+
 /// FR-139-AC-2 (TC-544 step 2): `only` over a condition that is not Boolean
 /// refuses `ill_typed`/`type-mismatch` at the condition.
 #[trace("TC-544", "FR-139-AC-2", "FSpec-TC-311", "FSpec-FR-376-AC-4")]
