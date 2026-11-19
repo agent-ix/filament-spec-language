@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -317,14 +317,24 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
 fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let directory = tempfile::tempdir().unwrap();
     let mut unit = crate::config_version_spine::spine::unit_text();
+    unit = unit.replace(
+        "profile v = \"filament.model.complete/v1\";",
+        "profile v = \"filament.model.complete/v1\";\nimport \"test/lib\" as library;",
+    );
     unit.push_str(
         "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          enum Mode { On, Off }\n\
          record Pair { left: Integer; right: Integer; }\n\
-         function positive using v(n: Int[0, 1000]): Boolean pure { n > 0 }\n\
-         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if library::positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
     );
-    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    std::fs::write(
+        directory.path().join("library.native"),
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function positive using v(n: Int[0, 1000]): Boolean pure { n > 0 }\n",
+    )
+    .unwrap();
     std::fs::write(
         directory.path().join("model.semantic-ir.json"),
         crate::config_version_spine::spine::DOMAIN_PACKAGE,
@@ -335,6 +345,7 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         "file": "model.semantic-ir.json", "authority": "agent-ix",
         "identity": "example/config-version", "document": "ConfigVersion",
         "formal_revision": 1}}],
+        "libraries": [{"identity":"test/lib", "source":source("library.native")}],
         "program": {"source": source("unit.native")},
         "tl_lowering": {"clause": "Canonical"}});
     let (exit, value) = run(directory.path(), request.clone());
@@ -344,18 +355,20 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         .expect("the atom has canonical checked text");
     assert_eq!(
         atom,
-        "holds(if ix://test:package-run:unit.native/positive(x.versionNumber) then contains(set[1, 2], 1) else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
+        "holds(if ix://test:package-run:library.native/positive(x.versionNumber) then contains(set[1, 2], 1) else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
         "{value}"
     );
     assert_eq!(
         value["tl_lowering"]["atoms"]["p1"],
-        "holds(ix://test:package-run:unit.native/Pair{left: 1, right: 2} = ix://test:package-run:unit.native/Pair{left: 1, right: 2})",
+        "holds(ix://test:package-run:unit.native/Pair {left: 1, right: 2} = ix://test:package-run:unit.native/Pair {left: 1, right: 2})",
         "{value}"
     );
 
     let renamed_unit = unit
         .replace("model Config =", "model C =")
-        .replace("Config::", "C::");
+        .replace("Config::", "C::")
+        .replace("as library", "as math")
+        .replace("library::", "math::");
     std::fs::write(directory.path().join("unit.native"), renamed_unit).unwrap();
     let (renamed_exit, renamed) = run(directory.path(), request);
     assert_eq!(renamed_exit, 0, "{renamed}");

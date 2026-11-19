@@ -487,7 +487,14 @@ fn lowering_record(
             reason: TraceForm::reason(classified),
         });
     }
-    let labels = canonical::source_labels(valuation)?;
+    let labels = canonical::source_labels(valuation).map_err(|error| match error {
+        canonical::CanonicalError::UnsupportedCase => Failure::Form {
+            member: "clause",
+            reason:
+                "case expression labels require binder names not retained by the checked condition",
+        },
+        canonical::CanonicalError::Fault(message) => Failure::Fault(message),
+    })?;
     let mut lowered = Lowered::default();
     let root = lowered.lower(formula, formula.root(), &labels)?;
     let tl = lowered.document(classified, root)?;

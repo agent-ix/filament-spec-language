@@ -31,6 +31,19 @@ pub(super) struct CheckedExpression {
     root: usize,
 }
 
+/// A canonical printer refusal differs from an internal rendering fault:
+/// checked case arms do not retain their authored binder names.
+pub(super) enum CanonicalError {
+    UnsupportedCase,
+    Fault(String),
+}
+
+impl From<String> for CanonicalError {
+    fn from(message: String) -> Self {
+        Self::Fault(message)
+    }
+}
+
 impl CheckedExpression {
     /// Normalize a source condition from the checked tree, without reading
     /// the expression's source span.
@@ -81,7 +94,7 @@ impl CheckedExpression {
         &self,
         binders: &[String],
         rows: &CanonicalRows,
-    ) -> Result<String, String> {
+    ) -> Result<String, CanonicalError> {
         let mut rendered: Vec<Option<(String, u8)>> = vec![None; self.nodes.len()];
         for (index, node) in self.nodes.iter().enumerate() {
             let child = |child: usize| {
@@ -218,13 +231,10 @@ impl CheckedExpression {
                         })
                         .collect::<Result<Vec<_>, _>>()?
                         .join(", ");
-                    (format!("{identity}{{{members}}}"), 10)
+                    (format!("{identity} {{{members}}}"), 10)
                 }
                 NodeKind::Case { .. } => {
-                    return Err(
-                        "case expression arm binder names are not retained by the checked condition"
-                            .to_owned(),
-                    );
+                    return Err(CanonicalError::UnsupportedCase);
                 }
                 NodeKind::Order(operator, _, left, right) => binary(
                     child(*left)?,
@@ -338,7 +348,7 @@ impl CheckedExpression {
 /// positional clause binders. Source slices are deliberately not involved.
 pub(super) fn source_labels(
     valuation: &fsl_replay::spine::TemporalValuation,
-) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, String> {
+) -> Result<BTreeMap<fsl_semantics::check::FormulaNodeId, String>, CanonicalError> {
     let clause = &valuation.clause;
     let mut binders = vec![clause.over().0.clone()];
     if let Some((trigger, _)) = clause.trigger() {
@@ -356,6 +366,7 @@ pub(super) fn source_labels(
         .iter()
         .map(|(atom, body)| {
             CheckedExpression::from_source(body.root())
+                .map_err(CanonicalError::Fault)
                 .and_then(|expression| expression.render(&binders, &rows))
                 .map(|label| (*atom, format!("holds({label})")))
         })
