@@ -7185,10 +7185,9 @@ mod tests {
             assert!(matches!(
                 &refusals[0].cause,
                 ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
-                    if *member == MemberPath::new(MemberRoot::Operation)
-                        .name("params")
-                        .index(0)
-                        .name("presence")
+                    if *member == MemberPath::from_document_location(
+                        "$.types[1].operations[0].params[0]",
+                    ).name("presence")
             ));
         }
     }
