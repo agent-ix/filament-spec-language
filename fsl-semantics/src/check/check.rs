@@ -3199,9 +3199,20 @@ impl<'a> Typer<'a> {
         &self.slot_names
     }
 
-    /// The declared name of `slot` (FR-400 "Canonical read projections").
-    pub(crate) fn slot_name(&self, slot: Slot) -> String {
-        self.slot_names.get(slot).cloned().unwrap_or_default()
+    /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
+    /// bound without a recorded name is an internal fault, never an empty name.
+    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+        self.slot_names.get(slot).cloned().ok_or_else(|| {
+            refuse(
+                location,
+                CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "S3",
+                        "checked-binding-slot-has-a-declared-name",
+                    ),
+                ))),
+            )
+        })
     }
 
     /// Seed this typing pass with the checked graph's retained compound
@@ -4236,7 +4247,7 @@ impl<'a> Typer<'a> {
             composed = node(
                 NodeKind::Let {
                     slot,
-                    name: self.slot_name(slot),
+                    name: self.slot_name(slot, location)?,
                     value,
                     body,
                 },
@@ -5787,7 +5798,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Map,
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5813,7 +5824,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Filter,
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5831,7 +5842,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit,
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },

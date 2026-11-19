@@ -558,13 +558,12 @@ impl<'r> Callee<'r> {
         }
     }
 
-    /// The declared parameter type at `index` of a function, imported call
-    /// or union-member construction, the calls whose argument type node
-    /// FR-347 compares.
+    /// The declared parameter type at `index` of a function or imported
+    /// call, the only calls whose argument type node FR-347 compares.
     fn call_parameter(&self, index: usize) -> Option<ValueType> {
         match self {
             Self::Value(application) => application.call_parameter(index),
-            Self::Union(member) => member.parameter(index).cloned(),
+            Self::Union(_) => None,
         }
     }
 
@@ -3277,7 +3276,7 @@ impl<'a> Typer<'a> {
                 Ok(Step::Typed(node(
                     NodeKind::Let {
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, &location)?,
                         value: self.push(value),
                         body: self.push(body),
                     },
@@ -3326,8 +3325,8 @@ impl<'a> Typer<'a> {
                 let names = open
                     .binders
                     .iter()
-                    .map(|slot| self.slot_name(*slot))
-                    .collect();
+                    .map(|slot| self.slot_name(*slot, &frame.location))
+                    .collect::<Result<Vec<_>, _>>()?;
                 arms.builder.arm(open.member, open.binders, names, body);
                 arms
             }
@@ -3958,8 +3957,8 @@ impl<'a> Typer<'a> {
             NodeKind::Fold {
                 accumulator: fold.accumulator,
                 binder: fold.binder,
-                accumulator_name: self.slot_name(fold.accumulator),
-                binder_name: self.slot_name(fold.binder),
+                accumulator_name: self.slot_name(fold.accumulator, &frame.location)?,
+                binder_name: self.slot_name(fold.binder, &frame.location)?,
                 source: self.push(fold.source),
                 step: self.push(fold.step),
                 identity: identity.map(|identity| self.push(identity)),
@@ -4010,7 +4009,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit,
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, &location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -4290,17 +4289,17 @@ impl<'a> Typer<'a> {
             )
         };
         let query = |typer: &mut Self, visit, source: Node, body: Node, value_type| {
-            node(
+            Ok::<_, CheckRefusal>(node(
                 NodeKind::Query {
                     visit,
                     slot,
-                    name: typer.slot_name(slot),
+                    name: typer.slot_name(slot, location)?,
                     source: typer.push(source),
                     body: typer.push(body),
                 },
                 value_type,
                 location,
-            )
+            ))
         };
         let tally = |typer: &mut Self, visit, value_type, source: Node, condition: Option<Node>| {
             let body = condition.unwrap_or_else(|| truth(location));
@@ -4321,22 +4320,22 @@ impl<'a> Typer<'a> {
                     }
                     _ => ValueType::Integer,
                 };
-                Ok(tally(self, Visit::Count, value_type, source, condition))
+                tally(self, Visit::Count, value_type, source, condition)
             }
-            PopulationForm::Exists => Ok(tally(
+            PopulationForm::Exists => tally(
                 self,
                 Visit::Exists,
                 ValueType::Boolean,
                 source,
                 condition,
-            )),
-            PopulationForm::All => Ok(tally(
+            ),
+            PopulationForm::All => tally(
                 self,
                 Visit::Forall,
                 ValueType::Boolean,
                 source,
                 condition,
-            )),
+            ),
             PopulationForm::Sum | PopulationForm::Only => {
                 let body = body.ok_or_else(|| mismatch(location))?;
                 // A `sum` folds its condition into the summand, so each object
@@ -4363,7 +4362,7 @@ impl<'a> Typer<'a> {
                     (Some(condition), _) => {
                         let filtered = source.value_type.clone();
                         (
-                            query(self, Visit::Filter, source, condition, filtered),
+                            query(self, Visit::Filter, source, condition, filtered)?,
                             body,
                         )
                     }
@@ -4393,10 +4392,10 @@ impl<'a> Typer<'a> {
                     } else {
                         body.value_type.clone()
                     };
-                    Ok(query(self, Visit::Sum, source, body, value_type))
+                    query(self, Visit::Sum, source, body, value_type)
                 } else {
                     let value_type = body.value_type.clone();
-                    Ok(query(self, Visit::Only, source, body, value_type))
+                    query(self, Visit::Only, source, body, value_type)
                 }
             }
         }
@@ -4462,7 +4461,7 @@ impl<'a> Typer<'a> {
                 Ok(Step::Typed(node(
                     NodeKind::Seq {
                         slot,
-                        name: self.slot_name(slot),
+                        name: self.slot_name(slot, &location)?,
                         low: self.push(*low),
                         high: self.push(*high),
                         body: self.push(typed),

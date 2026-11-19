@@ -1010,7 +1010,7 @@ fn shape_low(leaf: &str) -> String {
 /// `case_binders_match_across_the_source_and_package_routes`.
 #[test]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2562: blocked by the red field-identity rows of the model-backed TL lowering (`c.versionNumber` faults `field has a selected exact identity row`); the literal-scrutinee twin below runs"]
+#[ignore = "QSL-2629: a bounded-integer argument to a union member emits a union_value the strict package read refuses (TypeMismatch); the literal-argument twin below runs"]
 fn case_binders_print_under_their_declared_names() {
     let atom = |leaf: &str| {
         let (code, value) = run(
@@ -1132,7 +1132,7 @@ fn both_routes(leaf: &str) -> (String, String) {
 #[test]
 #[trace("TC-3039", "FR-400-AC-13")]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2562: blocked by the red field-identity rows and by `tl_lowering` over a selected checked package, which is not implemented yet (it refuses the member over a selected checked package)"]
+#[ignore = "QSL-2627: tl_lowering over a selected checked package is not implemented yet"]
 fn case_binders_match_across_the_source_and_package_routes() {
     for leaf in [
         "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
@@ -1155,7 +1155,7 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// `ieee_operand_0` around a comparison prints as written. Both routes agree.
 #[test]
 #[trace("TC-3039", "FR-931-AC-14")]
-#[ignore = "QSL-2562: a float literal in a temporal clause refuses `invalid_package` at compile (unrelated to binder names); the printer shape is covered by canonical.rs unit tests"]
+#[ignore = "QSL-2628: a float literal in a temporal clause refuses invalid_package at compile; canonical.rs unit tests cover the printer shape"]
 fn the_checker_ieee_operand_binder_never_prints() {
     const A: &str = "float64(bits: 0x3ff0000000000000)";
     const Z: &str = "float64(bits: 0x0000000000000000)";
