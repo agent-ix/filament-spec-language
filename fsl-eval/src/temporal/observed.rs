@@ -1332,9 +1332,10 @@ mod tests {
 }
 
 /// What [`observed_valuation`] returns: the reading of every `holds` atom of
-/// a clause at each represented position of a closed finite trace, and the
-/// clause formula's native value at each activation position (FR-757
-/// "Cross-evaluation").
+/// a clause at each represented position of a closed finite trace or a lasso,
+/// and the clause formula's native value at each activation position (FR-757
+/// "Cross-evaluation"). Over a lasso the activation positions are the
+/// unrolled positions `n + m x L` (FR-329), the readings the represented ones.
 #[derive(Debug)]
 pub struct ObservedValuation {
     /// The clause's `holds` atoms, in arena order.
@@ -1345,13 +1346,14 @@ pub struct ObservedValuation {
     /// Each activation position, in order, with the formula's native value
     /// there.
     pub activations: Vec<(TemporalPosition, TemporalOutcome)>,
+    /// The trace the valuation reads: the closed finite trace, or the lasso
+    /// whose prefix and loop the readings are split by.
+    pub trace: TemporalTrace,
 }
 
 /// Why [`observed_valuation`] has no valuation.
 #[derive(Debug)]
 pub enum ValuationStop {
-    /// The trace is not a closed finite trace.
-    NotFinite,
     /// A letter stopped: a condition refused or failed, a meter stopped, or
     /// an internal invariant broke.
     Letter(LetterStop),
@@ -1371,9 +1373,6 @@ pub fn observed_valuation(
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
-    if !matches!(trace, TemporalTrace::Finite { .. }) {
-        return Err(ValuationStop::NotFinite);
-    }
     let mut letters = ObservedLetters {
         package,
         clause,
@@ -1406,8 +1405,22 @@ pub fn letters_valuation<L: TemporalLetters>(
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
-    let TemporalTrace::Finite { len } = trace else {
-        return Err(ValuationStop::NotFinite);
+    // A lasso reads its represented positions and is activated over the
+    // unrolled word (FR-329): every unrolled position past the represented
+    // ones reads the loop position it wraps to.
+    let (len, unrolled) = match trace {
+        TemporalTrace::Finite { len } => (len, len),
+        TemporalTrace::Lasso { .. } => {
+            let represented = trace
+                .represented()
+                .ok_or(ValuationStop::Refused(TemporalRefusal::TraceTooLong))?;
+            let unrolled = super::engine::unrolling(clause, trace)
+                .map_err(ValuationStop::Refused)?
+                .positions;
+            let unrolled = u64::try_from(unrolled)
+                .map_err(|_| ValuationStop::Refused(TemporalRefusal::TraceTooLong))?;
+            (represented, unrolled)
+        }
     };
     let atoms: Vec<FormulaNodeId> = clause
         .formula()
@@ -1419,23 +1432,46 @@ pub fn letters_valuation<L: TemporalLetters>(
         .collect();
     let mut readings = Vec::new();
     let mut activations = Vec::new();
-    for index in 0..len {
+    // Whether the guard of an `on each ... when` clause holds at each
+    // represented position.
+    let mut guards = Vec::new();
+    for index in 0..unrolled {
         let position = TemporalPosition::new(index);
-        let row = atoms
-            .iter()
-            .map(|atom| letters.atom(*atom, position, meter))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(ValuationStop::Letter)?;
-        readings.push(row);
+        if index < len {
+            let row = atoms
+                .iter()
+                .map(|atom| letters.atom(*atom, position, meter))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(ValuationStop::Letter)?;
+            readings.push(row);
+            if matches!(
+                clause.activation(),
+                fsl_semantics::check::Activation::Each { guarded: true }
+            ) {
+                guards.push(matches!(
+                    letters
+                        .activation(position, meter)
+                        .map_err(ValuationStop::Letter)?,
+                    AtomReading::True
+                ));
+            }
+        }
         let active = match clause.activation() {
             fsl_semantics::check::Activation::Origin => index == 0,
             fsl_semantics::check::Activation::Each { guarded: false } => true,
-            fsl_semantics::check::Activation::Each { guarded: true } => matches!(
-                letters
-                    .activation(position, meter)
-                    .map_err(ValuationStop::Letter)?,
-                AtomReading::True
-            ),
+            fsl_semantics::check::Activation::Each { guarded: true } => {
+                let represented = match trace {
+                    TemporalTrace::Lasso { prefix, loop_len } if index >= len => {
+                        prefix + (index - prefix) % loop_len
+                    }
+                    TemporalTrace::Finite { .. } | TemporalTrace::Lasso { .. } => index,
+                };
+                usize::try_from(represented)
+                    .ok()
+                    .and_then(|represented| guards.get(represented))
+                    .copied()
+                    .ok_or(ValuationStop::Refused(TemporalRefusal::TraceTooLong))?
+            }
         };
         if active {
             let (result, _) = super::engine::run_seeking(
@@ -1453,5 +1489,6 @@ pub fn letters_valuation<L: TemporalLetters>(
         atoms,
         readings,
         activations,
+        trace,
     })
 }

@@ -381,24 +381,38 @@ fn lassos() -> Vec<(usize, Vec<i64>)> {
     all
 }
 
+/// The clock `temporal C` names under `profile`: the infinite-trace profile
+/// takes no clock configuration, the event-position one the `events` clock.
+fn clock_of(profile: &str) -> &'static str {
+    if profile == INFINITE_PROFILE {
+        "steps"
+    } else {
+        "events"
+    }
+}
+
 /// A `native-run/1` request over the unit holding `temporal C` (`body`,
 /// `head`) under `profile`, with `extra` merged into the request.
 fn request_over(profile: &str, head: &str, body: &str, extra: Value) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
+    let clock = clock_of(profile);
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile e = \"{profile}\";\n\
          record Counter {{ level: Int[0, 9]; }}\n\
-         temporal C using e over (c: Counter) clock \"events\" {head} {{ {body} }}\n"
+         temporal C using e over (c: Counter) clock \"{clock}\" {head} {{ {body} }}\n"
     );
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
     let mut request = json!({
         "models": [],
         "program": {"source": {"file": "unit.native", "authority": "agent-ix",
             "identity": "test:mltl-infinite", "document": "Mltl", "formal_revision": 1}},
-        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
     });
+    if profile != INFINITE_PROFILE {
+        request["clocks"] =
+            json!({"events": {"kind": "event_position", "sequence_authority": "events"}});
+    }
     for (key, value) in extra.as_object().expect("an object") {
         request[key] = value.clone();
     }
@@ -452,7 +466,6 @@ fn lower_infinite(body: &str, lowering: Value) -> (u8, Value) {
 /// `tl-mltl`, the opposite of the clipping reading.
 #[test]
 #[trace("TC-3024", "FR-932-AC-5")]
-#[ignore = "QSL-2505: fsl-command does not lower infinite-trace past clauses to mltl.infinite-trace/v1 yet"]
 fn tl_mltl_agrees_on_every_lasso() {
     for body in PAST {
         for (prefix, values) in lassos() {
@@ -518,7 +531,6 @@ fn tl_mltl_agrees_on_every_lasso() {
 /// `profile`; the infinite-trace clauses outside the row stay unsupported.
 #[test]
 #[trace("TC-3023", "FR-931-AC-9")]
-#[ignore = "QSL-2505: tl_lowering has no mltl.infinite-trace/v1 correspondence yet"]
 fn an_infinite_trace_past_clause_lowers_to_the_infinite_trace_correspondence() {
     let back = "once[1,1] not holds(c.level = 0)";
     let (default_code, default) = lower_infinite(back, json!({"clause": "C"}));
@@ -594,7 +606,6 @@ fn an_infinite_trace_past_clause_lowers_to_the_infinite_trace_correspondence() {
 /// empty loop refuses as FR-329 refuses it.
 #[test]
 #[trace("TC-3023", "FR-931-AC-10")]
-#[ignore = "QSL-2505: tl_lowering does not admit a lasso cross-evaluation trace yet"]
 fn a_trace_form_must_match_the_correspondence() {
     let back = "once[1,1] not holds(c.level = 0)";
     for (lowering, member) in [
@@ -640,7 +651,6 @@ fn a_trace_form_must_match_the_correspondence() {
 /// table agrees.
 #[test]
 #[trace("TC-3023", "FR-931-AC-10")]
-#[ignore = "QSL-2505: the fsl-command library entry does not cross-evaluate a lasso under mltl.infinite-trace/v1 yet"]
 fn a_mis_mapped_atom_over_a_lasso_is_a_correspondence_loss() {
     let directory = tempfile::tempdir().unwrap();
     let unit = format!(
@@ -648,7 +658,7 @@ fn a_mis_mapped_atom_over_a_lasso_is_a_correspondence_loss() {
          profile v = \"filament.value.complete/v1\";\n\
          profile e = \"{INFINITE_PROFILE}\";\n\
          record Counter {{ level: Int[0, 9]; }}\n\
-         temporal C using e over (c: Counter) clock \"events\" on each (q: Counter) \
+         temporal C using e over (c: Counter) clock \"steps\" on each (q: Counter) \
          {{ once[1,1] not holds(c.level = 0) }}\n"
     );
     std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
@@ -656,7 +666,6 @@ fn a_mis_mapped_atom_over_a_lasso_is_a_correspondence_loss() {
         "models": [],
         "program": {"source": {"file": "unit.native", "authority": "agent-ix",
             "identity": "test:mltl-infinite-mismap", "document": "Mltl", "formal_revision": 1}},
-        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
         "clause": {"selection": {"temporal": {"name": "C", "trace": lasso(0, &[0])}},
             "observations": {}}}});
     let path = directory.path().join("request.json");
@@ -693,4 +702,26 @@ fn a_mis_mapped_atom_over_a_lasso_is_a_correspondence_loss() {
         json!([{"kind": "correspondence-loss", "clause": "C", "trace": 0, "position": 1,
             "native": false, "tl": true}])
     );
+}
+
+/// FR-931-AC-3, AC-10: a `lasso` trace for a clause whose default target
+/// reads a finite trace (the event-position past clause, target
+/// `mltl.origin-complete-history/v1`) is refused after classification,
+/// `invalid-request` at stage `request`, naming the trace member, with no
+/// result document (the lasso is not read under a bounded profile).
+#[test]
+#[trace("TC-2602", "FR-931-AC-3")]
+#[trace("TC-3023", "FR-931-AC-10")]
+fn a_lasso_beside_a_finite_default_target_is_refused_after_classification() {
+    let (code, value) = request_over(
+        "filament.temporal.event-position.false-extension/v1",
+        "on each (q: Counter)",
+        "historically[0,2] holds(c.level <= 2)",
+        json!({"tl_lowering": {"clause": "C", "cross_evaluate": {"trace": lasso(0, &[0])}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    let text = value.to_string();
+    assert!(text.contains("invalid-request"), "{text}");
+    assert!(text.contains("tl_lowering.cross_evaluate.trace"), "{text}");
+    assert_eq!(value["tl_lowering"], Value::Null, "{text}");
 }

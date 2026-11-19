@@ -193,7 +193,6 @@ fn unrolled(prefix: usize, values: &[i64], positions: usize) -> Vec<i64> {
 /// position repeats one of them.
 #[trace("TC-3024", "FR-932-AC-4")]
 #[test]
-#[ignore = "QSL-2505: the lasso half of the FR-932 differential is not run yet"]
 fn fsl_eval_agrees_with_the_reference_on_every_lasso() {
     let past = CASES[..5].iter().chain(PRE_ORIGIN_CASES);
     for (body, truth) in past {

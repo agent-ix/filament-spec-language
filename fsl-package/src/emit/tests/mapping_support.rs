@@ -184,7 +184,12 @@ fn each_row_of_the_support_table_returns_its_disposition() {
         ),
         (TIMESTAMPED, FUTURE, Open, unsupported(&[FiniteWindow])),
         (TIMESTAMPED, PAST, Complete, unsupported(&[FiniteWindow])),
-        (INFINITE, PAST, Open, unsupported(&[InfiniteTrace])),
+        (
+            INFINITE,
+            PAST,
+            Open,
+            supported(Target::InfiniteTrace, false),
+        ),
     ];
     for (profile, body, surrounding, expected) in cases {
         let classified = classify(profile, body, surrounding);
@@ -316,7 +321,6 @@ fn an_unsupported_result_retains_the_native_subject() {
 /// event-position past row keeps its target.
 #[trace("FR-527-AC-4", "TC-1322", "FR-045-AC-7", "TC-3022")]
 #[test]
-#[ignore = "QSL-2505: the infinite-trace bounded-past row (mltl.infinite-trace/v1) is not classified yet"]
 fn an_infinite_trace_closed_past_clause_maps_to_the_infinite_trace_target() {
     let supported_bodies = [
         format!("once[1,1] not {P}"),
