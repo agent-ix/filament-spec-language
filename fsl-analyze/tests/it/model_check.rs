@@ -338,11 +338,11 @@ fn terminal_when_quantifies_two_populations_at_the_reachable_terminal_state() {
         if expansion.successors.is_empty() {
             terminals += 1;
             assert_eq!(value(&state, "c1"), 3);
-            assert_eq!(
+            assert!(matches!(
                 state.state().populations[&crate::counter::key("gates")]["g1"].fields
                     [&crate::counter::key("Gate/open")],
                 filament_exact::Value::Boolean(true)
-            );
+            ));
             assert_eq!(
                 system.terminal_class(&state, false).expect("classifies"),
                 TerminalClass::Intended
