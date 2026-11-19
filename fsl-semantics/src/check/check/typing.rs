@@ -4341,26 +4341,28 @@ impl<'a> Typer<'a> {
                     (None, _) => (source, body),
                 };
                 if form == PopulationForm::Sum {
-                    if !is_integer(&body.value_type) {
+                    if !summand_of_family(&body.value_type, &body.value_type) {
                         return Err(refuse(
                             &body.location,
-                            CheckCause::PopulationFormNotChecked {
-                                what: "a sum over a value that is not an integer",
-                            },
+                            CheckCause::IllTyped(IllTypedCause::TypeMismatch),
                         ));
                     }
-                    let value_type = match (named, maximum, self.static_range(&body)) {
-                        (true, Some(maximum), Some((low, high))) => {
-                            let count = Integer::from(maximum);
-                            let product_low = count.mul(&low);
-                            let product_high = count.mul(&high);
-                            int_type(
-                                product_low.min(Integer::zero()),
-                                product_high.max(Integer::zero()),
-                                location,
-                            )?
+                    let value_type = if is_integer(&body.value_type) {
+                        match (named, maximum, self.static_range(&body)) {
+                            (true, Some(maximum), Some((low, high))) => {
+                                let count = Integer::from(maximum);
+                                let product_low = count.mul(&low);
+                                let product_high = count.mul(&high);
+                                int_type(
+                                    product_low.min(Integer::zero()),
+                                    product_high.max(Integer::zero()),
+                                    location,
+                                )?
+                            }
+                            _ => ValueType::Integer,
                         }
-                        _ => ValueType::Integer,
+                    } else {
+                        body.value_type.clone()
                     };
                     Ok(query(self, Visit::Sum, source, body, value_type))
                 } else {

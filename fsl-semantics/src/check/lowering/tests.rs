@@ -1436,6 +1436,21 @@ fn nb() -> FunctionDeclaration {
     )
 }
 
+/// A call lowers even when its callee has not yet received its final key.
+#[test]
+fn a_call_to_a_function_without_a_key_yet_lowers() {
+    let caller = function(
+        "caller",
+        &[],
+        boolean(),
+        None,
+        Expression::call("callee".to_owned(), vec![]),
+    );
+    let callee = function("callee", &[], boolean(), None, Expression::boolean(true));
+    let graph = check(vec![caller, callee]).expect("the call lowers");
+    application(graph.semantic_graph(), "filament.op.function.call");
+}
+
 fn h() -> FunctionDeclaration {
     function(
         "h",

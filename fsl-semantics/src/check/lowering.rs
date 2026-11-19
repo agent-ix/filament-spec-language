@@ -2161,6 +2161,23 @@ impl<'w> LeafWalk<'w> {
 }
 
 impl<'a> Lowering<'a> {
+    /// The catalogued all-instances operation over a population. Both the
+    /// refinement population read and `allInstances` use this same operation
+    /// and member construction.
+    fn all_instances_operation(
+        &mut self,
+        result_type: &ValueType,
+        location: &Location,
+    ) -> Result<Operation, CheckRefusal> {
+        let object = self.referenced_object(result_type, location)?;
+        Ok(Operation {
+            member: Some(Member::TypeArgument {
+                declaration: object,
+            }),
+            ..Operation::plain("filament.op.model.all_instances")
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_source_owners(
         scope: &'a Scope,
@@ -3775,11 +3792,26 @@ impl<'a> Lowering<'a> {
         }
         self.functions_open = false;
         if !self.deferred_mixed_settlement {
-            if let Err(refusal) = self.settle() {
-                refusals.push(refusal);
+            if !self.has_unresolved_function_placeholders() {
+                if let Err(refusal) = self.settle() {
+                    refusals.push(refusal);
+                }
             }
         }
         refusals
+    }
+
+    fn has_unresolved_function_placeholders(&self) -> bool {
+        self.unsettled_functions.iter().any(|index| {
+            self.functions
+                .get(*index)
+                .and_then(Option::as_ref)
+                .and_then(|node| match node {
+                    NodeRef::Pending(placeholder) => self.placeholders.get(placeholder),
+                    NodeRef::Admitted(_) => None,
+                })
+                .is_some_and(Option::is_none)
+        })
     }
 
     /// Open every function and protocol name in a mixed recursion component
@@ -4317,9 +4349,15 @@ impl<'a> Lowering<'a> {
                 function.location.clone(),
             );
         }
+        let placeholder = self.functions.get(index).cloned().flatten();
         if let Some(slot) = self.functions.get_mut(index) {
             *slot = Some(key.clone());
             self.unsettled_functions.push(index);
+        }
+        if let Some(NodeRef::Pending(placeholder)) = placeholder {
+            if self.placeholders.contains_key(&placeholder) {
+                self.placeholders.insert(placeholder, Some(key.clone()));
+            }
         }
         Ok(key)
     }
@@ -5201,8 +5239,20 @@ impl<'a> Lowering<'a> {
             // clock value; the downstream term contract has no row for it.
             // A quantifier over a clock collection's slots likewise has no
             // producer form yet.
-            NodeKind::PopulationObjects { .. }
-            | NodeKind::History { .. }
+            NodeKind::PopulationObjects { population } => {
+                let population = self.population_reference_node(population, node.location())?;
+                let result_type = self.type_ref(node.value_type(), node.location())?;
+                let operation = self.all_instances_operation(node.value_type(), node.location())?;
+                let term = self.typed_application(
+                    node.location(),
+                    result_type,
+                    Operator::Query,
+                    operation,
+                    vec![MemberTerm::Leaf(LeafTerm::reference_node(population.into()))],
+                )?;
+                return Ok(LowerStep::Lowered(term));
+            }
+            NodeKind::History { .. }
             | NodeKind::PlaceReference { .. }
             | NodeKind::SlotPresence { .. } => {
                 return Err(refuse(
@@ -5228,19 +5278,19 @@ impl<'a> Lowering<'a> {
                 function,
                 arguments,
             } => {
-                let callee = self
-                    .functions
-                    .get(*function)
-                    .cloned()
-                    .flatten()
-                    .ok_or_else(|| {
-                        refuse(
-                            node.location(),
-                            CheckCause::UnsupportedFeature {
-                                loci: vec![node.location().clone()],
-                            },
-                        )
-                    })?;
+                let callee = match self.functions.get(*function).cloned().flatten() {
+                    Some(callee) => callee,
+                    None => {
+                        if self.functions.get(*function).is_none() {
+                            return Err(fault(node.location(), KeyFault::UnresolvedDraft));
+                        }
+                        let placeholder = self.placeholder();
+                        self.functions[*function] = Some(placeholder.clone());
+                        self.unsettled_functions.push(*function);
+                        self.functions_open = true;
+                        placeholder
+                    }
+                };
                 let mut terms = Vec::with_capacity(arguments.len() + 1);
                 terms.push(LeafTerm::reference_node(callee));
                 return self.next_operand(
@@ -5743,16 +5793,10 @@ impl<'a> Lowering<'a> {
                 )
             }
             NodeKind::AllInstances { population } => {
-                let object = self.referenced_object(node.value_type(), node.location())?;
                 (
                     Keyed::Application(
                         Operator::Query,
-                        Operation {
-                            member: Some(Member::TypeArgument {
-                                declaration: object,
-                            }),
-                            ..plain("filament.op.model.all_instances")
-                        },
+                        self.all_instances_operation(node.value_type(), node.location())?,
                     ),
                     Operands::One(population),
                 )

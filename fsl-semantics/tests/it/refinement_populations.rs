@@ -13,7 +13,8 @@ use filament_exact::{
 };
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    CheckedRefinement, CheckedRow, PopulationUse, PopulationValue, RefinementCause,
+    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckedRefinement, CheckedRow, LeafTerm,
+    MemberTerm, PopulationUse, PopulationValue, RefinementCause,
 };
 use ix_trace_rs::trace;
 
@@ -187,6 +188,131 @@ fn only_refusal(rows: &str) -> (Code, Option<&'static str>, String) {
     )
 }
 
+/// FR-998-AC-1: a refinement `only` lowers to a catalogued collection
+/// operation over the population's all-instances value.
+#[trace("TC-2822", "FR-998-AC-1", "FSpec-FR-376-AC-3")]
+#[test]
+fn only_over_a_population_lowers() {
+    let checked = checked(&ring_is_queue(
+        "lone = only(s in R::slots where s.ring = self: s.value);",
+    ));
+    let graph = checked.graph.semantic_graph();
+    let application_at = |reference: &fsl_semantics::check::NodeRef, identity: &str| {
+        let key = reference.admitted().expect("a lowered node reference");
+        let node = graph.node(key.clone()).expect("a node for the reference");
+        let BodyTerm::Application(application) = node.body() else {
+            panic!("{identity} names an application");
+        };
+        assert_eq!(application.operation.identity(), identity);
+        application
+    };
+    let only_nodes: Vec<&ApplicationTerm> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.collection.only" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [only] = only_nodes.as_slice() else {
+        panic!("one collection.only application: {only_nodes:?}");
+    };
+    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    assert_eq!(
+        only.operation.member(),
+        Some(&fsl_semantics::value::Member::TypeArgument {
+            declaration: result_type.clone(),
+        })
+    );
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: filtered }), MemberTerm::Binding(Binding {
+        name: only_binder,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: only_body }),
+    })] = only.arguments.as_slice()
+    else {
+        panic!("collection.only has a filtered collection and one value binder");
+    };
+    assert_eq!(only_binder, "s");
+    let filter = application_at(filtered, "filament.op.collection.filter");
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
+        name: filter_binder,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
+    })] = filter.arguments.as_slice()
+    else {
+        panic!("collection.filter has the population and its condition binder");
+    };
+    assert_eq!(filter_binder, "s");
+    let all_instances = application_at(population, "filament.op.model.all_instances");
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: population_node })] =
+        all_instances.arguments.as_slice()
+    else {
+        panic!("all_instances has one population reference");
+    };
+    let population_node = graph
+        .node(population_node.admitted().expect("the population is resolved").clone())
+        .expect("the population node exists");
+    assert_eq!(population_node.semantic_form(), "population");
+    application_at(predicate, "filament.op.reference.eq");
+    let only_body = graph
+        .node(only_body.admitted().expect("the only body is resolved").clone())
+        .expect("the only body node exists");
+    assert_eq!(only_body.semantic_type(), Some(result_type.clone()));
+}
+
+/// FR-998-AC-1: without `where`, `only` takes the population's
+/// `all_instances` application directly as its source.
+#[trace("TC-2822", "FR-998-AC-1", "FSpec-FR-376-AC-3")]
+#[test]
+fn only_without_where_uses_all_instances_as_its_source() {
+    let checked = checked(&ring_is_queue("lone = only(s in R::slots: s.value);"));
+    let graph = checked.graph.semantic_graph();
+    let only_nodes: Vec<&ApplicationTerm> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.collection.only" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [only] = only_nodes.as_slice() else {
+        panic!("one collection.only application: {only_nodes:?}");
+    };
+    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    assert_eq!(
+        only.operation.member(),
+        Some(&fsl_semantics::value::Member::TypeArgument {
+            declaration: result_type.clone(),
+        })
+    );
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
+        name,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: body }),
+    })] = only.arguments.as_slice()
+    else {
+        panic!("collection.only has a source and one value binder");
+    };
+    assert_eq!(name, "s");
+    let source = graph
+        .node(source.admitted().expect("the source is resolved").clone())
+        .expect("the source node exists");
+    let BodyTerm::Application(source) = source.body() else {
+        panic!("the source is the all_instances application");
+    };
+    assert_eq!(
+        source.operation.identity(),
+        "filament.op.model.all_instances"
+    );
+    let body = graph
+        .node(body.admitted().expect("the body is resolved").clone())
+        .expect("the body node exists");
+    assert_eq!(body.semantic_type(), Some(result_type.clone()));
+}
+
 /// FR-139-AC-2 (TC-544 step 2): `only` over a condition that is not Boolean
 /// refuses `ill_typed`/`type-mismatch` at the condition.
 #[trace("TC-544", "FR-139-AC-2", "FSpec-TC-311", "FSpec-FR-376-AC-4")]
@@ -271,17 +397,56 @@ fn a_count_used_as_a_boolean_refuses_whatever_the_universe_size() {
     assert_eq!(at, "count(s in R::slots where s.value = 1)");
 }
 
-/// FR-139 behavior: a bound that depends on a population's size through a
-/// form other than the row's whole value is refused as not yet checked,
-/// rather than admitted unchecked.
+/// FR-139: arithmetic around a population count preserves the size-dependent
+/// bound and checks at subject admission.
 #[trace("TC-544")]
 #[test]
-fn a_size_dependent_bound_inside_a_larger_expression_is_refused_as_unbuilt() {
-    let (code, cause, _) = only_refusal("used = count(s in R::slots where s.value = 1) + 0;");
-    assert_eq!(
-        (code, cause),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
+fn a_row_bound_depending_on_population_size_checks() {
+    let graph = checked(&ring_is_queue(
+        "used = count(s in R::slots where s.value = 1) + 0;",
+    ))
+    .graph;
+    let [refinement] = graph.refinements() else {
+        panic!("one refinement");
+    };
+    let [count] = queue_row(refinement, 0).population_uses() else {
+        panic!("the row retains its population-dependent count bound");
+    };
+    assert_eq!(count.value(), &PopulationValue::Count);
+    assert_eq!(count.admitted_type(2), Some(interval(0, 2)));
+    assert_eq!(refinement.admit_universes(&BTreeMap::from([(slots(), 2)])), Ok(()));
+}
+
+/// FR-145: population sums admit decimal summands and lower to the decimal
+/// collection sum operation.
+#[trace("TC-544", "FSpec-FR-376-AC-1")]
+#[test]
+fn sum_over_a_population_with_a_decimal_body_checks() {
+    let source = ring_is_queue(
+        "busy = sum(s in R::slots: convert<D>(convert<N>(s.value))) = \
+         sum(s in R::slots: convert<D>(convert<N>(s.value)));",
+    )
+    .replacen(
+        "invariant Anything",
+        "type N = Rational[0, 2; 1, 1];\ntype D = Decimal[0, 100; 1, 1; exact];\ninvariant Anything",
+        1,
     );
+    let graph = checked(&source).graph;
+    assert!(graph.semantic_graph().nodes().any(|node| {
+        matches!(node.body(), fsl_semantics::check::BodyTerm::Application(application)
+            if application.operation.identity() == "filament.op.collection.sum.decimal")
+    }));
+}
+
+/// FR-139: `sum` refuses a Boolean summand as ill-typed.
+#[trace("TC-544")]
+#[test]
+fn sum_over_a_population_with_a_boolean_body_refuses_ill_typed() {
+    let (code, cause, at) = only_refusal(
+        "total = sum(s in R::slots where s.ring = self: s.value = 1);",
+    );
+    assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
+    assert_eq!(at, "s.value = 1");
 }
 
 /// FR-139 (admission): a population whose universe is smaller than the
