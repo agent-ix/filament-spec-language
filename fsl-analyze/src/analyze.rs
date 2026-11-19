@@ -87,6 +87,7 @@ pub use clause_item::{
     ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
 };
 pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
+pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]

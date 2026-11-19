@@ -145,17 +145,18 @@ pub trait AnalysisView: sealed::Sealed {
     }
 
     /// The claim nodes whose name the package does not carry: each node
-    /// with a `claim` occurrence that is neither a temporal clause with a
-    /// `temporal_clause_names` row, nor a named declaration, nor a `pre` or
-    /// `post` state clause (which no request names, FR-625). An `invariant`
-    /// state clause, a refinement and a state-graph claim are named in
-    /// source but carry no name row in the package (FR-850 claim lookup).
+    /// with a `claim` occurrence that is neither named by a
+    /// `temporal_clause_names` or `claim_names` row, nor a named
+    /// declaration, nor a `pre` or `post` state clause (which no request
+    /// names, FR-625). A package whose writer names every claim (FSpec FR-322
+    /// "Claim names") has none (FR-850 claim lookup).
     fn unnamed_claims(&self) -> Vec<&CheckedNodeId> {
         use filament_contract_model::{CheckedNodePathSegment, CheckedOccurrenceRole};
         let named: Vec<&CheckedNodeId> = self
             .clause_names()
             .iter()
             .map(|row| &row.declaration)
+            .chain(self.claim_names().iter().map(|row| &row.declaration))
             .collect();
         self.package()
             .resolved_graph()

@@ -388,6 +388,19 @@ impl<'p> PackageModelInput<'p> {
             .find(|entry| entry.identity == *clause && entry.claim == *claim)
     }
 
+    /// The state clause whose node key is `clause`, declared at its own
+    /// `claim_names` row (FR-940).
+    pub fn state_clause_at(&self, clause: &NodeKey) -> Option<&StateClauseEntry> {
+        self.state_clauses
+            .iter()
+            .find(|entry| entry.identity == *clause)
+    }
+
+    /// The package this input was built from.
+    pub fn package(&self) -> &'p BarePackage<'p> {
+        self.package
+    }
+
     /// The input this package lends.
     pub fn input(&self) -> ModelCheckInput<'_> {
         ModelCheckInput {

@@ -30,7 +30,8 @@ use serde_json::{json, Map};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
-    ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject, SubjectBinding,
+    ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
+    PackageInvariantSubject, PackageItemInputs, SubjectBinding,
 };
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
@@ -170,12 +171,19 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    Invariant {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        selection: &'s ItemSelection,
+    },
 }
 
 /// How a resolved package-route claim item runs.
 enum Route<'a> {
     Clause(Box<PackageClauseSubject<'a>>),
     Deadlock,
+    Invariant,
 }
 
 /// FR-850, FR-940: resolve `run`'s items against the package's name tables,
@@ -247,6 +255,7 @@ pub fn settle_package_run(
     let mut routes: BTreeMap<RequestIndex, Route<'_>> = BTreeMap::new();
     let mut owners: BTreeMap<OccurrenceKey, Option<String>> = BTreeMap::new();
     let mut clause_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut invariant_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Settled(settled) => resolved.push(settled),
@@ -279,6 +288,19 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+            Named::Invariant {
+                index,
+                name,
+                declaration,
+                selection,
+            } => match reads.invariant(index, name, &declaration, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, ()) => {
+                    invariant_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Invariant);
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
         }
     }
     let model_input = input.as_ref().map(PackageModelInput::input);
@@ -295,6 +317,9 @@ pub fn settle_package_run(
             .unwrap_or_else(|| sole_model(package))
     };
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
+        ItemKind::Formula if invariant_claims.contains(claim) => {
+            Some(DeclarationFamily::StateModel)
+        }
         ItemKind::Formula => clause_claims
             .contains(claim)
             .then_some(DeclarationFamily::TemporalTrace),
@@ -451,6 +476,23 @@ fn resolve_names<'s>(
                     selection,
                 });
             }
+            // FR-850-AC-7, FR-940-AC-7: any other claim by its `claim_names`
+            // row. An `invariant` state clause runs over the package route's
+            // input; a claim of another family has no package form yet.
+            if let Some(found) = view.claim_name(name) {
+                if derived {
+                    return Err(pending(PendingFamily::Derived));
+                }
+                if !is_invariant(view, &found.declaration) {
+                    return Err(pending(PendingFamily::Declaration));
+                }
+                return Ok(Named::Invariant {
+                    index,
+                    name,
+                    declaration: found.declaration,
+                    selection,
+                });
+            }
             if declared.iter().any(|(declared, _)| declared == name) {
                 return Err(pending(PendingFamily::Declaration));
             }
@@ -472,6 +514,24 @@ fn resolve_names<'s>(
             Ok(Named::Settled(unknown_claim(index, name)))
         })
         .collect()
+}
+
+/// Whether the package node `node` is an `invariant` state clause (FR-625):
+/// a `state`/`state_clause` node of the `invariant` kind.
+fn is_invariant(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
+    use filament_contract_model::CheckedNodePathSegment;
+    view.package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|candidate| candidate.node_id == *node)
+        .is_some_and(|candidate| {
+            candidate.semantic_form.as_ref() == "state_clause"
+                && matches!(
+                    node.path.get(2),
+                    Some(CheckedNodePathSegment::Name(kind)) if kind.as_ref() == "invariant"
+                )
+        })
 }
 
 /// FR-850: a derived item whose `claim` names no claim row and no model
@@ -750,6 +810,138 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             (),
         ))
     }
+
+    /// FR-625's item over the `invariant` state clause `name`, whose
+    /// `claim_names` row is on `declaration`, as the source route's
+    /// `resolve_one` resolves it: at the clause's node and `claim`
+    /// occurrence, kind `operation-contract` unless the item names another,
+    /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
+    /// item with no model subject is decided by EN-2's contract check, which
+    /// has no package form yet.
+    fn invariant(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let pending = |family| {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family,
+                node: Some(declaration.clone()),
+            })
+        };
+        let input = self
+            .input
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let key = input
+            .package()
+            .node_key(declaration)
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let clause = input
+            .state_clause_at(&key)
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
+        let own_subject = self.own_subject(index, selection)?;
+        let kind = match selection.kind.as_deref() {
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+            None => Capability::OperationContract,
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if kind.applies_to_declaration(DeclarationFamily::StateModel) {
+            if let Some(refused) = unknown_option(
+                index,
+                Some(name),
+                self.registry,
+                named.as_ref(),
+                &backend_options,
+            ) {
+                return Ok(Resolution::Settled(refused));
+            }
+        }
+        let model_subject = !own_subject.initial_states.is_empty();
+        if kind == Capability::OperationContract && !model_subject {
+            return Err(pending(PendingFamily::Declaration));
+        }
+        let candidates = invariant_tie(
+            self.registry.candidates(kind, named.as_ref()),
+            kind,
+            named.as_ref(),
+        );
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent: ExtentClassification::Bounded,
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: None,
+        };
+        let unrouted = selection.unrouted()
+            || selection.reductions.is_some()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            (),
+        ))
+    }
+}
+
+/// FR-962's tie rule for an unnamed `operation-contract` item over an
+/// `invariant` state clause and a model subject: EN-1 stays a candidate, and
+/// a tie between EN-1 and EN-2 selects EN-1 (FR-489).
+fn invariant_tie(
+    candidates: CandidateOutcome,
+    kind: Capability,
+    named: Option<&BackendId>,
+) -> CandidateOutcome {
+    if named.is_some() || kind != Capability::OperationContract {
+        return candidates;
+    }
+    let CandidateOutcome::Candidates(set) = &candidates else {
+        return candidates;
+    };
+    let mut members: Vec<&str> = set
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.id().as_str())
+        .collect();
+    members.sort_unstable();
+    let mut tied = [
+        crate::contract_check::manifest::BACKEND_ID,
+        crate::model_check::manifest::BACKEND_ID,
+    ];
+    tied.sort_unstable();
+    if members != tied {
+        return candidates;
+    }
+    match set.narrowed_to(&BackendId::new(crate::model_check::manifest::BACKEND_ID)) {
+        Some(narrowed) => CandidateOutcome::Candidates(narrowed),
+        None => candidates,
+    }
 }
 
 /// FR-620's item options of `selection`.
@@ -852,6 +1044,36 @@ impl<'a> WorkInputs<'_, 'a> {
                     form,
                 )
                 .item(item.request_index)
+            }
+            // FR-489's tie routed the invariant over the model subject to
+            // EN-1 (FR-625, FR-951), as on the source route.
+            (_, Some(Route::Invariant))
+                if item.kind == Capability::OperationContract
+                    && negotiated.disposition.target().is_some_and(|backend| {
+                        backend.id().as_str() == crate::model_check::manifest::BACKEND_ID
+                    }) =>
+            {
+                let form = match &item.form {
+                    Some(ItemForm::Temporal(form)) => form.clone(),
+                    Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
+                        super::super::TemporalItem::default()
+                    }
+                };
+                PackageInvariantSubject::new(
+                    PackageItemInputs {
+                        input: self.input,
+                        package_bytes: self.package_bytes,
+                        supply: self.supply,
+                        binding: self.binding.clone(),
+                        limits: self.limits,
+                    },
+                    &item.claim,
+                    &form,
+                )
+                .map_or_else(
+                    || AnalyzeItem::unadapted(item.request_index, item.kind, family),
+                    |subject| subject.item(item.request_index),
+                )
             }
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
         };
