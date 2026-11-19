@@ -26,8 +26,8 @@ mod footprints;
 mod frames;
 mod input;
 pub use input::{
-    BodyReads, ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
-    StateClauseEntry,
+    BodyReads, ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm,
+    PendingPackageForm, StateClauseEntry,
 };
 mod operation_coverage;
 pub use operation_coverage::{

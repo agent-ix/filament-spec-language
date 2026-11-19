@@ -107,6 +107,7 @@ impl<N> ClauseBody<'_, N> {
     fn scope(&self) -> BodyScope<'_> {
         BodyScope {
             name: self.name,
+            receivers: &[0],
             binds_result: self.binds_result,
             parameters: &self.parameters,
             observed: Observed::Pre(&self.pre_reads),
@@ -196,6 +197,7 @@ pub fn derive_constraint_reads_over<'a, N: ReadNode<'a>>(
 fn unobserved<'c>(name: &'c str, parameters: &'c [(String, ValueType)]) -> BodyScope<'c> {
     BodyScope {
         name,
+        receivers: &[0],
         binds_result: false,
         parameters,
         observed: Observed::None,
@@ -261,6 +263,7 @@ pub fn derive_guard_reads_over<'a, N: ReadNode<'a>>(
     types: &'a TypeEnvironment,
     model: &'a StateModel,
     parameters: &[(String, ValueType)],
+    receivers: &[usize],
     condition: N,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let reader = Reader::new(types, model)?;
@@ -269,7 +272,13 @@ pub fn derive_guard_reads_over<'a, N: ReadNode<'a>>(
         receiver @ FootprintObject::Receiver => receiver,
     };
     Ok(reader
-        .body_reads(&unobserved("guard", parameters), condition)?
+        .body_reads(
+            &BodyScope {
+                receivers,
+                ..unobserved("guard", parameters)
+            },
+            condition,
+        )?
         .into_iter()
         .map(|(location, _)| match location {
             SymbolicLocation::Field { object, field } => SymbolicLocation::Field {
@@ -283,6 +292,21 @@ pub fn derive_guard_reads_over<'a, N: ReadNode<'a>>(
             other => other,
         })
         .collect())
+}
+
+/// The locations `root` reads under `pre(..)`, or through a reference obtained
+/// there (FR-104), in a clause whose own observation is `clause` and whose
+/// slots below `roots` are its `self`, `result` and operation parameters.
+pub fn pre_observed_locations<'a, N: ReadNode<'a>>(
+    root: N,
+    clause: Observation,
+    roots: usize,
+) -> BTreeSet<Location> {
+    crate::check::observation::observed_reads(root, clause, roots)
+        .into_iter()
+        .filter(|(_, observation)| *observation == Observation::Pre)
+        .filter_map(|(node, _)| node.location().cloned())
+        .collect()
 }
 
 /// The reference literals a body of any [`ReadNode`] source names, each as

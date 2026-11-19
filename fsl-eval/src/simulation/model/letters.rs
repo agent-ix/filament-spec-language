@@ -657,13 +657,7 @@ impl ModelLetters for ClauseLetters<'_, '_> {
                 if clause.captures().len() > 0 {
                     return Err(PACKAGE_FOOTPRINT);
                 }
-                let mut binders = vec![clause.over().clone()];
-                binders.extend(
-                    clause
-                        .trigger()
-                        .map(|(name, value_type)| (name.to_owned(), value_type.clone())),
-                );
-                return self.system.activation_guard_reads(key, &binders);
+                return self.system.activation_guard_reads(key);
             }
         };
         let clause = node.clause();

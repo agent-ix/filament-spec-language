@@ -154,24 +154,51 @@ pub struct ProjectedClause {
 fn clause_body<'p>(
     projected: &'p ProjectedClause,
     operation: Option<&fsl_semantics::model::operation::OperationDeclaration>,
-) -> fsl_semantics::check::footprint::ClauseBody<'p, ReaderNode<'p>> {
+) -> Result<
+    fsl_semantics::check::footprint::ClauseBody<'p, ReaderNode<'p>>,
+    fsl_semantics::check::footprint::FootprintRefusal,
+> {
+    use fsl_semantics::check::footprint::FootprintRefusal;
     use fsl_semantics::model::clause_observation::Observation;
     let declaration = &projected.declaration;
-    let mut parameters = vec![(
-        "self".to_owned(),
-        ValueType::Reference(declaration.context.clone()),
-    )];
+    let mut types = vec![ValueType::Reference(declaration.context.clone())];
     let mut binds_result = false;
     if let Some(operation) = operation {
         if declaration.observation == Observation::Post {
             if let Some(result) = operation.result() {
                 binds_result = true;
-                parameters.push(("result".to_owned(), result.clone()));
+                types.push(result.clone());
             }
         }
-        parameters.extend(operation.parameters().iter().cloned());
+        types.extend(
+            operation
+                .parameters()
+                .iter()
+                .map(|(_, value_type)| value_type.clone()),
+        );
     }
-    fsl_semantics::check::footprint::ClauseBody {
+    // The footprint reads a parameter by its slot, so the package's own
+    // parameters must take their slots in declaration order, one for each
+    // the operation declares.
+    let declared = projected.clause.parameters();
+    if declared.len() != types.len()
+        || declared
+            .iter()
+            .enumerate()
+            .any(|(position, (_, slot))| position != *slot)
+    {
+        return Err(FootprintRefusal::Unresolved {
+            what: "state clause parameters in slot order",
+        });
+    }
+    let parameters: Vec<(String, ValueType)> = declared
+        .iter()
+        .map(|(name, _)| name.clone())
+        .zip(types)
+        .collect();
+    let observation = declaration.observation;
+    let root = ReaderNode::root(projected.clause.projection());
+    Ok(fsl_semantics::check::footprint::ClauseBody {
         name: &declaration.name,
         identity: declaration.identity.clone(),
         context: declaration.context.clone(),
@@ -180,16 +207,15 @@ fn clause_body<'p>(
             .as_ref()
             .map(|owner| (owner.declaring.clone(), owner.operation.clone())),
         binds_result,
+        pre_reads: fsl_semantics::check::footprint::pre_observed_locations(
+            root,
+            observation,
+            parameters.len(),
+        ),
         parameters,
-        observation: declaration.observation,
-        pre_reads: projected
-            .clause
-            .projection()
-            .pre_read_locations()
-            .into_iter()
-            .collect(),
-        root: ReaderNode::root(projected.clause.projection()),
-    }
+        observation,
+        root,
+    })
 }
 
 /// FR-155 "Derivation" over the package route: the symbolic footprint of
@@ -217,7 +243,7 @@ pub(crate) fn package_operation_footprint(
     let bodies: Vec<_> = clauses
         .iter()
         .map(|clause| clause_body(clause, Some(operation.operation)))
-        .collect();
+        .collect::<Result<_, _>>()?;
     fsl_semantics::check::footprint::derive_selected_footprint_over(
         types,
         model,
@@ -239,7 +265,7 @@ pub(crate) fn package_constraint_reads(
     model: &fsl_semantics::model::state::StateModel,
     clause: &ProjectedClause,
 ) -> Result<BodyReads, fsl_semantics::check::footprint::FootprintRefusal> {
-    let body = clause_body(clause, None);
+    let body = clause_body(clause, None)?;
     let reads = fsl_semantics::check::footprint::derive_constraint_reads_over(types, model, &body)?;
     Ok(BodyReads {
         reads,
@@ -248,7 +274,7 @@ pub(crate) fn package_constraint_reads(
 }
 
 /// FR-156 "Atom footprints" over the package route: the locations a
-/// projected term reads, with the `over` parameter (slot 0) the receiver, and
+/// projected term reads, `receivers` being the slots that read as the receiver, and
 /// the reference literals it names.
 ///
 /// # Errors
@@ -258,16 +284,20 @@ pub(crate) fn package_term_reads(
     projection: &fsl_package::ReaderProtocolProjection,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     model: &fsl_semantics::model::state::StateModel,
+    receivers: &[usize],
 ) -> Result<BodyReads, fsl_semantics::check::footprint::FootprintRefusal> {
     let root = ReaderNode::root(projection);
     Ok(BodyReads {
-        reads: fsl_semantics::check::footprint::derive_atom_reads_over(types, model, root)?,
+        reads: fsl_semantics::check::footprint::derive_atom_reads_over(
+            types, model, receivers, root,
+        )?,
         literals: fsl_semantics::check::footprint::reference_literals_of(root),
     })
 }
 
 /// FR-125-AC-18, FR-337 over the package route: the locations the `when`
-/// guard of an `on each` activation reads, over `binders`.
+/// guard of an `on each` activation reads, `receivers` being the slots of its
+/// `over` and trigger binders.
 ///
 /// # Errors
 ///
@@ -276,12 +306,16 @@ pub(crate) fn package_guard_reads(
     projection: &fsl_package::ReaderProtocolProjection,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     model: &fsl_semantics::model::state::StateModel,
-    binders: &[(String, ValueType)],
+    receivers: &[usize],
 ) -> Result<BodyReads, fsl_semantics::check::footprint::FootprintRefusal> {
     let root = ReaderNode::root(projection);
     Ok(BodyReads {
         reads: fsl_semantics::check::footprint::derive_guard_reads_over(
-            types, model, binders, root,
+            types,
+            model,
+            &[],
+            receivers,
+            root,
         )?,
         literals: fsl_semantics::check::footprint::reference_literals_of(root),
     })

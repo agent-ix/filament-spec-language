@@ -21,8 +21,8 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
-    BarePackage, CheckedNodeId, CheckedPackage, PackageTerminal, TerminalResolveRefusal,
-    UnreadModelForm,
+    BarePackage, CheckedNodeId, CheckedPackage, ClauseBinder, PackageTerminal,
+    TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
     FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
@@ -48,8 +48,6 @@ use crate::value::{
     WrittenCollection,
 };
 
-/// The populations each created reference literal of the subject names, by
-/// the literal's object type and identity.
 /// The reads a body derivation reports, and the reference literals the body
 /// names, which the subject's bindings turn into membership reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -943,7 +941,6 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         &self,
         model: &StateModel,
         clause: &NodeKey,
-        binders: &[(String, ValueType)],
     ) -> Result<Option<BodyReads>, FootprintRefusal>;
 
     /// ADR-027 FT-3: the reads of a protocol expression.
@@ -1357,7 +1354,6 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         _model: &StateModel,
         _clause: &NodeKey,
-        _binders: &[(String, ValueType)],
     ) -> Result<Option<BodyReads>, FootprintRefusal> {
         Err(SOURCE_ROUTE_FOOTPRINT)
     }
@@ -1536,7 +1532,13 @@ impl ModelEvaluator for BarePackage<'_> {
             .project_state_graph_predicate(claim, role)
             .map_err(|_| unresolved())?;
         let world = self.world().map_err(|_| unresolved())?;
-        crate::value::package_term_reads(predicate.projection(), world.types(), model)
+        let over = predicate
+            .parameters()
+            .first()
+            .map(|(_, slot)| *slot)
+            .into_iter()
+            .collect::<Vec<_>>();
+        crate::value::package_term_reads(predicate.projection(), world.types(), model, &over)
     }
 
     fn evaluate_state_graph_predicate(
@@ -1752,9 +1754,11 @@ impl ModelEvaluator for BarePackage<'_> {
         model: &StateModel,
         name: &str,
     ) -> Option<Result<BodyReads, FootprintRefusal>> {
-        let declaration = self
-            .state_clause_declarations()
-            .ok()?
+        let declarations = match self.state_clause_declarations() {
+            Ok(declarations) => declarations,
+            Err(failure) => return Some(Err(selection_refusal(name, failure))),
+        };
+        let declaration = declarations
             .into_iter()
             .find(|declaration| declaration.name == name)?;
         Some(projected_clause(self, declaration).and_then(|clause| {
@@ -1777,14 +1781,14 @@ impl ModelEvaluator for BarePackage<'_> {
         let world = self
             .world()
             .map_err(|_| unresolved_package("package world"))?;
-        crate::value::package_term_reads(term.projection(), world.types(), model)
+        let over = receiver_slots(term.binders(), |binder| binder == ClauseBinder::Over);
+        crate::value::package_term_reads(term.projection(), world.types(), model, &over)
     }
 
     fn activation_guard_reads(
         &self,
         model: &StateModel,
         clause: &NodeKey,
-        binders: &[(String, ValueType)],
     ) -> Result<Option<BodyReads>, FootprintRefusal> {
         let Some(term) = self
             .project_guard(clause)
@@ -1795,7 +1799,10 @@ impl ModelEvaluator for BarePackage<'_> {
         let world = self
             .world()
             .map_err(|_| unresolved_package("package world"))?;
-        crate::value::package_guard_reads(term.projection(), world.types(), model, binders)
+        let receivers = receiver_slots(term.binders(), |binder| {
+            matches!(binder, ClauseBinder::Over | ClauseBinder::Trigger)
+        });
+        crate::value::package_guard_reads(term.projection(), world.types(), model, &receivers)
             .map(Some)
     }
 
@@ -1836,6 +1843,20 @@ impl ModelEvaluator for BarePackage<'_> {
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
         Err(NO_SOURCE_FOOTPRINT)
     }
+}
+
+/// The local slots of a projected clause term whose binder `reads_as_receiver`
+/// selects. A package term gives frame slots only to the binders it reads, so
+/// the receiver is found by the binder, never by a fixed slot.
+fn receiver_slots(
+    binders: &[(usize, ClauseBinder)],
+    reads_as_receiver: impl Fn(ClauseBinder) -> bool,
+) -> Vec<usize> {
+    binders
+        .iter()
+        .filter(|(_, binder)| reads_as_receiver(*binder))
+        .map(|(slot, _)| *slot)
+        .collect()
 }
 
 /// A package-route footprint refusal for a fact the package does not hold.
@@ -1940,5 +1961,41 @@ fn source_predicate<'p>(
     match predicate {
         Some(CheckedStatePredicate::Checked(body)) => Ok(body),
         _ => Err(fault("state-graph-predicate-is-written")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClauseBinder, receiver_slots};
+    use ix_trace_rs::trace;
+
+    /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders
+    /// it reads and the next slots to the variables it introduces, so the
+    /// receiver is the slot of the `over` binder (and, for a guard, of the
+    /// trigger binder), whatever number that is.
+    #[trace("TC-3034", "FR-940-AC-11")]
+    #[test]
+    fn the_receiver_slots_follow_the_binder_a_term_reads() {
+        let binders = [(0, ClauseBinder::Trigger), (1, ClauseBinder::Capture(0))];
+        assert_eq!(
+            receiver_slots(&binders, |b| b == ClauseBinder::Over),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            receiver_slots(&binders, |b| matches!(
+                b,
+                ClauseBinder::Over | ClauseBinder::Trigger
+            )),
+            [0]
+        );
+        let binders = [(2, ClauseBinder::Over), (3, ClauseBinder::Trigger)];
+        assert_eq!(receiver_slots(&binders, |b| b == ClauseBinder::Over), [2]);
+        assert_eq!(
+            receiver_slots(&binders, |b| matches!(
+                b,
+                ClauseBinder::Over | ClauseBinder::Trigger
+            )),
+            [2, 3]
+        );
     }
 }

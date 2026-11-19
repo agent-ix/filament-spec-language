@@ -1290,7 +1290,7 @@ fn the_port_derives_the_package_footprints_the_source_derives() {
             let expected =
                 derive_guard_reads(graph, &model, &binders, guard).expect("the source guard reads");
             let read = package
-                .activation_guard_reads(&model, &key, &binders)
+                .activation_guard_reads(&model, &key)
                 .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", clause.clause().name()))
                 .expect("the package clause has the guard");
             assert_eq!(read.reads, expected, "{}", clause.clause().name());

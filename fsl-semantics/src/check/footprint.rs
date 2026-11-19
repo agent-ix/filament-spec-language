@@ -26,7 +26,7 @@ mod read_node;
 pub use read_node::{
     ClauseBody, PackageOperation, ReadNode, derive_constraint_reads_over, derive_guard_reads_over,
     derive_node_reads_over, derive_selected_footprint_over, derive_slot_reads_over,
-    reference_literals_of,
+    pre_observed_locations, reference_literals_of,
 };
 
 /// The populations each created reference literal of a subject names, by the
@@ -407,7 +407,7 @@ pub fn derive_atom_reads(
     _over: &(String, ValueType),
     condition: CheckedNode<'_>,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-    derive_atom_reads_over(graph.scope().types(), model, condition)
+    derive_atom_reads_over(graph.scope().types(), model, &[0], condition)
 }
 
 /// FR-125-AC-18, FR-156: the locations the `when` guard of an `on each`
@@ -427,6 +427,7 @@ pub fn derive_guard_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name: "guard",
+        receivers: &[0],
         binds_result: false,
         parameters,
         observed: Observed::None,
@@ -472,6 +473,7 @@ pub fn derive_slot_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name,
+        receivers: &[0],
         binds_result: false,
         parameters,
         observed: Observed::None,
@@ -508,6 +510,7 @@ pub fn derive_node_reads(
     let reader = Reader::new(graph.scope().types(), model)?;
     let scope = BodyScope {
         name,
+        receivers: &[0],
         binds_result: false,
         parameters,
         observed: Observed::None,
@@ -586,6 +589,10 @@ fn constraint_reads_of<'a, N: ReadNode<'a>>(
 /// model read observes.
 struct BodyScope<'c> {
     name: &'c str,
+    /// The local slots that read as the receiver: `self`, or the `over`
+    /// parameter. A package term lays its slots out by the binders it reads,
+    /// so the slot is the term's own, not always 0.
+    receivers: &'c [usize],
     binds_result: bool,
     parameters: &'c [(String, ValueType)],
     observed: Observed<'c>,
@@ -605,6 +612,7 @@ impl<'c> BodyScope<'c> {
     fn of_clause(clause: &'c CheckedStateClause) -> Self {
         Self {
             name: clause.name(),
+            receivers: &[0],
             binds_result: clause.binds_result(),
             parameters: clause.parameters(),
             observed: Observed::Clause(&clause.observations),
@@ -984,7 +992,7 @@ impl<'a> Reader<'a> {
                 NodeKind::Value(operand) | NodeKind::Coerce(operand, _) => {
                     node = node.at(*operand);
                 }
-                NodeKind::Local(0) => return Holder::Receiver,
+                NodeKind::Local(slot) if scope.receivers.contains(slot) => return Holder::Receiver,
                 NodeKind::Local(slot) => {
                     let first = 1 + usize::from(scope.binds_result);
                     return match scope.parameters.get(*slot) {
@@ -1343,6 +1351,7 @@ impl<'a> AtomNode<'a> for CheckedNode<'a> {
 pub fn derive_atom_reads_over<'a, N: AtomNode<'a>>(
     types: &TypeEnvironment,
     model: &StateModel,
+    receivers: &[usize],
     root: N,
 ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
     let reader = Reader::new(types, model)?;
@@ -1365,7 +1374,7 @@ pub fn derive_atom_reads_over<'a, N: AtomNode<'a>>(
                     match holder.form() {
                         AtomForm::Wrap(operand) => holder = operand,
                         // The `over` parameter is slot 0, the receiver.
-                        AtomForm::Local(0) => {
+                        AtomForm::Local(slot) if receivers.contains(&slot) => {
                             break SymbolicLocation::Field {
                                 object: FootprintObject::Receiver,
                                 field,

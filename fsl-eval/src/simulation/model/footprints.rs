@@ -824,7 +824,7 @@ impl<'a> ModelSystem<'a> {
 
     /// FR-125-AC-18, FR-337 over the package route: the symbolic locations the
     /// `when` guard of the `on each` activation of the temporal clause
-    /// `clause` reads over `binders`; none for a clause with no guard.
+    /// `clause` reads; none for a clause with no guard.
     ///
     /// # Errors
     ///
@@ -832,14 +832,13 @@ impl<'a> ModelSystem<'a> {
     pub fn activation_guard_reads(
         &self,
         clause: &NodeKey,
-        binders: &[(String, ValueType)],
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
         let Some(BodyReads {
             reads: mut symbolic,
             literals,
         }) = self
             .evaluator()
-            .activation_guard_reads(&self.model, clause, binders)?
+            .activation_guard_reads(&self.model, clause)?
         else {
             return Ok(BTreeSet::new());
         };
