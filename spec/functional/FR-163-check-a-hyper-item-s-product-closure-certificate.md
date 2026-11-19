@@ -46,8 +46,11 @@ certified set holds every initial product state, is closed under the
 recomputed successors, holds no undefined, refused or incomplete letter or
 match, and holds no violation by the form's rule (ADR-023 HX-7). The
 certificate reuses ADR-018's closure certificate (PC-3) and component
-certificate (PC-4). The checker recompiles the package and reads nothing
-from the engine's search but the certificate, so a certified hyper `proved`
+certificate (PC-4). The checker rebuilds the clause from the package the
+item was analyzed through (FR-940 "Package form of a hyper clause": the
+source route's own emission or the selected package, never source on the
+package route), recomputes successors through that route's evaluator and
+reads nothing from the engine's search but the certificate, so a certified hyper `proved`
 does not depend on the engine (ADR-029 CB-2, RU-2).
 
 ## Use case
