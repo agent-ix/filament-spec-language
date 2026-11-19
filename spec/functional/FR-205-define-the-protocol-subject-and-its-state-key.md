@@ -23,6 +23,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-425
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-828
+    type: depends_on
 ---
 # FR-205: Define the protocol subject and its canonical state key
 
@@ -156,6 +158,15 @@ has already seen instead of a new one.
   identity is reused within an instance, queued or already received. Two
   states that differ only in their message or delivery history therefore
   have different keys.
+- `bounds` SHALL hold `business-effect-ordinal`, the next occurrence ordinal
+  of each effect node on each path (FSpec FR-425-AC-16). An `effect` node's
+  `event` step takes the ordinal as its effect occurrence key's ordinal
+  (FR-894) and advances it by one; the entry is present from the node's first
+  `event` step on the path and kept until the instance is removed, after the
+  thread on that path has finished, so a reused path's next `effect` step
+  takes the following ordinal and no effect occurrence key is reused within
+  an instance. Two states that differ only in their effect history therefore
+  have different keys.
 - Thread, instance, registration and nesting counts SHALL have no ceiling
   of their own; the run's method bounds and resource limits (FR-209, FR-215) are
   the only bounds.
@@ -163,32 +174,39 @@ has already seen instead of a new one.
   `on origin`, instance 0 settled from the start of `run` (FR-206); under
   `on each`, no instance (FR-209).
 
-### Cycle key: message and delivery identities the checked item does not read
+### Cycle key: message, delivery and effect identities the checked item does not read
 
-Message ordinals and delivery indices (FR-894) are identity labels, and the
-state key keeps them until the instance is removed so that none is reused.
-So the `next-delivery` and `message-ordinal` bounds only grow while the
-instance lives. Without a further rule a loop of `duplicate` and `lose`
-steps, or a `repeat` with no maximum around `send` and `receive`, never
-returns to an equal key, even though nothing the claim can see has changed.
+Message ordinals, delivery indices and business-effect ordinals (FR-894) are
+identity labels, and the state key keeps them until the instance is removed
+so that none is reused. So the `next-delivery`, `message-ordinal` and
+`business-effect-ordinal` bounds only grow while the instance lives. Without
+a further rule a loop of `duplicate` and `lose` steps, a `repeat` with no
+maximum around `send` and `receive`, or a `repeat` with no maximum around an
+`effect` node, never returns to an equal key, even though nothing the claim
+can see has changed.
 FSL SHALL therefore compare protocol states for coalescing and loop closure
 by a **cycle key**, which keeps an identity wherever the checked item reads
 it and canonicalises it wherever the item does not.
 
-- **Read sets.** For a checked item (a model-check item, FR-125, with its
-  clause), a channel is in the item's **message read set** when the item's
-  obligation reads the message identity or the delivery index of a step on
-  that channel (FR-894), and in its **delivery read set** when the
-  obligation reads the delivery index of such a step; the same holds when a
-  guard, constraint, capture or binder the item evaluates holds such an
-  identity. The delivery read set is part of the message read set, because a
-  delivery identity names its message. A `send` or `receive` binder holds
-  the payload only and a capture the trigger record (ADR-027 ST-3, ST-4,
-  ST-13), so the obligation is what places a channel in a read set. The
-  term through which an obligation reads a step's message identity or
-  delivery index is not yet specified (Remaining work: QSL-2568); until it
-  is, both read sets of every checked item are empty, and the read-case
-  criteria below (FR-205-AC-12, FR-329-AC-11) are planned under that ticket.
+- **Read sets.** An obligation reads a step's identities only through a
+  step identity read (FSpec FR-828, FR-894 "Step identity reads"):
+  `filament::protocol::message(N)`, `filament::protocol::delivery(N)` and
+  `filament::protocol::effect(N)`. For a checked item (a model-check item,
+  FR-125, with its clause), the read sets are computed statically at S3 from
+  the step identity reads the item's clause holds, in its formula, its
+  captures and its activation guard: a channel is in the item's **message
+  read set** when the clause holds a `message(N)` or `delivery(N)` read
+  whose node `N` sends or receives on that channel; it is in the item's
+  **delivery read set** when the clause holds a `delivery(N)` read whose
+  node receives on it; and an effect node is in the item's **effect read
+  set** when the clause holds an `effect(N)` read of it. The delivery read
+  set is part of the message read set, because a delivery identity names its
+  message. A read counts whether or not the item's evaluation reaches it, so
+  the sets are a sound over-approximation of what the item can tell apart. A
+  `send` or `receive` binder holds the payload only, a capture of the
+  protocol the trigger record, and a protocol guard or constraint cannot
+  hold a step identity read (FSpec FR-828), so the obligation is the only
+  thing that places a channel or an effect node in a read set.
 - **Canonical form.** For a protocol state `s` and the item, `canon(s)` is
   `s` with, in each protocol instance, the following changes. A send node
   and path with a pending interval send (FSpec FR-426, FR-509) keeps its
@@ -212,13 +230,18 @@ it and canonicalises it wherever the item does not.
      `next-delivery` bound is set to `k`, and removed when `k` is 0.
   3. Each changed `unordered` queue is re-sorted by its entries' JCS bytes
      (PS-7).
+  4. **Business-effect ordinals**, for each effect node outside the effect
+     read set: its `business-effect-ordinal` entry on every path is removed.
+     No other member of the key names an effect occurrence key, so no entry
+     is renumbered; this is step 1 with `m` = 0 for every effect node.
   `canon` changes nothing else: payloads, send nodes, thread paths,
   positions, capacities and every other member of the key are kept. The
   **cycle key** of `s` is the `ProtocolKey` of `canon(s)`. Inside the read
   sets the full identity stays: a channel in the message read set keeps its
-  message ordinals and `message-ordinal` bounds, and one in the delivery
-  read set also keeps its delivery indices and every message's
-  `next-delivery`.
+  message ordinals and `message-ordinal` bounds, one in the delivery read
+  set also keeps its delivery indices and every message's `next-delivery`,
+  and an effect node in the effect read set keeps its
+  `business-effect-ordinal` entries.
 - **Uses.** EN-1 (ADR-027 TS-6) SHALL key each product state by the cycle key
   of its protocol state and store `canon(s)` as the state, so two states with
   equal cycle keys are one state. A closure certificate's protocol states are
@@ -236,8 +259,9 @@ it and canonicalises it wherever the item does not.
   as FR-894 states; only the closure test reads the cycle key.
 - **When the item reads the identity.** On a channel in a read set the cycle
   key keeps what the item reads. A loop that takes a `duplicate` on a
-  channel in the delivery read set, or a `send` on a channel in the message
-  read set, and does not finish the instance (ADR-027 AE-3) never closes,
+  channel in the delivery read set, a `send` on a channel in the message
+  read set, or an `event` step of an effect node in the effect read set, and
+  does not finish the instance (ADR-027 AE-3) never closes,
   because the bound it advances grows and no step but the instance's removal
   lowers it. EN-1 then gives bounded evidence only: a run that reaches its
   horizon with no counterexample settles ADR-018 V-5
@@ -256,12 +280,16 @@ have equal cycle keys. Outside the read sets they differ only by a
 relabelling of the ordinals of their queued messages and the indices of
 their queued copies, and in identity history: the `next-delivery` entries of
 messages with no queued copy and the values of the `message-ordinal` and
-`next-delivery` bounds. A label is used only as an identity token. ST-4
-picks an entry by send node, payload and position, and ST-5 by entry and
-capacity. A message with no queued copy enables no step, since `receive`,
-`duplicate` and `lose` each need a queued copy and a pending send is left
-unchanged by `canon`. A `send` or `duplicate` takes a fresh label: the
-send node's next ordinal on its path, or the message's next index. The
+`next-delivery` bounds, and the `business-effect-ordinal` bounds of effect
+nodes outside the effect read set. A label is used only as an identity
+token. ST-4 picks an entry by send node, payload and position, and ST-5 by
+entry and capacity. A message with no queued copy enables no step, since
+`receive`, `duplicate` and `lose` each need a queued copy and a pending send
+is left unchanged by `canon`; no step's enabledness reads an effect ordinal
+(ST-2 reads the attempt's binder, not the ordinal). A `send`, `duplicate` or
+effect `event` step takes a fresh label: the send node's next ordinal on its
+path, the message's next index, or the effect node's next ordinal on its
+path. The
 matching steps in `s` and `t` may take different labels, but each label is
 greater than every label of the same kind still in use, and `canon` gives
 the new message or copy the same position-based rank in both post-states, so
@@ -298,10 +326,12 @@ proof or lasso.
 | FR-205-AC-9 | The `Fill` subject's every state holds the `roles` entry `{"type":"model-binding","selection":"<M's identity>"}` for `w`; a `Fill` variant over a package selecting aliases `M` and `N`, with `role w on M` and `role u on N` and `u` owning an attempt on an `N` operation, builds with no binding for either role, and each state's `roles` entries name `M`'s and `N`'s identities (FSpec FR-425-AC-13, TC-375 PK-17 and PK-18). | Test (TC-650) |
 | FR-205-AC-10 | Protocol `Echo` over the `Fill` model of AC-1 (`c.v = 0`, which no step of `Echo` writes): channel `ch` `fifo`, capacity 2, `delivery unknown`, carrying `S`; `run sequence { send Snd via ch; receive Rcv via ch of Snd }`; the claim `always holds(c.v = 0)`, which reads no delivery index. After `send`, the queue entry carries the message (instance 0, `Snd`, path `(0)`, ordinal 0) and delivery 0, and the message's `next-delivery` bound is 1 (state `s1`). From `s1`, `duplicate` then `lose` of delivery 0 reaches `s2`, whose queue holds delivery 1 and whose bound is 2; also from `s1`, `duplicate` then `lose` of the copy, delivery 1, reaches `s3`, whose queue holds delivery 0 and whose bound is 2. `s1`, `s2` and `s3` have three different `ProtocolKey`s and one cycle key, the `ProtocolKey` of `s1`. A second round from `s2` duplicates with delivery index 2 in its transition identity. EN-1 explores finitely many product states and settles the claim `Holds` (`proved`); a closure certificate holding the cycle keys is accepted. A cycle key that keeps the `next-delivery` bound or the raw delivery index of an unread channel fails this criterion. | Test (TC-650) |
 | FR-205-AC-11 | Over `Echo` with the unread claim, `canon` is a bisimulation: from `s1` and from `s2`, the enabled steps pair one to one by kind and node (`duplicate`, `lose`, `receive`), each pair's post-states have equal cycle keys and equal model states, and the paired `receive` binds equal payloads; the paired `duplicate` steps take delivery 1 (from `s1`) and 2 (from `s2`), and their post-states have equal cycle keys. On an `unordered` variant of `ch` holding deliveries 1 and 3 of one message, `canon` renumbers them 0 and 1 and sets the bound to 2. | Test (TC-650) |
-| FR-205-AC-12 | Read case, planned under QSL-2568 (the obligation term that reads a step's message identity or delivery index). For an `Echo` item whose obligation reads the delivery index of `Rcv`'s receive steps ("each delivery of a message on `ch` is received at most once", which holds), `s1`, `s2` and `s3` have three different cycle keys, EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}`, and no run settles `proved`. An item whose obligation reads the message identity of `Rcv`'s receive steps and no delivery index keeps `s1`, `s2` and `s3` at one cycle key and settles `Holds`; over AC-15's `Loop`, the same message-identity item keeps the ordinals, so the states for `k` = 0, 1 and 2 have three different cycle keys and EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}`. | Test (TC-650), planned: QSL-2568 |
+| FR-205-AC-12 | Read case. The delivery item over `Echo`: clause `on each` with `when (present(filament::protocol::delivery(Echo::Rcv)))`, capture `d` of that delivery, formula `not eventually[1, 8] holds(filament::protocol::delivery(Echo::Rcv) = some(d))` ("each delivery is received at most once", which holds). Its delivery and message read sets are `{Echo::ch}`, so `s1`, `s2` and `s3` have three different cycle keys, EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}`, and no run settles `proved`. The message item: the same clause with `filament::protocol::message(Echo::Rcv)` in place of the delivery read, capture `m`. Its message read set is `{Echo::ch}` and its delivery read set is empty, so `s1`, `s2` and `s3` keep one cycle key and the item settles `Holds`; over AC-15's `Loop`, the message item with `Loop::Rcv` keeps the ordinals, so the states for `k` = 0, 1 and 2 have three different cycle keys and EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}`. An item whose clause holds no step identity read has three empty read sets. A cycle key computed from read sets that ignore the clause's reads makes the delivery item `proved`, which this criterion rejects. | Test (TC-650) |
 | FR-205-AC-13 | Counterexamples keep concrete labels. Re-concretising, from `Echo`'s initial state, the cycle-key path with prefix `send(Snd)`, `duplicate`, `lose` of the older copy and loop `duplicate`, `lose` of the older copy gives a counterexample whose `duplicate` identities carry delivery 1 and then 2, whose `lose` identities carry delivery 0 and then 1, and whose post-state keys are the concrete `ProtocolKey`s (`next-delivery` 2 after the first `duplicate`, 3 after the second); no delivery index appears in two `duplicate` identities. For the infinite-trace claim `eventually holds(c.v = 1)`, FR-217 replays it against the `scheduling adversarial` package with every step enabled and the loop closing on cycle keys, and settles `reproduced-with-evaluated-witness`. The same counterexample with the loop's `duplicate` relabelled to delivery 1 refuses `invalid_runtime_input`/`invalid-value` naming that step as not enabled. | Test (TC-650) |
 | FR-205-AC-14 | Key members (FSpec FR-425-AC-15). `Echo`'s post-send queue entry is exactly `{message, delivery, payload}`, with no `send` or `thread` member. On a `fifo` channel of capacity 2 with delivery `[2,2]`, `send Snd`'s `count` 2 step queues deliveries 0 and 1 of one message (ordinal 0) and leaves `next-delivery` 2 and `message-ordinal` 1. With capacity 2, overflow `block` and delivery `[3,3]`, in `parallel P { branch s send Snd via ch; branch r receive Rcv via ch of Snd } join all`, the `count` 3 step queues deliveries 0 and 1 and leaves the send pending with count 1, `next-delivery` 2 and no `message-ordinal` for `Snd` on `s`'s path; after `receive`, the continuation step appends delivery 2 of the same message (ordinal 0), and only then is `next-delivery` 3 and `message-ordinal` 1. In `parallel P { branch a sequence { send Snd via ch; attempt A }; branch b receive Rcv via ch of Snd } join all`, `message-ordinal` 1 for `Snd` on `a`'s path is present while `a` rests at `A`, after `receive` and `attempt(A)`, when `a` has completed and no copy is queued, and in every later state until the instance is removed. Reused path: `repeat maximum 2 { parallel P { branch a send Snd via ch; branch b receive Rcv via ch of Snd } join all }` forks `a` on path `(0, P, a, 0)` in both iterations; the first message (ordinal 0) has been received when the second `send` runs, which takes ordinal 1, so the two `receive` steps bind deliveries of two different messages; a key that drops the ordinal when `a` completes or when its last copy leaves the queue gives both messages ordinal 0 and fails this criterion. | Test (TC-650) |
 | FR-205-AC-15 | Unread message ordinals close a loop. Protocol `Loop` over the `Fill` model of AC-1: channel `ch` `fifo`, capacity 1, `delivery exactly-once-premise`; `run repeat { send Snd via ch; receive Rcv via ch of Snd }`, a `repeat` with no maximum; the claim `always holds(c.v = 0)`, which reads no message identity. After `k` iterations the state with the root back at `Snd` has `message-ordinal` `k` and `next-delivery` entries for the `k` received messages, so the states for `k` = 0, 1 and 2 have three different `ProtocolKey`s; `canon` removes the `next-delivery` entries of the received messages and the `message-ordinal` bound, so the three have one cycle key, the initial state's. The post-`send` states of iterations 1 and 2 hold messages with ordinals 0 and 1 and have one cycle key, whose entry names ordinal 0. EN-1 explores finitely many product states and settles the claim `Holds` (`proved`), and the lasso with an empty prefix and loop `send(Snd)`, `receive(Rcv)` closes on cycle keys under FR-217. A cycle key that keeps the ordinal or a received message's `next-delivery` fails this criterion. | Test (TC-650) |
+| FR-205-AC-16 | Unread business-effect ordinals close a loop (FSpec FR-425-AC-16). Protocol `Charge` over the `Fill` model of AC-1: `run repeat { attempt Pay; effect Paid of Pay }`, a `repeat` with no maximum, `Pay` an operation that writes nothing and is always enabled; the claim `always holds(c.v = 0)`, which holds no step identity read. After `k` iterations the state with the root back at `Pay` has `business-effect-ordinal` `k` for `Paid` on `(0)` (none for `k` = 0), so the states for `k` = 0, 1 and 2 have three different `ProtocolKey`s; `canon` removes the entry, so the three have one cycle key, the initial state's. The `k`-th `event(Paid)` of a counterexample or replayed lasso carries the concrete effect occurrence key with ordinal `k - 1`, never relabelled. EN-1 explores finitely many product states and settles `Holds` (`proved`), and the lasso with an empty prefix and loop `attempt(Pay)`, `event(Paid)` closes on cycle keys under FR-217. A cycle key that keeps the ordinal never closes the loop and settles `BoundReached`, which this criterion rejects. | Test (TC-650) |
+| FR-205-AC-17 | Read business-effect ordinals stay apart. Over AC-16's `Charge`, the effect item: clause `on each` with `when (present(filament::protocol::effect(Charge::Paid)))`, capture `e` of that occurrence, formula `not eventually[1, 8] holds(filament::protocol::effect(Charge::Paid) = some(e))` ("no `Paid` occurrence is established twice", which holds). Its effect read set is `{Charge::Paid}` and its message and delivery read sets are empty, so the states for `k` = 0, 1 and 2 keep their `business-effect-ordinal` entries and have three different cycle keys; EN-1 with `max_depth` 8 settles `inconclusive` `BoundReached{depth: 8}` and no run settles `proved`; the loop `attempt(Pay)`, `event(Paid)` offered as a lasso refuses under FR-217 and FR-329 as a loop that does not close. A variant whose clause reads `effect` of another effect node `Other` that `Charge` never reaches keeps `Paid` outside the effect read set and settles `Holds`. | Test (TC-650) |
 
 
 ## Dependencies
@@ -316,9 +346,10 @@ proof or lasso.
 - FSpec owns the protocol subject and the content of the state key's
   members (ADR-027 QS-1, QS-3); FSL builds them. The message, delivery,
   `message-ordinal` and `next-delivery` members are FSpec FR-425-AC-15
-  (agent-ix/filament-specification#742), on which this requirement depends.
-- Remaining work: QSL-2568 (the obligation read term; FR-205-AC-12 and
-  FR-329-AC-11 are planned under it).
+  (agent-ix/filament-specification#742), and the `business-effect-ordinal`
+  member FSpec FR-425-AC-16, on which this requirement depends.
+- FSpec FR-828 owns the step identity reads whose occurrences in a clause
+  form the read sets.
 - [FR-894](FR-894-keep-message-delivery-and-business-effect-identities-apart.md)
   (delivery identity and what an obligation reads),
   [FR-217](FR-217-replay-a-protocol-counterexample.md) and

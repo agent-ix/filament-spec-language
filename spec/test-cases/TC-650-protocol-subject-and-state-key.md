@@ -12,7 +12,7 @@ relationships:
 
 Verify the protocol subject's construction and refusals, the thread paths and ordinals, binder removal and the canonical state key.
 
-Scope: FR-205-AC-1 to FR-205-AC-15 (FR-205-AC-12 planned under QSL-2568).
+Scope: FR-205-AC-1 to FR-205-AC-17.
 
 ## Test Procedure
 
@@ -61,11 +61,11 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
 11. Pair the enabled steps at `s1` and `s2` and compare their post-states'
     cycle keys, model states and `receive` payloads; canonicalise an
     `unordered` variant holding deliveries 1 and 3 of one message.
-12. Planned under QSL-2568 (FR-205-AC-12): repeat step 10's key reads and
-    EN-1 run for an item whose obligation reads the delivery index of
-    `Rcv`'s receive steps, and for an item that reads the message identity
-    of `Rcv`'s receive steps and no delivery index, and that item over
-    FR-205-AC-15's `Loop` for 0, 1 and 2 iterations.
+12. FR-205-AC-12: repeat step 10's key reads and EN-1 run for the delivery
+    item (clause holding `filament::protocol::delivery(Echo::Rcv)`) and the
+    message item (clause holding `filament::protocol::message(Echo::Rcv)`
+    only), read each item's three read sets, and run the message item with
+    `Loop::Rcv` over FR-205-AC-15's `Loop` for 0, 1 and 2 iterations.
 13. Re-concretise from `Echo`'s initial state the cycle-key path with
     prefix `send`, `duplicate`, `lose` of the older copy and loop
     `duplicate`, `lose` of the older copy; replay it through FR-217 for
@@ -89,6 +89,15 @@ Use ADR-027 §7's `Fill` unit (universe `{c}`, `c.v = 0`).
     and of the post-`send` states of iterations 1 and 2. Run EN-1 on
     `always holds(c.v = 0)`; replay the lasso with an empty prefix and loop
     `send(Snd)`, `receive(Rcv)` through FR-217.
+17. FR-205-AC-16: build `Charge` (`run repeat { attempt Pay; effect Paid of
+    Pay }`). Read the `ProtocolKey` and cycle key of the state with the root
+    at `Pay` after 0, 1 and 2 iterations; run EN-1 on `always holds(c.v =
+    0)`; replay the lasso with an empty prefix and loop `attempt(Pay)`,
+    `event(Paid)` through FR-217 and read its `event` identities.
+18. FR-205-AC-17: repeat step 17's key reads and EN-1 run (`max_depth` 8)
+    for the effect item holding `filament::protocol::effect(Charge::Paid)`,
+    and offer step 17's lasso for it; then run the variant that reads
+    `effect` of a node `Other` that `Charge` never reaches.
 
 Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
 
@@ -135,10 +144,12 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   equal cycle keys, model states and payloads, the paired `duplicate` steps
   taking deliveries 1 and 2; the `unordered` copies become deliveries 0 and
   1 with bound 2.
-- Step 12 (planned, QSL-2568): for the delivery-reading item, three
-  different cycle keys and `inconclusive` `BoundReached{depth: 8}`, never
-  `proved`; for the message-identity item, one cycle key and `Holds` over
-  `Echo`, and over `Loop` three cycle keys and `BoundReached{depth: 8}`.
+- Step 12: the delivery item's delivery and message read sets are
+  `{Echo::ch}`; the message item's message read set is `{Echo::ch}` and its
+  delivery read set is empty. For the delivery item, three different cycle
+  keys and `inconclusive` `BoundReached{depth: 8}`, never `proved`; for the
+  message item, one cycle key and `Holds` over `Echo`, and over `Loop` three
+  cycle keys and `BoundReached{depth: 8}`.
 - Step 13: `duplicate` identities carry deliveries 1 then 2, `lose`
   identities 0 then 1, post-state keys are concrete (`next-delivery` 2,
   then 3), and no index repeats; the replay settles
@@ -165,3 +176,13 @@ Tag the tests `#[trace("TC-650", "FR-205-AC-n")]`.
   one cycle key naming ordinal 0; EN-1 settles `Holds` (`proved`); the
   replay closes the loop on cycle keys. The step fails if the cycle key
   keeps the ordinal or a received message's `next-delivery`.
+- Step 17: three different `ProtocolKey`s (`business-effect-ordinal`
+  absent, 1, 2) and one cycle key, the initial state's; EN-1 settles `Holds`
+  (`proved`); the replay closes on cycle keys and its `event(Paid)`
+  identities carry ordinals 0, 1, … in order, never relabelled. The step
+  fails if the cycle key keeps the ordinal.
+- Step 18: the effect item's effect read set is `{Charge::Paid}` and its
+  message and delivery read sets are empty; three different cycle keys;
+  `inconclusive` `BoundReached{depth: 8}`, never `proved`; the lasso refuses
+  `invalid_runtime_input`/`invalid-value` as a loop that does not close. The
+  `Other` variant settles `Holds`.
