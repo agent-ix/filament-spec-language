@@ -318,3 +318,20 @@ fn the_request_writer_restricts_each_item_by_its_reductions() {
         )
     );
 }
+
+/// FR-239: EN-6 advertises `temporal-satisfaction` over both a bounded and
+/// an unbounded domain, so a declared timed clause and the derived
+/// time-lock-freedom item, which route as unbounded, negotiate to it.
+#[trace("TC-698", "FR-239")]
+#[test]
+fn en6_advertises_temporal_satisfaction_bounded_and_unbounded() {
+    let en6 = en6::descriptor(ProviderOrigin::Linked).expect("EN-6 admits");
+    let advertised: Vec<_> = en6.advertises().collect();
+    assert_eq!(advertised.len(), 2, "{advertised:?}");
+    for mode in [Mode::Bounded, Mode::Unbounded] {
+        assert!(
+            advertised.contains(&(Capability::TemporalSatisfaction, mode)),
+            "{mode:?}"
+        );
+    }
+}
