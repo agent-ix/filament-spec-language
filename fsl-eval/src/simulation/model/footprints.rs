@@ -752,15 +752,13 @@ impl<'a> ModelSystem<'a> {
     /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
     /// locations the predicate of `role` of `claim` reads, with the claim's
     /// `over` parameter as the receiver; none for the constant `true`. The
-    /// source route derives them from the checked body. A package-route
-    /// predicate holds no checked body, and its reads are not derived from
-    /// the reader projection yet, so the port reports them as unresolved and
-    /// the partial-order reduction is not applied to it.
+    /// source route derives them from the checked body, the package route
+    /// from the predicate node's reader projection through the evaluator
+    /// port, by the one derivation.
     ///
     /// # Errors
     ///
-    /// [`FootprintRefusal`] as [`Self::atom_reads`] refuses, and for a
-    /// package-route predicate.
+    /// [`FootprintRefusal`] as [`Self::atom_reads`] refuses.
     pub fn state_graph_reads(
         &self,
         claim: &fsl_semantics::check::CheckedStateGraphClaim,

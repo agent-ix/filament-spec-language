@@ -876,7 +876,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         } else {
             (
                 ExtentClassification::Bounded,
-                self.registry.candidates(kind, named.as_ref()),
+                // FR-962: `resolve_tie` is the identity on every kind but
+                // `operation-contract`, which excludes EN-1 for a claim that
+                // is no `invariant` state clause.
+                tie(
+                    self.registry.candidates(kind, named.as_ref()),
+                    kind,
+                    named.as_ref(),
+                ),
             )
         };
         if let Some(refused) = super::sampling_refusal(index, name, subject.claim(), &temporal) {

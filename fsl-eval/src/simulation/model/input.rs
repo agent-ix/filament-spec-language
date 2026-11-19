@@ -65,6 +65,8 @@ pub struct StateClauseEntry {
     /// Which state the clause observes: an invariant the current state, a
     /// precondition the pre-state, a postcondition the post-state.
     pub observation: Observation,
+    /// Whether the clause is an `invariant` (and no `constraint`).
+    pub invariant: bool,
 }
 
 /// What a model check reads of a checked package (FR-531, FR-940): the
@@ -137,6 +139,7 @@ impl<'a> ModelCheckInput<'a> {
                         )
                     }),
                     observation: clause.observation(),
+                    invariant: clause.kind() == fsl_forms::StateClauseKind::Invariant,
                 })
                 .collect(),
             terminals: fsl_package::resolve_terminals(package),
@@ -314,6 +317,7 @@ impl<'p> PackageModelInput<'p> {
                     .operation
                     .map(|operation| (operation.declaring, operation.operation)),
                 observation: declaration.observation,
+                invariant: declaration.invariant,
             })
             .collect();
         Ok(Self {
@@ -415,6 +419,11 @@ impl<'p> PackageModelInput<'p> {
         self.state_clauses
             .iter()
             .find(|entry| entry.identity == *clause && entry.claim == *claim)
+    }
+
+    /// Every state clause declaration, in source order (FR-940).
+    pub fn state_clauses(&self) -> &[StateClauseEntry] {
+        &self.state_clauses
     }
 
     /// The state clause whose node key is `clause`, declared at its own
@@ -672,6 +681,21 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         further: Vec<Value>,
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
+
+    /// FR-156, FR-940 "Package form of a state-graph claim": the symbolic
+    /// locations the predicate of `role` of the claim at `claim` reads, as the
+    /// partial-order reduction takes them; none for the constant `true`.
+    ///
+    /// # Errors
+    ///
+    /// [`FootprintRefusal`] as the derivation refuses a form with no
+    /// footprint rule.
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal>;
 
     /// [`Self::evaluate_state_graph_predicate`] for an instance whose key
     /// holds no object conforming to the `over` parameter's type, as
@@ -1041,6 +1065,18 @@ impl ModelEvaluator for CheckedPackage {
         )
     }
 
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let body = source_predicate(self, claim, role).map_err(|_| FootprintRefusal::Unresolved {
+            what: "state-graph predicate",
+        })?;
+        derive_atom_reads(self.graph(), model, &(String::new(), ValueType::Boolean), body.body())
+    }
+
     fn evaluate_state_graph_predicate(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
@@ -1396,6 +1432,22 @@ impl ModelEvaluator for BarePackage<'_> {
         _meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         Err(SOURCE_FORM)
+    }
+
+    fn state_graph_reads(
+        &self,
+        model: &StateModel,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        role: fsl_semantics::check::PredicateRole,
+    ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+        let unresolved = || FootprintRefusal::Unresolved {
+            what: "state-graph predicate",
+        };
+        let predicate = self
+            .project_state_graph_predicate(claim, role)
+            .map_err(|_| unresolved())?;
+        let world = self.world().map_err(|_| unresolved())?;
+        crate::value::projection_atom_reads(predicate.projection(), world.types(), model)
     }
 
     fn evaluate_state_graph_predicate(

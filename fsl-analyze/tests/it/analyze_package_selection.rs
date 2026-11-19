@@ -432,7 +432,7 @@ fn state_graph_claims() -> &'static str {
         "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n",
         "always possible Back using v over (c: M::Counter) { c.value = 0 }\n",
         "always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n",
-        "unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1)\n",
+        "unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1);\n",
     )
 }
 

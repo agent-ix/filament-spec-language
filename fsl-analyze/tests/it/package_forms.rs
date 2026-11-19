@@ -66,8 +66,20 @@ fn handoff(
     Handoff,
     filament_contract_model::NativeJoinBudget,
 ) {
+    handoff_of(name, CLAUSES)
+}
+
+/// [`handoff`] of the unit whose claims are `claims`.
+fn handoff_of(
+    name: &str,
+    claims: &str,
+) -> (
+    Workspace,
+    Handoff,
+    filament_contract_model::NativeJoinBudget,
+) {
     let ws = Workspace::new(name);
-    let _ = counter_request_with(&ws, CLAUSES, request_members(None));
+    let _ = counter_request_with(&ws, claims, request_members(None));
     let (_, bytes) = package_selection(&ws, &request_members(None));
     let directory = ws.path(HANDOFF);
     let compiled = fsl_command::checked_handoff::compile(&directory)
@@ -999,5 +1011,81 @@ fn the_package_form_of_each_temporal_clause_equals_its_source_form() {
             source.clause().name()
         );
         assert!(package == *source.clause());
+    }
+}
+
+/// The four state-graph claims of FR-940-AC-11 over the Counter unit: one of
+/// each form, `Back` written without `from`.
+const STATE_GRAPH_CLAIMS: &str = "\
+     possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+     always possible Back using v over (c: M::Counter) { c.value = 0 }\n\
+     always possible FromOne using v over (c: M::Counter) from (c.value = 1) { c.value = 0 }\n\
+     unique path Straight using v over (c: M::Counter) from (c.value = 0) to (c.value = 1);\n";
+
+/// FR-940-AC-11 (first half): `BarePackage::state_graph_claim_form` of each
+/// claim's `claim_names` occurrence, rebuilt by
+/// `CheckedStateGraphClaim::of_package_form`, equals the source route's
+/// checked claim in name, span, `over`, form, capability, requirements and
+/// occurrence; `Back`'s `from` is the constant predicate and a written
+/// predicate holds its package node and no checked body.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn the_package_form_of_each_state_graph_claim_equals_its_source_claim() {
+    use fsl_semantics::check::{CheckedStatePredicate, StateGraphForm};
+    let (_ws, handoff, mut budget) = handoff_of("package-forms-state-graph", STATE_GRAPH_CLAIMS);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let world = bare.world().expect("the package's declarations read");
+    let sources = handoff.compiled.checked().graph().state_graph_claims();
+    assert_eq!(sources.len(), 4);
+    let predicates = |form: &StateGraphForm| -> Vec<&CheckedStatePredicate> {
+        match form {
+            StateGraphForm::Possible { target } => vec![target],
+            StateGraphForm::AlwaysPossible { from, target } => vec![from, target],
+            StateGraphForm::UniquePath { from, to } => vec![from, to],
+        }
+    };
+    for source in sources {
+        let occurrence = source.occurrence().expect("an assembled claim").clone();
+        let form = bare
+            .state_graph_claim_form(&occurrence)
+            .unwrap_or_else(|refusal| panic!("{}: {refusal:?}", source.name()));
+        let package = fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
+            form,
+            world.types(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .unwrap_or_else(|refusal| panic!("{}: {refusal}", source.name()));
+        let name = source.name();
+        assert_eq!(package.name(), name);
+        assert_eq!(package.span(), source.span(), "{name}");
+        assert_eq!(package.over(), source.over(), "{name}");
+        assert_eq!(package.occurrence(), source.occurrence(), "{name}");
+        assert_eq!(package.claim().kind(), source.claim().kind(), "{name}");
+        assert_eq!(
+            package.claim().requirements(occurrence.node().clone()),
+            source.claim().requirements(occurrence.node().clone()),
+            "{name}"
+        );
+        assert_eq!(
+            std::mem::discriminant(package.form()),
+            std::mem::discriminant(source.form()),
+            "{name}"
+        );
+        for (package, source) in predicates(package.form())
+            .into_iter()
+            .zip(predicates(source.form()))
+        {
+            assert_eq!(package.is_constant_true(), source.is_constant_true(), "{name}");
+            assert_eq!(package.package().is_some(), source.body().is_some(), "{name}");
+            assert!(package.body().is_none(), "{name}");
+        }
     }
 }

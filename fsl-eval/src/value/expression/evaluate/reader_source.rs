@@ -93,3 +93,41 @@ impl<'arena> NodeSource<'arena> for ReaderNode<'arena> {
         })
     }
 }
+
+impl<'arena> fsl_semantics::check::footprint::AtomNode<'arena> for ReaderNode<'arena> {
+    fn form(self) -> fsl_semantics::check::footprint::AtomForm<'arena, Self> {
+        fsl_semantics::check::footprint::atom_form(
+            NodeSource::kind(self),
+            NodeSource::value_type(self),
+            |child| NodeSource::at(self, child),
+            |child| NodeSource::kind(NodeSource::at(self, child)),
+        )
+    }
+
+    fn children(self) -> Vec<Self> {
+        NodeSource::children(self)
+    }
+}
+
+/// FR-156 "Atom footprints" over the package route: the symbolic locations
+/// the predicate `projection` reads, as the source route derives them from
+/// its checked body (FR-940 "Package form of a state-graph claim").
+///
+/// # Errors
+///
+/// [`fsl_semantics::check::footprint::FootprintRefusal`] as the derivation
+/// refuses a form with no footprint rule.
+pub(crate) fn projection_atom_reads(
+    projection: &fsl_package::ReaderProtocolProjection,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+    model: &fsl_semantics::model::state::StateModel,
+) -> Result<
+    std::collections::BTreeSet<fsl_semantics::check::footprint::SymbolicLocation>,
+    fsl_semantics::check::footprint::FootprintRefusal,
+> {
+    fsl_semantics::check::footprint::derive_atom_reads_over(
+        types,
+        model,
+        ReaderNode::root(projection),
+    )
+}

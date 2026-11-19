@@ -2500,6 +2500,17 @@ pub enum StateGraphCause {
         /// The constraint's span.
         span: Span,
     },
+    /// The claim's name is an earlier claim-bearing declaration's: a claim
+    /// name names one declaration (FR-940 "Claim names"). Located at the later
+    /// name, naming both.
+    AmbiguousName {
+        /// The shared name.
+        name: String,
+        /// The earlier declaration's name span.
+        earlier: Span,
+        /// The later declaration's name span.
+        span: Span,
+    },
     /// The state clause checker refused a predicate, as it refuses an
     /// invariant body.
     Predicate {
@@ -2530,7 +2541,16 @@ impl StateGraphCause {
             | Self::ReadsBeyondState { span }
             | Self::TemporalOperator { span }
             | Self::Fairness { span }
+            | Self::AmbiguousName { span, .. }
             | Self::Predicate { span, .. } => Some(*span),
+        }
+    }
+
+    /// The spans of the declarations the refusal relates, in source order.
+    pub fn related(&self) -> Vec<Span> {
+        match self {
+            Self::AmbiguousName { earlier, span, .. } => vec![*earlier, *span],
+            _ => Vec::new(),
         }
     }
 
@@ -2541,6 +2561,7 @@ impl StateGraphCause {
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Code::UnsupportedConstruct,
+            Self::AmbiguousName { .. } => Code::AmbiguousDeclaration,
             Self::Predicate { cause, .. } => cause.code(),
         }
     }
@@ -2552,6 +2573,7 @@ impl StateGraphCause {
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Some("expression-form"),
+            Self::AmbiguousName { .. } => Some("ambiguous-name"),
             Self::Predicate { cause, .. } => cause.cause(),
         }
     }

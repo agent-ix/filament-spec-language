@@ -276,7 +276,7 @@ pub fn replay_model_graph_with_cancel_and_temporal_selections(
             &system,
             timed.as_ref(),
             state_graph_truth,
-            Some(package),
+            Loci::Source(package),
             claim,
             envelope.family_payload(),
             model_limits.limits.max_states,
@@ -410,7 +410,7 @@ pub fn replay_model_graph_from_package(
     let model_limits = caller.engines.model_check;
     Ok(crate::result::ReplayResult::ModelGraph(replay_evidence(
         &system,
-        None,
+        Loci::Package(&input),
         &claim,
         envelope.family_payload(),
         model_limits.limits.max_states,
@@ -431,7 +431,7 @@ pub(super) fn replay_evidence(
     system: &ModelSystem<'_>,
     timed: Option<&TimedSystem<'_, '_>>,
     state_graph_truth: Option<bool>,
-    package: Option<&fsl_package::CheckedPackage>,
+    loci: Loci<'_>,
     claim: &CheckedStateGraphClaim,
     evidence: &GraphEvidence,
     max_states: usize,
@@ -642,7 +642,7 @@ pub(super) fn replay_evidence(
             let replayed = replay_graph_path(system, timed, stem)?;
             let matches = replay_claim_undefined(
                 system,
-                package,
+                loci,
                 claim,
                 &replayed.positions,
                 over.as_ref(),
@@ -664,7 +664,7 @@ pub(super) fn replay_evidence(
 
 fn replay_claim_undefined(
     system: &ModelSystem<'_>,
-    package: Option<&fsl_package::CheckedPackage>,
+    loci: Loci<'_>,
     claim: &CheckedStateGraphClaim,
     positions: &[Position],
     over: Option<&ObjectReference>,
@@ -683,13 +683,7 @@ fn replay_claim_undefined(
         let Some(locus) = undefined.locus.as_ref() else {
             return Ok(false);
         };
-        let package = source_package(package)?;
-        let Some(clause) = package
-            .graph()
-            .state_clauses()
-            .iter()
-            .find(|clause| clause.body().location() == locus)
-        else {
+        let Some(clause) = loci.state_clause_at(locus, false) else {
             return Err(ReplayRefusal::ModelGraphMismatch {
                 member: "undefined_locus",
             });
@@ -703,7 +697,7 @@ fn replay_claim_undefined(
                 .iter()
                 .filter_map(|finding| finding.undefined_contract())
                 .any(|contract| {
-                    contract.clause == clause.name()
+                    contract.clause == clause
                         && contract.guard_of.as_ref() == Some(transition)
                         && contract.cause == undefined.cause
                 });
@@ -717,40 +711,27 @@ fn replay_claim_undefined(
         let Some(locus) = undefined.locus.as_ref() else {
             return Ok(false);
         };
-        let package = source_package(package)?;
         let mut locus_resolved = false;
         for (index, (state, _)) in positions.iter().enumerate() {
             let expansion = system
                 .successors(state)
                 .map_err(|_| fault("state-graph-undefined-subject-expansion"))?;
             let has_successor = !expansion.successors.is_empty();
-            let terminals = fsl_package::resolve_terminals(package)
-                .map_err(|_| fault("state-graph-undefined-terminal-resolution"))?;
-            let terminal = terminals.iter().find(|terminal| {
-                let fsl_package::PackageTerminalDeclaration::When(predicate) = terminal.declaration
-                else {
-                    return false;
-                };
-                predicate.body().location() == locus
-            });
+            let terminal = loci.terminal_at(locus)?;
             if let Some(terminal) = terminal {
                 locus_resolved = true;
                 if let TerminalClass::Undefined { model, cause } = system
                     .terminal_class(state, has_successor)
                     .map_err(|_| fault("state-graph-undefined-terminal"))?
                 {
-                    if model == terminal.model && cause == undefined.cause {
+                    if model == terminal && cause == undefined.cause {
                         return Ok(index + 1 == positions.len());
                     }
                 }
             }
-            let constraint = package.graph().state_clauses().iter().find(|clause| {
-                clause.body().location() == locus
-                    && clause.kind() == fsl_forms::StateClauseKind::Invariant
-            });
-            if let Some(constraint) = constraint {
+            if let Some(constraint) = loci.state_clause_at(locus, true) {
                 locus_resolved = true;
-                match system.constraint_value(state, constraint.name()) {
+                match system.constraint_value(state, &constraint) {
                     Ok(fsl_eval::simulation::ConstraintValue::Undefined { cause, .. })
                         if cause == undefined.cause =>
                     {
@@ -1305,16 +1286,68 @@ pub(super) fn result(
     }
 }
 
-/// The source package an undefined locus is resolved against. The package
-/// route holds none: a locus that names a state clause, an operation guard or
-/// a terminal predicate has no package form in this replay yet, and is
-/// refused rather than read from source.
-fn source_package(
-    package: Option<&fsl_package::CheckedPackage>,
-) -> Result<&fsl_package::CheckedPackage, ReplayRefusal> {
-    package.ok_or_else(|| {
-        refused(ModelTraceRefusal::HyperShape {
-            reason: "an undefined state clause or terminal locus has no package form yet",
-        })
-    })
+/// Where an undefined locus is resolved: the source route's checked package,
+/// or the package route's state clauses read from the admitted bytes
+/// ([`PackageModelInput::state_clauses`]).
+#[derive(Clone, Copy)]
+pub(super) enum Loci<'a> {
+    /// The recompiled source package.
+    Source(&'a fsl_package::CheckedPackage),
+    /// The package route's model-check input.
+    Package(&'a fsl_eval::simulation::model::PackageModelInput<'a>),
+}
+
+impl Loci<'_> {
+    /// The name of the state clause whose body is at `locus`; only an
+    /// `invariant` when `invariant` is set.
+    fn state_clause_at(
+        self,
+        locus: &filament_semantic_value::location::ExpressionLocation,
+        invariant: bool,
+    ) -> Option<String> {
+        match self {
+            Self::Source(package) => package
+                .graph()
+                .state_clauses()
+                .iter()
+                .find(|clause| {
+                    clause.body().location() == locus
+                        && (!invariant || clause.kind() == fsl_forms::StateClauseKind::Invariant)
+                })
+                .map(|clause| clause.name().to_owned()),
+            Self::Package(input) => input.state_clauses().iter().find_map(|entry| {
+                if invariant && !entry.invariant {
+                    return None;
+                }
+                let body = input
+                    .package()
+                    .project_state_clause(&entry.identity, &entry.name)
+                    .ok()?;
+                let projection = body.projection();
+                (projection.location(projection.root()) == Some(locus))
+                    .then(|| entry.name.clone())
+            }),
+        }
+    }
+
+    /// The model of the `terminal when` predicate whose body is at `locus`.
+    /// The package route reads no terminal declaration: a package that holds
+    /// one is refused when its model-check input is built.
+    fn terminal_at(
+        self,
+        locus: &filament_semantic_value::location::ExpressionLocation,
+    ) -> Result<Option<String>, ReplayRefusal> {
+        let Self::Source(package) = self else {
+            return Ok(None);
+        };
+        let terminals = fsl_package::resolve_terminals(package)
+            .map_err(|_| fault("state-graph-undefined-terminal-resolution"))?;
+        Ok(terminals.iter().find_map(|terminal| {
+            let fsl_package::PackageTerminalDeclaration::When(predicate) = terminal.declaration
+            else {
+                return None;
+            };
+            (predicate.body().location() == locus).then(|| terminal.model.to_owned())
+        }))
+    }
 }

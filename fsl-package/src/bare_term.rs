@@ -365,6 +365,8 @@ pub struct BareStateClauseDeclaration {
     pub operation: Option<BareFrameOperation>,
     /// The observation the clause's kind reads (FR-104).
     pub observation: fsl_semantics::model::clause_observation::Observation,
+    /// Whether the clause is an `invariant` (and no `constraint`).
+    pub invariant: bool,
 }
 
 impl BarePackage<'_> {
@@ -506,6 +508,7 @@ impl BarePackage<'_> {
                 context,
                 operation,
                 observation,
+                invariant: matches!(kind, StateClauseKind::Invariant),
             });
         }
         Ok(declarations)

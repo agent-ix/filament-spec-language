@@ -5099,8 +5099,32 @@ impl PackageDeclarations {
         // family's contract once every function signature is known, against
         // the same package-wide node total and contract meter.
         let mut checked_state_graph_claims = Vec::with_capacity(self.state_graph_claims.len());
-        for claim in &self.state_graph_claims {
+        for (position, claim) in self.state_graph_claims.iter().enumerate() {
             let location = root(Origin::Expression);
+            // FR-940 "Claim names": a claim name names one declaration, so the
+            // later of two claim-bearing declarations that share a name is
+            // refused at its name, naming both.
+            let earlier = self
+                .temporal_clauses
+                .iter()
+                .map(|temporal| &temporal.form.name)
+                .chain(
+                    self.state_graph_claims[..position]
+                        .iter()
+                        .map(|earlier| &earlier.form.name),
+                )
+                .find(|earlier| earlier.name == claim.form.name.name);
+            if let Some(earlier) = earlier {
+                refusals.push(CheckRefusal {
+                    location,
+                    cause: CheckCause::StateGraph(Box::new(StateGraphCause::AmbiguousName {
+                        name: claim.form.name.name.clone(),
+                        earlier: earlier.span,
+                        span: claim.form.name.span,
+                    })),
+                });
+                continue;
+            }
             let declarations = state_clause::ClauseDeclarations {
                 unit: self.source_owners.get(&claim.form.name.name),
                 scope: &scope,
