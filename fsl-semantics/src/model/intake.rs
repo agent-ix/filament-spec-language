@@ -7148,7 +7148,7 @@ mod tests {
         );
     }
 
-    #[trace("FSpec-FR-154-AC-40")]
+    #[trace("FR-056-AC-65", "FSpec-FR-154-AC-40")]
     #[test]
     fn operation_parameter_presence_is_required_and_rejects_unknown_values() {
         let mut document = option_wire_document(Some(serde_json::json!(

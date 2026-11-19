@@ -13,7 +13,7 @@ use serde_json::json;
 
 use super::model_operations::{
     admit_and_assemble_with_body, config_version_document_with_operations, empty_frame, operation,
-    PACKAGE_IDENTITY,
+    operation_parameter, PACKAGE_IDENTITY,
 };
 
 /// The one function the unit declares: a unit needs a declaration, and no
@@ -45,6 +45,35 @@ fn check(
     let document = config_version_document_with_operations(vec![bump]);
     admit_and_assemble_with_body(&document, UNIT_BODY)
         .expect("the package assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+}
+
+fn check_optional_parameter_clause(
+    clause: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+    let mut bump = operation(
+        "bump",
+        json!([operation_parameter(
+            "bump",
+            "amount",
+            "ix://filament/native/Integer"
+        )]),
+        None,
+        empty_frame(),
+    );
+    bump["params"][0]["presence"] = json!("optional");
+    bump["pre"] = json!([{
+        "language": "quire",
+        "text": clause,
+        "origin": bump["origin"].clone(),
+    }]);
+    let document = config_version_document_with_operations(vec![bump]);
+    admit_and_assemble_with_body(&document, UNIT_BODY)
+        .expect("the optional-parameter package assembles")
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
@@ -146,4 +175,51 @@ fn a_kept_clause_is_checked_under_the_profile_independent_defaults() {
         refusal.operation_member(),
         Some(MemberPath::new(MemberRoot::Operation).name("pre").index(0))
     );
+}
+
+/// FR-103-AC-12: an optional operation parameter is typed as an option, so
+/// its presence can be checked directly.
+#[trace("FR-103-AC-12")]
+#[test]
+fn present_over_an_optional_parameter_checks() {
+    check_optional_parameter_clause("present(amount)")
+        .expect("presence of the optional parameter checks");
+}
+
+/// FR-103-AC-12: a presence guard proves the value of an optional parameter.
+#[trace("FR-103-AC-12")]
+#[test]
+fn guarded_value_of_an_optional_parameter_checks() {
+    check_optional_parameter_clause("present(amount) implies value(amount) >= 0")
+        .expect("the guard proves the optional parameter is present");
+}
+
+/// FR-103-AC-12: reading an optional parameter without a presence proof
+/// refuses at the value expression with `unproved-presence`.
+#[trace("FR-103-AC-12")]
+#[test]
+fn value_of_an_optional_parameter_without_a_presence_guard_refuses_unproved_presence() {
+    let refusals = check_optional_parameter_clause("value(amount) >= 0")
+        .expect_err("an unguarded value read must refuse");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal, got {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), fsl_foundation::diagnostic::Code::UndefinedExpression);
+    assert_eq!(refusal.cause.cause(), Some("unproved-presence"));
+    assert_eq!(refusal.location.path(), vec![0, 0]);
+}
+
+/// FR-103-AC-12: `deref` requires a reference option, so it cannot be applied
+/// to an optional integer parameter.
+#[trace("FR-103-AC-12")]
+#[test]
+fn deref_over_an_optional_parameter_refuses_type_mismatch() {
+    let refusals = check_optional_parameter_clause("deref(amount) >= 0")
+        .expect_err("deref of an optional integer must refuse");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal, got {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), fsl_foundation::diagnostic::Code::IllTyped);
+    assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
+    assert_eq!(refusal.location.path(), vec![0]);
 }

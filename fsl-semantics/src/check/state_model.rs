@@ -669,7 +669,7 @@ mod tests {
         })
     }
 
-    #[trace("FSpec-FR-151-AC-20")]
+    #[trace("FR-103-AC-12", "FSpec-FR-151-AC-20")]
     #[test]
     fn dispatch_calls_may_omit_only_a_trailing_optional_parameter() {
         assert!(matches!(check_dispatch_arity(1), Ok(Checked::Operation(0))));
