@@ -9,14 +9,14 @@
 
 use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    check_hybrid_certificate, hybrid_locus_wire, ExactGap, HybridCertificateCheck,
-    HybridCertificateRefusal, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
-    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
-    ModelCheckLimit, TerminalValue, UnsupportedConstruct,
+    ExactGap, HybridCertificateCheck, HybridCertificateRefusal, HybridCounterexample,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridSettlement,
+    HybridSolveRequest, HybridVerdict, IncompleteCause, ModelCheckLimit, TerminalValue,
+    UnsupportedConstruct, check_hybrid_certificate, hybrid_locus_wire,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -108,6 +108,14 @@ pub(super) fn hybrid_item<'a>(
                 };
                 let answer = provider.solve(&request, cancel);
                 let mut meter = HybridReplayMeter::new(work_units);
+                let witness_trace = match &answer.verdict {
+                    HybridVerdict::Solved(result) => match &result.outcome {
+                        fsl_replay::SolverOutcome::Unknown(Some(trace)) => Some(trace.as_ref()),
+                        _ => None,
+                    },
+                    HybridVerdict::Refuted(counterexample) => Some(&counterexample.trace),
+                    HybridVerdict::Unsupported(_) => None,
+                };
                 let certificate = match answer.certificate.as_ref() {
                     Some(form) => {
                         let (result, method) = match &answer.verdict {
@@ -132,7 +140,7 @@ pub(super) fn hybrid_item<'a>(
                             HybridVerdict::Unsupported(_) => ("unsupported", None),
                         };
                         match check_hybrid_certificate(
-                            graph, checked, result, method, form, &mut meter,
+                            graph, checked, result, method, form, witness_trace, &mut meter,
                         ) {
                             Ok(check) => Some((form.clone(), check)),
                             Err(HybridCertificateRefusal::FormMismatch) => {
@@ -167,6 +175,20 @@ pub(super) fn hybrid_item<'a>(
                     }
                     None => None,
                 };
+                let validated_witness = certificate.as_ref().is_some_and(|(_, check)| {
+                    matches!(check, HybridCertificateCheck::Accepted)
+                }) && matches!(
+                    &answer.verdict,
+                    HybridVerdict::Solved(result)
+                        if matches!(&result.outcome, fsl_replay::SolverOutcome::Unknown(Some(_)))
+                );
+                let witness_trace = match &answer.verdict {
+                    HybridVerdict::Solved(result) => match &result.outcome {
+                        fsl_replay::SolverOutcome::Unknown(Some(trace)) => Some((**trace).clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
                 let settled = match answer.verdict {
                     HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
                     HybridVerdict::Refuted(claimed) => {
@@ -181,6 +203,24 @@ pub(super) fn hybrid_item<'a>(
                 match settled {
                     Ok(settled) => {
                         let mut settled = settled;
+                        if validated_witness
+                            && matches!(
+                                &settled.value,
+                                TerminalValue::Inconclusive(
+                                    fsl_replay::InconclusiveCause::SolverInconclusive {
+                                        replay: Some(replay), ..
+                                    }
+                                ) if matches!(replay.exact.as_deref(), Some(fsl_replay::ExactRecord::NotExact))
+                            )
+                        {
+                            if let Some(trace) = witness_trace {
+                                settled.value = TerminalValue::Refuted;
+                                settled.counterexample = Some(fsl_replay::HybridCounterexample {
+                                    kind: fsl_replay::HybridCounterexampleKind::Formula,
+                                    trace,
+                                });
+                            }
+                        }
                         if matches!(
                             certificate.as_ref(),
                             Some((_, HybridCertificateCheck::Accepted))

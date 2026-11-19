@@ -53,6 +53,7 @@ pub fn check_hybrid_certificate(
     result: &str,
     method: Option<SolverMethod>,
     certificate: &Value,
+    trace: Option<&super::HybridTrace>,
     meter: &mut HybridReplayMeter,
 ) -> Result<HybridCertificateCheck, HybridCertificateRefusal> {
     let model = graph
@@ -71,7 +72,7 @@ pub fn check_hybrid_certificate(
             check_flowpipe(graph, claim, model, certificate, meter)
         }
         ("refuted" | "inconclusive", _, "validated-witness") => {
-            check_witness(graph, claim, model, certificate, meter)
+            check_witness(graph, claim, model, certificate, trace, meter)
         }
         ("proved", _, "validated-witness")
         | ("refuted" | "inconclusive", _, "inductive-enclosure")
@@ -433,15 +434,223 @@ fn check_flowpipe(
 }
 
 fn check_witness(
-    _graph: &CheckedGraph,
-    _claim: &CheckedHybridClaim,
-    _model: &CheckedHybridModel,
-    _certificate: &Value,
-    _meter: &mut HybridReplayMeter,
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    model: &CheckedHybridModel,
+    certificate: &Value,
+    trace: Option<&super::HybridTrace>,
+    meter: &mut HybridReplayMeter,
 ) -> Result<HybridCertificateCheck, HybridCertificateRefusal> {
-    // A witness is never accepted until all dwell and decisive-step checks
-    // have run; rejecting it leaves the provider's ordinary settlement intact.
-    Ok(rejected("witness-start", "/certificate"))
+    let Some(trace) = trace else {
+        return Ok(rejected("witness-start", "/certificate"));
+    };
+    let dwells = certificate
+        .get("dwells")
+        .and_then(Value::as_array)
+        .ok_or_else(|| HybridCertificateRefusal::Malformed("/certificate/dwells".to_owned()))?;
+    if dwells.len() != trace.state_count() {
+        return Ok(rejected("witness-start", "/certificate/dwells"));
+    }
+
+    let mut decisive = false;
+    let mut last_pointer = "/certificate/dwells".to_owned();
+    let mut previous_end = trace.start.time.upper.clone();
+    let mut previous_endpoint = trace
+        .start
+        .enclosure
+        .iter()
+        .map(|i| Interval {
+            lower: Some(i.lower.clone()),
+            upper: Some(i.upper.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    for (dwell_index, raw_steps) in dwells.iter().enumerate() {
+        let at_dwell = format!("/certificate/dwells/{dwell_index}");
+        let Some(steps) = raw_steps.as_array() else {
+            return Err(HybridCertificateRefusal::Malformed(at_dwell));
+        };
+        let Some(state) = trace.state(dwell_index) else {
+            return Ok(rejected("witness-start", &at_dwell));
+        };
+        if steps.is_empty() {
+            return Ok(rejected("witness-start", &at_dwell));
+        }
+        let mode = model
+            .modes
+            .get(state.mode.get())
+            .ok_or(HybridCertificateRefusal::UnknownModel)?;
+        for (step_index, step) in steps.iter().enumerate() {
+            let at = format!("{at_dwell}/{step_index}");
+            last_pointer.clone_from(&at);
+            let mode_name = step.get("mode").and_then(Value::as_str);
+            if mode_name != Some(mode.name.as_str()) {
+                return Ok(rejected(
+                    if step_index == 0 && dwell_index == 0 {
+                        "witness-start"
+                    } else {
+                        "witness-picard"
+                    },
+                    &format!("{at}/mode"),
+                ));
+            }
+            let time = step
+                .get("time")
+                .and_then(read_interval)
+                .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/time")))?;
+            let delta = step
+                .get("step")
+                .and_then(read_rational)
+                .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/step")))?;
+            let box_ = read_box(step.get("box"), model)
+                .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/box")))?;
+            let apriori = read_box(step.get("apriori"), model)
+                .ok_or_else(|| HybridCertificateRefusal::Malformed(format!("{at}/apriori")))?;
+            let (Some(lower), Some(upper), Some(start)) = (
+                time.lower.as_ref(),
+                time.upper.as_ref(),
+                previous_end.as_ref(),
+            ) else {
+                return Ok(rejected("witness-picard", &at));
+            };
+            if lower != start || delta <= zero() || upper.sub(lower) != delta {
+                return Ok(rejected("witness-picard", &format!("{at}/time")));
+            }
+            if !subset(&previous_endpoint, &box_) {
+                return Ok(rejected(
+                    if step_index == 0 && dwell_index == 0 {
+                        "witness-start"
+                    } else {
+                        "witness-picard"
+                    },
+                    &format!("{at}/box"),
+                ));
+            }
+            if step_index == 0 && dwell_index == 0 {
+                let (Some(start_lower), Some(start_upper)) = (
+                    trace.start.time.lower.as_ref(),
+                    trace.start.time.upper.as_ref(),
+                ) else {
+                    return Ok(rejected("witness-start", "/certificate/dwells/0/0/box"));
+                };
+                if start_lower != start_upper || lower != start_lower {
+                    return Ok(rejected("witness-start", &format!("{at}/time")));
+                }
+            }
+            if truth(graph, &mode.invariant, &apriori, meter)? != Tri::True {
+                return Ok(rejected("witness-picard", &at));
+            }
+            let mut rates = Vec::with_capacity(mode.rates.len());
+            for rate in &mode.rates {
+                let IValue::Number(rate) = value(graph, rate, &apriori, meter)? else {
+                    return Err(HybridCertificateRefusal::Evaluation);
+                };
+                rates.push(rate);
+            }
+            let mut picard = Vec::with_capacity(box_.len());
+            let mut endpoint = Vec::with_capacity(box_.len());
+            for (variable, rate) in rates.iter().enumerate() {
+                let tube = add_intervals(&box_[variable], &scale_nonnegative(rate, &delta))
+                    .ok_or(HybridCertificateRefusal::Evaluation)?;
+                let point = add_intervals(&box_[variable], &scale_point(rate, &delta))
+                    .ok_or(HybridCertificateRefusal::Evaluation)?;
+                picard.push(contract_boundary(
+                    graph,
+                    &mode.invariant,
+                    variable,
+                    tube,
+                    &apriori,
+                    meter,
+                )?);
+                endpoint.push(contract_boundary(
+                    graph,
+                    &mode.invariant,
+                    variable,
+                    point,
+                    &apriori,
+                    meter,
+                )?);
+            }
+            if !subset(&picard, &apriori) {
+                return Ok(rejected("witness-picard", &at));
+            }
+            if let Some(next_step) = steps.get(step_index + 1) {
+                let Some(next_box) = read_box(next_step.get("box"), model) else {
+                    return Err(HybridCertificateRefusal::Malformed(format!(
+                        "{at_dwell}/{}/box",
+                        step_index + 1
+                    )));
+                };
+                if !subset(&endpoint, &next_box) {
+                    return Ok(rejected(
+                        "witness-picard",
+                        &format!("{at_dwell}/{}/box", step_index + 1),
+                    ));
+                }
+            }
+            if !decisive && violates_always_claim(graph, claim, &time, &box_, &apriori, meter)? {
+                decisive = true;
+            }
+            previous_end = time.upper.clone();
+            previous_endpoint = endpoint;
+        }
+        if let Some(jump) = trace.jumps.get(dwell_index) {
+            let final_step = steps.last().expect("nonempty dwell checked");
+            let final_box = read_box(final_step.get("apriori"), model).ok_or_else(|| {
+                HybridCertificateRefusal::Malformed(format!("{last_pointer}/apriori"))
+            })?;
+            let Some(transition) = mode.transitions.get(jump.transition as usize) else {
+                return Ok(rejected("witness-guard", &last_pointer));
+            };
+            if truth(graph, &transition.guard, &final_box, meter)? != Tri::True {
+                return Ok(rejected("witness-guard", &last_pointer));
+            }
+            previous_endpoint = jump
+                .state
+                .enclosure
+                .iter()
+                .map(|i| Interval {
+                    lower: Some(i.lower.clone()),
+                    upper: Some(i.upper.clone()),
+                })
+                .collect();
+            previous_end = jump.state.time.upper.clone();
+        }
+    }
+    if decisive {
+        Ok(HybridCertificateCheck::Accepted)
+    } else {
+        Ok(rejected("witness-violation", &last_pointer))
+    }
+}
+
+fn violates_always_claim(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    time: &Interval,
+    box_: &[Interval],
+    apriori: &[Interval],
+    meter: &mut HybridReplayMeter,
+) -> Result<bool, HybridCertificateRefusal> {
+    let fsl_semantics::check::HybridFormula::Always(region, inner) = &claim.formula else {
+        return Ok(false);
+    };
+    let fsl_semantics::check::HybridFormula::Holds(atom) = inner.as_ref() else {
+        return Ok(false);
+    };
+    let start = claim
+        .horizon
+        .as_ref()
+        .and_then(|_| region.as_ref())
+        .map_or_else(zero, |interval| interval.lower.clone());
+    let end = region.as_ref().and_then(|interval| interval.upper.as_ref());
+    if time.lower.as_ref().is_none_or(|lower| lower < &start)
+        || end.is_some_and(|end| time.upper.as_ref().is_none_or(|upper| upper > end))
+    {
+        return Ok(false);
+    }
+    Ok(truth(graph, atom, box_, meter)? == Tri::False
+        || truth(graph, atom, apriori, meter)? == Tri::False)
 }
 
 fn truth(
@@ -565,11 +774,7 @@ fn scale_point(value: &Interval, scale: &Rational) -> Interval {
         .map(|(a, b)| {
             let left = a.mul(scale);
             let right = b.mul(scale);
-            if left <= right {
-                left
-            } else {
-                right
-            }
+            if left <= right { left } else { right }
         });
     let upper = value
         .lower
@@ -578,11 +783,7 @@ fn scale_point(value: &Interval, scale: &Rational) -> Interval {
         .map(|(a, b)| {
             let left = a.mul(scale);
             let right = b.mul(scale);
-            if left >= right {
-                left
-            } else {
-                right
-            }
+            if left >= right { left } else { right }
         });
     Interval { lower, upper }
 }

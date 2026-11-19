@@ -25,9 +25,9 @@ use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
+use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -452,8 +452,10 @@ fn hybrid_replay_request(
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
-            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
-                .expect("the claim name is an identifier")])
+            fsl_replay::QualifiedName::new(vec![
+                filament_exact::Identifier::new("TooSlow")
+                    .expect("the claim name is an identifier"),
+            ])
             .expect("the claim name is qualified"),
         ),
         source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
@@ -624,20 +626,27 @@ fn a_mismatched_certificate_form_refuses_at_certificate() {
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-#[ignore = "QSL-2531: validated-witness refutation not implemented yet"]
 fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile p = \"filament.temporal.infinite-trace/v1\";\n\
          hybrid Grow using p {\n\
-           mode Up invariant { v >= 1 and v <= 100 } flow { v' = v * v / (1 + v * v); }\n\
+           mode Up invariant { v >= 1 and v <= 100 } flow { v' = 1 - 1 / (1 + v * v); }\n\
          }\n\
          temporal Below using p over (h: Grow) clock \"model-time\" \
          on origin { always [0, 40] holds(h.v < 30) }\n";
     let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
         "enclosure": {"v": interval("1", "1")}}, "jumps": []});
-    let witness = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
-        "time": interval("0", "40"), "step": rational("40"),
-        "box": {"v": interval("1", "1")}, "apriori": {"v": interval("1", "41")}}]]});
+    let lower = [
+        "1", "3", "33/5", "21/2", "72/5", "183/10", "111/5", "261/10", "30",
+    ];
+    let steps = (0..9)
+        .map(|k| {
+            json!({"mode": "Up", "time": interval(&(4 * k).to_string(), &(4 * k + 4).to_string()),
+            "step": rational("4"), "box": {"v": interval(lower[k], &(1 + 4 * k).to_string())},
+            "apriori": {"v": interval(lower[k], &(5 + 4 * k).to_string())}})
+        })
+        .collect::<Vec<_>>();
+    let witness = json!({"type": "validated-witness", "dwells": [steps.clone()]});
     let entry = |certificate: Option<&Value>| {
         let mut entry = json!({"request_index": 0, "result": "inconclusive",
             "cause": {"type": "solver-inconclusive", "trace": trace.clone()}});
@@ -654,6 +663,7 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
         vec![hybrid_fixture("hybrid-fixture", &entry(Some(&witness)))],
     );
     assert_eq!(with["record"]["result"], "refuted", "{with}");
+    assert_eq!(with["certificate"]["accepted"], true, "{with}");
     let (_, without) = first_item(
         "hybrid-652-3b",
         unit,
@@ -662,6 +672,37 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
         vec![hybrid_fixture("hybrid-fixture", &entry(None))],
     );
     assert_eq!(without["record"]["result"], "inconclusive", "{without}");
+
+    for (name, steps, at) in [
+        (
+            "hybrid-652-3-cut",
+            steps[..8].to_vec(),
+            "/certificate/dwells/0/7",
+        ),
+        (
+            "hybrid-652-3-straddle",
+            vec![
+                json!({"mode": "Up", "time": interval("0", "40"), "step": rational("40"),
+                "box": {"v": interval("1", "1")}, "apriori": {"v": interval("1", "41")}}),
+            ],
+            "/certificate/dwells/0/0",
+        ),
+    ] {
+        let witness = json!({"type": "validated-witness", "dwells": [steps]});
+        let (_, rejected) = first_item(
+            name,
+            unit,
+            named("Below", "hybrid-fixture"),
+            json!({}),
+            vec![hybrid_fixture("hybrid-fixture", &entry(Some(&witness)))],
+        );
+        assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
+        assert_eq!(
+            rejected["certificate"]["rule"], "witness-violation",
+            "{rejected}"
+        );
+        assert_eq!(rejected["certificate"]["at"], at, "{rejected}");
+    }
 }
 
 /// `Braking`'s flowpipe: 160 `Moving` steps of 1/16 s contracted to
