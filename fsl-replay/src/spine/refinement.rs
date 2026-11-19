@@ -370,6 +370,8 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::ReservedIntrinsicConflict(_)
         | CheckCause::UnrepresentableBound
         | CheckCause::DefinitionCycle { .. }
+        | CheckCause::DuplicateVerificationStep { .. }
+        | CheckCause::VerificationPlanBoundZero { .. }
         | CheckCause::InvalidDispatchDeclaration(_)
         | CheckCause::MissingSelection { .. }
         | CheckCause::UnsupportedFeature { .. }
