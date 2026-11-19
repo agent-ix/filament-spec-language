@@ -5185,8 +5185,23 @@ impl<'a> Lowering<'a> {
             // clock value; the downstream term contract has no row for it.
             // A quantifier over a clock collection's slots likewise has no
             // producer form yet.
-            NodeKind::PopulationObjects { .. }
-            | NodeKind::History { .. }
+            NodeKind::PopulationObjects { population } => {
+                let object = self.referenced_object(node.value_type(), node.location())?;
+                let population = self.population_reference_node(population, node.location())?;
+                let result_type = self.type_ref(node.value_type(), node.location())?;
+                let term = self.typed_application(
+                    node.location(),
+                    result_type,
+                    Operator::Query,
+                    Operation {
+                        member: Some(Member::TypeArgument { declaration: object }),
+                        ..plain("filament.op.model.all_instances")
+                    },
+                    vec![MemberTerm::Leaf(LeafTerm::reference_node(population.into()))],
+                )?;
+                return Ok(LowerStep::Lowered(term));
+            }
+            NodeKind::History { .. }
             | NodeKind::PlaceReference { .. }
             | NodeKind::SlotPresence { .. } => {
                 return Err(refuse(

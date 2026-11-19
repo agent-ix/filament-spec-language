@@ -1851,17 +1851,15 @@ impl CheckedRefinement {
         fields.chain(steps).chain(updates)
     }
 
-    /// Whether every row expression has a node form: a whole population, a
-    /// history read and a `seq` have none yet (FR-139, FR-138; FR-093
-    /// gives no row for them), so a refinement with one is not emitted.
+    /// Whether every row expression has an S4 node form. History reads are
+    /// not emitted yet (FR-138); population reads and `seq` lower through
+    /// their catalogued FR-322 operations.
     pub(crate) fn rows_have_nodes(&self) -> bool {
         self.rows().all(|row| {
             row.body().descendants().into_iter().all(|node| {
                 !matches!(
                     node.kind(),
-                    NodeKind::PopulationObjects { .. }
-                        | NodeKind::History { .. }
-                        | NodeKind::Seq { .. }
+                    NodeKind::History { .. }
                 )
             })
         })
