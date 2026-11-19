@@ -13,9 +13,9 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
-    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
-    ModelCheckLimit, TerminalValue, UnsupportedConstruct,
+    hybrid_locus_wire, ExactGap, HybridAnswer, HybridCounterexample, HybridCounterexampleKind,
+    HybridReplayMeter, HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict,
+    IncompleteCause, ModelCheckLimit, TerminalValue, UnsupportedConstruct,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -46,7 +46,7 @@ pub(super) struct Spelling<'a> {
 pub(super) fn hybrid_item<'a>(
     package: &'a CheckedPackage,
     request_index: RequestIndex,
-    claim: &OccurrenceKey,
+    claim: &'a OccurrenceKey,
     form: &'a HybridItem,
     work_units: u64,
     deadline: DeadlineSupply,
