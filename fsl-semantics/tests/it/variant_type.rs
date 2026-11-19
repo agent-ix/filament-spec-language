@@ -458,6 +458,7 @@ fn conformance_clock_tuple_union_intake_vectors_are_admitted() {
             "{name}: the admitted member retains Clock"
         );
     }
+    println!("conformance: 2 Clock tuple/union intake vectors admitted");
 }
 
 fn single_type(mutate: impl FnOnce(&mut Value)) -> Value {

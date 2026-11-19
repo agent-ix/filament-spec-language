@@ -3172,6 +3172,7 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
         .collect();
     assert!(names.iter().any(|name| name == "s.0"), "{names:?}");
     assert!(names.iter().any(|name| name == "p.Armed"), "{names:?}");
+    assert!(model.clock_fields().all(|(_, field)| !field.presence_bit()));
     assert_eq!(
         model
             .resets()
@@ -3194,6 +3195,13 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
     );
     assert_eq!(
         presence("invariant Same using v on Config::Call at current { self.p = self.p }\n"),
+        [(
+            Code::InvalidTimedModel,
+            Some("clock-read-outside-constraint")
+        )]
+    );
+    assert_eq!(
+        presence("invariant Same using v on Config::Call at current { self.s = self.s }\n"),
         [(
             Code::InvalidTimedModel,
             Some("clock-read-outside-constraint")
