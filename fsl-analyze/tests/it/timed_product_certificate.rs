@@ -314,7 +314,6 @@ fn region_document_keeps_fraction_order() {
 #[trace("TC-2489", "FR-920-AC-3")]
 #[trace("FSpec-TC-1767", "FSpec-FR-725-AC-3")]
 #[test]
-#[ignore = "QSL-2156: timed-product/v1 certificate documents not implemented yet"]
 fn timed_document_has_no_component_member() {
     let world = retx(GUARD, true, "", &every_deadlines());
     let mut doc = document(&settle(&world, "Deadline"));
