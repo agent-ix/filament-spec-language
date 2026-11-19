@@ -240,11 +240,17 @@ fn hybrid_runtime_invariant_rows_map_to_exit_30() {
         ),
     ];
     for (hybrid, invariant) in cases {
-        let ReplayRefusal::Fault(fault) = hybrid_runtime_refusal(hybrid) else {
+        let replay: Result<crate::ReplayResult, ReplayRefusal> =
+            Err(hybrid_runtime_refusal(hybrid));
+        let Err(error) = replay else {
+            panic!("a checked-package fault returns no replay row");
+        };
+        assert_eq!(error.code(), Code::RuntimeInvariant);
+        assert_eq!(error.code().category().exit_code(), 30);
+        let ReplayRefusal::Fault(fault) = error else {
             panic!("a checked-package fault maps to an internal failure");
         };
         assert_eq!(fault.invariant(), invariant);
-        assert_eq!(Code::RuntimeInvariant.category().exit_code(), 30);
     }
 }
 

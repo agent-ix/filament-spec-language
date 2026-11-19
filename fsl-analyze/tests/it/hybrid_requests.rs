@@ -390,6 +390,13 @@ fn exact(value: i64) -> Rational {
 }
 
 fn point_counterexample() -> fsl_replay::HybridCounterexample {
+    point_counterexample_with_acceleration(2, 10)
+}
+
+fn point_counterexample_with_acceleration(
+    acceleration: i64,
+    transition_time: i64,
+) -> fsl_replay::HybridCounterexample {
     use fsl_replay::{
         ExactInterval, HybridCounterexample, HybridCounterexampleKind, HybridTrace, TraceBefore,
         TraceJump, TraceState,
@@ -398,7 +405,7 @@ fn point_counterexample() -> fsl_replay::HybridCounterexample {
     let state = |mode, time, v| TraceState {
         mode: ModeIndex::new(mode),
         time: interval(time),
-        enclosure: vec![interval(v), interval(2)],
+        enclosure: vec![interval(v), interval(acceleration)],
     };
     HybridCounterexample {
         kind: HybridCounterexampleKind::Formula,
@@ -407,10 +414,10 @@ fn point_counterexample() -> fsl_replay::HybridCounterexample {
             jumps: vec![TraceJump {
                 transition: 0,
                 before: Some(TraceBefore {
-                    time: interval(10),
-                    enclosure: vec![interval(0), interval(2)],
+                    time: interval(transition_time),
+                    enclosure: vec![interval(0), interval(acceleration)],
                 }),
-                state: state(1, 10, 0),
+                state: state(1, transition_time, 0),
             }],
             delta: None,
             loop_to: None,
@@ -835,6 +842,38 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
         row.settlement,
         fsl_replay::HybridReplaySettlement::Reproduced { .. }
     ));
+
+    // With acceleration 1, the same path reaches Stopped only at t=20.
+    // `TooSlow` holds throughout [0, 10], so exact replay must report that
+    // the provider's refuted trace does not reproduce the claim violation.
+    let non_reproducing = fsl_replay::replay(
+        hybrid_replay_request(&braking_pair(), point_counterexample_with_acceleration(1, 20)),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect("a valid trace that does not violate TooSlow settles as a row");
+    let non_reproducing_wire: Value = serde_json::from_str(
+        &non_reproducing
+            .to_function_json()
+            .expect("the inconclusive hybrid result serializes"),
+    )
+    .expect("the result row is JSON");
+    assert_eq!(
+        non_reproducing.category(),
+        filament_semantic_value::catalog::Category::Inconclusive
+    );
+    assert_eq!(non_reproducing_wire["settlement"], "inconclusive");
+    assert_eq!(
+        non_reproducing_wire["replay"]["exact"]["outcome"],
+        "not-reproduced"
+    );
+    assert_eq!(
+        non_reproducing_wire["disagreement"]["cause"],
+        "hybrid-trace"
+    );
+    assert_eq!(
+        non_reproducing_wire["disagreement"]["disagreement"]["type"],
+        "not-reproduced"
+    );
 }
 
 /// FR-750-AC-11 (process half): a process `failed` `tool-failure` entry is
