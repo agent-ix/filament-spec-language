@@ -298,21 +298,45 @@ fn project(
 fn source_projection_preserves_send_receive_direction_and_local_order() {
     use fsl_replay::protocol_analysis::{AnalysisOutcome, LocalEventKind};
     let directory = tempfile::tempdir().unwrap();
-    let package = handoff(directory.path(), &corpus("original/exchange.native"));
+    let original = std::fs::read_to_string(corpus("original/exchange.native")).unwrap();
+    let file = directory.path().join("two-exchanges.native");
+    std::fs::write(
+        &file,
+        original.replace(
+            "receive Seen via Queue of Sent as (got: Note) { true };",
+            "receive Seen via Queue of Sent as (got: Note) { true };\n\
+         send Next via Queue as (next: Note) { true };\n\
+         receive After via Queue of Next as (after: Note) { true };",
+        ),
+    )
+    .unwrap();
+    let package = handoff(directory.path(), &file);
     for (role, sends) in [("Sender", true), ("Receiver", false)] {
         let outcome = project(&package, role);
         let AnalysisOutcome::Proved(witness) = outcome.outcome else {
             panic!("{role}: expected a proved projection: {outcome:?}");
         };
-        assert_eq!(witness.local_graph.events.len(), 1, "{role}: {witness:?}");
-        assert!(witness.local_graph.edges.is_empty(), "{role}: {witness:?}");
-        let kind = &witness.local_graph.events[0].kind;
-        if sends {
-            assert!(matches!(kind, LocalEventKind::Send { .. }), "{kind:?}");
-        } else {
-            assert!(matches!(kind, LocalEventKind::Receive { .. }), "{kind:?}");
+        let events = &witness.local_graph.events;
+        assert_eq!(events.len(), 2, "{role}: {witness:?}");
+        assert_eq!(
+            witness.local_graph.edges,
+            vec![(events[0].id.clone(), events[1].id.clone())],
+            "{role}: {witness:?}"
+        );
+        for event in events {
+            if sends {
+                assert!(
+                    matches!(event.kind, LocalEventKind::Send { .. }),
+                    "{event:?}"
+                );
+            } else {
+                assert!(
+                    matches!(event.kind, LocalEventKind::Receive { .. }),
+                    "{event:?}"
+                );
+            }
         }
-        assert_eq!(witness.correspondence.0.len(), 1, "{role}: {witness:?}");
+        assert_eq!(witness.correspondence.0.len(), 2, "{role}: {witness:?}");
     }
 }
 
