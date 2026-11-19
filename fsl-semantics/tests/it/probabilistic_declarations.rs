@@ -827,6 +827,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(8),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("255 is eight bits");
     let past = service(Some((STEADY, &steady_with_request("256"))), "");
@@ -834,6 +835,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(8),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
     let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
@@ -1164,10 +1166,18 @@ fn quantity_literals_type_against_the_declared_units() {
 fn a_quantity_literal_is_bounded_by_the_configured_rational_bits() {
     let limits = CheckingLimits::default().with_rational_bits(8);
     assemble("function lag using v(): Boolean pure { 255 ms <= 3 ms }")
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect("eight bits is within the ceiling");
     let past = assemble("function lag using v(): Boolean pure { 256 ms <= 3 ms }")
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("256 is nine bits");
     let CheckCause::ResourceExhausted(limit) = &past[0].cause else {
         panic!("a limit refusal: {:?}", past[0].cause);
@@ -1188,7 +1198,11 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
     let body = service(Some((D, random)), "");
     let limits = CheckingLimits::default().with_rational_bits(3);
     let refusals = assemble(&body)
-        .check(CheckMode::Linked, limits)
+        .check(
+            CheckMode::Linked,
+            limits,
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
         .expect_err("the sum is four bits");
     let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
@@ -1201,6 +1215,7 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
         .check(
             CheckMode::Linked,
             CheckingLimits::default().with_rational_bits(7),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("the sum is within seven bits (the other declarations' 98)");
 }
@@ -3499,8 +3514,14 @@ fn s3_stops_at_the_first_negative_returned_by_the_evaluator() {
         .expect_err("the recording evaluator reports a negative reward");
     let calls = evaluator.0.into_inner();
     assert_eq!(calls.len(), 2, "evaluation stops at the first negative");
-    assert_eq!(calls[0], KernelValue::Integer(Integer::from(1_i64)));
-    assert_eq!(calls[1], KernelValue::Integer(Integer::from(3_i64)));
+    assert!(matches!(
+        &calls[0],
+        KernelValue::Integer(value) if value == &Integer::from(1_i64)
+    ));
+    assert!(matches!(
+        &calls[1],
+        KernelValue::Integer(value) if value == &Integer::from(3_i64)
+    ));
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
