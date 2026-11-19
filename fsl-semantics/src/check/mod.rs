@@ -1806,6 +1806,69 @@ fn root(origin: Origin) -> Location {
     Location::root(origin)
 }
 
+/// The first directed prerequisite cycle in source order. A verification
+/// plan is a sidecar, so its graph is checked before clause checking begins
+/// (FR-753, FSpec FR-192).
+fn verification_plan_cycle(
+    plan: &fsl_forms::VerificationPlanForm,
+) -> Option<Vec<(String, String)>> {
+    let steps = &plan.steps;
+    let indices: BTreeMap<&str, usize> = steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| (step.name.name.as_str(), index))
+        .collect();
+    let mut state = vec![0_u8; steps.len()];
+    let mut next_dependency = vec![0_usize; steps.len()];
+    for start in 0..steps.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        let mut active = vec![start];
+        state[start] = 1;
+        while let Some(&node) = active.last() {
+            let dependencies = &steps[node].depends;
+            if next_dependency[node] == dependencies.len() {
+                state[node] = 2;
+                active.pop();
+                continue;
+            }
+            let dependency_index = next_dependency[node];
+            next_dependency[node] += 1;
+            let dependency = dependencies.get(dependency_index)?;
+            let Some(&target) = indices.get(dependency.name.as_str()) else {
+                continue;
+            };
+            match state[target] {
+                0 => {
+                    state[target] = 1;
+                    active.push(target);
+                }
+                1 => {
+                    let cycle_start = active.iter().position(|&member| member == target)?;
+                    let members = active.get(cycle_start..)?;
+                    let mut edges: Vec<(String, String)> = members
+                        .windows(2)
+                        .filter_map(|edge| {
+                            Some((
+                                steps.get(*edge.first()?)?.name.name.clone(),
+                                steps.get(*edge.last()?)?.name.name.clone(),
+                            ))
+                        })
+                        .collect();
+                    edges.push((
+                        steps.get(node)?.name.name.clone(),
+                        steps.get(target)?.name.name.clone(),
+                    ));
+                    return Some(edges);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 /// Internal declared-span key for a timed source. Timed declarations have a
 /// source span but no distinct `Origin` variant; the spaced name cannot
 /// collide with an FSL declaration name.
@@ -2130,6 +2193,14 @@ impl PackageDeclarations {
         continue_state_clause_refusals: bool,
         protocol_check_refusals: &mut Vec<ProtocolCheckRefusal>,
     ) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+        for plan in &self.verification_plans {
+            if let Some(edges) = verification_plan_cycle(plan) {
+                return Err(vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::DefinitionCycle { edges },
+                }]);
+            }
+        }
         // FR-230: S2 retains every timed declaration independent of header
         // selection. S3 owns the facet gate and keeps incomplete timed
         // constructs from silently entering the checked package.
