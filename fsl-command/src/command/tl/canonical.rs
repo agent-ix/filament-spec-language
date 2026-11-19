@@ -22,6 +22,7 @@ pub(super) struct CanonicalRows {
     declarations: BTreeMap<NodeKey, String>,
     fields: BTreeMap<MemberId, String>,
     functions: BTreeMap<usize, String>,
+    record_fields: BTreeMap<NodeKey, Vec<String>>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
@@ -193,6 +194,38 @@ impl CheckedExpression {
                         .join(", ");
                     (format!("{function}({arguments})"), 10)
                 }
+                NodeKind::Record { declaration, slots } => {
+                    let identity = rows.declarations.get(declaration).ok_or_else(|| {
+                        "record constructor has a canonical declaration identity".to_owned()
+                    })?;
+                    let fields = rows.record_fields.get(declaration).ok_or_else(|| {
+                        "record constructor has checked declaration field order".to_owned()
+                    })?;
+                    if fields.len() != slots.len() {
+                        return Err("record constructor slots match its declaration".to_owned());
+                    }
+                    let members = fields
+                        .iter()
+                        .zip(slots)
+                        .filter_map(|(field, slot)| match slot {
+                            filament_checked::node::RecordSlot::Absent => None,
+                            filament_checked::node::RecordSlot::Null => {
+                                Some(Ok(format!("{field}: none")))
+                            }
+                            filament_checked::node::RecordSlot::Present(value) => {
+                                Some(child(*value).map(|value| format!("{field}: {value}")))
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ");
+                    (format!("{identity}{{{members}}}"), 10)
+                }
+                NodeKind::Case { .. } => {
+                    return Err(
+                        "case expression arm binder names are not retained by the checked condition"
+                            .to_owned(),
+                    );
+                }
                 NodeKind::Order(operator, _, left, right) => binary(
                     child(*left)?,
                     child_prec(*left)?,
@@ -316,6 +349,7 @@ pub(super) fn source_labels(
         declarations: valuation.canonical_declarations.clone(),
         fields: valuation.canonical_fields.clone(),
         functions: valuation.canonical_functions.clone(),
+        record_fields: valuation.canonical_record_fields.clone(),
     };
     valuation
         .checked_conditions

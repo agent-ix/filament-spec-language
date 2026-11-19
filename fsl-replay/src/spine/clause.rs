@@ -496,6 +496,8 @@ pub struct TemporalValuation {
     pub canonical_fields: BTreeMap<MemberId, String>,
     /// Alias-free identities of local functions called by checked conditions.
     pub canonical_functions: BTreeMap<usize, String>,
+    /// Declared field order of record constructors in checked conditions.
+    pub canonical_record_fields: BTreeMap<filament_exact::NodeKey, Vec<String>>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -544,16 +546,59 @@ impl TemporalValuation {
             })
             .collect();
         let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
+        let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
         Self {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
             canonical_fields,
             canonical_functions,
+            canonical_record_fields,
             positions,
             behaviours,
         }
     }
+}
+
+fn canonical_condition_record_fields(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
+    let mut records = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(composite) = graph.scope().types().composite(declaration.clone()) {
+                    if let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+                        composite.shape()
+                    {
+                        records.insert(
+                            declaration.clone(),
+                            fields.iter().map(|field| field.name().to_owned()).collect(),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    records
 }
 
 fn canonical_condition_functions(
@@ -630,6 +675,8 @@ fn canonical_condition_declarations(
                     Some(member.variant().owner().clone())
                 }
                 NodeKind::Field { field, .. } => Some(field.declaration()),
+                NodeKind::Record { declaration, .. } => Some(declaration.clone()),
+                NodeKind::ImportedCall { callee, .. } => Some(callee.clone()),
                 _ => None,
             };
             if let Some(key) = key {

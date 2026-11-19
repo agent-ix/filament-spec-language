@@ -316,29 +316,28 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
 #[trace("FR-931-AC-11", "FR-931-AC-12")]
 fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
     let directory = tempfile::tempdir().unwrap();
-    let mut unit = config_version_spine::unit_text();
+    let mut unit = crate::config_version_spine::unit_text();
     unit.push_str(
         "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          enum Mode { On, Off }\n\
+         record Pair { left: Integer; right: Integer; }\n\
          function positive using v(n: Int[0, 1000]): Boolean pure { n > 0 }\n\
-         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always holds(if positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) }\n",
+         temporal Canonical using inf over (x: Config::ConfigVersion) clock \"model-steps\" on origin { always (holds(if positive(x.versionNumber) then contains(set[1, 2], 1) else Mode::On = Mode::On) and holds(Pair{left: 1, right: 2} = Pair{left: 1, right: 2})) }\n",
     );
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
     std::fs::write(
         directory.path().join("model.semantic-ir.json"),
-        config_version_spine::DOMAIN_PACKAGE,
+        crate::config_version_spine::DOMAIN_PACKAGE,
     )
     .unwrap();
 
-    let (exit, value) = run(
-        directory.path(),
-        json!({"models": [{"format": "semantic-ir/2.0.0", "source": {
-            "file": "model.semantic-ir.json", "authority": "agent-ix",
-            "identity": "example/config-version", "document": "ConfigVersion",
-            "formal_revision": 1}}],
-            "program": {"source": source("unit.native")},
-            "tl_lowering": {"clause": "Canonical"}}),
-    );
+    let request = json!({"models": [{"format": "semantic-ir/2.0.0", "source": {
+        "file": "model.semantic-ir.json", "authority": "agent-ix",
+        "identity": "example/config-version", "document": "ConfigVersion",
+        "formal_revision": 1}}],
+        "program": {"source": source("unit.native")},
+        "tl_lowering": {"clause": "Canonical"}});
+    let (exit, value) = run(directory.path(), request.clone());
     assert_eq!(exit, 0, "{value}");
     let atom = value["tl_lowering"]["atoms"]["p0"]
         .as_str()
@@ -347,6 +346,22 @@ fn source_tl_labels_use_checked_precedence_and_alias_free_declaration_keys() {
         atom,
         "holds(if ix://test:package-run:unit.native/positive(x.versionNumber) then contains(set[1, 2], 1) else ix://test:package-run:unit.native/Mode::On = ix://test:package-run:unit.native/Mode::On)",
         "{value}"
+    );
+    assert_eq!(
+        value["tl_lowering"]["atoms"]["p1"],
+        "holds(ix://test:package-run:unit.native/Pair{left: 1, right: 2} = ix://test:package-run:unit.native/Pair{left: 1, right: 2})",
+        "{value}"
+    );
+
+    let renamed_unit = unit
+        .replace("model Config =", "model C =")
+        .replace("Config::", "C::");
+    std::fs::write(directory.path().join("unit.native"), renamed_unit).unwrap();
+    let (renamed_exit, renamed) = run(directory.path(), request);
+    assert_eq!(renamed_exit, 0, "{renamed}");
+    assert_eq!(
+        renamed["tl_lowering"]["atoms"],
+        value["tl_lowering"]["atoms"]
     );
 }
 
