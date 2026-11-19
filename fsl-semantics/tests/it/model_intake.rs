@@ -2836,7 +2836,7 @@ mod float_members {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::declaration::CompositeShape;
     use fsl_foundation::Code;
-    use fsl_semantics::check::{AssemblyRefusal, PackageDeclarations};
+    use fsl_semantics::check::{AssemblyRefusal, CheckCause, CheckedGraph, PackageDeclarations};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::intake::{admit_unit, meaning};
     use ix_trace_rs::trace;
@@ -3184,6 +3184,66 @@ mod float_members {
             })
     }
 
+    /// Check one clause while retaining the checked graph or typed refusals
+    /// for acceptance assertions that depend on their provenance.
+    fn check_clause_with_diagnostics(
+        clause: &str,
+    ) -> Result<CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+        let body =
+            format!("invariant I using v on Config::ConfigVersion at current {{ {clause} }}\n");
+        let declarations = admit_and_assemble_with_body(&rule_document(), &body)
+            .unwrap_or_else(|refusal| panic!("the valid rule fixture assembles: {refusal:?}"));
+        declarations.check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+    }
+
+    fn graph_for_clause(clause: &str) -> CheckedGraph {
+        check_clause_with_diagnostics(clause)
+            .unwrap_or_else(|refusals| panic!("{clause} checks: {refusals:?}"))
+    }
+
+    fn applications(graph: &CheckedGraph) -> Vec<&fsl_semantics::check::ApplicationTerm> {
+        graph
+            .semantic_graph()
+            .nodes()
+            .filter_map(|node| match node.body() {
+                fsl_semantics::check::BodyTerm::Application(application) => Some(application),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn assert_ieee_law(graph: &CheckedGraph) {
+        let apps = applications(graph);
+        assert!(
+            apps.iter().any(
+                |application| application.operation.laws().iter().any(|law| {
+                    law.role == fsl_semantics::check::LawRole::IeeeProfile
+                        && law.definition.identity == "filament.value.ieee754-2019-default/v1"
+                })
+            ),
+            "every admitted float expression carries the selected IEEE profile law: {apps:?}"
+        );
+    }
+
+    fn ieee_meter() -> filament_exact::Meter {
+        filament_exact::Meter::new(filament_exact::ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units: u64::MAX,
+        })
+    }
+
     #[trace("TC-3005", "FR-056-AC-57")]
     #[test]
     fn a_rule_over_a_float_field_checks_with_the_ieee_profile() {
@@ -3195,6 +3255,62 @@ mod float_members {
         ] {
             assert_eq!(check_clause(clause), Ok(()), "{clause}");
         }
+        let comparison = graph_for_clause("self.reading <= self.limit");
+        assert_ieee_law(&comparison);
+        let strict_sum = graph_for_clause("self.reading + self.limit = self.limit");
+        assert_ieee_law(&strict_sum);
+        assert!(
+            applications(&strict_sum).iter().any(|application| {
+                matches!(
+                    application.operation.mode(),
+                    Some(fsl_semantics::check::OperationMode::Rounding(
+                        RoundingMode::Exact
+                    ))
+                )
+            }),
+            "bare float addition retains strict exact rounding metadata"
+        );
+        let converted_sum = graph_for_clause(
+            "convert<Float64[nearest-even]>(self.reading) + convert<Float64[nearest-even]>(self.limit) <= convert<Float64[nearest-even]>(self.limit)",
+        );
+        assert_ieee_law(&converted_sum);
+        assert!(
+            applications(&converted_sum).iter().any(|application| {
+                matches!(
+                    application.operation.mode(),
+                    Some(fsl_semantics::check::OperationMode::Rounding(
+                        RoundingMode::NearestEven
+                    ))
+                )
+            }),
+            "converted float addition retains nearest-even rounding metadata"
+        );
+
+        let reading = filament_exact::IeeeValue::binary64(0x3ff0_0000_0000_0000);
+        let limit = filament_exact::IeeeValue::binary64(0x3ca0_0000_0000_0000);
+        let strict = filament_exact::evaluate_ieee(
+            filament_exact::IeeeOperation::Add(reading, limit),
+            RoundingMode::Exact,
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            strict,
+            Ok(filament_exact::Outcome::Refused(filament_exact::Refusal::IeeeNotExact {
+                would_be,
+                ..
+            })) if would_be.contains(filament_exact::IeeeFlag::Inexact)
+        ));
+        let rounded = filament_exact::evaluate_ieee(
+            filament_exact::IeeeOperation::Add(reading, limit),
+            RoundingMode::NearestEven,
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            rounded,
+            Ok(filament_exact::Outcome::Completed(result))
+                if result.value().bits() == 0x3ff0_0000_0000_0000
+                    && result.flags().contains(filament_exact::IeeeFlag::Inexact)
+        ));
     }
 
     #[trace("TC-3005", "FR-056-AC-58")]
@@ -3209,6 +3325,48 @@ mod float_members {
         ] {
             assert_eq!(check_clause(clause), Ok(()), "{clause}");
         }
+        let nan = filament_exact::IeeeValue::binary64(0x7ff8_0000_0000_0000);
+        let plus_zero = filament_exact::IeeeValue::binary64(0);
+        let minus_zero = filament_exact::IeeeValue::binary64(0x8000_0000_0000_0000);
+        assert!(matches!(
+            filament_exact::compare_ieee(
+                filament_exact::IeeeComparison::NumericEqual,
+                nan,
+                nan,
+                &mut ieee_meter(),
+            ),
+            Ok(filament_exact::Outcome::Completed(false))
+        ));
+        assert!(matches!(
+            filament_exact::compare_ieee(
+                filament_exact::IeeeComparison::NumericEqual,
+                plus_zero,
+                minus_zero,
+                &mut ieee_meter(),
+            ),
+            Ok(filament_exact::Outcome::Completed(true))
+        ));
+        let set_type = filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Set,
+            ValueType::Float(FloatType::new(
+                IeeeWidth::Binary64,
+                RoundingMode::NearestEven,
+            )),
+            Some(filament_exact::CardinalityBound::at_most(2)),
+        );
+        let set = filament_exact::form(
+            &set_type,
+            vec![
+                filament_exact::Value::Float(plus_zero),
+                filament_exact::Value::Float(minus_zero),
+            ],
+            &mut ieee_meter(),
+        );
+        assert!(matches!(
+            set,
+            filament_exact::Outcome::Completed(filament_exact::Value::Collection(value))
+                if value.elements().len() == 2
+        ));
     }
 
     #[trace("TC-3005", "FR-056-AC-59")]
@@ -3222,6 +3380,44 @@ mod float_members {
             "self.a + 1 = self.a",
             "self.a = convert<Float64[nearest-even]>(self.a)",
         ] {
+            let refusals = check_clause_with_diagnostics(clause)
+                .expect_err("incompatible float/exact operands produce no checked graph");
+            assert_eq!(refusals.len(), 1, "{clause}: {refusals:?}");
+            let refusal = &refusals[0];
+            assert_eq!(refusal.cause.code(), Code::IllTyped, "{clause}");
+            assert_eq!(refusal.cause.cause(), Some("type-mismatch"), "{clause}");
+            assert_eq!(
+                refusal.location.origin,
+                filament_semantic_value::location::ExpressionOwner::StateClause {
+                    clause: "I".to_owned(),
+                    index: 0,
+                },
+                "the diagnostic identifies the source clause owning the rejected operator: {clause}: {refusal:?}"
+            );
+            match &refusal.cause {
+                CheckCause::OperandTypeMismatch {
+                    left_type,
+                    right_type,
+                    ..
+                } => {
+                    assert_ne!(left_type, right_type, "{clause}");
+                    let operand_types = format!("{left_type:?} {right_type:?}");
+                    assert!(operand_types.contains("Float"), "{clause}: {operand_types}");
+                    if clause.contains("convert<Float64") {
+                        assert!(
+                            operand_types.matches("Float").count() >= 2,
+                            "both rounded and exact float types are retained: {clause}: {operand_types}"
+                        );
+                    } else {
+                        assert!(
+                            operand_types.contains("Integer")
+                                || operand_types.contains("Binary32"),
+                            "both float and exact/narrow float types are retained: {clause}: {operand_types}"
+                        );
+                    }
+                }
+                other => panic!("typed operand mismatch for {clause}: {other:?}"),
+            }
             assert_eq!(
                 check_clause(clause),
                 Err(vec![(Code::IllTyped, Some("type-mismatch".to_owned()))]),

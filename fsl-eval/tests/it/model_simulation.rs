@@ -2588,3 +2588,30 @@ fn a_float_field_model_explores_by_its_ieee_bits() {
     assert_eq!(successors, [0x0000_0000_0000_0000, 0x8000_0000_0000_0000]);
     assert_eq!(stats(&explore(&from_zero)).0, 2);
 }
+
+/// FR-056-AC-58 (TC-3005): model state identity retains the Float64 bits of
+/// a field, including the sign bit on zero.
+#[trace("TC-3005", "FR-056-AC-58")]
+#[test]
+fn float_model_state_keys_distinguish_signed_zero() {
+    let mut world = float_world();
+    let plus_zero = float_start(&mut world, "plus-zero", "0000000000000000");
+    let minus_zero = float_start(&mut world, "minus-zero", "8000000000000000");
+    let system = system(&world, vec![plus_zero, minus_zero], &["c1"], UNLIMITED);
+    let initial = system.initial();
+    assert_eq!(initial.len(), 2, "both signed-zero snapshots are admitted");
+    let plus = initial
+        .iter()
+        .find(|state| float_bits(state.state(), "c1") == 0x0000_0000_0000_0000)
+        .expect("the +0 state is present");
+    let minus = initial
+        .iter()
+        .find(|state| float_bits(state.state(), "c1") == 0x8000_0000_0000_0000)
+        .expect("the -0 state is present");
+    let (_, plus_key) = system.state_key(plus).expect("plus-zero key encodes");
+    let (_, minus_key) = system.state_key(minus).expect("minus-zero key encodes");
+    assert_ne!(
+        plus_key, minus_key,
+        "states differing only by signed zero have distinct keys"
+    );
+}

@@ -2411,6 +2411,15 @@ impl<'a> Typer<'a> {
             }
         }
         Ok(match peer {
+            Some(peer)
+                if matches!(peer.as_ref(), ValueType::Float(_))
+                    && matches!(expression.node(), ExprNode::Integer(_)) =>
+            {
+                // An exact integer literal is not a Float operand merely
+                // because equality has a Float peer. Keep its admitted type
+                // so the refusal can retain both operand types.
+                Goal::Infer(expression, None, location)
+            }
             Some(peer) if contextual(expression) => {
                 Goal::Expect(expression, Expected::Checked(peer), location)
             }

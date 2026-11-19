@@ -2568,6 +2568,31 @@ fn mismatch(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
 }
 
+fn operand_mismatch(
+    location: &Location,
+    operator: fsl_forms::BinaryOperator,
+    left_type: ValueType,
+    right_type: ValueType,
+) -> CheckRefusal {
+    CheckRefusal {
+        location: location.clone(),
+        cause: CheckCause::OperandTypeMismatch {
+            operator,
+            left_type: Box::new(left_type),
+            right_type: Box::new(right_type),
+        },
+    }
+}
+
+fn ordering_binary_operator(operator: OrderingOperator) -> fsl_forms::BinaryOperator {
+    match operator {
+        OrderingOperator::Less => fsl_forms::BinaryOperator::Less,
+        OrderingOperator::LessOrEqual => fsl_forms::BinaryOperator::LessOrEqual,
+        OrderingOperator::Greater => fsl_forms::BinaryOperator::Greater,
+        OrderingOperator::GreaterOrEqual => fsl_forms::BinaryOperator::GreaterOrEqual,
+    }
+}
+
 /// Whether the steps `path` read the clock place whose steps are `steps`: a
 /// union case is the field read after its union field, and a selector is a
 /// slot step. Each selector's index in `path` comes back, in order.
@@ -3794,6 +3819,29 @@ impl<'a> Typer<'a> {
         {
             return Err(ineligible(location));
         }
+        let mismatch_operator = match operator {
+            EqualityOperator::Equal => fsl_forms::BinaryOperator::Equal,
+            EqualityOperator::NotEqual => fsl_forms::BinaryOperator::NotEqual,
+        };
+        if matches!(&left.node.value_type, ValueType::Float(_))
+            || matches!(&right.node.value_type, ValueType::Float(_))
+        {
+            let same_float_type = matches!(
+                (&left.node.value_type, &right.node.value_type),
+                (ValueType::Float(left), ValueType::Float(right)) if left == right
+            );
+            if !same_float_type
+                || left.conversion_target.is_some()
+                || right.conversion_target.is_some()
+            {
+                return Err(operand_mismatch(
+                    location,
+                    mismatch_operator,
+                    left.node.value_type.clone(),
+                    right.node.value_type.clone(),
+                ));
+            }
+        }
         if let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.node.value_type, &right.node.value_type)
         {
@@ -4060,10 +4108,20 @@ impl<'a> Typer<'a> {
         let (ValueType::Float(left_type), ValueType::Float(right_type)) =
             (&left.value_type, &right.value_type)
         else {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         };
         if left_type != right_type {
-            return Err(mismatch(location));
+            return Err(operand_mismatch(
+                location,
+                ordering_binary_operator(operator),
+                left.value_type.clone(),
+                right.value_type.clone(),
+            ));
         }
         // Each operand is evaluated once and read by every part of the
         // composition: an operand that is not already a slot read or a
