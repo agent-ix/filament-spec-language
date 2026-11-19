@@ -187,3 +187,67 @@ fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
         .expect("en-1 registers");
     assert_eq!(en1.state_graph_forms().len(), 3);
 }
+
+/// The Zeno-only `Rpc` variant of FR-244-AC-7: the time invariant
+/// `x <= 0 ms` holds at every state and `reply` needs `x >= 0 ms`, so no
+/// positive delay is ever admissible and the only infinite path is the
+/// zero-delay `send`, `reply`, `reset` cycle.
+fn zeno_only_unit() -> String {
+    let claims = format!(
+        "{CLAIMS}temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
+         {{ always holds(not c.late) }}\n"
+    );
+    crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims).replace(
+        "time invariant ServerDeadline when { self.inflight } { self.x <= 3 ms }",
+        "time invariant ServerDeadline when { true } { self.x <= 0 ms }",
+    )
+}
+
+/// FR-244-AC-7, FR-245-AC-11: a state-graph item's certificate certifies the
+/// reachable timed graph with no `admitted` witness and is accepted over a
+/// Zeno-only graph; a temporal claim over the same subject still settles
+/// `NoAdmittedBehaviour` (negative: its witness requirement stays).
+#[trace("TC-3030", "FR-244-AC-7")]
+#[trace("TC-3030", "FR-245-AC-11")]
+#[test]
+#[ignore = "QSL-2305: a state-graph zone certificate over a Zeno-only graph is not emitted and accepted without the admitted witness yet"]
+fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness() {
+    let unit = zeno_only_unit();
+    assert!(unit.contains("when { true } { self.x <= 0 ms }"), "{unit}");
+    let ws = Workspace::new("timed-sg-zeno-only");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [
+            {"claim": "Replied"},
+            {"claim": "BackToIdle"},
+            {"claim": "NoLateReply"}
+        ]}),
+    ));
+    for index in [0, 1] {
+        let item = run.item(index);
+        assert_eq!(label(&item), "proved", "{item}");
+        assert_eq!(item["certificate"]["accepted"], true, "{item}");
+        assert_eq!(item["record"]["certification"], "certified", "{item}");
+        assert!(
+            item["certificate"]["document"].get("admitted").is_none(),
+            "a state-graph certificate carries no admitted witness: {item}"
+        );
+    }
+    assert!(
+        run.item(1)["certificate"]["document"]["state_graph"]["ef_nodes"]
+            .as_array()
+            .is_some_and(|nodes| !nodes.is_empty()),
+        "{}",
+        run.item(1)
+    );
+    let temporal = run.item(2);
+    assert_eq!(label(&temporal), "inconclusive", "{temporal}");
+    assert!(
+        temporal.to_string().contains("no-admitted-behaviour"),
+        "{temporal}"
+    );
+    assert!(temporal["certificate"].is_null(), "{temporal}");
+}
