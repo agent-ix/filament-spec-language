@@ -453,7 +453,6 @@ fn digital_values_for_a_strict_guard_are_rejected() {
 /// boundary regions.
 #[trace("TC-2491", "FR-922-AC-3")]
 #[test]
-#[ignore = "QSL-2156: boundary-region certificates for expected elapsed time not implemented yet"]
 fn strict_mean_time_is_certified_over_boundary_regions() {
     let world = retx(
         STRICT,
