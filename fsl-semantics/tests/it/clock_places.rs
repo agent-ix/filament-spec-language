@@ -80,9 +80,7 @@ const DENSE: &str = "time Config dense unit ms;\n";
 /// data reads and writes; `self.u = self.t` refuses
 /// `clock-read-outside-constraint` at `self.t`, and a `Timer` literal in a
 /// `let` refuses `clock-write` at the literal. The checked `Timer` record
-/// lists `n` only. The three objects' clocks are `fsl-eval`'s. Not
-/// covered: the tuple field `p: (Clock, Int)`, which a package cannot
-/// declare (STD-493 item 16).
+/// lists `n` only. The three objects' clocks are `fsl-eval`'s.
 #[trace("TC-685")]
 #[test]
 fn a_package_record_holds_its_clock_as_a_place_of_its_object() {
