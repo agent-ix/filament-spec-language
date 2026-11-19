@@ -3762,10 +3762,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     })
 }
 
-pub(super) fn execute_prepared(
-    prepared: PreparedRun,
-    settle: &settle::Settle<'_>,
-) -> Result<RunResult> {
+fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),

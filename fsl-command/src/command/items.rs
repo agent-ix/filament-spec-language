@@ -447,12 +447,12 @@ pub(super) fn run_bytes(
                         "tl_lowering is not an item selection",
                     ));
                 }
-                Ok(package @ super::PreparedRun::Package(_)) if kind == "call" => {
+                Ok(super::PreparedRun::Package(package)) if kind == "call" => {
                     // FR-1039: each call selection executes from the admitted
                     // package bytes. The package route owns admission and
                     // evaluation; this batch layer only preserves selection
                     // order and result framing.
-                    ItemExecution::Run(Box::new(super::execute_prepared(package, settle)))
+                    ItemExecution::Run(Box::new(super::package_run::execute(*package)))
                 }
                 Ok(super::PreparedRun::Package(_)) => {
                     return Err(refused(
