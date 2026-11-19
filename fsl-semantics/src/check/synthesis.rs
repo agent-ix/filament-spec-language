@@ -7,57 +7,88 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
+use super::ir::CheckedBody;
 use super::{CheckCause, CheckRefusal, Scope, Signatures, Typer};
 use crate::family::{CheckContext, DiagnosticSink, ScopeStack, StageLimits};
+
+/// One synthesis declaration after its names and expressions pass S3.
+#[derive(Debug)]
+pub(crate) struct CheckedSynthesis {
+    /// The S2 declaration and its authored spans.
+    pub(crate) form: fsl_forms::SynthesisForm,
+    /// The resolved candidate grammar type.
+    pub(crate) grammar: ValueType,
+    /// The resolved finite candidate domain type.
+    pub(crate) domain: ValueType,
+    /// The checked `satisfies` block.
+    pub(crate) satisfies: CheckedBody,
+    /// The checked objective when the declaration has one.
+    pub(crate) objective: Option<CheckedBody>,
+    /// The candidate binder name shared by both checked expressions.
+    pub(crate) slot_names: Vec<String>,
+}
 
 /// Resolve and type-check each source synthesis declaration (FR-754 S3).
 pub(crate) fn check_forms(
     forms: &[fsl_forms::SynthesisForm],
     scope: &Scope,
     signatures: &Signatures,
-) -> Vec<CheckRefusal> {
-    let mut refusals = Vec::new();
+) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
+    let mut checked = Vec::with_capacity(forms.len());
     for form in forms {
         let location = Location::root(Origin::Expression);
         let Some(domain) = named_type(scope, &form.domain.name) else {
-            refusals.push(CheckRefusal {
+            return Err(vec![CheckRefusal {
                 location,
                 cause: CheckCause::MissingName(form.domain.name.clone()),
-            });
-            continue;
+            }]);
         };
-        if named_type(scope, &form.grammar.name).is_none() {
-            refusals.push(CheckRefusal {
+        let Some(grammar) = named_type(scope, &form.grammar.name) else {
+            return Err(vec![CheckRefusal {
                 location,
                 cause: CheckCause::MissingName(form.grammar.name.clone()),
-            });
-            continue;
-        }
+            }]);
+        };
 
-        let parameters = vec![(form.name.name.clone(), domain.clone())];
-        if let Err(refusal) = check_expression(
+        let candidate_type = if matches!(grammar, ValueType::Reference(_)) {
+            grammar.clone()
+        } else {
+            domain.clone()
+        };
+        let parameters = vec![(form.name.name.clone(), candidate_type)];
+        let (satisfies, slot_names) = check_expression(
             scope,
             signatures,
             &form.satisfies.expression,
             &parameters,
             &ValueType::Boolean,
-        ) {
-            refusals.push(refusal);
-            continue;
-        }
-        if let Some(objective) = &form.objective {
-            if let Err(refusal) = check_expression(
-                scope,
-                signatures,
-                &objective.expression.expression,
-                &parameters,
-                &domain,
-            ) {
-                refusals.push(refusal);
-            }
-        }
+        )
+        .map_err(|refusal| vec![refusal])?;
+        let objective = if let Some(objective) = &form.objective {
+            Some(
+                check_expression(
+                    scope,
+                    signatures,
+                    &objective.expression.expression,
+                    &parameters,
+                    &domain,
+                )
+                .map_err(|refusal| vec![refusal])?
+                .0,
+            )
+        } else {
+            None
+        };
+        checked.push(CheckedSynthesis {
+            form: form.clone(),
+            grammar,
+            domain,
+            satisfies,
+            objective,
+            slot_names,
+        });
     }
-    refusals
+    Ok(checked)
 }
 
 fn named_type(scope: &Scope, name: &str) -> Option<ValueType> {
@@ -73,7 +104,7 @@ fn check_expression(
     expression: &fsl_forms::Expression,
     parameters: &[(String, ValueType)],
     expected: &ValueType,
-) -> Result<(), CheckRefusal> {
+) -> Result<(CheckedBody, Vec<String>), CheckRefusal> {
     let location = Location::root(Origin::Expression);
     let limits = super::CheckingLimits::default();
     let mut nodes = 0;
@@ -105,7 +136,7 @@ fn check_expression(
             cause: CheckCause::NonBooleanRoot,
         });
     }
-    Ok(())
+    Ok((body, typer.slot_names().to_vec()))
 }
 
 /// Return the first component of `value_type` whose value set is unbounded.

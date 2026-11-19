@@ -3128,10 +3128,7 @@ impl PackageDeclarations {
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
         let signatures = Signatures::new(signatures);
-        let synthesis_refusals = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures);
-        if !synthesis_refusals.is_empty() {
-            return Err(synthesis_refusals);
-        }
+        let checked_syntheses = synthesis::check_forms(&self.synthesis_forms, &scope, &signatures)?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
             if !seen_operations.insert((operation.receiver_type.clone(), operation.member.clone()))
@@ -6650,6 +6647,21 @@ impl PackageDeclarations {
                 Err(refusal) => refusals.push(refusal),
             }
         }
+        let mut lowered_syntheses = Vec::with_capacity(checked_syntheses.len());
+        for (index, checked) in checked_syntheses.iter().enumerate() {
+            let location = lowering::synthesis_location(index, &checked.form.name.name);
+            type_spans.insert(
+                match &location.origin {
+                    Origin::TypeDeclaration { name } => name.clone(),
+                    _ => continue,
+                },
+                checked.form.span,
+            );
+            match lowering.synthesis_request(index, checked) {
+                Ok(key) => lowered_syntheses.push(key),
+                Err(refusal) => refusals.push(refusal),
+            }
+        }
         // FSpec FR-640: the nodes each checked random parameter and
         // workload refers to.
         let lowered_rewards = match lowering.probabilistic_declarations(&probabilistic_model) {
@@ -7252,6 +7264,9 @@ impl PackageDeclarations {
             return Err(unlowered());
         }
         if lowered_state_graph.len() != checked_state_graph_claims.len() {
+            return Err(unlowered());
+        }
+        if lowered_syntheses.len() != checked_syntheses.len() {
             return Err(unlowered());
         }
         let lowered_probabilistic = lowered_probabilistic.ok_or_else(unlowered)?;

@@ -89,6 +89,7 @@ mod refinement_rows;
 mod state;
 mod state_graph;
 mod state_transition;
+mod synthesis;
 mod temporal;
 mod terminal;
 mod timed_clause;
@@ -124,6 +125,7 @@ pub(crate) use state::{
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
+pub(crate) use synthesis::synthesis_location;
 pub(crate) use temporal::{
     temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
     TemporalSite,
