@@ -83,3 +83,13 @@ scope:
     and `b` as `{"reference": {"population": P, "key": "child"}}` reports `success`, `truth: true`, exit 0; a Boolean claim `function short using v(t: Text[0,
     8; nfc]): Boolean pure { size(t) < 3 }` selected with `t` `{"kind": "text", "text": "ab"}` over the same snapshot reports `success`.'
 ```
+
+## Dispositions
+
+Round 1 at `98bf9a61cab8ec925022329989b14bf212aa61f4`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | still-open | Commit 98bf9a61ca removed the full missing-parameter check added in d788390536. The missing-first fixture now passes, but declaring (p[4], q[1], flag), supplying the same population for p and q and omitting flag still reaches the binding conflict for q before checking flag. FR-109 requires FR-100 name binding, and FR-100-AC-16 gives missing parameters precedence over all value admission. Check all slots for missing arguments after validating supplied names and before converting the first slot. |
+| FND-002 | fixed | The helper takes ownership of the accumulator. Both no-op branches return the environment directly and the final insertion consumes it. |
+| FND-003 | fixed | Targeted rustfmt reported only unchanged imports at the top of clause.rs. The edited continuation and integration-test import now match rustfmt. |

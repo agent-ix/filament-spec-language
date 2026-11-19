@@ -889,7 +889,7 @@ fn function_claim_maps_population_and_reference_arguments_by_role() {
 /// before later population arguments are admitted.
 #[trace("FR-100-AC-4", "FR-650-AC-7")]
 #[test]
-fn function_claim_reports_missing_parameter_before_later_population_conflict() {
+fn function_claim_reports_missing_first_parameter_before_population_conflict() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("unbound-before-population-claim");
     spine::write(&path, Case::Healthy).unwrap();
@@ -915,6 +915,66 @@ fn function_claim_reports_missing_parameter_before_later_population_conflict() {
     let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
     request.selection = fsl_replay::spine::ClauseRunSelection::Function {
         name: "needsFlag".to_owned(),
+        arguments: vec![
+            fsl_replay::spine::ClauseArgument {
+                parameter: "p".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+            fsl_replay::spine::ClauseArgument {
+                parameter: "q".to_owned(),
+                value: fsl_replay::spine::ClauseArgumentValue::Form(
+                    json!({"population": population}),
+                ),
+            },
+        ],
+        snapshot,
+        snapshot_path: None,
+    };
+
+    let report = run_clause(request).unwrap();
+    let refusal = match report.disposition {
+        ClauseDisposition::ArgumentRefusal(refusal) => refusal,
+        other => panic!("expected a missing-parameter refusal, got {other:?}"),
+    };
+    assert!(
+        matches!(*refusal, fsl_replay::spine::RunRefusal::UnboundParameter { ref parameter } if parameter == "flag"),
+        "{refusal:?}"
+    );
+}
+
+/// FR-100-AC-4 / FR-650-AC-7: an unbound final parameter is reported before
+/// earlier population arguments are admitted.
+#[trace("FR-100-AC-4", "FR-650-AC-7")]
+#[test]
+fn function_claim_reports_missing_last_parameter_before_population_conflict() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join("unbound-last-before-population-claim");
+    spine::write(&path, Case::Healthy).unwrap();
+
+    let mut program = std::fs::read_to_string(path.join("spine-unit.native")).unwrap();
+    program.push_str(
+        "\nfunction needsFlagLast using v(p: Population<Config::ConfigVersion>[4], \
+         q: Population<Config::ConfigVersion>[1], flag: Boolean): Boolean pure { true }\n",
+    );
+    std::fs::write(path.join("spine-unit.native"), program).unwrap();
+
+    let mut request = spine::request(&path, Case::Healthy).unwrap();
+    let snapshot = match &request.selection {
+        fsl_replay::spine::ClauseRunSelection::Clause(clause) => match &clause.input {
+            fsl_semantics::model::observation::ClauseSelectionInput::Current {
+                snapshot, ..
+            } => snapshot.clone(),
+            _ => panic!("healthy spine selection carries its current snapshot"),
+        },
+        _ => panic!("healthy spine selection is a clause"),
+    };
+    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
+    request.selection = fsl_replay::spine::ClauseRunSelection::Function {
+        name: "needsFlagLast".to_owned(),
         arguments: vec![
             fsl_replay::spine::ClauseArgument {
                 parameter: "p".to_owned(),
