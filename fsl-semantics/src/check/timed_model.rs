@@ -27,7 +27,7 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,22 +38,22 @@ use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
 };
-use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::RawSourceRef;
 
 pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
+use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
 use super::refusal::TimedConstruct;
 use super::refusal::{
     CheckCause, CheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
-    ClauseView, PopulationDomain, StateClauseDeclaration,
+    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
+    check_clause, check_clause_named, population_of,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -756,6 +756,9 @@ pub struct PresencePlace {
     pub(crate) owner: EffectiveId,
     pub(crate) field: String,
     pub(crate) case: Option<String>,
+    /// The full non-collection path, allowing `present(self.s.0.Case)` to
+    /// identify a nested union clock without flattening its tuple/record path.
+    pub(crate) path: Vec<PlaceStep>,
     /// Whether the place is the element of a `Sequence<Option<Clock>>`
     /// field, whose presences `forall(e in r.f: present(e))` reads.
     pub(crate) slot: bool,
@@ -808,28 +811,50 @@ fn presence_places(clocks: &[ClockField]) -> Vec<PresencePlace> {
     clocks
         .iter()
         .filter(|clock| clock.guarded)
-        .filter_map(|clock| match clock.path.as_slice() {
-            [PlaceStep::Field(field)] => Some(PresencePlace {
+        .filter_map(|clock| {
+            let (field, case, slot) = match clock.path.as_slice() {
+                [PlaceStep::Field(field)] if clock.bit => (field.clone(), None, false),
+                [PlaceStep::Field(field), PlaceStep::Slot(_)] if clock.bit => {
+                    (field.clone(), None, true)
+                }
+                _ => {
+                    let (field, case) = place_presence_key(&clock.path)?;
+                    (field, case, false)
+                }
+            };
+            Some(PresencePlace {
                 owner: clock.owner.clone(),
-                field: field.clone(),
-                case: None,
-                slot: false,
-            }),
-            [PlaceStep::Field(field), PlaceStep::Union(case)] => Some(PresencePlace {
-                owner: clock.owner.clone(),
-                field: field.clone(),
-                case: Some(case.clone()),
-                slot: false,
-            }),
-            [PlaceStep::Field(field), PlaceStep::Slot(_)] if clock.bit => Some(PresencePlace {
-                owner: clock.owner.clone(),
-                field: field.clone(),
-                case: None,
-                slot: true,
-            }),
-            _ => None,
+                field,
+                case,
+                path: clock.path.clone(),
+                slot,
+            })
         })
         .collect()
+}
+
+/// The key an expression and an evaluation environment use for one guarded
+/// clock path: its root object field, and an optional case key. Direct paths
+/// retain their existing field/case form; deeper paths carry an opaque suffix
+/// derived from their checked steps.
+pub(super) fn place_presence_key(path: &[PlaceStep]) -> Option<(String, Option<String>)> {
+    let [PlaceStep::Field(field), suffix @ ..] = path else {
+        return None;
+    };
+    if suffix.is_empty() {
+        return Some((field.clone(), None));
+    }
+    if suffix.iter().any(|step| matches!(step, PlaceStep::Slot(_)))
+        || !suffix
+            .iter()
+            .any(|step| matches!(step, PlaceStep::Union(_)))
+    {
+        return None;
+    }
+    if let [PlaceStep::Union(case)] = suffix {
+        return Some((field.clone(), Some(case.clone())));
+    }
+    Some((field.clone(), Some(format!("@clock-path:{suffix:?}"))))
 }
 
 /// One disjunct of a state predicate that reads the presence of
@@ -2995,11 +3020,7 @@ fn part_predicate(
                 // the data predicate.
                 DataLiteral::Family(_) | DataLiteral::Presence(_) => return None,
             };
-            if positive {
-                Some(cut)
-            } else {
-                cut.negated()
-            }
+            if positive { Some(cut) } else { cut.negated() }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -5172,7 +5193,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
+    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

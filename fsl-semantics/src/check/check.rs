@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
-};
 use fsl_foundation::Span;
+use fsl_foundation::source::node_table::{
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
-use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
+use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
+use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, TypeEnvironment,
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, TypeEnvironment,
+    admits_equality_conversion,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    check_comparable, evaluate_quantity_unit, result_unit,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -2684,9 +2684,9 @@ pub(super) struct AbsentComparison<'e> {
     /// The owner's location.
     pub(super) owner_location: Location,
     /// The place's field.
-    pub(super) field: &'e str,
+    pub(super) field: String,
     /// The union case of the place, when it is one.
-    pub(super) case: Option<&'e str>,
+    pub(super) case: Option<String>,
     /// Whether the comparison requires the place present (`!=`).
     pub(super) present: bool,
 }
@@ -3585,7 +3585,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Rational(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -3644,7 +3644,7 @@ impl<'a> Typer<'a> {
                 return Err(CheckRefusal::ill_typed(
                     location,
                     IllTypedCause::AmbiguousLiteral,
-                ))
+                ));
             }
             Some(ValueType::Decimal(domain)) => domain,
             Some(_) => return Err(mismatch(location)),
@@ -4265,7 +4265,7 @@ impl<'a> Typer<'a> {
                         return Err(CheckRefusal::ill_typed(
                             location,
                             IllTypedCause::AmbiguousLiteral,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4541,38 +4541,47 @@ impl<'a> Typer<'a> {
     pub(super) fn place_operand<'e>(
         &self,
         operand: fsl_forms::ExprRef<'e>,
-    ) -> Option<(fsl_forms::ExprRef<'e>, &'e str, Option<&'e str>, usize)> {
+    ) -> Option<(fsl_forms::ExprRef<'e>, String, Option<String>, usize)> {
         if self.presence_places.is_empty() {
             return None;
         }
-        let fsl_forms::ExprNode::Field {
-            operand: owner,
-            field,
-            ..
-        } = operand.node()
-        else {
-            return None;
-        };
-        let names = |field: &str, case: Option<&str>| {
-            self.presence_places
-                .iter()
-                .any(|place| !place.slot && place.field == field && place.case.as_deref() == case)
-        };
-        if names(field, None) {
-            return Some((operand.at(*owner), field.as_str(), None, 1));
+        let mut path = Vec::new();
+        let mut owner = operand;
+        loop {
+            match owner.node() {
+                fsl_forms::ExprNode::Field {
+                    operand: before,
+                    field,
+                    ..
+                } => {
+                    path.push(field.clone());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::Index {
+                    operand: before,
+                    index,
+                } => {
+                    let fsl_forms::ExprNode::Integer(position) = owner.at(*index).node() else {
+                        return None;
+                    };
+                    path.push(position.to_u64()?.to_string());
+                    owner = owner.at(*before);
+                }
+                fsl_forms::ExprNode::SelfRef if !path.is_empty() => break,
+                _ => return None,
+            }
         }
-        let fsl_forms::ExprNode::Field {
-            operand: object,
-            field: union,
-            ..
-        } = operand.at(*owner).node()
-        else {
-            return None;
-        };
-        names(union, Some(field)).then(|| {
-            let owner = operand.at(*owner);
-            (owner.at(*object), union.as_str(), Some(field.as_str()), 2)
-        })
+        path.reverse();
+        let place = self.presence_places.iter().find(|place| {
+            !place.slot
+                && place.path.len() == path.len()
+                && place.path.iter().zip(&path).all(|(step, read)| match step {
+                    super::lowering::PlaceStep::Field(name)
+                    | super::lowering::PlaceStep::Union(name) => name == read,
+                    super::lowering::PlaceStep::Slot(_) => false,
+                })
+        })?;
+        Some((owner, place.field.clone(), place.case.clone(), path.len()))
     }
 
     /// Whether `operand`, the operand of a field read `operand.op`, is
@@ -5804,7 +5813,7 @@ impl<'a> Typer<'a> {
         let source_type = source_type.clone();
         match (form, identity) {
             (Accumulation::Fold, false) | (Accumulation::Reduce, true) => {
-                return Err(mismatch(location))
+                return Err(mismatch(location));
             }
             (Accumulation::Fold, true) | (Accumulation::Reduce, false) => {}
         }

@@ -21,7 +21,7 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
+use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
@@ -733,7 +733,7 @@ impl Lowering<'_> {
                                         CheckCause::InternalFault(Box::new(
                                             KeyFault::UnknownDeclaration(clock.field().clone()),
                                         )),
-                                    ))
+                                    ));
                                 }
                                 (false, _) => LeafTerm::reference(integer.clone()),
                             },
@@ -804,6 +804,25 @@ impl Lowering<'_> {
         self.timed_places
             .iter()
             .find(|place| place.owner == owner && place.path == path)
+            .map(|place| place.node.clone())
+    }
+
+    /// The checked clock-place template selected by a `PlacePresence` node,
+    /// whose field/case pair is the stable key assigned from its full path.
+    pub(super) fn timed_place_presence(
+        &self,
+        owner: EffectiveId,
+        field: &str,
+        case: Option<&str>,
+    ) -> Option<NodeKey> {
+        self.timed_places
+            .iter()
+            .find(|place| {
+                place.owner == owner
+                    && crate::check::timed_model::place_presence_key(&place.path).is_some_and(
+                        |(root, nested_case)| root == field && nested_case.as_deref() == case,
+                    )
+            })
             .map(|place| place.node.clone())
     }
 

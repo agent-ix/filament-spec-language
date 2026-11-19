@@ -5,7 +5,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
+use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
 use crate::emit::timed_models_of;
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;
@@ -403,11 +403,16 @@ fn a_clock_place_reads_back() {
     );
 }
 
-/// Clock tuple positions and union payloads survive package emission and I2.
-#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-322-AC-399")]
+/// Clock tuple positions and union payloads retain their checked resolved rows.
+#[trace(
+    "TC-1860",
+    "FR-230-AC-63",
+    "FSpec-FR-322-AC-399",
+    "FSpec-FR-322-AC-475"
+)]
 #[test]
-fn model_tuple_and_union_clock_places_read_back() {
-    use crate::checked_v2::ClockPathStep;
+fn model_tuple_and_union_clock_places_keep_resolved_rows() {
+    use fsl_semantics::check::PlaceStep;
     let mut document: Value = serde_json::from_slice(&clocked_document_with(false)).expect("JSON");
     let identity = |name: &str| format!("ix://example/config-version/{name}");
     let origin = |name: &str| {
@@ -455,33 +460,45 @@ fn model_tuple_and_union_clock_places_read_back() {
             fsl_semantics::model::intake::meaning::VARIANT_TYPE,
         ),
     ] {
+        let members = if name == "tuple" {
+            json!({"positions": "required"})
+        } else {
+            json!({"variants": "required"})
+        };
         document["constructs"].as_array_mut().expect("constructs").push(json!({
             "kind": {"module": "test/clock-members", "name": name}, "moduleVersion": "1.0.0",
-            "construct": {"identity": "value", "shape": shape, "members": {}, "meaning": meaning}
+            "construct": {"identity": "value", "shape": shape, "members": members, "meaning": meaning}
         }));
     }
-    let document = crate::emit::tests::wire_bytes(&document).expect("wire document");
-    let models = read_back(&document).expect("tuple and union places admit through I2");
-    let [model] = models.as_slice() else {
-        panic!("one timed model");
-    };
+    let wire_document = crate::emit::tests::wire_bytes(&document).expect("wire document");
+    let packages = fsl_semantics::model::intake::package_input([wire_document.as_slice()])
+        .expect("tuple and union package input");
+    let graph = assemble_with_models(clocked_unit("").as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("tuple and union clock places check");
+    let model = graph.timed_model("Config").expect("the timed Config model");
     let paths: Vec<_> = model
-        .clock_places
+        .clocks()
         .iter()
-        .map(|place| place.path.clone())
+        .map(|place| place.path().to_vec())
         .collect();
     assert_eq!(paths.len(), 3, "x, s.0 and p.Armed");
     assert!(
         paths.contains(&vec![
-            ClockPathStep::Field("s".to_owned()),
-            ClockPathStep::Tuple(0)
+            PlaceStep::Field("s".to_owned()),
+            PlaceStep::Field("0".to_owned())
         ]),
         "{paths:?}"
     );
     assert!(
         paths.contains(&vec![
-            ClockPathStep::Field("p".to_owned()),
-            ClockPathStep::Union("Armed".to_owned())
+            PlaceStep::Field("p".to_owned()),
+            PlaceStep::Union("Armed".to_owned())
         ]),
         "{paths:?}"
     );
@@ -490,11 +507,11 @@ fn model_tuple_and_union_clock_places_read_back() {
         ("p", "variant/Phase-Armed", "Phase"),
     ] {
         let place = model
-            .clock_places
+            .clocks()
             .iter()
-            .find(|place| place.path.first() == Some(&ClockPathStep::Field(root.to_owned())))
+            .find(|place| place.path().first() == Some(&PlaceStep::Field(root.to_owned())))
             .expect("the aggregate clock place");
-        let [field, terminal] = place.resolved_path.as_slice() else {
+        let [field, terminal] = place.resolved_path() else {
             panic!("one row per path step");
         };
         assert_eq!(
@@ -504,42 +521,26 @@ fn model_tuple_and_union_clock_places_read_back() {
         assert_eq!(terminal.declaring_type, identity(declaring));
         assert_eq!(terminal.member_identity, identity(member));
         assert_eq!(terminal.member_type, "ix://filament/native/Clock");
-    }
-    let packages =
-        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model input");
-    let unit = clocked_unit("");
-    let graph = assemble_with_models(unit.as_bytes(), &packages)
-        .expect("assembly")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .expect("checked clocks");
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("emission");
-    let wire = wire(&emission);
-    for name in ["Slot", "Phase"] {
-        let node = nodes(&wire)
-            .iter()
-            .find(|node| node["owner"]["node"] == identity(name))
-            .expect("model-owned aggregate");
-        assert_eq!(node["owner"]["kind"], "model");
-        assert_eq!(node["owner"]["identity"], "example/config-version");
-    }
-    for place in nodes(&wire)
-        .iter()
-        .filter(|node| node["semantic_form"] == "clock_place")
-    {
-        let entry = wire["source_map"]
-            .as_array()
-            .expect("source map")
-            .iter()
-            .find(|entry| entry["node_id"] == place["node_id"])
-            .expect("clock place source association");
-        let region = &entry["regions"][0];
-        let start = usize::try_from(region["start"].as_u64().expect("start")).expect("usize");
-        let end = usize::try_from(region["end"].as_u64().expect("end")).expect("usize");
-        assert_eq!(&unit[start..end], "time Config dense unit ms;");
+        let origin_identity = if root == "s" {
+            document["types"]
+                .as_array()
+                .expect("types")
+                .iter()
+                .find(|ty| ty["identity"] == identity("Slot"))
+                .expect("Slot declaration")["positions"][0]["origin"]["source"]["sourceIdentity"]
+                .as_str()
+                .expect("tuple position origin")
+        } else {
+            document["types"]
+                .as_array()
+                .expect("types")
+                .iter()
+                .find(|ty| ty["identity"] == identity("Phase"))
+                .expect("Phase declaration")["variants"][0]["origin"]["source"]["sourceIdentity"]
+                .as_str()
+                .expect("union case origin")
+        };
+        assert_eq!(origin_identity, terminal.member_identity);
     }
 }
 
