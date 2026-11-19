@@ -542,9 +542,6 @@ pub(crate) fn check_type_invariant<'a>(
 /// only `check::mod`'s own state-clause checking constructs or reads one,
 /// never a caller outside `fsl-semantics`.
 pub struct ClauseDeclarations<'a> {
-    /// Temporal conditions use the package mode; declared state clauses keep
-    /// Linked definedness under either package mode.
-    pub(crate) mode: filament_semantic_value::checking::CheckMode,
     pub(crate) scope: &'a Scope,
     pub(crate) signatures: &'a Signatures,
     pub(crate) dispatch_tables: &'a [DispatchTable],
@@ -575,7 +572,6 @@ impl<'a> ClauseDeclarations<'a> {
     /// location (`ClauseDeclarations { location, ..declarations.at() }`).
     pub(crate) fn at(&self) -> Self {
         Self {
-            mode: self.mode,
             scope: self.scope,
             signatures: self.signatures,
             dispatch_tables: self.dispatch_tables,

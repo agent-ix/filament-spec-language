@@ -2392,7 +2392,6 @@ fn q14_count_refuses_unproved_range_at_check() {
 /// FR-766-AC-1: the same count into a domain that holds `[0, 5]` checks.
 #[trace("TC-2195", "FR-766-AC-1")]
 #[test]
-#[ignore = "QSL-2003: control for the linked count<N> range obligation, enabled with it"]
 fn q14_count_proves_when_the_bound_fits() {
     let package = plain();
     for kind in COUNTED_KINDS {

@@ -2092,35 +2092,54 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         assert_eq!(check(&unit, "AllBelow", failing, 1_000_000), unmet(step));
     }
 
-    // Declared state clauses retain Linked definedness in either package mode.
-    let text = witness_unit_text()
-        + "invariant RefusedDomain using v on Config::ConfigVersion at current { \
-        forall(n in ints(sequence[0, count<Zero>(m in ints(sequence[self.versionNumber]): m > 0)]): n < 500) }\n";
-    let domain_document = config_version_domain_document();
-    let packages =
-        fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
-    for mode in [CheckMode::Linked, CheckMode::Kernel] {
-        let (declarations, _) =
-            super::fixture_declarations(source(), "witness.native", text.as_bytes(), &packages);
-        let refusals = declarations.check(mode, Default::default()).unwrap_err();
-        assert_eq!(refusals.len(), 1, "{mode:?}: {refusals:?}");
-        let fsl_semantics::check::CheckCause::Unproved(fsl_semantics::check::Obligation::Range {
-            required,
-            proved,
-        }) = &refusals[0].cause
-        else {
-            panic!("{mode:?}: count is refused at check: {refusals:?}");
-        };
-        assert_eq!(required.lower, Some(0_i64.into()));
-        assert_eq!(required.upper, Some(0_i64.into()));
-        assert_eq!(proved.lower, Some(0_i64.into()));
-        assert_eq!(proved.upper, Some(3_i64.into()));
-    }
-
+    count_refusal_in_a_called_kernel_function_fails_the_domain_step();
     assert_eq!(
         check(&unit, "AllBelow", &record, 0),
         SeparationOutcome::Exhausted
     );
+}
+
+/// A kernel function's refused count retains the separation domain failure.
+#[trace("TC-743", "FR-268-AC-3")]
+#[test]
+fn count_refusal_in_a_called_kernel_function_fails_the_domain_step() {
+    let (base, packages) = config_version_unit_and_packages();
+    let text = base + "function z using v(x: Integer): Int[0, 0] pure { count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }\n\
+        function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] pure { xs }\n\
+        invariant RefusedDomain using v on Config::ConfigVersion at current { forall(n in ints(sequence[0, z(self.versionNumber)]): n < 500) }\n";
+    let compiled = crate::spine::lifecycle::compose_in_mode(
+        source(),
+        "witness.native",
+        text.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        crate::spine::lifecycle::ComposeModes {
+            check_mode: Some(CheckMode::Linked),
+            function_modes: &BTreeMap::from([("z".to_owned(), CheckMode::Kernel)]),
+        },
+    )
+    .expect("only the called function's count needs kernel checking");
+    let unit = Unit {
+        bytes: text.into_bytes(),
+        domain_document: config_version_domain_document(),
+        compiled,
+    };
+    let refused = built_record(
+        &unit,
+        "RefusedDomain",
+        &[],
+        &[0, 0],
+        integer(600),
+        1,
+        Snapshot::High,
+    );
+    let SeparationOutcome::Failed(SeparationStep::Domain, SeparationReason::Refused(refusal)) =
+        check(&unit, "RefusedDomain", &refused, 1_000_000)
+    else {
+        panic!("a refused count must fail separation step 2 with its refusal record");
+    };
+    assert_eq!(refusal.code, "integer_out_of_domain");
 }
 
 /// TC-744 step 2 (FR-269-AC-2): an `undefined` step evaluation maps to

@@ -616,6 +616,15 @@ fn request(
     assert!(text.contains(header), "{text}");
     let mut text = text.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
+    if text.contains("count<Zero>") {
+        for argument in ["c.value mod 2", "q.value mod 2", "c.value", "q.value"] {
+            text = text.replace(
+                &format!("count<Zero>(m in ints(sequence[{argument}]): m > 0)"),
+                &format!("refusingCount({argument})"),
+            );
+        }
+        text.push_str("function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n");
+    }
     let documents: Vec<(DocumentRef, Vec<u8>)> = values
         .iter()
         .enumerate()
@@ -717,10 +726,15 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
         .source
         .unit()
         .bytes
-        .windows(b"count<Zero>".len())
-        .any(|part| part == b"count<Zero>")
+        .windows(b"function refusingCount".len())
+        .any(|part| part == b"function refusingCount")
     {
-        return super::kernel_report(request, &temporal_selections);
+        let modes = BTreeMap::from([(
+            "refusingCount".to_owned(),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        )]);
+        return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
+            .expect("a well-formed request always reports");
     }
     let has_kernel_mod = match &mut request.source {
         ClauseRunSource::Program { bytes, .. } => {

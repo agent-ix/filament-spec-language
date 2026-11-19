@@ -600,7 +600,6 @@ fn type_condition(
             input.dispatch_tables,
             &input.scope.dispatch_operations,
         )
-        .with_check_mode(input.mode)
         .with_observations(&observations)
         .check(body.root())?;
         Ok(TypedCondition {
