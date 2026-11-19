@@ -1,4 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 type R = Rational[1,9;1,9];
-function ordered using v(a: R,b: R): Boolean pure { a<b or a>=b }
+function compare using v(a: R,b: R): Boolean pure { a<b or a>=b }

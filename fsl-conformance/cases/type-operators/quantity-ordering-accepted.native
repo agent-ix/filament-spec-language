@@ -4,4 +4,4 @@ dimension Length;
 dimension Time;
 unit m : Length = rational(1,1);
 unit s : Time = rational(1,1);
-function ordered using v(a: Quantity<m>,b: Quantity<m>): Boolean pure { a<b }
+function compare using v(a: Quantity<m>,b: Quantity<m>): Boolean pure { a<b }

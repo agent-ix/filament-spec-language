@@ -2,4 +2,4 @@ language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
 ordered enum E { A,B }
 enum Unordered { A,B }
-function ordered using v(a: E,b: E): Boolean pure { a<b }
+function compare using v(a: E,b: E): Boolean pure { a<b }
