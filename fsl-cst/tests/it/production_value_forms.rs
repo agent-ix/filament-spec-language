@@ -1123,6 +1123,7 @@ fn incomplete_aggregates_and_unwrapped_boolean_thresholds_refuse_locally() {
 
 #[test]
 #[trace("FSpec-FR-339-AC-1")]
+#[ignore = "QSL-2626: mode-switch declarations are not admitted at S1"]
 fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
     let declaration = "mode Tasks hi on Plant::raise;";
     let source = unit(declaration);
