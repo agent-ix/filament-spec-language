@@ -23,18 +23,18 @@ use filament_exact::ScalarLimits;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::bound::ProofBound;
+use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckedHyper, CheckedHyperClause, CheckedTemporalClause, PackageDeclarations, check_clauses,
-    check_hyper_clauses,
+    check_clauses, check_hyper_clauses, CheckedHyper, CheckedHyperClause, CheckedTemporalClause,
+    PackageDeclarations,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
-use serde_json::{Value as Json, json};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use serde_json::{json, Value as Json};
 
 const PACKAGE: &str = "test/vault";
 const OTHER: &str = "test/vault-other";
@@ -95,7 +95,8 @@ pub const EQUAL_INPUTS: &str =
     "match { a.step.op = b.step.op and a.step.Vault::step.i = b.step.Vault::step.i }";
 
 /// ADR-023 section 1's `SavesPower`, over two models.
-pub const SAVES_POWER: &str = "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+pub const SAVES_POWER: &str =
+    "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
      forall trace s of V forall trace n of N \
      match { s.step.Vault::step.i = n.step.Vault::step.i } \
      { always holds(d.l @ s = e.l @ n) }";
@@ -454,7 +455,11 @@ impl World {
             .next()
             .map(|checked| checked.expect("the temporal clause checks"));
         let graph = assembled
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let unassembled = match check_hyper_clauses(&declarations(&documents, &text))
@@ -648,7 +653,7 @@ mod tp4 {
     use filament_exact::ValueType;
     use filament_exact::{Cancel, Meter, Origin, Role};
     use fsl_eval::automaton::{
-        BuchiState, BuchiStates, ContextBinding, Letter, StateContext, SubjectKind, translate,
+        translate, BuchiState, BuchiStates, ContextBinding, Letter, StateContext, SubjectKind,
     };
     use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
     use fsl_eval::simulation::model::ModelSimState;
@@ -657,14 +662,14 @@ mod tp4 {
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_replay::ClauseIdentity;
     use fsl_replay::{
-        CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
-        ComponentCertificate, ModelCheckItem, ModelCheckLimits, TemporalCertificateCheck,
-        check_components,
+        check_components, CertificateLocus, CertificateRequest, CertificateRule,
+        ClosureCertificate, ComponentCertificate, ModelCheckItem, ModelCheckLimits,
+        TemporalCertificateCheck,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
     use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 
-    use super::{FORALL_EXISTS, World};
+    use super::{World, FORALL_EXISTS};
 
     /// Every `holds` atom is true at every position, so the engine walks a
     /// path whose states differ by the past history it has retained.
