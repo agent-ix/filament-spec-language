@@ -1177,6 +1177,13 @@ pub enum Payload {
         /// The modes its manifest advertises for the kind.
         modes: Vec<Mode>,
     },
+    /// A finite trace population exceeds the bound declared by its hyper clause.
+    FiniteHyperBound {
+        /// The declared trace bound.
+        bound: u64,
+        /// The number of distinct traces supplied.
+        found: usize,
+    },
     /// A capability kind that does not apply to the checked claim family.
     Inapplicable {
         /// The request item's index.
@@ -1222,6 +1229,9 @@ impl Payload {
                     Value::Array(modes.iter().map(|mode| json!(mode.to_wire())).collect()),
                 ),
             ],
+            Self::FiniteHyperBound { bound, found } => {
+                vec![("bound", json!(bound)), ("found", json!(found))]
+            }
             Self::NotEmitted { kind, backend } => vec![
                 ("kind", json!(kind.to_wire())),
                 ("backend", json!(backend.as_str())),
@@ -1286,6 +1296,8 @@ impl Diagnostic {
 pub enum DispositionKind {
     /// `requires-bound`.
     RequiresBound,
+    /// A finite trace population exceeds the bound declared by its hyper clause.
+    RequiresFiniteHyperBound { bound: u64, found: usize },
     /// `unsupported`.
     Unsupported,
     /// `invalid-request`.
@@ -2719,6 +2731,14 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found }) => disposed(
+            DispositionKind::RequiresBound,
+            Diagnostic {
+                code: CatalogCode::new("requires_bound", "requires-bound"),
+                payload: Payload::FiniteHyperBound { bound, found },
+            },
+            backend,
+        ),
     }
 }
 
