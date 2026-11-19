@@ -633,8 +633,8 @@ fn subject(
     let limits = cx.limits;
     let cancel = cx.cancel;
     let identity = cx.identity;
-    let objective = match weight {
-        Some(name) => {
+    let objective = match weight.as_ref() {
+        Some(fsl_semantics::check::Weighting::Reward(name)) => {
             #[cfg(feature = "test-support")]
             cx.phase(LongRunProbabilityPhase::Unit)?;
             cx.work(1)?;
@@ -646,6 +646,9 @@ fn subject(
                 cancel,
                 &mut cx.storage,
             )?)
+        }
+        Some(fsl_semantics::check::Weighting::Delay) => {
+            return Err(ProbabilityDocumentError::Unsupported);
         }
         None => None,
     };
