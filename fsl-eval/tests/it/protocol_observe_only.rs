@@ -266,6 +266,10 @@ fn an_observe_only_step_leaves_state_unchanged() {
                 assert_eq!(recommendation.node, "Main/Advise");
                 assert_eq!(recommendation.role, "Auditor");
                 assert_eq!(recommendation.operation, "step");
+                let receiver: Value = serde_json::from_str(&recommendation.receiver)
+                    .expect("the recommendation receiver is canonical JSON");
+                assert_eq!(receiver["type"], "reference");
+                assert_eq!(receiver["identity"], "node-1");
                 assert!(recommendation.arguments.is_empty());
                 recommends += 1;
             }

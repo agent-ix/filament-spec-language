@@ -168,4 +168,31 @@ fn the_package_records_the_observe_boundary() {
             .collect()
     };
     assert_eq!(ids(&marked), ids(&plain));
+
+    let changed_ids = [
+        node(&marked, &["Flow", "role", "Auditor"])["node_id"].to_string(),
+        node(&marked, &["Flow", "run", "Review"])["node_id"].to_string(),
+    ];
+    for (marked_node, plain_node) in nodes(&marked).iter().zip(nodes(&plain)) {
+        assert_eq!(marked_node["node_id"], plain_node["node_id"]);
+        let id = marked_node["node_id"].to_string();
+        if changed_ids.contains(&id) {
+            let mut body = marked_node["body"].clone();
+            let arguments = body["arguments"]
+                .as_array_mut()
+                .expect("the marked body has arguments");
+            let boundary = arguments.pop().expect("the boundary is the last argument");
+            assert_eq!(boundary["name"], "boundary");
+            assert_eq!(boundary["value"]["value"], "observe-only");
+            assert_eq!(
+                body, plain_node["body"],
+                "only the boundary differs at {id}"
+            );
+        } else {
+            assert_eq!(
+                marked_node["body"], plain_node["body"],
+                "unmarked node body is unchanged for {id}"
+            );
+        }
+    }
 }
