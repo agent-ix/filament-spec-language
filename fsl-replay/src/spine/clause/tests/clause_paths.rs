@@ -311,7 +311,7 @@ fn sum_out_of_domain_is_undefined_in_clause_run() {
     let item = run_item("S", &report);
     assert_eq!(item["result"], "refuted", "{item}");
     assert_eq!(item["cause"]["kind"], "undefined-evaluation", "{item}");
-    assert_eq!(item["cause"]["code"], "sum-out-of-domain", "{item}");
+    assert_eq!(item["cause"]["cause"], "sum-out-of-domain", "{item}");
 }
 
 /// TC-2830: a typed evaluator halt always supplies an item
