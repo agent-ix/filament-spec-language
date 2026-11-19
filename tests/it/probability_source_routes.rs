@@ -115,6 +115,20 @@ fn invalid_probability_claim_forms_refuse_with_their_specific_causes() {
             "invalid_probabilistic_model",
             "invalid-confidence",
         ),
+        (
+            "quantile-over-fraction",
+            "probability >= 0.8 [ eventually[0,2] holds(packet.delivered) ]",
+            "quantile 0.75 of (fraction holds(packet.delivered) over [0, 2]) <= rational(1, 2)",
+            "invalid_probabilistic_model",
+            "quantile-over-fraction",
+        ),
+        (
+            "untimed-elapsed",
+            "probability >= 0.8 [ eventually[0,2] holds(packet.delivered) ]",
+            "expected elapsed until holds(packet.delivered) <= 3",
+            "ill_typed",
+            "type-mismatch",
+        ),
     ] {
         assert!(original.contains(from));
         let file = directory.path().join(format!("{name}.native"));
