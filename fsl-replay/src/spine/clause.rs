@@ -14,12 +14,12 @@
 use filament_checked::node::{CheckedLiteral, Connective, NodeKind};
 use std::collections::BTreeMap;
 
-use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
+use filament_exact::{Cancel, Identifier, MemberId, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
+use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
@@ -492,6 +492,8 @@ pub struct TemporalValuation {
     /// Alias-free declaration spellings referenced by the checked conditions.
     /// Structural package keys never provide surface labels by themselves.
     pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
+    /// Alias-free member spellings referenced by the checked conditions.
+    pub canonical_fields: BTreeMap<MemberId, String>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -529,10 +531,16 @@ impl TemporalValuation {
             }
         }
         let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
+        let canonical_fields = graph
+            .selected_exact_field_rows()
+            .iter()
+            .map(|row| (row.member_id.clone(), row.field_original_identity.to_string()))
+            .collect();
         Self {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
+            canonical_fields,
             positions,
             behaviours,
         }

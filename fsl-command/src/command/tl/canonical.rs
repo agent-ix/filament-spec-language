@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
 };
-use filament_exact::{NodeKey, Value, ValueType};
+use filament_exact::{MemberId, MemberOwner, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
 use fsl_package::{BarePackage, ReaderProtocolProjection};
 use fsl_semantics::check::{CheckedNode, NodeId};
@@ -16,6 +16,12 @@ use fsl_semantics::check::{CheckedNode, NodeId};
 struct ExpressionNode {
     kind: NodeKind<usize, CheckedLiteral>,
     value_type: ValueType,
+}
+
+#[derive(Default)]
+pub(super) struct CanonicalRows {
+    declarations: BTreeMap<NodeKey, String>,
+    fields: BTreeMap<MemberId, String>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
@@ -121,7 +127,7 @@ impl CheckedExpression {
     pub(super) fn render(
         &self,
         binders: &[String],
-        declarations: &BTreeMap<NodeKey, String>,
+        rows: &CanonicalRows,
     ) -> Result<String, String> {
         let mut rendered: Vec<Option<(String, u8)>> = vec![None; self.nodes.len()];
         for (index, node) in self.nodes.iter().enumerate() {
@@ -140,7 +146,7 @@ impl CheckedExpression {
                     .ok_or_else(|| "checked expression operands precede their node".to_owned())
             };
             let (text, precedence) = match &node.kind {
-                NodeKind::Literal(literal) => (literal_text(&literal.0, declarations)?, 10),
+                NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
                 NodeKind::Local(slot) => (
                     binders
                         .get(*slot)
@@ -151,30 +157,29 @@ impl CheckedExpression {
                 NodeKind::Attribute {
                     reference, field, ..
                 } => {
-                    let owner = field
-                        .owner
-                        .owner_chain()
-                        .last()
-                        .ok_or_else(|| "model field has a declaration owner".to_owned())?;
                     (
                         format!(
                             "{}.{}",
                             child(*reference)?,
-                            field_uri(owner.package(), owner.node(), &field.name)
+                            field_text(
+                                &rows.fields,
+                                MemberOwner::Effective(field.owner.clone()),
+                                &field.name,
+                            )?
                         ),
                         9,
                     )
                 }
                 NodeKind::Field { operand, field, .. } => {
-                    let declaration = field.declaration();
-                    let declaration = declarations.get(&declaration).ok_or_else(|| {
-                        "record field has an alias-free declaration key".to_owned()
-                    })?;
                     (
                         format!(
                             "{}.{}",
                             child(*operand)?,
-                            field_uri_from_key(declaration, field.name())
+                            field_text(
+                                &rows.fields,
+                                MemberOwner::Node(field.declaration()),
+                                field.name(),
+                            )?
                         ),
                         9,
                     )
@@ -296,13 +301,17 @@ pub(super) fn source_labels(
         binders.push(trigger.to_owned());
     }
     binders.extend(clause.captures().map(|(name, _)| name.to_owned()));
+    let rows = CanonicalRows {
+        declarations: valuation.canonical_declarations.clone(),
+        fields: valuation.canonical_fields.clone(),
+    };
     valuation
         .checked_conditions
         .iter()
         .map(|(atom, body)| {
             CheckedExpression::from_source(body.root())
                 .and_then(|expression| {
-                    expression.render(&binders, &valuation.canonical_declarations)
+                    expression.render(&binders, &rows)
                 })
                 .map(|label| (*atom, label))
         })
@@ -311,15 +320,15 @@ pub(super) fn source_labels(
 
 /// Resolve package enum references only through identity rows joined by the
 /// admitted package reader.
-pub(super) fn package_declarations(
+pub(super) fn package_rows(
     package: &BarePackage<'_>,
-) -> Result<BTreeMap<NodeKey, String>, String> {
+) -> Result<CanonicalRows, String> {
     let identities = package
         .identities()
         .ok_or_else(|| "checked package has joined selected identity rows".to_owned())?;
-    let mut declarations = BTreeMap::new();
+    let mut rows = CanonicalRows::default();
     for row in identities.source_enum_rows() {
-        declarations.insert(
+        rows.declarations.insert(
             row.declaration.node_key.clone(),
             format!(
                 "ix://{}/{}",
@@ -334,7 +343,7 @@ pub(super) fn package_declarations(
         );
     }
     for row in identities.source_record_rows() {
-        declarations.insert(
+        rows.declarations.insert(
             row.record_key.clone(),
             format!(
                 "ix://{}/{}",
@@ -349,13 +358,17 @@ pub(super) fn package_declarations(
     }
     for row in identities.declaration_rows() {
         if let filament_contract_model::SelectedExactIdentity::Record(key) = &row.exact_identity {
-            declarations.insert(
+            rows.declarations.insert(
                 key.clone(),
                 format!("ix://{}/{}", row.selected_document, row.original_identity),
             );
         }
     }
-    Ok(declarations)
+    for row in identities.field_rows() {
+        rows.fields
+            .insert(row.member_id.clone(), row.field_original_identity.to_string());
+    }
+    Ok(rows)
 }
 
 fn checked_children(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
@@ -429,12 +442,17 @@ fn declaration_uri(package: &str, node: &str) -> String {
     format!("ix://{package}/{node}")
 }
 
-fn field_uri(package: &str, node: &str, field: &str) -> String {
-    format!("ix://{package}/{node}/{field}")
-}
-
-fn field_uri_from_key(declaration: &str, field: &str) -> String {
-    format!("{declaration}/{field}")
+fn field_text(
+    fields: &BTreeMap<MemberId, String>,
+    owner: MemberOwner,
+    name: &str,
+) -> Result<String, String> {
+    let identity = MemberId::new(owner, name.to_owned())
+        .map_err(|_| "checked field has a nonempty member identity".to_owned())?;
+    fields
+        .get(&identity)
+        .cloned()
+        .ok_or_else(|| "field has an alias-free identity row".to_owned())
 }
 
 fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Result<String, String> {
