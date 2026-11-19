@@ -13,7 +13,8 @@ use filament_exact::{
 };
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    CheckedRefinement, CheckedRow, PopulationUse, PopulationValue, RefinementCause,
+    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckedRefinement, CheckedRow, LeafTerm,
+    MemberTerm, PopulationUse, PopulationValue, RefinementCause, SemanticGraph,
 };
 use ix_trace_rs::trace;
 
@@ -192,22 +193,72 @@ fn only_refusal(rows: &str) -> (Code, Option<&'static str>, String) {
 #[trace("TC-2822", "FR-998-AC-1", "FSpec-FR-376-AC-3")]
 #[test]
 fn only_over_a_population_lowers() {
-    let graph = checked(&ring_is_queue(
+    let checked = checked(&ring_is_queue(
         "lone = only(s in R::slots where s.ring = self: s.value);",
-    ))
-    .graph;
-    let identities: Vec<_> = graph
-        .semantic_graph()
+    ));
+    let graph = checked.graph.semantic_graph();
+    let application_at = |reference: &fsl_semantics::check::NodeRef, identity: &str| {
+        let key = reference.admitted().expect("a lowered node reference");
+        let node = graph.node(key.clone()).expect("a node for the reference");
+        let BodyTerm::Application(application) = node.body() else {
+            panic!("{identity} names an application");
+        };
+        assert_eq!(application.operation.identity(), identity);
+        application
+    };
+    let only_nodes: Vec<&ApplicationTerm> = graph
         .nodes()
         .filter_map(|node| match node.body() {
-            fsl_semantics::check::BodyTerm::Application(application) => {
-                Some(application.operation.identity())
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.collection.only" =>
+            {
+                Some(application)
             }
             _ => None,
         })
         .collect();
-    assert!(identities.contains(&"filament.op.collection.only"));
-    assert!(identities.contains(&"filament.op.model.all_instances"));
+    let [only] = only_nodes.as_slice() else {
+        panic!("one collection.only application: {only_nodes:?}");
+    };
+    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    assert_eq!(
+        only.operation.member(),
+        Some(&fsl_semantics::value::Member::TypeArgument {
+            declaration: result_type.clone(),
+        })
+    );
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: filtered }), MemberTerm::Binding(Binding {
+        name: only_binder,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: only_body }),
+    })] = only.arguments.as_slice()
+    else {
+        panic!("collection.only has a filtered collection and one value binder");
+    };
+    assert_eq!(only_binder, "s");
+    let filter = application_at(filtered, "filament.op.collection.filter");
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
+        name: filter_binder,
+        value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
+    })] = filter.arguments.as_slice()
+    else {
+        panic!("collection.filter has the population and its condition binder");
+    };
+    assert_eq!(filter_binder, "s");
+    let all_instances = application_at(population, "filament.op.model.all_instances");
+    let [MemberTerm::Leaf(LeafTerm::Reference { target: population_node })] =
+        all_instances.arguments.as_slice()
+    else {
+        panic!("all_instances has one population reference");
+    };
+    let population_node = graph
+        .node(population_node.admitted().expect("the population is resolved").clone())
+        .expect("the population node exists");
+    assert_eq!(population_node.semantic_form(), "population");
+    application_at(predicate, "filament.op.integer.eq");
+    let only_body = graph
+        .node(only_body.admitted().expect("the only body is resolved").clone())
+        .expect("the only body node exists");
+    assert_eq!(only_body.semantic_type(), Some(result_type));
 }
 
 /// FR-139-AC-2 (TC-544 step 2): `only` over a condition that is not Boolean
