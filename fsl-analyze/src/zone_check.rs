@@ -13,6 +13,7 @@
 //! on the same search, with FR-142's discrete product (FSpec FR-430).
 
 mod certificate;
+pub(crate) use certificate::state_graph_certificate;
 mod concretise;
 mod dbm;
 mod divergence;

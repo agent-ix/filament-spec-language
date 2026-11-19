@@ -568,6 +568,7 @@ impl ItemDetail {
                 .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
             checker: model
                 .and_then(|model| model.checker)
+                .or_else(|| record.state_graph.as_ref().and_then(|graph| graph.checker))
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
             non_zeno: record
@@ -673,6 +674,10 @@ pub struct GraphReport {
     /// A proved record's witnesses in FSpec FR-393's spelling, with the
     /// sampled ones.
     pub evidence: Option<serde_json::Value>,
+    /// The accepted timed state-graph certificate's FR-712 document.
+    pub certificate_document: Option<serde_json::Value>,
+    /// The checker that accepted a timed state-graph proof.
+    pub checker: Option<fsl_replay::CertificateChecker>,
 }
 
 /// A reproduced counterexample with its FR-286 spelling, written where the
@@ -925,7 +930,8 @@ pub fn analyze_item(
     if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
         return Ok(
             OutcomeItem::from_state_graph(record.request_index(), &graph.record)
-                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone()),
+                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone())
+                .with_graph_certificate_document(graph.certificate_document.clone()),
         );
     }
     let wire = found.map(|found| found.wire.clone()).transpose()?;

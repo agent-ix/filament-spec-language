@@ -162,6 +162,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
             model: model.to_owned(),
             exploration: fsl_eval::simulation::Limits::default(),
             max_clocks,
+            digital: false,
         }),
     };
     let reductions = form.reductions.clone();
@@ -232,7 +233,7 @@ pub(super) fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
 
 /// EN-6's budgets under the item's `max_states` and `max_transitions`, which
 /// bound the symbolic states and edges (FSpec FR-368 "Negotiation").
-fn zone_limits(form: &TemporalItem) -> ZoneCheckLimits {
+pub(super) fn zone_limits(form: &TemporalItem) -> ZoneCheckLimits {
     let mut limits = ZoneCheckLimits::default();
     if let Ok(states) = u64::try_from(form.limits.limits.max_states) {
         limits.max_symbolic_states = states;
@@ -320,6 +321,7 @@ pub(super) fn zone_derived_item<'a>(
                         model: model.clone(),
                         exploration: fsl_eval::simulation::Limits::default(),
                         max_clocks,
+                        digital: false,
                     }),
                 };
                 let reductions = form.reductions.clone();

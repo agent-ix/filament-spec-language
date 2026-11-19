@@ -999,6 +999,7 @@ pub(super) fn zone_refusal(refusal: &ZoneCheckRefusal) -> Refusal {
         ZoneCheckRefusal::Extent(_)
         | ZoneCheckRefusal::Atom(_)
         | ZoneCheckRefusal::Automaton(_)
+        | ZoneCheckRefusal::Stopped(_)
         | ZoneCheckRefusal::Fault(_) => Refusal::Failed(BROKEN),
     }
 }

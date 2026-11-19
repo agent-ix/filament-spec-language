@@ -85,12 +85,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use filament_exact::{Cancel, Integer, Meter, Rational};
+use filament_exact::{Cancel, Integer, Meter, Rational, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    position_automaton, AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal,
+    AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal, position_automaton,
 };
-use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
+use fsl_eval::fairness::{EdgeLabel, FairnessError, Graph, Identity, components};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
@@ -101,20 +101,21 @@ use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, EmitRefusal, EmittedPackage};
 use fsl_semantics::check::{
-    CheckedRefinement, ClockOp, FormulaNodeId, TemporalProfile, TimedPropertyForm,
+    CheckedRefinement, CheckedStateGraphClaim, ClockOp, FormulaNodeId, StateGraphForm,
+    TemporalProfile, TimedPropertyForm,
 };
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 
 use super::closure::CertificateRejection;
-use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
+use super::simulation::{CertifiedPosition, EvaluationOutcome, position_matches};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
 use crate::refinement::{
-    check_initial, check_step, open_systems, ConcreteStep, RefinementPosition, StepVerdict,
-    SubjectRefusal, Taken,
+    ConcreteStep, RefinementPosition, StepVerdict, SubjectRefusal, Taken, check_initial,
+    check_step, open_systems,
 };
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
@@ -153,10 +154,43 @@ pub struct ZoneCertificate<O> {
     pub divergence: Option<Vec<DivergenceWitness>>,
     /// The witness that the subject admits a time-divergent behaviour
     /// (ADR-026 TD-6).
-    pub admitted: DivergenceWitness,
+    pub admitted: Option<DivergenceWitness>,
+    /// FR-712's state-graph least-fixpoint part; absent for other items.
+    pub state_graph: Option<StateGraphPart>,
     /// FR-244's refinement part, for the safety half of a timed
     /// refinement (FSpec FR-430); `None` otherwise.
     pub refinement: Option<RefinementPart>,
+}
+
+/// FR-712's state-graph certificate extension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StateGraphPart {
+    /// The checked form this part proves.
+    pub form: StateGraphCertificateForm,
+    /// The node positions in `ZoneCertificate::nodes` that belong to E(P).
+    pub ef_nodes: Vec<usize>,
+}
+
+/// State-graph form carried by the FR-712 certificate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StateGraphCertificateForm {
+    /// `possible`.
+    Possible,
+    /// `always possible`.
+    AlwaysPossible,
+    /// `unique path`.
+    UniquePath,
+}
+
+impl StateGraphCertificateForm {
+    /// The FR-712 certificate form spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Possible => "possible",
+            Self::AlwaysPossible => "always-possible",
+            Self::UniquePath => "unique-path",
+        }
+    }
 }
 
 /// The non-Zeno premise stated by a timed liveness result (FR-235).
@@ -534,6 +568,13 @@ pub enum CertifiedItem<'a> {
         /// The abstract model's initial states.
         abstract_initial: &'a [DocumentRef],
     },
+    /// FSpec FR-712's state-graph claim.
+    StateGraph {
+        /// The checked claim.
+        claim: &'a CheckedStateGraphClaim,
+        /// The instance's `over` binding.
+        over: Option<&'a filament_exact::ObjectReference>,
+    },
 }
 
 /// The item an obligation names, as the checker compares it with the
@@ -554,6 +595,8 @@ pub enum CertificateItem<'o> {
         /// The abstract initial states.
         abstract_initial: &'o BTreeSet<DocumentRef>,
     },
+    /// A state-graph claim by its checked occurrence.
+    StateGraph(&'o OccurrenceKey),
     /// Any other item, which no zone certificate proves.
     Other,
 }
@@ -576,6 +619,8 @@ pub enum ItemIdentity {
         /// The abstract initial states.
         abstract_initial: BTreeSet<DocumentRef>,
     },
+    /// A state-graph claim by its checked occurrence.
+    StateGraph(OccurrenceKey),
     /// Any other item.
     Other,
 }
@@ -593,6 +638,7 @@ impl From<CertificateItem<'_>> for ItemIdentity {
                 occurrence: occurrence.clone(),
                 abstract_initial: abstract_initial.clone(),
             },
+            CertificateItem::StateGraph(occurrence) => Self::StateGraph(occurrence.clone()),
             CertificateItem::Other => Self::Other,
         }
     }
@@ -833,6 +879,14 @@ pub fn check_zone_certificate<O: Clone + Eq>(
                 occurrence: occurrence.clone(),
                 abstract_initial: abstract_initial.iter().cloned().collect(),
             }),
+        CertifiedItem::StateGraph { claim, .. } => source
+            .graph()
+            .state_graph_claim(claim.name())
+            .filter(|own| own.occurrence() == claim.occurrence())
+            .and_then(|own| own.occurrence())
+            .map_or(ItemIdentity::Other, |occurrence| {
+                ItemIdentity::StateGraph(occurrence.clone())
+            }),
     };
     if named != recompiled || recompiled == ItemIdentity::Other {
         return Err(ZoneCertificateRefusal::IdentityMismatch {
@@ -996,7 +1050,8 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         }
         CertifiedItem::DeadlockFreedom
         | CertifiedItem::TimeLockFreedom
-        | CertifiedItem::Refinement { .. } => (None, None),
+        | CertifiedItem::Refinement { .. }
+        | CertifiedItem::StateGraph { .. } => (None, None),
     };
     let time_lock = matches!(request.item, CertifiedItem::TimeLockFreedom);
     let count = certificate.nodes.len();
@@ -1006,6 +1061,10 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         window,
         live,
         time_lock,
+        state_graph: match request.item {
+            CertifiedItem::StateGraph { claim, over } => Some(StateGraphClaim { claim, over }),
+            _ => None,
+        },
         refined,
         certificate,
         cancel,
@@ -1090,6 +1149,9 @@ struct Checker<'c, 'a, O> {
     live: Option<product::LiveClaim<'c>>,
     /// Whether the item is time-lock freedom, with its divergence part.
     time_lock: bool,
+    /// FR-712's discrete state-graph proof, checked over these reachable
+    /// timed zones without FR-244's divergence-admission premise.
+    state_graph: Option<StateGraphClaim<'c>>,
     /// A refinement form's check.
     refined: Option<Refined<'c, 'a>>,
     certificate: &'c ZoneCertificate<O>,
@@ -1124,6 +1186,11 @@ struct Checker<'c, 'a, O> {
     max_automaton_states: u64,
 }
 
+struct StateGraphClaim<'a> {
+    claim: &'a CheckedStateGraphClaim,
+    over: Option<&'a filament_exact::ObjectReference>,
+}
+
 impl<O> Checker<'_, '_, O> {
     // Not named `check`: CK-1's checked-input gate reads any `.check(..)`
     // call in a stage crate as the S3 stage constructor (TC-745).
@@ -1145,7 +1212,11 @@ impl<O> Checker<'_, '_, O> {
         }
         self.initial()?;
         self.reach()?;
-        let divergent = self.divergent()?;
+        let divergent = if self.state_graph.is_some() {
+            vec![false; self.certificate.nodes.len()]
+        } else {
+            self.divergent()?
+        };
         for node in 0..self.certificate.nodes.len() {
             self.poll()?;
             if let Some(rejection) = self.refinement_failures.remove(&node) {
@@ -1166,7 +1237,11 @@ impl<O> Checker<'_, '_, O> {
         if self.time_lock {
             self.divergence_part()?;
         }
-        self.admitted()
+        if self.state_graph.is_some() {
+            self.state_graph()
+        } else {
+            self.admitted()
+        }
     }
 
     /// Charge `count` edge reads against `max_certificate_edges`.
@@ -1317,6 +1392,32 @@ impl<O> Checker<'_, '_, O> {
             (None, None) => None,
         };
         let nodes = certificate.nodes.len();
+        let graph_part_ok = match (&self.state_graph, &certificate.state_graph) {
+            (Some(state_graph), Some(part)) => {
+                let expected_form = match state_graph.claim.form() {
+                    StateGraphForm::Possible { .. } => StateGraphCertificateForm::Possible,
+                    StateGraphForm::AlwaysPossible { .. } => {
+                        StateGraphCertificateForm::AlwaysPossible
+                    }
+                    StateGraphForm::UniquePath { .. } => StateGraphCertificateForm::UniquePath,
+                };
+                part.form == expected_form
+                    && (part.form == StateGraphCertificateForm::AlwaysPossible
+                        || part.ef_nodes.is_empty())
+                    && part.ef_nodes.iter().all(|&node| node < nodes)
+                    && part.ef_nodes.windows(2).all(|pair| pair[0] < pair[1])
+            }
+            (Some(state_graph), None) => matches!(
+                state_graph.claim.form(),
+                StateGraphForm::Possible { .. } | StateGraphForm::UniquePath { .. }
+            ),
+            (None, None) => true,
+            (None, Some(_)) => false,
+        };
+        let admitted_shape_ok = match (&self.state_graph, &certificate.admitted) {
+            (Some(_), None) | (None, Some(_)) => true,
+            _ => false,
+        };
         let windowed = self.window.is_some();
         let live = self.live.as_ref();
         let node_ok = |node: &CertNode| {
@@ -1338,7 +1439,12 @@ impl<O> Checker<'_, '_, O> {
         }
         if !certificate.nodes.iter().all(node_ok)
             || certificate.initials.iter().any(|&node| node >= nodes)
-            || certificate.admitted.start >= nodes
+            || !graph_part_ok
+            || !admitted_shape_ok
+            || certificate
+                .admitted
+                .as_ref()
+                .is_some_and(|witness| witness.start >= nodes)
         {
             return malformed(CertificateMember::Nodes);
         }
@@ -1366,14 +1472,14 @@ impl<O> Checker<'_, '_, O> {
                 && shaped
                 && (edge.horizon.is_none() || (windowed && dense))
         };
-        let target_ok = match &certificate.admitted.target {
-            DivergentTarget::Quiescent(node) | DivergentTarget::Terminal(node) => *node < nodes,
-            DivergentTarget::Cycle(cycle) => cycle.iter().all(|&edge| edge < edges),
-        };
-        if !certificate.edges.iter().all(edge_ok)
-            || certificate.admitted.path.iter().any(|&edge| edge >= edges)
-            || !target_ok
-        {
+        let admitted_ok = certificate.admitted.as_ref().is_none_or(|admitted| {
+            let target_ok = match &admitted.target {
+                DivergentTarget::Quiescent(node) | DivergentTarget::Terminal(node) => *node < nodes,
+                DivergentTarget::Cycle(cycle) => cycle.iter().all(|&edge| edge < edges),
+            };
+            admitted.path.iter().all(|&edge| edge < edges) && target_ok
+        });
+        if !certificate.edges.iter().all(edge_ok) || !admitted_ok {
             return malformed(CertificateMember::Edges);
         }
         let witness_ok = |witness: &DivergenceWitness| {
@@ -2089,6 +2195,9 @@ impl<O> Checker<'_, '_, O> {
         if covered.iter().any(|&covered| !covered) {
             return reject(CertificateRule::SuccessorMissing, at_node(node));
         }
+        if self.state_graph.is_some() {
+            return Ok(());
+        }
         let listed = &self.certificate.nodes[node];
         if listed.locked {
             if divergent[node] {
@@ -2380,6 +2489,186 @@ impl<O> Checker<'_, '_, O> {
         Ok(bounded.is_some_and(|bounded| bounded.iter().any(|place| !reset.contains(place))))
     }
 
+    /// Re-derive FR-712's state-graph decision over the reachable timed
+    /// zones. Delays do not create distinct paths; the certified nodes
+    /// already represent their time-closed zones.
+    fn state_graph(&self) -> Step<(), O> {
+        let Some(state_graph) = &self.state_graph else {
+            return malformed(CertificateMember::Nodes);
+        };
+        let claim = state_graph.claim;
+        match (claim.over(), state_graph.over) {
+            (None, None) => {}
+            (Some(parameter), Some(reference)) => {
+                let instances = self
+                    .timed
+                    .system()
+                    .instances(&ValueType::Reference(parameter.object.clone()))
+                    .map_err(|_| Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
+                let bound = instances.iter().any(|instance| {
+                    self.timed
+                        .system()
+                        .bound_reference(parameter.object.clone(), instance)
+                        .is_ok_and(|candidate| candidate == *reference)
+                });
+                if !bound {
+                    return Err(Halt::Refusal(ZoneCertificateRefusal::Undecided));
+                }
+            }
+            _ => return Err(Halt::Refusal(ZoneCertificateRefusal::Undecided)),
+        }
+        let (target, from) = match claim.form() {
+            StateGraphForm::Possible { target } => (target, None),
+            StateGraphForm::AlwaysPossible { from, target } => (target, Some(from)),
+            StateGraphForm::UniquePath { from, to } => (to, Some(from)),
+        };
+        let target_values = self.predicate_values(target, state_graph.over)?;
+        let ef = self.ef_nodes(&target_values);
+        match claim.form() {
+            StateGraphForm::Possible { .. } => {
+                if self.certificate.initials.iter().all(|&node| ef[node]) {
+                    Ok(())
+                } else {
+                    reject(
+                        CertificateRule::InitialMissing,
+                        CertificateLocus::CertificateMember(CertificateMember::Initials),
+                    )
+                }
+            }
+            StateGraphForm::AlwaysPossible { .. } => {
+                let Some(part) = &self.certificate.state_graph else {
+                    return malformed(CertificateMember::Nodes);
+                };
+                let expected = ef
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(node, member)| member.then_some(node))
+                    .collect::<Vec<_>>();
+                if part.ef_nodes != expected {
+                    return reject(CertificateRule::RankBroken, at_node(0));
+                }
+                let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
+                let from_values = self.predicate_values(from, state_graph.over)?;
+                if self
+                    .states
+                    .iter()
+                    .enumerate()
+                    .all(|(node, state)| state.is_none() || !from_values[node] || ef[node])
+                {
+                    Ok(())
+                } else {
+                    reject(CertificateRule::SuccessorMissing, at_node(0))
+                }
+            }
+            StateGraphForm::UniquePath { .. } => {
+                let from = from.ok_or_else(|| fault(CheckerFault::Automaton))?;
+                let from_values = self.predicate_values(from, state_graph.over)?;
+                let mut memo = vec![None; self.states.len()];
+                let mut visiting = vec![false; self.states.len()];
+                for (node, state) in self.states.iter().enumerate() {
+                    if state.is_some()
+                        && from_values[node]
+                        && self.path_count(node, &target_values, &ef, &mut memo, &mut visiting) != 1
+                    {
+                        return reject(CertificateRule::CountBroken, at_node(node));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn predicate_values(
+        &self,
+        predicate: &fsl_semantics::check::CheckedStatePredicate,
+        over: Option<&filament_exact::ObjectReference>,
+    ) -> Step<Vec<bool>, O> {
+        if predicate.is_constant_true() {
+            return Ok(self.states.iter().map(Option::is_some).collect());
+        }
+        let body = predicate
+            .predicate_body()
+            .ok_or(Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
+        self.states
+            .iter()
+            .enumerate()
+            .map(|(index, state)| {
+                let Some(state) = state else {
+                    return Ok(false);
+                };
+                let readings = self
+                    .timed
+                    .system()
+                    .state_predicates_with_cancel(state, &[(body, over)], self.cancel)
+                    .map_err(|_| Halt::Refusal(ZoneCertificateRefusal::Undecided))?;
+                match readings.as_slice() {
+                    [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
+                    [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
+                    [fsl_eval::simulation::model::PredicateReading::Undefined { .. }]
+                    | [fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+                        reject(CertificateRule::PredicateUndefined, at_node(index))
+                    }
+                    _ => Err(fault(CheckerFault::Automaton)),
+                }
+            })
+            .collect()
+    }
+
+    fn ef_nodes(&self, target: &[bool]) -> Vec<bool> {
+        let mut ef = target.to_vec();
+        loop {
+            let mut changed = false;
+            for (index, edge) in self.certificate.edges.iter().enumerate() {
+                if self.covers[index].is_some()
+                    && self.states[edge.from].is_some()
+                    && self.states[edge.to].is_some()
+                    && ef[edge.to]
+                    && !ef[edge.from]
+                {
+                    ef[edge.from] = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return ef;
+            }
+        }
+    }
+
+    fn path_count(
+        &self,
+        node: usize,
+        target: &[bool],
+        can_reach: &[bool],
+        memo: &mut [Option<u8>],
+        visiting: &mut [bool],
+    ) -> u8 {
+        if !can_reach[node] {
+            return 0;
+        }
+        if let Some(count) = memo[node] {
+            return count;
+        }
+        if visiting[node] {
+            return 2;
+        }
+        visiting[node] = true;
+        let mut count = u8::from(target[node]);
+        for (index, edge) in self.certificate.edges.iter().enumerate() {
+            if edge.from == node && self.covers[index].is_some() {
+                count = count
+                    .saturating_add(self.path_count(edge.to, target, can_reach, memo, visiting))
+                    .min(2);
+                if count == 2 {
+                    break;
+                }
+            }
+        }
+        visiting[node] = false;
+        memo[node] = Some(count);
+        count
+    }
+
     /// `admitted`: a path of valid edges from an initial node to a
     /// divergent target, recomputed in exact zones from the initial state,
     /// each held to its state's own invariants, so the path is one some
@@ -2388,7 +2677,9 @@ impl<O> Checker<'_, '_, O> {
     /// under fairness has no certificate part (spec gap STD-493, comment
     /// 8eafddf9, item 3; SR-1647002 FND-002).
     fn admitted(&self) -> Step<(), O> {
-        let witness = &self.certificate.admitted;
+        let Some(witness) = &self.certificate.admitted else {
+            return malformed(CertificateMember::Admitted);
+        };
         let mut at = witness.start;
         let fails = |at: usize| reject(CertificateRule::WitnessFails, at_node(at));
         if !self.certificate.initials.contains(&at) || self.states[at].is_none() {
@@ -2427,11 +2718,7 @@ impl<O> Checker<'_, '_, O> {
                 self.advancing_cycle(at, cycle)? && self.repeats(cycle, &zone)?
             }
         };
-        if holds {
-            Ok(())
-        } else {
-            fails(at)
-        }
+        if holds { Ok(()) } else { fails(at) }
     }
 
     /// The exact zone of an initial state the initial node `node` holds.
@@ -2847,7 +3134,14 @@ fn certificate_bytes<O>(certificate: &ZoneCertificate<O>) -> u64 {
         }
     }
     let edges = u64::try_from(certificate.edges.len()).unwrap_or(u64::MAX);
-    let mut parts = witness_bytes(&certificate.admitted);
+    let mut parts = certificate.admitted.as_ref().map_or(0, witness_bytes);
+    if let Some(part) = &certificate.state_graph {
+        parts = parts
+            .saturating_add(std::mem::size_of_val(&part.form) as u64)
+            .saturating_add(
+                (part.ef_nodes.len() as u64).saturating_mul(std::mem::size_of::<usize>() as u64),
+            );
+    }
     if let Some(components) = &certificate.components {
         parts = parts.saturating_add(components_bytes(components));
     }

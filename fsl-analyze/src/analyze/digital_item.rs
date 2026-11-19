@@ -111,6 +111,7 @@ pub(super) fn digital_clause_item<'a>(
                         model: model.clone(),
                         exploration: fsl_eval::simulation::Limits::default(),
                         max_clocks,
+                        digital: true,
                     }),
                 };
                 // The closure checker reads no digital-clock product: the

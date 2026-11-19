@@ -176,9 +176,6 @@ fn determinize(graph: &TimedStateGraph, start: usize, target: &[bool]) -> Dfa {
         )> = Vec::new();
         for node in subset {
             accepting[at] |= target.get(node).copied().unwrap_or(false);
-            if target.get(node).copied().unwrap_or(false) {
-                continue;
-            }
             for edge in graph.edges.iter().filter(|edge| edge.from == node) {
                 let Some((_, destinations)) = symbols
                     .iter_mut()
@@ -275,9 +272,6 @@ fn path_for_word(
             if target.get(node).copied().unwrap_or(false) {
                 return Some(path);
             }
-            continue;
-        }
-        if target.get(node).copied().unwrap_or(false) {
             continue;
         }
         for (edge_index, edge) in graph

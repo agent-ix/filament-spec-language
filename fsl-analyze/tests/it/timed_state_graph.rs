@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
 use crate::analyze_family_cli::{rpc_snapshot, rpc_unit};
 
-const CLAIMS: &str = "possible Replied using v over (c: M::Call) { c.phase = 2 }\n\
-    possible Late using v over (c: M::Call) { c.phase = 3 }\n\
+const CLAIMS: &str = "possible ReplyPossible using v over (c: M::Call) { c.phase = 2 }\n\
+    possible LatePossible using v over (c: M::Call) { c.phase = 3 }\n\
+    possible IdlePossible using v over (c: M::Call) { c.phase = 0 }\n\
     always possible BackToIdle using v over (c: M::Call) { c.phase = 0 }\n\
     unique path OneReply using v over (c: M::Call) from (c.phase = 0) to (c.phase = 2);\n";
 
@@ -46,12 +47,11 @@ fn run(name: &str, reset: bool, items: Value) -> Run {
 #[trace("TC-2412", "FR-852-AC-1")]
 #[trace("TC-2412", "FSpec-FR-712-AC-1")]
 #[test]
-#[ignore = "QSL-2305: EN-6 lists no state-graph form, so a timed state-graph item settles unsupported"]
 fn a_timed_possible_claim_proves_on_zones_and_refutes() {
     let run = run(
         "timed-sg-possible",
         true,
-        json!([{"claim": "Replied"}, {"claim": "Late"}]),
+        json!([{"claim": "ReplyPossible"}, {"claim": "LatePossible"}]),
     );
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
@@ -72,13 +72,17 @@ fn a_timed_possible_claim_proves_on_zones_and_refutes() {
 #[trace("TC-2412", "FR-852-AC-2")]
 #[trace("TC-2412", "FSpec-FR-712-AC-2")]
 #[test]
-#[ignore = "QSL-2305: EN-6 lists no state-graph form, so a timed state-graph item settles unsupported"]
 fn a_timed_always_possible_claim_proves_and_refutes() {
     let items = json!([{"claim": "BackToIdle"}]);
     let proved = run("timed-sg-always", true, items.clone());
     let item = proved.item(0);
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["state_graph"]["form"],
+        "always-possible",
+        "{item}"
+    );
     assert!(
         item["certificate"]["document"]["state_graph"]["ef_nodes"]
             .as_array()
@@ -91,16 +95,55 @@ fn a_timed_always_possible_claim_proves_and_refutes() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
+/// A state-graph certificate establishes reachability and the claim's graph
+/// predicate. It remains valid when the timed graph has only zero-time
+/// behavior; FR-244's non-Zeno witness belongs to liveness certificates.
+#[trace("TC-2412", "FR-852-AC-2")]
+#[trace("TC-2412", "FSpec-FR-712-AC-2")]
+#[test]
+fn a_zeno_only_timed_graph_accepts_state_graph_certificate() {
+    let frozen = unit(true).replace(
+        "time invariant ServerDeadline",
+        "time invariant Frozen when { true } { self.x <= 0 ms }\n\
+         time invariant ServerDeadline",
+    );
+    let ws = Workspace::new("timed-sg-zeno-only");
+    let run = analyze(&request_over(
+        &ws,
+        &frozen,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "IdlePossible"}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-6", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["state_graph"]["form"],
+        "possible",
+        "{item}"
+    );
+    assert!(item["certificate"]["document"]["admitted"].is_null(), "{item}");
+}
+
 /// FR-852-AC-3, FSpec FR-712-AC-3: the `reset` cycle gives `OneReply`
 /// infinitely many paths; without it the one step sequence `send`, `reply`
 /// is one path whatever the delay before `reply`.
 #[trace("TC-2412", "FR-852-AC-3")]
 #[trace("TC-2412", "FSpec-FR-712-AC-3")]
 #[test]
-#[ignore = "QSL-2305: EN-6 lists no state-graph form, so a timed state-graph item settles unsupported"]
 fn a_timed_unique_path_counts_step_sequences() {
     let items = json!([{"claim": "OneReply"}]);
-    let cyclic = run("timed-sg-unique", true, items.clone());
+    let cycle_unit = unit(true).replace("self.x <= 3 ms", "self.x <= 4 ms");
+    let ws = Workspace::new("timed-sg-unique");
+    let cyclic = analyze(&request_over(
+        &ws,
+        &cycle_unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": items.clone()}),
+    ));
     assert_eq!(label(&cyclic.item(0)), "refuted", "{}", cyclic.item(0));
     let acyclic = run("timed-sg-unique-no-reset", false, items);
     assert_eq!(label(&acyclic.item(0)), "proved", "{}", acyclic.item(0));
@@ -111,12 +154,11 @@ fn a_timed_unique_path_counts_step_sequences() {
 #[trace("TC-2412", "FR-852-AC-4")]
 #[trace("TC-2412", "FSpec-FR-712-AC-4")]
 #[test]
-#[ignore = "QSL-2305: EN-6 lists no state-graph form, so a timed state-graph item settles unsupported"]
 fn en_1_is_no_candidate_and_a_budget_stops_the_zone_search() {
     let named = run(
         "timed-sg-en1",
         true,
-        json!([{"claim": "Replied", "backend": "en-1"}]),
+        json!([{"claim": "ReplyPossible", "backend": "en-1"}]),
     );
     let item = named.item(0);
     assert_eq!(label(&item), "unsupported", "{item}");
@@ -128,17 +170,20 @@ fn en_1_is_no_candidate_and_a_budget_stops_the_zone_search() {
     let limited = run(
         "timed-sg-budget",
         true,
-        json!([{"claim": "Replied", "temporal": {"limits": {"max_states": 1}}}]),
+        json!([{"claim": "ReplyPossible", "temporal": {"limits": {"max_states": 1}}}]),
     );
     let item = limited.item(0);
     assert_eq!(label(&item), "incomplete", "{item}");
-    assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
+    assert_eq!(
+        item["record"]["cause"]["limit"],
+        "max_states",
+        "{item}"
+    );
 }
 
 /// FR-852-AC-5: EN-6 advertises the three state-graph forms.
 #[trace("TC-2412", "FR-852-AC-5")]
 #[test]
-#[ignore = "QSL-2305: EN-6 lists no state-graph form"]
 fn en_6_advertises_the_state_graph_forms() {
     use fsl_route::StateGraphFormKind;
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
@@ -161,24 +206,32 @@ fn en_6_advertises_the_state_graph_forms() {
 #[trace("TC-2412", "FR-852-AC-6")]
 #[trace("TC-2412", "FSpec-FR-712-AC-4")]
 #[test]
-#[ignore = "QSL-2305: a timed state-graph item has no digital-clock route"]
 fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
     let run = run(
         "timed-sg-digital",
         true,
         json!([
-            {"claim": "Replied", "options": {"method": "digital-clocks"}},
-            {"claim": "Late", "options": {"method": "digital-clocks"}}
+            {"claim": "ReplyPossible", "options": {"method": "digital-clocks"}},
+            {"claim": "LatePossible", "options": {"method": "digital-clocks"}}
         ]),
     );
     let proved = run.item(0);
     assert_eq!(label(&proved), "proved", "{proved}");
     assert_eq!(proved["record"]["backend"], "en-1", "{proved}");
     assert_eq!(proved["record"]["basis"]["type"], "exhaustive", "{proved}");
-    assert_eq!(proved["replay"]["reproduced"], true, "{proved}");
+    let evidence = &proved["record"]["evidence"];
+    assert_eq!(evidence["arm"], "witness", "{proved}");
+    let paths = evidence["paths"].as_array().expect("witness paths");
+    assert!(!paths.is_empty(), "{proved}");
+    assert!(paths.iter().all(|entry| {
+        entry["path"]["steps"]
+            .as_array()
+            .is_some_and(|steps| steps.iter().all(|step| step["delay"]["denominator"] == "1"))
+    }), "digital-clock witnesses use integral delays: {proved}");
     let refuted = run.item(1);
     assert_eq!(label(&refuted), "refuted", "{refuted}");
     assert_eq!(refuted["record"]["backend"], "en-1", "{refuted}");
+    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
 
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
     let en1 = engines
@@ -186,6 +239,55 @@ fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
         .find(|descriptor| descriptor.id().as_str() == "en-1")
         .expect("en-1 registers");
     assert_eq!(en1.state_graph_forms().len(), 3);
+}
+
+/// FR-852-AC-6: EN-1 decides the other two state-graph forms on the integer
+/// grid and replays their negative evidence.
+#[trace("TC-2412", "FR-852-AC-6")]
+#[trace("TC-2412", "FSpec-FR-712-AC-4")]
+#[test]
+fn digital_clocks_decide_always_possible_and_unique_path() {
+    let method = json!({"method": "digital-clocks"});
+    let always = run(
+        "timed-sg-digital-always",
+        true,
+        json!([{"claim": "BackToIdle", "options": method.clone()}]),
+    );
+    let item = always.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+    assert_eq!(item["record"]["basis"]["type"], "exhaustive", "{item}");
+
+    let always_refuted = run(
+        "timed-sg-digital-always-refuted",
+        false,
+        json!([{"claim": "BackToIdle", "options": method.clone()}]),
+    );
+    let item = always_refuted.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+
+    let unique = run(
+        "timed-sg-digital-unique",
+        false,
+        json!([{"claim": "OneReply", "options": method.clone()}]),
+    );
+    let item = unique.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["backend"], "en-1", "{item}");
+
+    let cyclic_unit = unit(true).replace("self.x <= 3 ms", "self.x <= 4 ms");
+    let ws = Workspace::new("timed-sg-digital-unique-refuted");
+    let unique_refuted = analyze(&request_over(
+        &ws,
+        &cyclic_unit,
+        &crate::zone_search::rpc_document(),
+        &[rpc_snapshot()],
+        json!({"items": [{"claim": "OneReply", "options": method}]}),
+    ));
+    let item = unique_refuted.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// The Zeno-only `Rpc` variant of FR-244-AC-7: the time invariant

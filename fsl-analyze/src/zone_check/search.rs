@@ -149,6 +149,10 @@ pub struct TimedStateGraph {
     pub stats: ZoneStats,
     /// The scale factor shared by the node zones.
     pub(super) scale: BigInt,
+    /// The LU simulation bounds used to explore and certify the graph.
+    pub(super) lower: Vec<Option<BigInt>>,
+    /// The upper LU simulation bounds used to explore and certify the graph.
+    pub(super) upper: Vec<Option<BigInt>>,
 }
 
 /// A request to EN-6.
@@ -399,12 +403,21 @@ pub fn explore_timed_state_graph(
     let mut run = Run::new(subject, Judged::StateGraph, None, &[], limits, cancel);
     let (initials, stats) = match run.search() {
         Ok(Searched::Graph { initials, stats }) => (initials, stats),
-        Ok(Searched::Undecided { .. }) | Ok(Searched::Stopped { .. }) => {
+        Ok(Searched::Stopped { cause, .. }) => return Err(ZoneCheckRefusal::Stopped(cause)),
+        Ok(Searched::Undecided { .. }) => {
             return Err(ZoneCheckRefusal::Fault("state-graph-stopped"));
         }
         Ok(_) => return Err(ZoneCheckRefusal::Fault("state-graph-outcome")),
         Err(Halt::Refusal(refusal)) => return Err(refusal),
-        Err(Halt::Outcome(_)) => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
+        Err(Halt::Outcome(outcome)) => match *outcome {
+            Searched::Stopped { cause, .. } => {
+                return Err(ZoneCheckRefusal::Stopped(cause));
+            }
+            Searched::Undecided { .. } => {
+                return Err(ZoneCheckRefusal::Fault("state-graph-stopped"));
+            }
+            _ => return Err(ZoneCheckRefusal::Fault("state-graph-halt")),
+        },
     };
     let nodes = run
         .nodes
@@ -445,6 +458,8 @@ pub fn explore_timed_state_graph(
         initials,
         stats,
         scale: run.scale,
+        lower: run.lower,
+        upper: run.upper,
     })
 }
 
@@ -530,6 +545,9 @@ pub fn concretise_timed_state_graph_path(
 /// Why EN-6 does not take the request.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ZoneCheckRefusal {
+    /// A state-graph-only exploration stopped before its graph was complete.
+    #[error("the zone graph exploration stopped: {0:?}")]
+    Stopped(ZoneStop),
     /// The clause is of no profile EN-6 reads, a TT-2 window's negation
     /// starts a punctual interval at many positions, which no timed
     /// automaton reads (FR-242; Alur and Dill, 1994), or its claim

@@ -115,6 +115,7 @@ impl Run<'_, '_, '_> {
             non_zeno: Some(non_zeno),
             divergence: None,
             admitted,
+            state_graph: None,
         })
     }
 
