@@ -14,7 +14,7 @@ use fsl_eval::simulation::Limits;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ReachedLimit, RefinementFailure, RefinementOutcome, SafetyOutcome,
+    ModelCheckOutcome, ReachedLimit, RefinementFailure, RefinementOutcome, SafetyOutcome, Taken,
     TemporalCounterexample, UndecidedCause,
 };
 use fsl_semantics::check::CheckedRefinement;
@@ -307,7 +307,28 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
     // `any` candidate can keep the abstract `prev` value or take write while
     // leaving the visible image unchanged. The non-taking path is weakly
     // unfair, while the candidate taking write supplies a fair run.
-    holds(&check_aux(&unit.world(&refinement)));
+    let outcome = check_aux(&unit.world(&refinement));
+    holds(&outcome);
+    let SafetyOutcome::Holds { certificate, .. } = &outcome.safety else {
+        panic!("the safety phase retains the candidate-set certificate");
+    };
+    assert!(
+        certificate
+            .positions
+            .iter()
+            .any(|position| position.abstract_states.len() > 1),
+        "the same concrete loop retains both hidden candidate valuations"
+    );
+    let abstract_write = operation_identity_text(&unit.abstract_key("Register/write"))
+        .expect("the abstract write identity");
+    assert!(
+        certificate.successors.iter().flatten().any(|edge| {
+            edge.transition.is_some()
+                && matches!(&edge.taken, Taken::Abstract(transitions)
+                    if transitions.iter().any(|transition| transition.operation() == abstract_write))
+        }),
+        "the candidate set includes a run taking the abstract write"
+    );
 }
 
 /// `Probe` over the concrete guards `concrete` (`flipA`, `flipB`, `setA`,
