@@ -1234,7 +1234,7 @@ impl Enabled<'_> {
             }
         }
         let before: Vec<Poly2> = self.solution.iter().cloned().map(Poly2::constant).collect();
-        let section = Section::new(at);
+        let section = Section::new(at, &mut *self.meter);
         for (free, body) in &quantified.free {
             let mut after = before.clone();
             after[*free] = Poly2::variable();
@@ -1243,8 +1243,8 @@ impl Enabled<'_> {
                 captures: &[],
                 activation: &before,
             };
-            let (satisfied, read) = section.exists(body, &env, self.meter)?;
-            decisions.extend(projection(&read));
+            let (satisfied, read) = section.exists(body, &env)?;
+            decisions.extend(projection(&read, &mut || section.charge())?);
             if !satisfied {
                 return Ok(false);
             }

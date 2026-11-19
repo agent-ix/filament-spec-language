@@ -13,6 +13,7 @@ use filament_exact::Rational;
 
 use super::poly::Poly;
 use super::trace::zero;
+use super::HybridReplayRefusal;
 
 fn one() -> Rational {
     Rational::from_integer(1_i64.into())
@@ -251,44 +252,52 @@ fn interpolate(values: &[Rational]) -> Poly {
 /// The principal subresultant coefficient of order `order` of `a` and `b`
 /// (order 0 is the resultant) as a polynomial in `t`, by evaluation at
 /// enough integers and interpolation. `order` is below both degrees.
-fn principal_subresultant(a: &Poly2, b: &Poly2, order: usize) -> Poly {
+fn principal_subresultant(
+    a: &Poly2,
+    b: &Poly2,
+    order: usize,
+    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+) -> Result<Poly, HybridReplayRefusal> {
     let (Some(m), Some(n)) = (a.degree(), b.degree()) else {
-        return Poly::zero();
+        return Ok(Poly::zero());
     };
     let size = m + n - 2 * order;
     let bound = (n - order) * a.parameter_degree() + (m - order) * b.parameter_degree();
-    let values: Vec<Rational> = (0..=bound)
-        .map(|point| {
-            let t = Rational::from_integer(point.into());
-            let (at_a, at_b) = (a.at_t(&t), b.at_t(&t));
-            let mut rows = Vec::with_capacity(size);
-            for (shifts, polynomial) in [(n - order, &at_a), (m - order, &at_b)] {
-                for shift in (0..shifts).rev() {
-                    rows.push(
-                        (0..size)
-                            .map(|column| {
-                                // Column `c` is the power `m + n - order - 1 - c`.
-                                let power = m + n - order - 1 - column;
-                                power
-                                    .checked_sub(shift)
-                                    .and_then(|degree| polynomial.coefficients().get(degree))
-                                    .cloned()
-                                    .unwrap_or_else(zero)
-                            })
-                            .collect(),
-                    );
-                }
+    let mut values: Vec<Rational> = Vec::with_capacity(bound + 1);
+    for point in 0..=bound {
+        charge()?;
+        let t = Rational::from_integer(point.into());
+        let (at_a, at_b) = (a.at_t(&t), b.at_t(&t));
+        let mut rows = Vec::with_capacity(size);
+        for (shifts, polynomial) in [(n - order, &at_a), (m - order, &at_b)] {
+            for shift in (0..shifts).rev() {
+                rows.push(
+                    (0..size)
+                        .map(|column| {
+                            // Column `c` is the power `m + n - order - 1 - c`.
+                            let power = m + n - order - 1 - column;
+                            power
+                                .checked_sub(shift)
+                                .and_then(|degree| polynomial.coefficients().get(degree))
+                                .cloned()
+                                .unwrap_or_else(zero)
+                        })
+                        .collect(),
+                );
             }
-            determinant(rows)
-        })
-        .collect();
-    interpolate(&values)
+        }
+        values.push(determinant(rows));
+    }
+    Ok(interpolate(&values))
 }
 
 /// The nonconstant polynomials in `t` whose roots bound every cell over
 /// which the real roots in `x` of every polynomial of `set`, their number
 /// and their order, are constant.
-pub(crate) fn projection(set: &[Poly2]) -> Vec<Poly> {
+pub(crate) fn projection(
+    set: &[Poly2],
+    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+) -> Result<Vec<Poly>, HybridReplayRefusal> {
     let mut projected: Vec<Poly> = Vec::new();
     let mut keep = |poly: Poly| {
         if poly.degree().unwrap_or(0) > 0 && !projected.contains(&poly) {
@@ -302,7 +311,7 @@ pub(crate) fn projection(set: &[Poly2]) -> Vec<Poly> {
         let derivative = f.derivative();
         if let (Some(m), Some(_)) = (f.degree(), derivative.degree()) {
             for order in 0..m.saturating_sub(1) {
-                keep(principal_subresultant(f, &derivative, order));
+                keep(principal_subresultant(f, &derivative, order, charge)?);
             }
         }
     }
@@ -310,10 +319,10 @@ pub(crate) fn projection(set: &[Poly2]) -> Vec<Poly> {
         for g in &set[i + 1..] {
             if let (Some(m), Some(n)) = (f.degree(), g.degree()) {
                 for order in 0..m.min(n) {
-                    keep(principal_subresultant(f, g, order));
+                    keep(principal_subresultant(f, g, order, charge)?);
                 }
             }
         }
     }
-    projected
+    Ok(projected)
 }

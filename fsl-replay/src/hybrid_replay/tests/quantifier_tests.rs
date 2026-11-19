@@ -37,9 +37,14 @@ fn and(a: Exp, b: Exp) -> Exp {
     Exp::Logic(fsl_semantics::check::LogicOp::And, Box::new(a), Box::new(b))
 }
 
-/// Whether some real `x` satisfies `body`, where `Variable(0)` is `x` and
-/// `Variable(1)` is `t`, at the instant `at`.
-fn exists_at(body: &Exp, at: &ExactReal) -> bool {
+/// The work units spent deciding whether some real `x` satisfies `body` at
+/// the instant `at` (`Variable(0)` is `x`, `Variable(1)` is `t`) under a
+/// meter of `bound` units, and the answer.
+fn exists_metered(
+    body: &Exp,
+    at: &ExactReal,
+    bound: u64,
+) -> (u64, Result<bool, HybridReplayRefusal>) {
     let variables = [
         Poly2::variable(),
         Poly2::constant(Poly::new(vec![n(0), n(1)])),
@@ -49,11 +54,18 @@ fn exists_at(body: &Exp, at: &ExactReal) -> bool {
         captures: &[],
         activation: &[],
     };
-    let mut meter = HybridReplayMeter::new(u64::MAX);
-    Section::new(at)
-        .exists(body, &env, &mut meter)
+    let mut meter = HybridReplayMeter::new(bound);
+    let answer = Section::new(at, &mut meter)
+        .exists(body, &env)
+        .map(|(found, _)| found);
+    (meter.consumed(), answer)
+}
+
+/// Whether some real `x` satisfies `body` at the instant `at`.
+fn exists_at(body: &Exp, at: &ExactReal) -> bool {
+    exists_metered(body, at, u64::MAX)
+        .1
         .expect("the body evaluates")
-        .0
 }
 
 fn rational(value: Rational) -> ExactReal {
@@ -140,7 +152,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
         Poly::zero(),
         Poly::constant(n(1)),
     ]);
-    let projected = projection(&[square]);
+    let projected = projection(&[square], &mut || Ok(())).expect("unmetered");
     assert!(!projected.is_empty());
     for poly in &projected {
         assert_eq!(poly.roots_in(&n(-100), &n(100)).len(), 1, "{poly:?}");
@@ -159,7 +171,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
 fn the_projection_of_two_lines_has_their_crossing() {
     let moving = Poly2::new(vec![Poly::new(vec![n(0), n(-1)]), Poly::constant(n(1))]);
     let fixed = Poly2::new(vec![Poly::constant(n(-1)), Poly::constant(n(1))]);
-    let projected = projection(&[moving, fixed]);
+    let projected = projection(&[moving, fixed], &mut || Ok(())).expect("unmetered");
     let roots_of = |poly: &Poly| poly.roots_in(&n(-100), &n(100));
     // The resultant is the one projected polynomial that vanishes at the
     // crossing and nowhere else; the coefficient `-t` adds the root 0, where
@@ -230,44 +242,46 @@ fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() 
     );
 }
 
-/// `Pulse` with a deterministic `Run -> Gone` reset: the same lasso and
-/// claims, so the same dwell segments, but no quantifier elimination.
-fn pulse_without_elimination() -> String {
-    PULSE
-        .replace("reset { w >= 0 }", "reset { w = 1 }")
-        .replace(
-            "mode Gone invariant { w * w = v and w * w * w = 2 }",
-            "mode Gone invariant { w >= 0 }",
-        )
-}
-
-fn consumed_by(source: &str) -> u64 {
-    let graph = check(source);
-    let mut meter = HybridReplayMeter::new(u64::MAX);
-    crate::hybrid_replay::exact_replay(&graph, claim(&graph, "Strong"), &pulse_trace(), &mut meter)
-        .expect("the lasso replays");
-    meter.consumed()
-}
-
-/// Quantifier elimination is charged to the caller's meter, with no fixed
-/// cap: the quantified claim costs strictly more than its deterministic twin
-/// over the same segments, and a bound at the twin's cost exhausts only the
-/// quantified claim.
+/// Every step of the elimination of `x * x = t` at `t = 4` is charged before
+/// it is taken: the run spends exactly `ELIMINATION_UNITS` (the samples of
+/// the line, each remainder step of the Sturm-Tarski sequences, each
+/// candidate and refinement in root isolation, each root comparison), the
+/// same bound suffices, one unit fewer is refused as `ResourceExhausted`, and
+/// a tiny meter is exhausted before the first answer.
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
-fn quantifier_elimination_is_charged_to_the_callers_meter() {
-    let without = consumed_by(&pulse_without_elimination());
-    let with = consumed_by(PULSE);
-    assert!(with > without, "{with} <= {without}");
-    let graph = check(PULSE);
-    let mut bounded = HybridReplayMeter::new(without);
+fn quantifier_elimination_charges_every_step_before_it_is_taken() {
+    const ELIMINATION_UNITS: u64 = 39;
+    let body = compare(
+        CompareOp::Eq,
+        times(Exp::Variable(0), Exp::Variable(0)),
+        Exp::Variable(1),
+    );
+    let at = rational(n(4));
+    let (spent, answer) = exists_metered(&body, &at, u64::MAX);
+    assert_eq!(answer, Ok(true));
+    assert_eq!(spent, ELIMINATION_UNITS);
+    assert_eq!(exists_metered(&body, &at, spent), (spent, Ok(true)));
+    let exhausted = Err(HybridReplayRefusal::ResourceExhausted {
+        counter: filament_exact::LimitKind::WorkUnits,
+    });
+    assert_eq!(exists_metered(&body, &at, spent - 1).1, exhausted);
+    assert_eq!(exists_metered(&body, &at, 1).1, exhausted);
+}
+
+/// The subresultant evaluation points of a projection are charged too.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn a_tiny_meter_is_exhausted_inside_a_projection() {
+    let square = Poly2::new(vec![
+        Poly::new(vec![n(0), n(-1)]),
+        Poly::zero(),
+        Poly::constant(n(1)),
+    ]);
+    let mut meter = HybridReplayMeter::new(0);
+    let mut charge = || meter.charge();
     assert_eq!(
-        crate::hybrid_replay::exact_replay(
-            &graph,
-            claim(&graph, "Strong"),
-            &pulse_trace(),
-            &mut bounded
-        ),
+        projection(&[square], &mut charge),
         Err(HybridReplayRefusal::ResourceExhausted {
             counter: filament_exact::LimitKind::WorkUnits,
         })

@@ -20,3 +20,11 @@ CONDITIONAL. FR-750-AC-12 (b)'s three Shuttle fairness variants are exercised on
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | The fsl-analyze unfair branch asserts only `inconclusive` and cause `replay-parity`, which a `NotExact` replay also produces; it does not check the disagreement is `hybrid-trace`/`not-reproduced`, so a regression to `NotExact` passes | fsl-analyze/tests/it/hybrid_requests.rs:1190-1195 |
+
+## Dispositions
+
+Round 1, head 0164e023bb27ec3330a142f6549b621bdea6bf53.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | The new assertion `cause.parity.reason == "hybrid-trace"` does not tell `NotExact` from `NotReproduced`: both are `ReplayParity(HybridTrace(..))` per FR-750-AC-12. A reviewer probe printed the full unfair item JSON. Its record is `{"kind":"replay-parity","parity":{"reason":"hybrid-trace"}}` and the item carries no exact-replay outcome, so this layer cannot assert the distinction. fsl-replay's `shuttle_fairness_over_a_nondeterministic_reset_is_decided_exactly` pins `NotReproduced { Claim }` for the same inputs. |
