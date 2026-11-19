@@ -42,8 +42,9 @@ invariant NoCycle using v on Config::ConfigVersion at current {
   not reaches(self, self, parent)
 }
 
-post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
-  self.versionNumber = pre(self.versionNumber)
+post VersionAdvances using v on Config::ConfigVersion::attemptUpdate {
+  (result implies convert<Integer>(self.versionNumber) = pre(self.versionNumber) + 1)
+  and (not result implies self.versionNumber = pre(self.versionNumber))
 }
 ```
 
@@ -59,8 +60,9 @@ post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
   it and `deref` follows it. `NoCycle`: following `parent` links never returns
   to the start.
 - **`post … on …::attemptUpdate`** is checked around an operation. `pre(x)` is
-  the value of `x` before the operation. `VersionUnchanged`: an update attempt
-  keeps the version number.
+  the value of `x` before the operation. `VersionAdvances`: an update attempt
+  that reports `true` advances the version by one; one that reports `false`
+  keeps it.
 
 ### Rules in Markdown specs
 
