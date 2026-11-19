@@ -384,6 +384,20 @@ pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocume
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }
+        Node::Array(mut monitor) if monitor.len() == 3 => {
+            if !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("deadline"))
+            ) || !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("eventually" | "always" | "until"))
+            ) || !matches!(
+                monitor.next().map(|part| part.node()),
+                Some(Node::String("pending" | "accept" | "reject"))
+            ) {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+        }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
     if parts[4..]
