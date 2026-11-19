@@ -68,3 +68,29 @@ Not machine-checked:
 | FND-010 | low | Refusals are attributed to the wrong place in two ways. A lowering refusal always names the first lowerable obligation (`lowerable.first()`), not the one whose construct failed. `read_models` refuses on any object type in any selected model, including types no obligation reads; for example the spine refuses on an unrelated nullable field. The exit is honest but the attribution can mislead. | fsl-command/src/command/export/map.rs:294-321; fsl-command/src/command/export/lower.rs:166-238 |
 | FND-011 | low | Naming deviates from FSpec FR-814. Operation parameters use the prefix `p_`, which FR-814 does not list. Record fields use `f_`, which FR-814 reserves for functions. The Lean text uses `Prod.fst`, which is outside FR-816's Lean subset (`.1`/`.2`). | fsl-command/src/command/export/lower.rs:394,612,1070-1076,1442-1444 |
 | FND-012 | low | Rust smells: `int_text(value, target)` ignores `target` (`let _ = target;`); `let binary = \|op\| Some(op)` is a no-op closure; `Show::expr` returns `String::new()` for an unknown object or field index instead of failing, which would silently write empty text. | fsl-command/src/command/export/lower.rs:428,582-589,605-610 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | medium | The fix commit committed `reviews/qsl-2587-code-review-comment.md` and `reviews/qsl-2587-gap-analysis-comment.md`. These are Linear comment bodies with no SpecReview frontmatter, and `quire validate` exits 3 on both. Only the two SR files belong under `reviews/`. | reviews/qsl-2587-code-review-comment.md; reviews/qsl-2587-gap-analysis-comment.md |
+| FND-014 | low | `writing_the_regions_charges_work_units` asserts only that the least admitting `export.work_units` is at least the number of `fsl:` comments. The node charges alone may already exceed that count, so the test may pass without the per-definition charge. A stronger assertion is that the least `export.work_units` equals the least `export.nodes` plus the number of definitions written. | tests/it/export_state_lowering.rs:570-588 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | map.rs refuses a `bounded` state clause as `model/bound`, exit 30. The probe and `a_bounded_population_is_a_mapper_failure` confirm this in both targets. |
+| FND-002 | fixed | Each Lean `op_` conjunct is parenthesized, and the probe shows `(forall k, ... -> Not (k = p_self) -> ...) /\ (WF s')`. |
+| FND-003 | fixed | `read_object` refuses a nonempty `pre`/`post` as `model/operation`. The probe with an ensures clause exits 30. |
+| FND-004 | fixed | `v_`/`T_` are in the name map, `op_inc` maps to its `state/operation_anchor` node (region 211-225), and `VARIABLES` has a comment. An operation with no FSL clause still maps to the type node, which is acceptable. |
+| FND-005 | fixed | The test is retagged `TC-2865`/`FR-1015-AC-2`. |
+| FND-006 | fixed | The FR-1015-AC-5 tag was removed from the spine refusal test. |
+| FND-007 | fixed | Tests were added for parameters with a receiver frame, Booleans with not/or, the or-guard, two exported types, bound, contract, lazy type reads and the Lean receiver frame. |
+| FND-008 | fixed | The lowering no longer charges nodes outside the closures, and one work unit is charged per written definition. Whether a definition counts as FR-1015's "region" is an open architecture question. |
+| FND-009 | fixed | The spine refusal test again covers all three floors, both targets, no `export` member, stage `emit` and `last_stage` S4. |
+| FND-010 | fixed | `Refusal.obligation` names the owning obligation, and type bodies are read lazily (`only_the_exported_types_are_read`). |
+| FND-011 | deferred | `Prod.fst` is replaced by `.1`. The `p_`/`f_` prefixes remain, because FR-814 lists no prefix for parameters or record fields. That gap needs an FSpec FR-814 decision, not a code change in this PR. |
+| FND-012 | fixed | The unused `target` parameter and the `binary` closure are removed, and `Show::expr` returns `Lower<String>`, refusing on a bad index. |
+| FND-013 | still-open | New this round. The two `*-comment.md` files under `reviews/` must be deleted before merge (the coordinator has said they will do this). |
+| FND-014 | still-open | New this round. The work-units test should pin `least(export.work_units) == least(export.nodes) + definitions`, or something equally exact. |

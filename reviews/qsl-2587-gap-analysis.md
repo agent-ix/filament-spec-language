@@ -42,3 +42,12 @@ Not covered:
 | FND-002 | medium | `an_unlowered_state_construct_is_a_mapper_failure` is tagged FR-1015-AC-5, which says nothing about refusing a spine invariant. | tests/it/export_state_lowering.rs:183-195 |
 | FND-003 | low | FR-865-AC-7's second clause ("over the same export with no output file named its last two lines are `bytes written: 0` and `output: none`") has no test. The renderer's `"none"` fallback is therefore unasserted. | fsl-inspect/src/render.rs:539-545; tests/it/plan_export_surface.rs:766-803 |
 | FND-004 | low | The counter Lean test is tagged FSpec FR-813-AC-5 ("The Lean file of AC-1 and AC-2", the temporal `always holds` exports), but it exports a state invariant. The tag overstates coverage of FR-813. | tests/it/export_state_lowering.rs:89-94 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Retagged `TC-2865`/`FR-1015-AC-2`. |
+| FND-002 | fixed | Tag removed from the spine refusal test. |
+| FND-003 | fixed | `an_export_with_no_output_file_renders_none` asserts `bytes written: 0` and `output: none`. |
+| FND-004 | fixed | The FSpec FR-813-AC-5 tag was removed from the counter Lean test. |
