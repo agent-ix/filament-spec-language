@@ -227,14 +227,19 @@ fn execute_request(
                         code: value
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
+                            .or_else(|| value.pointer("/disposition/refusal/code"))
                             .and_then(string_member)
                             .map(str::to_owned),
                         cause: value
                             .get("cause")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("cause")))
+                            .or_else(|| value.pointer("/disposition/refusal/cause"))
                             .and_then(string_member)
                             .map(str::to_owned),
-                        result: outcome.and_then(|outcome| outcome.get("value")).cloned(),
+                        result: outcome
+                            .and_then(|outcome| outcome.get("value"))
+                            .or_else(|| value.pointer("/disposition/outcome/value"))
+                            .cloned(),
                     })
                 }
                 Err(error) => {
@@ -990,9 +995,12 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+#[trace("FR-106", "FR-107", "FR-312")]
 #[test]
 fn corpus_operations() {
-    run_area("operations");
+    let directory = corpus_root().join("operations");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
 }
 
 #[test]
