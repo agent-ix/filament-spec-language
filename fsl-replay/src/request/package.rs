@@ -5,8 +5,8 @@ use super::{PackageMemberCause, ReplayRequestRefusal};
 use crate::identity::SourceRefWire;
 use filament_contract_model::CheckedRefinementInternal;
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageIncomplete, CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageIncomplete,
+    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 use quire_canonical::{Document, Node, NodeRef, ReadError};
 
@@ -121,6 +121,7 @@ impl ReplayPackage {
         // by the program; replay uses one configuration per role across the
         // checked closure.
         const DEPENDENCY_ROWS: &str = "/package/lock/dependency_clock_selections";
+        let mut dependency_members = std::collections::BTreeMap::new();
         if let Some(lock) = member(self.document.root(), "lock") {
             if let Some(rows) = member(lock, "dependency_clock_selections") {
                 for (index, row) in array(rows, DEPENDENCY_ROWS)?.enumerate() {
@@ -130,18 +131,51 @@ impl ReplayPackage {
                         &format!("{pointer}/clock_name"),
                     )?;
                     let clock_at = format!("{pointer}/clock");
-                    let clock = serde_json::from_value(json_value(required(row, "clock", &pointer)?))
-                        .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
-                    members.insert(name.to_owned(), clock);
+                    let clock =
+                        serde_json::from_value(json_value(required(row, "clock", &pointer)?))
+                            .map_err(|_| field_refusal(&clock_at, PackageMemberCause::WrongKind))?;
+                    dependency_members.insert(name.to_owned(), clock);
                 }
             }
         }
-        crate::spine::RequestClocks::new(members).map_err(|invalid| {
-            field_refusal(
-                &format!("{ROWS}/{}", invalid.clock),
-                PackageMemberCause::WrongKind,
-            )
-        })
+        let Some(lock) = member(self.document.root(), "lock") else {
+            return crate::spine::RequestClocks::new(members).map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            });
+        };
+        let Some(source_rows) = member(lock, "sources") else {
+            return crate::spine::RequestClocks::new(members).map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            });
+        };
+        let source_rows = array(source_rows, "/package/lock/sources")?;
+        let source = source_rows
+            .into_iter()
+            .next()
+            .ok_or_else(|| field_refusal("/package/lock/sources", PackageMemberCause::Missing))?;
+        let authority = string(
+            required(source, "authority", "/package/lock/sources/0")?,
+            "/package/lock/sources/0/authority",
+        )?
+        .to_owned();
+        let identity = string(
+            required(source, "identity", "/package/lock/sources/0")?,
+            "/package/lock/sources/0/identity",
+        )?
+        .to_owned();
+        crate::spine::RequestClocks::for_replay((authority, identity), members, dependency_members)
+            .map_err(|invalid| {
+                field_refusal(
+                    &format!("{ROWS}/{}", invalid.clock),
+                    PackageMemberCause::WrongKind,
+                )
+            })
     }
 
     /// FR-098-AC-34: every `function` node of a package document, in node
@@ -378,7 +412,7 @@ impl ReplayPackageAdmissionRefusal {
                 _ => {
                     return Self::Catalog {
                         refusal: Box::new(refusal),
-                    }
+                    };
                 }
             },
         };
