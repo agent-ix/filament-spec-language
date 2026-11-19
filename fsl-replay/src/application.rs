@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use filament_eval::{
-    Admission, BodyFactory, CallFailure, Evaluation, Progress, Registry, Session, SessionLimits,
-    Signature,
+    Admission, BodyFactory, CallFailure, Evaluation, LiveContext, Progress, Registry, Session,
+    SessionLimits, Signature,
 };
 use filament_exact::{
     Identifier, Meter, NodeKey, Origin as OccurrenceOrigin, Presence, Role, UnionMember, Value,
