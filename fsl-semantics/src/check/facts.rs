@@ -1806,6 +1806,7 @@ impl<'a> Definedness<'a> {
                         Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
+                            operand: Default::default(),
                         },
                     ))
                 }
