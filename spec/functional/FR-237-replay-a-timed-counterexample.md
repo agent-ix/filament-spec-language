@@ -102,7 +102,11 @@ refutation.
   exploration that finds one SHALL let the refutation settle; one that
   completes with none SHALL settle `inconclusive`, `ReplayParity`, since the
   violation lies only on time-locked behaviour (ADR-026 TD-1, TV-1); one
-  stopped by a limit SHALL settle V-7.
+  stopped by a limit SHALL settle V-7. This arm does not apply to a
+  deadline-miss counterexample of a task-derived subject (FR-249): its
+  continuation is the carried FSpec FR-364 witness (a finite loop, a
+  terminal-stutter loop or `queue_growth`), and one that carries none is
+  refused `malformed_wire` at `/loop` before any exploration.
 - **Evaluation.** For `kind: Formula`, replay SHALL evaluate the formula by
   FR-231 over the timed lasso, unrolling the loop until the unrolled time
   span covers the formula's time reach. `false` SHALL settle
@@ -143,6 +147,7 @@ refutation.
 | FR-237-AC-5 | FR-239-AC-5's counterexample replays to `reproduced-with-evaluated-witness`; with its last step removed it settles `inconclusive`, `ReplayParity`. | Test (TC-710) |
 | FR-237-AC-6 | Over a `Lock` model (one object with `phase: {A, B}` and a clock `x` never reset; `go` moves `A` to `B` with no guard; `time invariant when phase = B { x <= 1 ms }`; `ping`, enabled in `B`, changes no data field), the counterexample `go` after delay 0 to `always holds(c.phase = A)` settles `inconclusive`, `ReplayParity`, because the replayed state `(B, x = 0)` has no time-divergent continuation; over the variant in which `ping` resets `x`, the same counterexample settles `reproduced-with-evaluated-witness`; with an exploration limit of one state it settles V-7. | Test (TC-692) |
 | FR-237-AC-7 | The existing `ModelTrace` replay entry rebuilds an FR-249 task product and passes its model-trace payload to the FSpec FR-364 reader; an accepted task-derived miss yields the existing FR-072 ModelTrace result, while a rejected payload does not reproduce. No `TaskAutomatonTrace` result arm or parallel FSL trace wire is emitted. | Test (TC-704) |
+| FR-237-AC-8 | The FR-249-AC-9 counterexample with `loop` emptied is refused `malformed_wire` at `/loop` before any exploration, and is never settled by the admitted-endpoint arm, although its last state reaches a positive-delay cycle. | Test (TC-704) |
 
 ## Dependencies
 

@@ -17,7 +17,7 @@ the package, that the I2 reader refuses a malformed node, and that FSL
 settlement refuses a deadlock-freedom verdict decided under another
 declaration.
 
-Scope: FR-411-AC-1 to FR-411-AC-6.
+Scope: FR-411-AC-1 to FR-411-AC-8.
 
 ## Test Procedure
 
@@ -59,6 +59,15 @@ Use FR-126-AC-9's `Counter` unit.
    second with the reduced run and certificate request over its own. Hand
    `derived_zone_item` the timers' derived deadlock-freedom item with the
    run and certificate request over a package of another model.
+7. Compile AC-1's unit with `terminal Done using v on Counter when { true };`
+   and with `when { false }`; read each package with FSL's I2 reader and
+   the Contract IR reader, and run the Counter's deadlock-freedom item on
+   the source and the package route.
+8. Compile FR-411-AC-8's unit (`M` and `N` both selecting `test/vault`)
+   with `Done` on `M` and `Stop` on `N`, then with `any` on both; emit,
+   admit and read; write the deadlock-freedom request item and settle it;
+   rerun with `Stop` removed against the item written with both; swap the
+   two `model` lines, then the two declarations.
 
 Tag the tests `#[trace("TC-1142", "FR-411-AC-n")]` with the AC each step
 backs.
@@ -77,8 +86,9 @@ backs.
   `invalid_semantic_graph` at `condition`.
 - Step 5 (FR-411-AC-5): the two obligations are equal and the two `when`
   keys differ; each mismatched run or check refuses
-  `stale_dependency`/`content-mismatch` naming `v` and the two node keys
-  (`none` for no declaration), with no verdict settled; the `when` item
+  `stale_dependency`/`content-mismatch` naming the selection identity of
+  the model `Counter` selects and the two node keys (`none` for no
+  declaration), the alias only as a display label, with no verdict settled; the `when` item
   over the `when` package settles `proved` and the no-declaration item over
   its own package `refuted`; with the `value = 2` replay it settles
   `inconclusive`, `replay_refused`.
@@ -86,3 +96,13 @@ backs.
   `OtherAnchor` naming the `Rpc` item's anchor, on EN-1 and on EN-6;
   `TerminalDeclaration` naming `none` and the `when` key for the reduced
   run and for the certificate request; `Proved{Reduced}` on EN-6 for the matching item.
+- Step 7 (FR-411-AC-7): the `condition` references the `true` (`false`)
+  `value`/`literal` node with empty `parameters`; both readers admit; the
+  I2 read returns `When`; `proved` (`refuted` at `value = 3` for `false`)
+  on both routes.
+- Step 8 (FR-411-AC-8): two terminal nodes on the one `test/vault`
+  `model_root`, admitted, keyed (`test/vault`, 0) and (`test/vault`, 1) on
+  both routes; one node with two `claim` occurrences for `any` on both;
+  `terminals` is one entry for `test/vault` listing both keys; `proved`;
+  the `Stop`-removed run refuses `TerminalDeclaration` naming `test/vault`
+  and the two lists; each swap leaves package and `terminals` equal.

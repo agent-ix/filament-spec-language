@@ -40,10 +40,12 @@ with `t3` work 4; each task bound by `release S.τ on M::o;`. Every task has
    `schedulable BEdf on B under edf;` once on EN-7 and once with `backend`
    `en-6`; repeat for the work-4 variant.
 3. Read the refuted EN-6 item of the work-4 variant under
-   `fixed_priority`: its counterexample prefix, first `deadline-miss` step
-   and replay. Change the miss step's `deadline` to 11, then its `demand`
-   to 3, and replay each. Rerun with the `fire_*` operations declared in
-   reverse order.
+   `fixed_priority`: its counterexample prefix, `trace_position`, `loop`,
+   `queue_growth` and replay through the FR-237 `ModelTrace` entry. Replay
+   each variant: the miss step's `deadline` 11; its `demand` 3; `deadline`
+   11 on every `t3` job 0 step; `deadline` 81 on the loop's `activate` of
+   `t3` job 7; the last loop step removed; `loop` emptied. Rerun with the
+   `fire_*` operations declared in reverse order.
 4. Check `taskset Bad` whose task `p` has `periodic 0 ms`, then
    `periodic -4 ms`, each with `release Bad.p on M::o;`; analyze
    `schedulable BadFp on Bad under fixed_priority;` with `backend` `en-6`.
@@ -65,11 +67,20 @@ Tag tests `#[trace("TC-3008", "FR-249-AC-7")]` to
   EN-6 proves both. For the variant EN-7 returns `Miss` for `t3`, job 0,
   iterates `4, 7, 10, 11`, and EDF `Schedulable` at `59/60`; EN-6 refutes
   `fixed_priority` and proves `edf`. Each EN-6 label equals EN-7's.
-- Step 3: the first `deadline-miss` step in step order is the earliest
-  miss of the product: `t3`, job 0, `demand` 4, `deadline` 10, at time 10
-  with completed service 3, every task activated at 0, and no earlier miss.
-  The same miss is reported with the source operations declared in reverse
-  order. Replay reproduces; both mutations refuse replay.
+- Step 3: `prefix[trace_position]` is the earliest miss of the product:
+  `deadline-miss` of `t3`, job 0, `demand` 4, `deadline` 10, at time 10
+  with completed service 3, every task activated at 0, and no other
+  `deadline-miss` step in the prefix or loop. The prefix's last step is
+  `activate` of `t3` job 1 at time 10; `loop` is non-empty with delays
+  summing to exactly 60; `queue_growth` is absent. The same miss and loop
+  elapsed time are reported with the source operations declared in reverse
+  order. Replay reproduces. The variants refuse
+  `invalid_runtime_input`/`invalid-value` at, in order,
+  `/prefix/<miss>/transition/deadline`, `/prefix/<miss>/transition/demand`,
+  the `activate` step's `/transition/deadline`,
+  `/loop/<j>/transition/deadline` and `/loop/<last>/post_state`; the
+  emptied loop is refused `malformed_wire` at `/loop`. No variant settles
+  `refuted`.
 - Step 4: each check refuses `invalid_timed_model`/`invalid-task-set`
   naming `p` at its period quantity, with no `missing-name` for the
   release; the analyze request is refused as a whole at check and no engine
