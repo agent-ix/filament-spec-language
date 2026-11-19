@@ -70,7 +70,7 @@ fn original_protocol_declarations_communications_and_refusals() {
         ("object-message", "carries Note", "carries Factory::Job",
          "invalid_model_binding", "malformed-declaration"),
         ("wrong-channel", "receive Seen via Queue", "receive Seen via Absent",
-         "missing_declaration", "missing-name"),
+         "ill_typed", "type-mismatch"),
         ("effect-of-send", "receive Seen via Queue of Sent as (got: Note) { true };",
          "effect Seen of Sent as (got: Note) { true };", "ill_typed", "type-mismatch"),
     ] {
@@ -359,7 +359,7 @@ fn public_source_analysis_distinguishes_consumed_and_stranded_messages() {
         &stranded,
         original.replace(
             "receive Seen via Queue of Sent as (got: Note) { true };",
-            "",
+            "send Second via Queue as (second: Note) { true };",
         ),
     )
     .unwrap();
@@ -403,7 +403,7 @@ fn original_choice_parallel_and_repeat_have_positive_negative_and_zero_bound_con
     }
     for (name, control, code, cause) in [
         ("overlapping-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} case b when { got.ok } sequence B {} }", "undefined_expression", "unproved-exhaustiveness"),
-        ("nonexhaustive-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} }", "undefined_expression", "unproved-exhaustiveness"),
+        ("nonexhaustive-choice", "choice Decision by Receiver visible (got.ok) { case a when { got.ok } sequence A {} case b when { false } sequence B {} }", "undefined_expression", "unproved-exhaustiveness"),
         ("no-progress-repeat", "repeat Again by Receiver visible (got.ok) max 2 while { got.ok } sequence Cycle {} exhausted sequence Exhausted {}", "unsupported_construct", "declaration-form"),
     ] {
         let file = directory.path().join(format!("{name}.native"));
