@@ -504,6 +504,7 @@ fn a_seeded_regression_on_each_edge_fails_naming_its_case() {
         &registry(&[backend("backend-a", BOTH)]),
         Some(&mut supporting_all),
     );
+    let rendered = report.to_json().expect("the regression report renders");
     let regressions: Vec<_> = report
         .results
         .iter()
@@ -524,6 +525,10 @@ fn a_seeded_regression_on_each_edge_fails_naming_its_case() {
         assert!(name.child.identity().ends_with("-refused/child"));
         assert_eq!(parent.class, "refused");
         assert!(!parent.codes.is_empty());
+        assert!(HeaderLayer::from_identity(&name.parent_layer).is_some());
+        assert!(HeaderLayer::from_identity(&name.child_layer).is_some());
+        assert!(rendered.contains(&name.parent_layer));
+        assert!(rendered.contains(&name.child_layer));
         layers.insert((name.parent_layer.clone(), name.child_layer.clone()));
     }
     assert_eq!(layers.len(), 6, "one regression per edge");
