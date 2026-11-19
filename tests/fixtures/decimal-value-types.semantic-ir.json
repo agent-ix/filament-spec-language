@@ -626,6 +626,7 @@
           ],
           "returns": {
             "typeRef": "ix://test/decimal/Soc",
+            "nullable": false,
             "multiplicity": {
               "lower": 1,
               "upper": 1,
