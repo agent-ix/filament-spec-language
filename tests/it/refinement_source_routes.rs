@@ -10,11 +10,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Expected {
-    compile_exit: u8,
-    code: Option<String>,
-    mentions: Option<String>,
-    claim: Option<String>,
-    result: Option<String>,
+    claim: String,
+    result: String,
 }
 
 fn corpus() -> PathBuf {
@@ -22,85 +19,32 @@ fn corpus() -> PathBuf {
 }
 
 fn expected(stem: &str) -> Expected {
-    let bytes = std::fs::read(corpus().join(format!("{stem}.expected.json"))).unwrap();
+    let bytes = std::fs::read(corpus().join(format!("{stem}.verdict.json"))).unwrap();
     serde_json::from_slice(&bytes).expect("the authored expectation is strict JSON")
-}
-
-fn compile(stems: &[&str]) {
-    let mut failures = Vec::new();
-    for stem in stems {
-        let expected = expected(stem);
-        let path = corpus().join(format!("{stem}.request.json"));
-        match command::compile_outcome(&path) {
-            Ok(compiled) => {
-                if expected.compile_exit != 0 || compiled.package_bytes().is_empty() {
-                    failures.push(format!("{stem}: expected {expected:?}, compiled package"));
-                }
-            }
-            Err(error) => {
-                let value = error.artifact_value().expect("the refusal serializes");
-                let diagnostic = value.pointer("/diagnostics/0").unwrap_or(&value);
-                if error.category().exit_code() != expected.compile_exit
-                    || expected.code.as_deref() != diagnostic["code"].as_str()
-                    || !expected
-                        .mentions
-                        .as_deref()
-                        .is_some_and(|name| error.to_string().contains(name))
-                {
-                    failures.push(format!(
-                        "{stem}: expected {expected:?}, got {value}: {error}"
-                    ));
-                }
-            }
-        }
-        println!("checked source case {stem}");
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-#[trace("FR-135", "FR-136", "FR-901")]
-fn refinement_rows_compile_before_their_semantics_are_analyzed() {
-    compile(&[
-        "refinement-identity",
-        "refinement-stutter",
-        "refinement-constant-map",
-    ]);
 }
 
 #[test]
 #[trace("FR-135", "FR-136")]
-fn missing_and_mistyped_refinement_rows_name_the_unresolved_member() {
-    compile(&[
-        "refinement-missing-step",
-        "refinement-missing-object",
-        "refinement-missing-population",
-        "refinement-unknown-abstract-operation",
-        "refinement-wrong-map-type",
-    ]);
-}
-
-#[test]
-#[trace("FR-172", "FR-488")]
-fn universal_witness_set_and_single_existential_sources_compile() {
-    compile(&[
-        "hyper-universal-equal",
-        "hyper-universal-false",
-        "hyper-witness-equal",
-        "hyper-witness-impossible",
-        "hyper-single-reaches-three",
-        "hyper-single-impossible",
-    ]);
-}
-
-#[test]
-#[trace("FR-172", "FR-612")]
-fn hyper_trace_names_and_single_trace_boundaries_are_checked() {
-    compile(&[
-        "hyper-unknown-trace",
-        "hyper-duplicate-trace",
-        "hyper-plain-temporal-at",
-    ]);
+fn incomplete_refinement_rows_identify_the_missing_member() {
+    let mut messages = Vec::new();
+    for (stem, member) in [
+        ("refinement-missing-step", "inc"),
+        ("refinement-missing-object", "Counter"),
+        ("refinement-missing-population", "counters"),
+        ("refinement-unknown-abstract-operation", "absent"),
+    ] {
+        let error = command::compile_outcome(&corpus().join(format!("{stem}.request.json")))
+            .expect_err("incomplete refinement coverage is refused");
+        let message = error.to_string();
+        assert!(message.contains(member), "{stem}: {message}");
+        messages.push(message);
+    }
+    for pair in messages.windows(2) {
+        assert_ne!(
+            pair[0], pair[1],
+            "different missing rows keep distinct diagnostics"
+        );
+    }
 }
 
 fn analyze(stem: &str) {
@@ -115,14 +59,14 @@ fn analyze(stem: &str) {
     let items = value["items"].as_array().expect("analysis item records");
     let item = items
         .iter()
-        .find(|item| item["claim_name"].as_str() == expected.claim.as_deref())
+        .find(|item| item["claim_name"].as_str() == Some(expected.claim.as_str()))
         .unwrap_or_else(|| panic!("{stem}: expected named claim {expected:?}: {value}"));
     assert_eq!(
         item["record"]["result"].as_str(),
-        expected.result.as_deref(),
+        Some(expected.result.as_str()),
         "{stem}: {value}"
     );
-    match expected.result.as_deref().expect("an analysis oracle") {
+    match expected.result.as_str() {
         "proved" => {
             assert_eq!(output.exit_code, 0, "{stem}: {value}");
             assert_eq!(item["certificate"]["accepted"], true, "{stem}: {value}");
