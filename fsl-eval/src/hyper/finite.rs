@@ -53,16 +53,17 @@ pub enum FinitePopulationError {
         /// The trace with no states.
         identity: String,
     },
-    /// One identity occurs more than once in the population document.
-    DuplicateTraceIdentity {
+    /// One identity occurs with different records in the population document.
+    ConflictingTraceIdentity {
         /// The repeated trace identity.
         identity: String,
     },
 }
 
-impl<T> FiniteTracePopulation<T> {
+impl<T: PartialEq> FiniteTracePopulation<T> {
     /// Construct a population, rejecting empty identities, empty traces, and
-    /// every repeated identity in the source document.
+    /// identities that name different records. Repeated identical traces are
+    /// folded at their first occurrence.
     pub fn new(
         identity: impl Into<String>,
         record_type: impl Into<String>,
@@ -80,8 +81,11 @@ impl<T> FiniteTracePopulation<T> {
                     identity: trace.identity,
                 });
             }
-            if indices.contains_key(&trace.identity) {
-                return Err(FinitePopulationError::DuplicateTraceIdentity {
+            if let Some(index) = indices.get(&trace.identity).copied() {
+                if unique[index].records == trace.records {
+                    continue;
+                }
+                return Err(FinitePopulationError::ConflictingTraceIdentity {
                     identity: trace.identity,
                 });
             }

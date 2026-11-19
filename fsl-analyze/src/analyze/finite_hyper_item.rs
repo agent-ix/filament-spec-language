@@ -224,14 +224,8 @@ pub(super) fn item<'a>(
                     }))
                 }
                 FiniteHyperOutcome::RequiresBound { bound, .. } => {
-                    EngineReport::FiniteHyper(Box::new(FiniteHyperReport {
-                        terminal: fsl_replay::TerminalRecord::inconclusive(
-                            request_index,
-                            backend,
-                            fsl_replay::InconclusiveCause::BoundReached { depth: bound },
-                        ),
-                        counterexample: None,
-                    }))
+                    let found = population.traces.len();
+                    EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found })
                 }
                 FiniteHyperOutcome::Refuted { false_tuples } => {
                     let replay_body = |selected: &[&FiniteTrace<Vec<Value>>]| {

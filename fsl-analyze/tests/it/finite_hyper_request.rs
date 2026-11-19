@@ -124,7 +124,7 @@ fn closed_population_proves_and_replays_a_joint_position_refutation() {
 }
 
 /// FR-898-AC-4: quantifier order matters; an open population never proves,
-/// and exceeding the declared population bound is inconclusive.
+/// and a population beyond the declared bound requires that bound.
 #[trace("TC-2535", "FR-898-AC-4")]
 #[test]
 fn quantifier_order_open_prefix_and_population_bound_settle() {
@@ -177,7 +177,47 @@ fn quantifier_order_open_prefix_and_population_bound_settle() {
             ]),
         ),
     );
-    assert_eq!(label(&over_bound.item(0)), "inconclusive");
+    let item = over_bound.item(0);
+    assert_eq!(item["record"]["settled_by"], "disposition");
+    assert_eq!(item["record"]["diagnostic"]["code"], "requires_bound");
+    assert_eq!(item["record"]["diagnostic"]["cause"], "requires-bound");
+    assert_eq!(item["record"]["diagnostic"]["detail"]["bound"], 3);
+    assert_eq!(item["record"]["diagnostic"]["detail"]["found"], 4);
+}
+
+/// FR-898: identical repetitions of one trace identity are folded, while an
+/// identity reused for a different trace record is invalid runtime input.
+#[trace("TC-2535", "FR-898-AC-4")]
+#[test]
+fn repeated_trace_identities_fold_only_when_records_match() {
+    let ws = Workspace::new("finite-hyper-identical-duplicate");
+    let folded = request(
+        &ws,
+        DET,
+        population(
+            "closed",
+            json!([trace("a", &[(0, 0)]), trace("a", &[(0, 0)])]),
+        ),
+    );
+    assert_eq!(label(&folded.item(0)), "proved");
+
+    let ws = Workspace::new("finite-hyper-conflicting-duplicate");
+    let conflicting = request(
+        &ws,
+        DET,
+        population(
+            "closed",
+            json!([trace("a", &[(0, 0)]), trace("a", &[(0, 1)])]),
+        ),
+    );
+    assert_eq!(
+        conflicting.item(0)["record"]["diagnostic"]["code"],
+        "invalid_runtime_input"
+    );
+    assert_eq!(
+        conflicting.item(0)["record"]["diagnostic"]["cause"],
+        "invalid-value"
+    );
 }
 
 /// FR-898-AC-5: a tuple missing an aligned state remains inconclusive.
