@@ -221,7 +221,7 @@ fn exact_numeric_targets_read_their_whole_ascii_grammar() {
         FamilyOutcome::Evaluated(Outcome::Refused(Refusal::IntegerOutOfDomain { .. }))
     ));
 
-    for (text, coefficient, scale) in [("1.50", 150, 2), ("-0.5", -5, 1), ("3", 3, 0)] {
+    for (text, coefficient, scale) in [("1.50", 150_i64, 2), ("-0.5", -5_i64, 1), ("3", 3_i64, 0)] {
         let decimal = call(
             &package,
             "decimal_unbounded",
