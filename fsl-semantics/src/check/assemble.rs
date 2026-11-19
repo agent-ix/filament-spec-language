@@ -2345,30 +2345,8 @@ fn model_object_types(
         let Some(handle) = meaning_handles.get(&tuple.key) else {
             continue;
         };
-        let mut positions: Vec<_> = package
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                DomainPackageRecord::TuplePosition(position) if position.owner == tuple.key => {
-                    Some(position)
-                }
-                _ => None,
-            })
-            .collect();
-        positions.sort_by_key(|position| position.ordinal);
-        let mut data_position = 0;
-        let projection = positions
-            .iter()
-            .map(|position| {
-                if clock_place_type(&position.value_type, &records) {
-                    None
-                } else {
-                    let projected = data_position;
-                    data_position += 1;
-                    Some(projected)
-                }
-            })
-            .collect();
+        let projection =
+            crate::model::domain_package::tuple_data_projection(&package.records, &tuple.key);
         model_records.declare_tuple_positions(handle.clone(), projection);
     }
     for (key, handle) in &own_handles {

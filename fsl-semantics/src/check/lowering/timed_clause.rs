@@ -584,6 +584,7 @@ impl Lowering<'_> {
     /// entry of (a map slot step), read from the declared type of the field
     /// holding the place and followed down the path; `None` for any other
     /// step.
+    #[ix_trace_rs::string_edge]
     fn map_key_types(&self, clock: &ClockField) -> Vec<Option<ValueType>> {
         let types = self.scope.types();
         let mut keys = vec![None; clock.path().len()];
@@ -613,15 +614,47 @@ impl Lowering<'_> {
                     collection.element().clone()
                 }
                 (PlaceStep::Field(name), ValueType::Composite(handle)) => {
-                    let Some(filament_semantic_value::declaration::CompositeShape::Record(fields)) =
+                    match types.composite(handle.clone()).map(|c| c.shape()) {
+                        Some(filament_semantic_value::declaration::CompositeShape::Record(
+                            fields,
+                        )) => {
+                            let Some(found) = fields.iter().find(|f| f.name() == name) else {
+                                return keys;
+                            };
+                            found.value_type().clone()
+                        }
+                        Some(filament_semantic_value::declaration::CompositeShape::Tuple(
+                            positions,
+                        )) => {
+                            let Some(position) = name
+                                .parse::<usize>()
+                                .ok()
+                                .and_then(|position| {
+                                    self.scope.tuple_data_position(handle, position)
+                                })
+                                .and_then(|position| positions.get(position))
+                            else {
+                                return keys;
+                            };
+                            position.clone()
+                        }
+                        _ => return keys,
+                    }
+                }
+                (PlaceStep::Union(case), ValueType::Composite(handle)) => {
+                    let Some(filament_semantic_value::declaration::CompositeShape::Union(members)) =
                         types.composite(handle.clone()).map(|c| c.shape())
                     else {
                         return keys;
                     };
-                    let Some(found) = fields.iter().find(|f| f.name() == name) else {
+                    let Some(member) = members.iter().find(|member| member.identifier() == case)
+                    else {
                         return keys;
                     };
-                    found.value_type().clone()
+                    let [payload] = member.positions() else {
+                        return keys;
+                    };
+                    payload.clone()
                 }
                 _ => return keys,
             };

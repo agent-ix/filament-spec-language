@@ -4385,68 +4385,242 @@ fn a_model_variant_union_is_finite_by_its_payloads() {
     assert_eq!(format!("{:?}", bound.domains).matches("Node {").count(), 1);
 }
 
-/// A union's Clock payload has no data value and is live only in that case.
-#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28")]
-#[test]
-fn a_model_union_clock_is_live_only_in_its_active_case() {
+fn clock_fixture_key(name: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: ident(name),
+    }
+}
+
+fn clock_composite(world: &World, name: &str) -> filament_exact::NodeKey {
+    world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .composites()
+        .find(|declaration| declaration.name() == format!("M::{name}"))
+        .expect("the selected composite")
+        .key()
+}
+
+fn clock_case(world: &World, case: &str) -> filament_exact::Value {
+    use filament_semantic_value::declaration::CompositeShape;
+    let types = world.package.graph().scope().types();
+    let declaration = types
+        .composite(clock_composite(world, "ClockChoice"))
+        .expect("union");
+    let CompositeShape::Union(members) = declaration.shape() else {
+        panic!("union shape");
+    };
+    let member = members
+        .iter()
+        .find(|member| member.identifier() == case)
+        .expect("case");
+    filament_exact::value::union(
+        member.positions(),
+        member.member().expect("sealed case").clone(),
+        Vec::new(),
+    )
+    .expect("the case has no data payload")
+}
+
+fn clock_fixture_state(
+    world: &World,
+    held: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    extra: Vec<(&str, filament_exact::Value)>,
+) -> TimedState {
+    use filament_exact::{FieldValue, Value};
+    use fsl_semantics::model::state::{ModelState, StateObject};
+    let types = world.package.graph().scope().types();
+    let timer = types
+        .record(
+            clock_composite(world, "Timer"),
+            vec![("n", FieldValue::Present(Value::Integer(Integer::from(0))))],
+        )
+        .expect("admitted timer data");
+    let mut fields = BTreeMap::from([
+        (
+            clock_fixture_key("Call/phase"),
+            Value::Integer(Integer::from(0)),
+        ),
+        (clock_fixture_key("Call/inflight"), Value::Boolean(false)),
+        (clock_fixture_key("Call/late"), Value::Boolean(false)),
+        (clock_fixture_key("Call/t"), timer),
+    ]);
+    for (name, value) in extra {
+        fields.insert(clock_fixture_key(&format!("Call/{name}")), value);
+    }
+    let state = ModelState {
+        populations: BTreeMap::from([(
+            clock_fixture_key("calls"),
+            BTreeMap::from([(
+                "c".to_owned(),
+                StateObject {
+                    type_identity: clock_fixture_key("Call"),
+                    fields,
+                },
+            )]),
+        )]),
+        extents: Vec::new(),
+    };
+    TimedState::new(
+        held.pre_state(state, held.declared_anchor()),
+        ClockValuation::new(vec![exact(0, 1); timed.places().len()]),
+    )
+}
+
+fn clock_members_document(alias: bool) -> Vec<u8> {
     let choice = ident("ClockChoice");
     let case_origin = json!({"source": {"sourceIdentity": ident("spec"),
         "path": "clock-members.fspec", "startLine": 1, "startColumn": 1}});
-    let mut armed = json!({"identity": ident("variant/ClockChoice-Armed"), "name": "Armed",
-        "origin": case_origin});
-    armed["payloadType"] = json!("ix://filament/native/Clock");
-    let idle = json!({"identity": ident("variant/ClockChoice-Idle"), "name": "Idle",
-        "origin": case_origin});
-    let document = cells_document(
-        vec![wire_type(
+    let clock = if alias {
+        ident("ClockAlias")
+    } else {
+        CLOCK.to_owned()
+    };
+    let mut types = vec![
+        wire_type(
             &choice,
             "mode",
-            json!({"variants": [armed, idle]}),
-        )],
-        vec![("choice", choice, Some(json!("optional")))],
-        &["choice"],
-        &[],
-    );
-    let world = world_holding(
-        document,
-        "",
-        &only(&["work"], ""),
-        json!({"t": {"record": {"type": ident("Timer"), "fields": {"n": {"integer": "0"}}}},
-            "choice": {"absent": {}}}),
-    );
-    let held = system(&world);
-    let timed = TimedSystem::new(&held, "M").expect("a timed model");
-    let [initial] = &timed.initial()[..] else {
-        panic!("one initial state");
-    };
-    let steps = timed
-        .steps(initial)
-        .expect("the union's data domain is finite");
-    assert_eq!(
-        steps.len(),
-        3,
-        "absent, Armed and Idle are the three data values"
-    );
-    let base_clocks = timed.live_clocks(initial.discrete());
-    let mut armed_states = 0;
-    for (_, state) in steps {
-        let key = String::from_utf8(held.state_key(state.discrete()).expect("state key").0)
-            .expect("UTF-8");
-        let armed = key.contains("Armed");
-        armed_states += usize::from(armed);
-        assert_eq!(
-            timed.live_clocks(state.discrete()),
-            base_clocks + u64::from(armed),
-            "{key}"
-        );
-        if armed {
-            assert!(
-                !key.contains("Clock\""),
-                "the active case carries no Clock data value: {key}"
-            );
+            json!({"variants": [
+                {"identity": ident("variant/ClockChoice-Armed"), "name": "Armed", "payloadType": clock, "origin": case_origin},
+                {"identity": ident("variant/ClockChoice-Idle"), "name": "Idle", "origin": case_origin}
+            ]}),
+        ),
+        record_type("Wrapper", &[("choice", &choice, false)]),
+        wire_type(
+            &ident("Slot"),
+            "tuple",
+            json!({"positions": [
+                {"identity": ident("Slot/p0"), "typeRef": clock, "origin": origin(&ident("Slot/p0"))},
+                {"identity": ident("Slot/p1"), "typeRef": choice, "origin": origin(&ident("Slot/p1"))}
+            ]}),
+        ),
+    ];
+    if alias {
+        types.push(wire_type(
+            &ident("ClockAlias"),
+            "value_type",
+            json!({"target": CLOCK}),
+        ));
+    }
+    let fields = vec![
+        ("choice", choice, None),
+        ("wrap", ident("Wrapper"), None),
+        ("slot", ident("Slot"), None),
+    ];
+    let mut document: Json = serde_json::from_slice(&cells_document(
+        types,
+        fields,
+        &["choice", "wrap", "slot"],
+        &["choice", "wrap", "slot"],
+    ))
+    .expect("JSON");
+    document["constructs"].as_array_mut().expect("constructs").push(json!({
+        "kind": {"module": PACKAGE, "name": "tuple"}, "moduleVersion": "1.0.0",
+        "construct": {"identity": "value", "shape": "tuple", "members": {"positions": "required"}, "meaning": meaning::TUPLE_VALUE_TYPE}
+    }));
+    for operation in document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if operation["name"] != "work" && operation["name"] != "tick" {
+            operation["frame"]["modifies"] = json!([]);
         }
     }
-    assert_eq!(armed_states, 1);
+    serde_json::to_vec(&document).expect("JSON")
+}
+
+/// Direct, aliased and nested union clock places guard, reset and drop together.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28")]
+#[test]
+fn a_model_union_clock_is_live_only_in_its_active_case() {
+    use filament_exact::FieldValue;
+    for alias in [false, true] {
+        let body = "pre Ready using v on M::Call::reply { present(self.choice.Armed) and value(self.choice.Armed) >= 1 ms and present(self.wrap.choice.Armed) and value(self.wrap.choice.Armed) >= 1 ms and present(self.slot[1].Armed) and value(self.slot[1].Armed) >= 1 ms }\n\
+            post Arm using v on M::Call::work { self.choice = M::ClockChoice::Armed(0 ms) and self.wrap.choice = M::ClockChoice::Armed(0 ms) and self.slot[1] = M::ClockChoice::Armed(0 ms) }\n\
+            post Drop using v on M::Call::tick { self.choice = M::ClockChoice::Idle and self.wrap.choice = M::ClockChoice::Idle and self.slot[1] = M::ClockChoice::Idle }\n";
+        let world = world_of(
+            clock_members_document(alias),
+            "",
+            &only(&["work", "tick", "reply"], body),
+            json!([]),
+        );
+        let held = system(&world);
+        let timed = TimedSystem::new(&held, "M").expect("nested clock places check");
+        let types = world.package.graph().scope().types();
+        let idle_case = clock_case(&world, "Idle");
+        let wrap = types
+            .record(
+                clock_composite(&world, "Wrapper"),
+                vec![("choice", FieldValue::Present(idle_case.clone()))],
+            )
+            .expect("wrapper data");
+        let slot = types
+            .tuple(clock_composite(&world, "Slot"), vec![idle_case.clone()])
+            .expect("tuple data excludes Clock");
+        let idle = clock_fixture_state(
+            &world,
+            &held,
+            &timed,
+            vec![("choice", idle_case), ("wrap", wrap), ("slot", slot)],
+        );
+        let idle = TimedState::new(idle.discrete().clone(), idle.clocks().delayed(&exact(5, 1)));
+        let offered = |state: &TimedState| timed.steps(state).expect("the state steps");
+        assert!(
+            offered(&idle)
+                .iter()
+                .all(|(step, _)| !step.operation().contains("Call/reply\"")),
+            "inactive cases cannot enable the guarded operation"
+        );
+        assert_eq!(timed.live_clocks(idle.discrete()), 4);
+        let armed_steps: Vec<_> = offered(&idle)
+            .into_iter()
+            .filter(|(step, _)| step.operation().contains("Call/work\""))
+            .collect();
+        let [(arm, armed)] = armed_steps.as_slice() else {
+            panic!("one activation successor");
+        };
+        assert_eq!(arm.resets().len(), 3);
+        assert_eq!(timed.live_clocks(armed.discrete()), 7);
+        for (index, place) in timed.places().iter().enumerate() {
+            if timed
+                .model()
+                .clock(place.clock())
+                .is_some_and(|clock| clock.name().ends_with("Armed"))
+            {
+                assert!(timed.live(place, armed.discrete()));
+                assert_eq!(armed.clocks().get(index), Some(&exact(0, 1)));
+            }
+        }
+        assert!(
+            offered(armed)
+                .iter()
+                .all(|(step, _)| !step.operation().contains("Call/reply\"")),
+            "activation resets the deadline"
+        );
+        let due = TimedState::new(
+            armed.discrete().clone(),
+            armed.clocks().delayed(&exact(1, 1)),
+        );
+        assert!(offered(&due)
+            .iter()
+            .any(|(step, _)| step.operation().contains("Call/reply\"")));
+        let drops: Vec<_> = offered(&due)
+            .into_iter()
+            .filter(|(step, _)| step.operation().contains("Call/tick\""))
+            .collect();
+        let [(drop, dropped)] = drops.as_slice() else {
+            panic!("one drop successor");
+        };
+        assert!(drop.resets().is_empty());
+        assert_eq!(timed.live_clocks(dropped.discrete()), 4);
+        assert!(offered(dropped)
+            .iter()
+            .all(|(step, _)| !step.operation().contains("Call/reply\"")));
+    }
 }
 
 /// The data index after a Clock tuple position projects its data slot at run time.
@@ -4465,7 +4639,7 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
     );
     let mut document: Json = serde_json::from_slice(&cells_document(
         vec![tuple],
-        vec![("slot", slot, Some(json!("optional")))],
+        vec![("slot", slot, None)],
         &[],
         &[],
     ))
@@ -4475,19 +4649,17 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
         "construct": {"identity": "value", "shape": "tuple", "members": {"positions": "required"},
             "meaning": meaning::TUPLE_VALUE_TYPE}
     }));
-    let world = world_holding(serde_json::to_vec(&document).expect("JSON"), "", &only(&["work"],
-        "pre Data using v on M::Call::work { present(self.slot) and value(self.slot)[1] = 1 }\n"),
-        json!({"t": {"record": {"type": ident("Timer"), "fields": {"n": {"integer": "0"}}}},
-            "slot": {"absent": {}}}));
+    let world = world_of(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        &only(
+            &["work"],
+            "pre Data using v on M::Call::work { self.slot[1] = 1 }\n",
+        ),
+        json!([]),
+    );
     let held = system(&world);
     let timed = TimedSystem::new(&held, "M").expect("a timed model");
-    let [initial] = &timed.initial()[..] else {
-        panic!("one initial state");
-    };
-    assert!(timed
-        .steps(initial)
-        .expect("absent tuple is guarded")
-        .is_empty());
     let tuple = world
         .package
         .graph()
@@ -4500,34 +4672,17 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
         panic!("tuple shape");
     };
     assert_eq!(shape.len(), 1, "the Clock position holds no data");
-    let value = filament_exact::value::tuple(
-        shape,
-        tuple.key(),
-        vec![filament_exact::Value::Integer(Integer::from(1))],
-    )
-    .expect("the typed data part");
-    let mut state = initial.discrete().state().clone();
-    state
-        .populations
-        .get_mut(&DeclarationKey {
-            package: PACKAGE.to_owned(),
-            node: ident("calls"),
-        })
-        .expect("calls")
-        .get_mut("c")
-        .expect("the call")
-        .fields
-        .insert(
-            DeclarationKey {
-                package: PACKAGE.to_owned(),
-                node: ident("Call/slot"),
-            },
-            value,
-        );
-    let state = TimedState::new(
-        held.pre_state(state, initial.discrete().anchor().clone()),
-        initial.clocks().delayed(&exact(2, 1)),
-    );
+    let value = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .tuple(
+            tuple.key(),
+            vec![filament_exact::Value::Integer(Integer::from(1))],
+        )
+        .expect("the typed data part");
+    let state = clock_fixture_state(&world, &held, &timed, vec![("slot", value)]);
     assert_eq!(
         timed
             .steps(&state)
@@ -4540,6 +4695,131 @@ fn a_model_tuple_clock_keeps_the_authored_data_position_at_run_time() {
         .clock(place.clock())
         .is_some_and(|clock| clock.name() == "slot.0")
         && timed.live(place, state.discrete())));
+    let zero = world
+        .package
+        .graph()
+        .scope()
+        .types()
+        .tuple(
+            tuple.key(),
+            vec![filament_exact::Value::Integer(Integer::from(0))],
+        )
+        .expect("zero data");
+    let zero = clock_fixture_state(&world, &held, &timed, vec![("slot", zero)]);
+    assert!(timed
+        .steps(&zero)
+        .expect("the data guard is checked")
+        .is_empty());
+}
+
+/// A nonterminal tuple position reaches every collection clock after a removed Clock slot.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-322-AC-399")]
+#[test]
+fn a_model_tuple_clock_traverses_a_nonterminal_collection_and_counts_its_budget() {
+    use filament_exact::{FieldValue, Value, ValueType};
+    let mut document: Json = serde_json::from_slice(&clock_members_document(false)).expect("JSON");
+    let mut holder = record_type("Holder", &[("timers", &ident("Timer"), false)]);
+    holder["fields"][0]["multiplicity"] =
+        json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    let types = document["types"].as_array_mut().expect("types");
+    types.push(holder);
+    let slot = types
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Slot"))
+        .expect("Slot");
+    slot["positions"][1]["typeRef"] = json!(ident("Holder"));
+    slot["positions"].as_array_mut().expect("positions").push(json!({"identity": ident("Slot/p2"), "typeRef": ident("Int1"), "origin": origin(&ident("Slot/p2"))}));
+    for operation in types[1]["operations"].as_array_mut().expect("operations") {
+        operation["frame"]["modifies"] = json!([]);
+    }
+    let world = world_of(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        &only(
+            &["work"],
+            "pre Data using v on M::Call::work { self.slot[2] = 1 }\n",
+        ),
+        json!([]),
+    );
+    let held = system(&world);
+    let types = world.package.graph().scope().types();
+    let timer = types
+        .record(
+            clock_composite(&world, "Timer"),
+            vec![("n", FieldValue::Present(Value::Integer(Integer::from(0))))],
+        )
+        .expect("Timer");
+    let holder_type = types
+        .composite(clock_composite(&world, "Holder"))
+        .expect("Holder");
+    let filament_semantic_value::declaration::CompositeShape::Record(fields) = holder_type.shape()
+    else {
+        panic!("record");
+    };
+    let ValueType::Collection(collection) = fields[0].value_type() else {
+        panic!("Timer collection");
+    };
+    let timers = filament_exact::from_admitted(collection.clone(), vec![timer.clone(), timer]);
+    let holder = types
+        .record(
+            holder_type.key(),
+            vec![("timers", FieldValue::Present(timers))],
+        )
+        .expect("typed Holder");
+    let slot = types
+        .tuple(
+            clock_composite(&world, "Slot"),
+            vec![holder, Value::Integer(Integer::from(1))],
+        )
+        .expect("Clock is absent from the data tuple");
+    let idle = clock_case(&world, "Idle");
+    let wrapper = types
+        .record(
+            clock_composite(&world, "Wrapper"),
+            vec![("choice", FieldValue::Present(idle.clone()))],
+        )
+        .expect("Wrapper");
+    for max_clocks in [7, 8] {
+        let timed = TimedSystem::with_max_clocks(
+            &held,
+            "M",
+            std::num::NonZeroU64::new(max_clocks).expect("positive"),
+        )
+        .expect("a bounded collection path");
+        let state = clock_fixture_state(
+            &world,
+            &held,
+            &timed,
+            vec![
+                ("choice", idle.clone()),
+                ("wrap", wrapper.clone()),
+                ("slot", slot.clone()),
+            ],
+        );
+        assert_eq!(timed.live_clocks(state.discrete()), 8);
+        assert_eq!(
+            timed
+                .places()
+                .iter()
+                .filter(|place| timed.live(place, state.discrete()))
+                .count(),
+            8
+        );
+        if max_clocks == 7 {
+            assert_eq!(
+                timed.steps(&state).err(),
+                Some(TimedStop::MaxClocks { max_clocks })
+            );
+        } else {
+            assert_eq!(
+                timed
+                    .steps(&state)
+                    .expect("all tuple collection clocks fit")
+                    .len(),
+                1
+            );
+        }
+    }
 }
 
 /// FR-120-AC-26 (TC-1270) with the STD-508 ruling on collections of bare

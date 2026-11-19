@@ -485,6 +485,62 @@ fn model_tuple_and_union_clock_places_read_back() {
         ]),
         "{paths:?}"
     );
+    for (root, member, declaring) in [
+        ("s", "Slot/p0", "Slot"),
+        ("p", "variant/Phase-Armed", "Phase"),
+    ] {
+        let place = model
+            .clock_places
+            .iter()
+            .find(|place| place.path.first() == Some(&ClockPathStep::Field(root.to_owned())))
+            .expect("the aggregate clock place");
+        let [field, terminal] = place.resolved_path.as_slice() else {
+            panic!("one row per path step");
+        };
+        assert_eq!(
+            field.member_identity,
+            identity(&format!("ConfigVersion/{root}"))
+        );
+        assert_eq!(terminal.declaring_type, identity(declaring));
+        assert_eq!(terminal.member_identity, identity(member));
+        assert_eq!(terminal.member_type, "ix://filament/native/Clock");
+    }
+    let packages =
+        fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model input");
+    let unit = clocked_unit("");
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("assembly")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("checked clocks");
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("emission");
+    let wire = wire(&emission);
+    for name in ["Slot", "Phase"] {
+        let node = nodes(&wire)
+            .iter()
+            .find(|node| node["owner"]["node"] == identity(name))
+            .expect("model-owned aggregate");
+        assert_eq!(node["owner"]["kind"], "model");
+        assert_eq!(node["owner"]["identity"], "example/config-version");
+    }
+    for place in nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "clock_place")
+    {
+        let entry = wire["source_map"]
+            .as_array()
+            .expect("source map")
+            .iter()
+            .find(|entry| entry["node_id"] == place["node_id"])
+            .expect("clock place source association");
+        let region = &entry["regions"][0];
+        let start = usize::try_from(region["start"].as_u64().expect("start")).expect("usize");
+        let end = usize::try_from(region["end"].as_u64().expect("end")).expect("usize");
+        assert_eq!(&unit[start..end], "time Config dense unit ms;");
+    }
 }
 
 /// FSpec FR-322-AC-148 read-back of a template slot step: the place of `s:

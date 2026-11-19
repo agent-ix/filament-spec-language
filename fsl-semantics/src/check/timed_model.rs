@@ -1906,6 +1906,13 @@ impl Clocks<'_> {
     /// `r.f.c`, `c` a clock case of the union field `f`, of some object
     /// type of the model.
     fn names_guarded(&self, form: &ExpressionForm, id: ExprId) -> bool {
+        if self_path(form, id).is_some_and(|path| {
+            self.fields
+                .iter()
+                .any(|clock| clock.guarded && same_place(&clock.path, &path))
+        }) {
+            return true;
+        }
         let Some(ExprNode::Field { operand, field, .. }) =
             form.expression.get(id).map(|node| node.node())
         else {

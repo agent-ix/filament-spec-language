@@ -299,7 +299,7 @@ impl PackagePlace {
                 }
                 PlaceStep::Union(case) => {
                     let declaring = previous.unwrap_or_default();
-                    let identity = format!("{declaring}/union/{case}");
+                    let identity = identity.unwrap_or_else(|| format!("{declaring}/union/{case}"));
                     (declaring, identity)
                 }
             };
@@ -1950,10 +1950,11 @@ impl AdmittedModel {
                     if clock {
                         let mut below = at.clone();
                         below.path.push(PlaceStep::Union(case.case.clone()));
-                        below
-                            .members
-                            .push(("ix://filament/native/Clock".to_owned(), None));
-                        below.case = !below.optional && below.path.len() == 2;
+                        below.members.push((
+                            "ix://filament/native/Clock".to_owned(),
+                            Some(case.key.node.clone()),
+                        ));
+                        below.case = !below.optional;
                         below.optional = true;
                         places.push(below);
                     }
