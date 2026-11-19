@@ -14,11 +14,7 @@ use crate::prob_world::{self, World};
 
 const CLAIM: &str = "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
     with alpha 0.1, beta 0.1, indifference 0.2 \
-    { probability >= 0.5 [ always[0,0] holds(c.v = 0) ] }";
-const FALSE_CLAIM: &str =
-    "probabilistic CoinGone using ev on M over (c: M::Coin) under Even on origin \
-    with alpha 0.1, beta 0.1, indifference 0.2 \
-    { probability >= 0.5 [ always[0,0] holds(c.v = 1) ] }";
+    { probability >= 0.5 [ eventually[1,1] holds(c.v = 1) ] }";
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
@@ -30,7 +26,27 @@ fn sampler() -> DefinitionRef {
 }
 
 fn world(claim: &str) -> World {
-    World::new(&prob_world::coin(claim))
+    World::new(&prob_world::Model {
+        package: "test/cpcoin",
+        object: "Coin",
+        population: "coins",
+        key: "c",
+        integers: vec![("Bit", 0, 1)],
+        fields: vec![("v", "ix://test/cpcoin/Bit".to_owned())],
+        operations: vec![prob_world::Operation {
+            name: "flip",
+            parameters: vec![("b", "ix://test/cpcoin/Bit".to_owned())],
+            modifies: vec!["v"],
+            deletes: false,
+        }],
+        body: format!(
+            "bound B on M::coins [1]\\n\\
+             post Flipped using v on M::Coin::flip {{ self.v = b }}\\n\\
+             random Coin::flip(b) ~ {{ 0: 1, 1: 1 }};\\n\\
+             workload Even on M {{ weight Coin::flip = 1; }}\\n{claim}"
+        ),
+        initial: serde_json::json!({"v": {"integer": "0"}}),
+    })
 }
 
 fn decide(world: &World, seed: u64) -> StatisticalVerdict {
@@ -55,14 +71,13 @@ fn decide(world: &World, seed: u64) -> StatisticalVerdict {
     }
 }
 
-/// FR-189-AC-16: over 1,024 deterministic seeds, the exact interval contains
-/// the model's known probability `1/2` at least 90% of the time. The model
-/// deletes its coin that stays at value zero in every sample.
-#[trace("TC-624", "FR-189-AC-16")]
+/// Over 1,024 deterministic seeds, the exact interval contains the model's
+/// known stochastic probability `1/2` at least 90% of the time.
+#[trace("TC-624")]
 #[test]
 fn clopper_pearson_coverage() {
     let world = world(CLAIM);
-    let true_probability = ratio(1, 1);
+    let true_probability = ratio(1, 2);
     assert_eq!(decide(&world, 7), decide(&world, 7));
     let mut covered = 0_u64;
 
@@ -90,7 +105,7 @@ fn clopper_pearson_coverage() {
 #[trace("TC-628", "FR-193-AC-2")]
 #[test]
 fn clopper_pearson_witness_replays() {
-    let world = world(FALSE_CLAIM);
+    let world = world(CLAIM);
     let verdict = decide(&world, 7);
     assert_eq!(verdict.basis.method, StatisticalMethod::ClopperPearson);
     assert!(!verdict.witnesses.is_empty(), "the sample has a witness");

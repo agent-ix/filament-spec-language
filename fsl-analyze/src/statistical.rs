@@ -34,7 +34,7 @@ mod tests;
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Cancel, CancelCause, Integer, Rational};
+use filament_exact::{Cancel, CancelCause, Integer, Meter, Rational, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, NotMarkov};
@@ -469,6 +469,8 @@ struct Plan<'r> {
     tests: u32,
     alpha: Rational,
     beta: Rational,
+    /// The clause's scalar meter, also charged for exact CP tail work.
+    clause_meter: Meter,
 }
 
 /// Whether `cancel` has been cancelled, and why.
@@ -611,6 +613,7 @@ impl Plan<'_> {
                             tally.counted,
                             &self.alpha,
                             &self.beta,
+                            &mut self.clause_meter,
                         )
                         .map_err(fault)?,
                         Some(
@@ -619,6 +622,7 @@ impl Plan<'_> {
                                 tally.counted,
                                 &self.alpha,
                                 &self.beta,
+                                &mut self.clause_meter,
                             )
                             .map_err(fault)?,
                         ),
@@ -932,6 +936,20 @@ pub fn check_sampled<S: BehaviourSampler>(
     sampler: &mut S,
     cancel: &Cancel,
 ) -> Result<StatisticalOutcome, StatisticalRefusal> {
+    check_sampled_with_meter(
+        request,
+        sampler,
+        cancel,
+        Meter::new(ScalarLimits::default()).with_cancel(cancel.clone()),
+    )
+}
+
+fn check_sampled_with_meter<S: BehaviourSampler>(
+    request: SampledRequest<'_>,
+    sampler: &mut S,
+    cancel: &Cancel,
+    clause_meter: Meter,
+) -> Result<StatisticalOutcome, StatisticalRefusal> {
     let form = request.claim.form();
     if !form.admits(request.method) {
         return Err(StatisticalRefusal::NotStatistical {
@@ -969,6 +987,7 @@ pub fn check_sampled<S: BehaviourSampler>(
         tests,
         alpha: quotient(confidence.alpha(), &m).map_err(fault)?,
         beta: quotient(confidence.beta(), &m).map_err(fault)?,
+        clause_meter,
     };
     let regenerative = match request.method {
         StatisticalMethod::Regenerative { min_cycles } => {

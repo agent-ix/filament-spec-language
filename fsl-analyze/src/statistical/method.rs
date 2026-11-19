@@ -3,7 +3,7 @@
 //! one test's `α'`, `β'` and the claim's `ι` (ADR-024 ST-4, ST-5, ST-9), in
 //! exact rationals with every rounding outward, toward undecided.
 
-use filament_exact::{Integer, Rational};
+use filament_exact::{Charge, ChargePoint, Integer, LimitKind, Meter, Rational};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_replay::statistical::{Decision, UndecidedCause};
 use num_bigint::BigInt;
@@ -17,6 +17,8 @@ const BINOMIAL_SCALE: InternalFault = InternalFault::new("statistical-binomial",
 const BINOMIAL_DENOMINATOR: InternalFault =
     InternalFault::new("statistical-binomial", "positive-denominator");
 const BINOMIAL_MODE: InternalFault = InternalFault::new("statistical-binomial", "mode-in-range");
+const BINOMIAL_METER: InternalFault =
+    InternalFault::new("statistical-binomial", "clause-meter-exhausted");
 
 /// Decide `bound` over the interval `[estimate − half_width, estimate +
 /// half_width]` (ADR-024 ST-4): a `>= θ` bound accepts when the interval
@@ -146,10 +148,14 @@ fn binomial_tail(
     n: u64,
     p: &Rational,
     tail_kind: Tail,
+    meter: &mut Meter,
 ) -> Result<BinaryInterval, InternalFault> {
     if k > n {
         return Err(BINOMIAL_MODE);
     }
+    meter
+        .charge(Charge::new(ChargePoint::CollectionVisit).work(Integer::from(n.saturating_add(1))))
+        .map_err(|_| BINOMIAL_METER)?;
     let scale = BigInt::one() << binomial_precision(n);
     let zero = int(0);
     let one = int(1);
@@ -261,15 +267,18 @@ pub(crate) fn clopper_pearson_decision(
     samples: u64,
     alpha: &Rational,
     beta: &Rational,
+    meter: &mut Meter,
 ) -> Result<Decision, InternalFault> {
-    let lower = binomial_tail(held, samples, &bound.threshold, Tail::Lower)?;
-    let upper = binomial_tail(held, samples, &bound.threshold, Tail::Upper)?;
+    let lower = binomial_tail(held, samples, &bound.threshold, Tail::Lower, meter)?;
+    let upper = binomial_tail(held, samples, &bound.threshold, Tail::Upper, meter)?;
     let (accepted, rejected) = match bound.comparison {
         Comparison::AtLeast => (upper.upper_le(beta, false), lower.upper_le(alpha, false)),
         Comparison::AtMost => (lower.upper_le(beta, false), upper.upper_le(alpha, false)),
         Comparison::Below => (lower.upper_le(beta, true), upper.upper_le(alpha, false)),
     };
-    Ok(if accepted {
+    Ok(if accepted && rejected {
+        Decision::Undecided(UndecidedCause::IndifferenceRegion)
+    } else if accepted {
         Decision::Accepted
     } else if rejected {
         Decision::Rejected
@@ -286,6 +295,7 @@ pub(crate) fn clopper_pearson_interval(
     samples: u64,
     alpha: &Rational,
     beta: &Rational,
+    meter: &mut Meter,
 ) -> Result<(Rational, Rational), InternalFault> {
     if samples == 0 || held > samples {
         return Err(BINOMIAL_MODE);
@@ -295,7 +305,7 @@ pub(crate) fn clopper_pearson_interval(
     if held > 0 {
         for _ in 0..64 {
             let middle = lower.add(&upper).divided_by_power_of_two(1);
-            let tail = binomial_tail(held, samples, &middle, Tail::Upper)?;
+            let tail = binomial_tail(held, samples, &middle, Tail::Upper, meter)?;
             if tail.upper_le(beta, false) {
                 lower = middle;
             } else {
@@ -310,7 +320,7 @@ pub(crate) fn clopper_pearson_interval(
     if held < samples {
         for _ in 0..64 {
             let middle = lower.add(&upper).divided_by_power_of_two(1);
-            let tail = binomial_tail(held, samples, &middle, Tail::Lower)?;
+            let tail = binomial_tail(held, samples, &middle, Tail::Lower, meter)?;
             if tail.upper_le(alpha, false) {
                 upper = middle;
             } else {
@@ -444,13 +454,54 @@ mod tests {
             (196, Decision::Rejected),
             (184, Decision::Rejected),
         ];
+        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
         for (held, expected) in cases {
             assert_eq!(
-                clopper_pearson_decision(&bound, held, 231, &alpha, &beta).expect("binomial tails"),
+                clopper_pearson_decision(&bound, held, 231, &alpha, &beta, &mut meter)
+                    .expect("binomial tails"),
                 expected,
                 "held count {held}"
             );
         }
+    }
+
+    /// ADR-024 ST-11: both true tails leave the result undecided.
+    #[test]
+    fn clopper_pearson_both_tails_true_is_undecided() {
+        let bound = Bound {
+            comparison: Comparison::AtLeast,
+            threshold: ratio(1, 2),
+        };
+        let alpha = ratio(9, 10);
+        let beta = ratio(9, 10);
+        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
+        assert_eq!(
+            clopper_pearson_decision(&bound, 3, 6, &alpha, &beta, &mut meter)
+                .expect("binomial tails"),
+            Decision::Undecided(UndecidedCause::IndifferenceRegion)
+        );
+    }
+
+    /// FR-189 charges N+1 work units for each tail, including every
+    /// repeated tail evaluation in the interval bisection.
+    #[test]
+    fn clopper_pearson_charges_each_tail_term() {
+        let alpha = ratio(1, 100);
+        let beta = ratio(1, 100);
+        let limits = filament_exact::ScalarLimits {
+            work_units: 30_160,
+            ..filament_exact::ScalarLimits::default()
+        };
+        let mut meter = Meter::new(limits);
+        let bound = Bound {
+            comparison: Comparison::AtLeast,
+            threshold: ratio(9, 10),
+        };
+        clopper_pearson_decision(&bound, 219, 231, &alpha, &beta, &mut meter)
+            .expect("two N+1 tails");
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 464);
+        clopper_pearson_interval(219, 231, &alpha, &beta, &mut meter).expect("128 bisection tails");
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 30_160);
     }
 
     /// FR-189-AC-16: the outward 64-step interval brackets the published
@@ -460,7 +511,9 @@ mod tests {
     fn clopper_pearson_known_intervals() {
         let alpha = ratio(1, 100);
         let beta = ratio(1, 100);
-        let (lower, upper) = clopper_pearson_interval(219, 231, &alpha, &beta).expect("interval");
+        let mut meter = Meter::new(filament_exact::ScalarLimits::default());
+        let (lower, upper) =
+            clopper_pearson_interval(219, 231, &alpha, &beta, &mut meter).expect("interval");
         let published_lower = decimal("90351472792271070929", 20);
         let published_upper = decimal("97621175445884490995", 20);
         let printed_unit = int(1).divided_by_power_of_ten(20);

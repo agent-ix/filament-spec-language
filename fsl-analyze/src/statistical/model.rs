@@ -55,9 +55,9 @@ use fsl_semantics::check::{
 
 use super::claim::{reduce_quantile, Bound, Comparison, MeasureEvent, QuantileComparison};
 use super::{
-    check_sampled, require_statistical, violating, BehaviourSampler, Drawn, RegenerationWalk,
-    Sample, SampleHalt, SampledRequest, StatisticalClaim, TestSubject, UnitFraction, WalkStep,
-    Weight,
+    check_sampled, check_sampled_with_meter, require_statistical, violating, BehaviourSampler,
+    Drawn, RegenerationWalk, Sample, SampleHalt, SampledRequest, StatisticalClaim, TestSubject,
+    UnitFraction, WalkStep, Weight,
 };
 use crate::exact_probabilistic::plan::{read_letter, PlanFault};
 use crate::exact_probabilistic::{FormulaState, MonitorVerdict};
@@ -161,7 +161,9 @@ pub fn check_statistical(
     let mut model = ModelSampler {
         shared: Rc::new(RefCell::new(shared)),
     };
-    check_sampled(
+    let clause_meter =
+        filament_exact::Meter::new(subject.simulation.meter).with_cancel(cancel.clone());
+    check_sampled_with_meter(
         SampledRequest {
             claim: &statistical,
             tests: &tests,
@@ -174,6 +176,7 @@ pub fn check_statistical(
         },
         &mut model,
         cancel,
+        clause_meter,
     )
 }
 
