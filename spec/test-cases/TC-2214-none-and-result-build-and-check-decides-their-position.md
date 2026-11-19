@@ -23,11 +23,15 @@ unit. Scope: FR-091-AC-7 and FR-091-AC-76.
    `none_and_result_build_and_check_decides_their_position`.
 2. Build the function bodies `xs[0]`, `null` and `reaches(a, b, M::R)`.
    Test: `fsl-forms/tests/it/value_forms.rs`
-   `a_construct_no_variant_represents_refuses_the_unit`.
+   `a_construct_no_variant_represents_refuses_the_unit`,
+   `null_expression_builds_as_its_own_form` and
+   `a_qualified_edge_in_a_function_builds_with_its_name_and_span`.
 
 ## Expected Results
 
 - Step 1: `o` and `a` check; `n` refuses `ill_typed`/`type-mismatch`; the `let`
   refuses `ill_typed`/`ambiguous-literal`; `r` refuses
   `wrong_snapshot`/`wrong-anchor`; none refuses `unsupported_construct`.
-- Step 2: each refuses `UnrepresentedConstruct` at its construct.
+- Step 2: `xs[0]` refuses `UnrepresentedConstruct` at its construct;
+  `null` builds as `Null`; `reaches(a, b, M::R)` builds as `Reaches`
+  retaining both operands, the full edge name and the edge's exact span.

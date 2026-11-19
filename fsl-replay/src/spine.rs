@@ -597,7 +597,9 @@ impl CompileRefusal {
                 | Setting::RenderOutputBytes
                 | Setting::PrepareCompileWorkUnits
                 | Setting::PrepareCodeBytes => {
-                    unreachable!("format, render, export and prepare limits are not compile refusals")
+                    unreachable!(
+                        "format, render, export and prepare limits are not compile refusals"
+                    )
                 }
                 Setting::EmitOutputBytes => SpineStage::Emit,
                 Setting::S1InputBytes
@@ -947,9 +949,6 @@ fn forms_message(refusal: &FormsRefusal) -> String {
                 fsl_forms::ConstructKind::SizeOfType => {
                     let type_call = text.split_once('(').map_or(&**text, |(head, _)| head);
                     format!("`{type_call}` is not supported in expressions yet")
-                }
-                fsl_forms::ConstructKind::QualifiedReachesEdge => {
-                    format!("`reaches` over the qualified edge `{text}` is not supported yet")
                 }
                 fsl_forms::ConstructKind::HyperCondition => {
                     "a hyper expression is not supported as a temporal condition yet".to_owned()

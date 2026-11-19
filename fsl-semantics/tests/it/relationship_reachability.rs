@@ -434,6 +434,8 @@ fn a_qualified_edge_resolves_to_the_declared_edge() {
 fn a_qualified_edge_naming_an_unknown_edge_refuses_missing_name() {
     for edge in [
         "M::Order::noSuchEdge",
+        "M::Person::noSuchEdge",
+        "M::Person::next",
         "Missing::Order::trail",
         "M::Missing::trail",
         "M::order::trail",
@@ -456,7 +458,7 @@ fn a_qualified_edge_naming_an_unknown_edge_refuses_missing_name() {
 #[trace("TC-1046", "FR-365-AC-3", "FR-104-AC-17")]
 #[test]
 fn a_qualified_edge_of_another_type_refuses() {
-    for edge in ["M::Person::trail", "M::Person::next", "M::Rush::trail"] {
+    for edge in ["M::Person::trail", "M::Rush::trail"] {
         assert_refused(
             &invariant("Order", &format!("reaches(self, self, {edge})")),
             Code::IllTyped,

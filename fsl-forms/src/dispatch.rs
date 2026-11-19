@@ -443,8 +443,6 @@ pub enum ConstructKind {
     IndexSelection,
     /// `size<T>(e)` in an expression.
     SizeOfType,
-    /// A multi-segment edge passed to `reaches`.
-    QualifiedReachesEdge,
     /// A hyper expression in a temporal condition.
     HyperCondition,
     /// A declaration with no dispatch entry.
@@ -458,7 +456,6 @@ impl ConstructKind {
             Self::NullValue => "null-value",
             Self::IndexSelection => "index-selection",
             Self::SizeOfType => "size-of-type",
-            Self::QualifiedReachesEdge => "qualified-reaches-edge",
             Self::HyperCondition => "hyper-condition",
             Self::Declaration => "declaration",
         }

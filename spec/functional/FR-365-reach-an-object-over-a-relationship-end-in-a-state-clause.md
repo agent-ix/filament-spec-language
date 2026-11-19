@@ -70,19 +70,28 @@ with the charges below, or one refusal or incomplete outcome and no Boolean.
 
 ### Resolution of the third argument
 
-`name` is resolved on the static type `S` of `a` by FR-363's rule of the near
+An unqualified `name` is resolved on the static type `S` of `a` by FR-363's rule of the near
 end: the relationship's `sourceEnd.role` names the forward end for receivers
 conforming to the source end's type, and the `targetEnd.role`, when declared,
 names the inverse end for receivers conforming to the target end's type. The
 candidates are the field `name` of `S`'s effective view and every relationship
-end navigable from `S` under that role. The form resolves to the one
-candidate; otherwise:
+end navigable from `S` under that role. For a qualified `Q::member`, resolve
+the object type `Q` through the source unit's namespace (FR-104), and use
+the field `member` of `Q`'s effective view and the relationship ends
+navigable from `Q` under that role as candidates. An unknown qualifier
+refuses `missing_declaration`/`missing-name` with the full authored name.
+For either spelling, check candidate existence before operand conformance:
 
 - no candidate: `missing_declaration`/`missing-name`, located at the form, the
   refusal a name that is no field already gets;
+- at least one candidate but `S` does not conform to the qualifier `Q`:
+  `ill_typed`/`operator-ineligible`, located at the form;
 - two or more candidates (a field and an end, or two ends):
   `ambiguous_declaration`/`ambiguous-name`, located at the form, naming every
   candidate.
+
+Otherwise the form resolves to its one candidate. A qualified spelling
+never falls back to candidates of `S` under the last segment alone.
 
 When the candidate is a field, FR-104's field-edge rules apply and this
 requirement does not. The rules below apply when it is a relationship end.

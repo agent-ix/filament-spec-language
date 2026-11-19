@@ -373,9 +373,6 @@ impl FamilyContract for StateModelFamily {
                             let owner = scope
                                 .object_type_named(source_owner.as_ref(), owner)
                                 .ok_or_else(|| missing(edge))?;
-                            if !scope.types().conforms(object.clone(), owner.clone()) {
-                                return Err(ineligible(location));
-                            }
                             (owner, member)
                         }
                         None => (object.clone(), edge.as_str()),
@@ -383,10 +380,13 @@ impl FamilyContract for StateModelFamily {
                     let declared = scope.types().attribute(edge_owner.clone(), member);
                     let ends: Vec<Navigable<'_>> = scope
                         .relationships()
-                        .navigable(scope.types(), edge_owner, member)
+                        .navigable(scope.types(), edge_owner.clone(), member)
                         .collect();
                     let attribute = match (declared, ends.as_slice()) {
                         (None, []) => return Err(missing(edge)),
+                        _ if !scope.types().conforms(object.clone(), edge_owner) => {
+                            return Err(ineligible(location));
+                        }
                         (Some(attribute), []) => attribute,
                         (None, [end]) => {
                             reaches_end(end, scope.types(), other.clone())

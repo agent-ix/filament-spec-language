@@ -128,6 +128,7 @@ fn bound_stays_a_member_name_in_an_expression() {
 }
 
 #[trace("TC-456", "TC-1046", "FR-102-AC-3")]
+#[trace("TC-2158", "FR-763-AC-4")]
 #[test]
 fn a_qualified_edge_name_builds_a_reaches_form() {
     let (text, unit) = build(

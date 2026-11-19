@@ -697,6 +697,22 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
     }
 }
 
+#[trace("TC-396", "TC-2214", "FR-091-AC-7", "FR-102-AC-3")]
+#[test]
+fn a_qualified_edge_in_a_function_builds_with_its_name_and_span() {
+    let (text, unit) = build("function f using v(): Boolean pure { reaches(a, b, M::R) }");
+    let form = function(unit.forms()[0].form());
+    let ExprNode::Reaches {
+        edge, edge_span, ..
+    } = form.body.root_node()
+    else {
+        panic!("a reaches form");
+    };
+    assert_eq!(edge, "M::R");
+    assert_eq!(*edge_span, span_of(&text, "M::R"));
+    assert_eq!(show(form.body.root()), "Reaches[M::R](a, b)");
+}
+
 #[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
 #[test]
 fn null_expression_builds_as_its_own_form() {

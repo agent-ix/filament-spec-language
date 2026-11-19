@@ -45,8 +45,12 @@ Tag the test `#[trace("FR-091-AC-7", "FR-091-AC-8", "FR-091-AC-39")]`.
 
 ## Expected Results
 
-- Every step-1 case refuses with cause `UnrepresentedConstruct`, names the
+- In step 1, `xs[0]` refuses with cause `UnrepresentedConstruct`, names the
   construct's CST production and exact span, and returns no parsed unit.
+  `none` builds as `Absent` (FR-091-AC-76). `reaches(a, b, M::R)` builds
+  as `Reaches` with both operands and the entire edge name and span;
+  S2 does not resolve `M::R`. The latter admission is asserted by
+  `value_forms::a_qualified_edge_in_a_function_builds_with_its_name_and_span`.
 - Step 2 returns parsed forms with distinct operators and original spans.
   Check then refuses each with located `unsupported_construct`, including
   the dead branch's `mod`; it never returns `UnrepresentedConstruct` at S2.
