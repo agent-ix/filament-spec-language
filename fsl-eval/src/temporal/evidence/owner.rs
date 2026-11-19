@@ -827,7 +827,7 @@ fn nanos_per_tick(
     use filament_exact::{Integer, Rational};
     let Some(scale) = scale else {
         return match binding.clock {
-            ClockConfiguration::EventPosition { .. } | ClockConfiguration::FixedSample { .. } => {
+            ClockConfiguration::EventPosition { .. } => {
                 Ok(Rational::from_integer(Integer::from(1_i64)))
             }
             _ => Err(fault("checked-clock-has-time-unit-scale")),
