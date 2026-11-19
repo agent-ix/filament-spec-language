@@ -390,7 +390,11 @@ fn an_observed_attempt_refuses_before_the_first_step() {
     )
     .expect("unit assembled");
     let refusals = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
         .expect_err("an observed attempt is refused before evaluation");
     assert!(refusals.iter().any(|refusal| {
         matches!(
