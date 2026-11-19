@@ -28,7 +28,10 @@ work, deadline and cancellation limits.
 ## Outputs
 
 `DeclarationForm::Synthesis` at S2; a checked synthesis at S3, emitted as the
-checked package's `synthesis_request` node; one FSpec FR-194 result per run.
+checked package's `claim`/`synthesis_request` node (FR-1036, FSpec FR-322
+"Synthesis-request nodes"); one FSpec FR-194 result per run, selected and
+written as the `filament.synthesis-outcome/v1` document by the run
+request's `synthesis` member (FR-1037, FSpec FR-823).
 
 ## Behavior
 
@@ -55,7 +58,7 @@ checked package's `synthesis_request` node; one FSpec FR-194 result per run.
 | --- | --- | --- |
 | FR-754-AC-1 | S2 builds `synthesis Pick using p grammar Digit domain Digit satisfies { Pick * Pick = 49 };` into one `Synthesis` form with its names and block spans, and the same declaration with `minimize Pick` holds the objective direction and expression. | Test (TC-2104) |
 | FR-754-AC-2 | S3 refuses a `domain` naming unbounded `Integer`, a record with an unbounded `Text` field and a recursive union each `unsupported_projection`/`unbounded-extent` at the `domain` name, naming the component. | Test (TC-2104) |
-| FR-754-AC-3 | Running `Pick` returns `candidate` 7 `validated`; with `Pick * Pick = 50`, `no-candidate` after ten values; with `minimize Pick` and `Pick >= 3`, the optimal 3. | Test (TC-2104) |
+| FR-754-AC-3 | Running `Pick` returns `candidate` 7 `validated` after eight values; with `Pick * Pick = 50`, `no-candidate` after ten values; with `minimize Pick` and `Pick >= 3`, the optimal 3. | Test (TC-2104) |
 
 ## Dependencies
 

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use serde_json::Value;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -14,6 +15,7 @@ use super::{
     OutcomeRead, Stage,
 };
 use crate::model_check::counterexample::{ObservedTemporalCounterexample, ObservedTemporalKind};
+use crate::result::CauseCodecError;
 use crate::spine::{
     ContradictedDimension, ObservedPosition, ProgressClosure, ProgressCompleteness,
     ProgressContradiction, ProgressLimitReached, ProgressRefusal, ProgressValue,
@@ -21,12 +23,13 @@ use crate::spine::{
     TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
 };
 use fsl_eval::temporal::ObservedLocus;
+use fsl_eval::temporal::TemporalOutcome;
 
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
 /// The incomplete limit a window aggregate reports (FR-194).
-const MAX_WINDOW_VALUES: &str = "max_window_values";
+pub(crate) const MAX_WINDOW_VALUES: &str = "max_window_values";
 
 /// The undefined reason of a window aggregate short of data (FR-414).
 const INSUFFICIENT_DATA: &str = "insufficient-data";
@@ -78,15 +81,17 @@ fn undefined_cause(reason: &str) -> Option<TemporalUndefinedCause> {
 
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
-pub(super) enum TemporalWire {
+pub(crate) enum TemporalWire {
     Holds,
     Violated {
         position: u64,
-        counterexample: CounterexampleWire,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        counterexample: Option<CounterexampleWire>,
     },
     Undefined {
         position: u64,
-        counterexample: CounterexampleWire,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        counterexample: Option<CounterexampleWire>,
     },
     InsufficientData {
         position: u64,
@@ -215,14 +220,14 @@ struct WhereWire {
 /// `on each` activation guard, or a capture's initializer by its name.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum LocusWire {
+pub(crate) enum LocusWire {
     FormulaNode(usize),
     Guard(&'static str),
     Capture(String),
 }
 
 /// The `guard` locus value: the clause's one `on each` guard.
-const ON_EACH: &str = "on-each";
+pub(crate) const ON_EACH: &str = "on-each";
 
 /// One counterexample step: a snapshot by its labels, or a record sample by
 /// its index in the trace (FR-330-AC-18), with no value.
@@ -254,11 +259,59 @@ struct IntervalWire {
 }
 
 /// The canonical FR-364 fairness member `{kind, operation, granularity}`.
-fn fairness_wire(
+pub(crate) fn fairness_wire(
     constraint: &filament_semantic_value::fairness::FairnessConstraint,
-) -> Result<Box<RawValue>, NativeRunResultError> {
+) -> Result<Box<RawValue>, CauseCodecError> {
     let bytes = quire_canonical::to_vec(constraint, quire_canonical::Limits::new(u64::MAX))?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// The FR-352 temporal outcome member on an FR-323 replay row, which omits
+/// counterexample evidence because the replay row describes its outcome.
+pub(crate) fn replay_outcome_wire(outcome: &TemporalOutcome) -> Result<Value, CauseCodecError> {
+    let wire = match outcome {
+        TemporalOutcome::Holds => TemporalWire::Holds,
+        TemporalOutcome::Violated { at } => TemporalWire::Violated {
+            position: at.index(),
+            counterexample: None,
+        },
+        TemporalOutcome::Undefined(undefined) => TemporalWire::Undefined {
+            position: undefined.at.index(),
+            counterexample: None,
+        },
+        TemporalOutcome::InsufficientData(short) => TemporalWire::InsufficientData {
+            position: short.at.index(),
+            count: short.data.count,
+            min_count: short.data.min_count,
+        },
+        TemporalOutcome::Pending => TemporalWire::Pending,
+        TemporalOutcome::MissingFairnessPremise { constraint } => {
+            TemporalWire::MissingFairnessPremise {
+                constraint: fairness_wire(constraint)?,
+            }
+        }
+        TemporalOutcome::Incomplete(_) => TemporalWire::Incomplete,
+        TemporalOutcome::WindowLimitReached(reached) => TemporalWire::WindowLimitReached {
+            limit: MAX_WINDOW_VALUES,
+            value: reached.limit,
+            setting: reached.setting,
+        },
+    };
+    let mut value = serde_json::to_value(wire)?;
+    if let TemporalOutcome::Undefined(undefined) = outcome {
+        value["reason"] = Value::String(crate::undefined_reason(&undefined.cause).to_owned());
+    }
+    Ok(value)
+}
+
+/// The FR-352 spelling for a replay parity's observed-evaluation locus.
+pub(crate) fn replay_locus_wire(locus: &ObservedLocus) -> Result<Value, CauseCodecError> {
+    let wire = match locus {
+        ObservedLocus::Atom(atom) => LocusWire::FormulaNode(atom.index()),
+        ObservedLocus::Activation => LocusWire::Guard(ON_EACH),
+        ObservedLocus::Capture(name) => LocusWire::Capture(name.clone()),
+    };
+    Ok(serde_json::to_value(wire)?)
 }
 
 /// The undefined value's FR-100 reason.
@@ -523,7 +576,7 @@ pub(super) fn verdict_wire(
         TemporalVerdict::Violated { at } => (
             TemporalWire::Violated {
                 position: *at,
-                counterexample: checked(*at, None)?,
+                counterexample: Some(checked(*at, None)?),
             },
             None,
         ),
@@ -548,7 +601,7 @@ pub(super) fn verdict_wire(
             (
                 TemporalWire::Undefined {
                     position: *at,
-                    counterexample: checked(*at, Some(reason))?,
+                    counterexample: Some(checked(*at, Some(reason))?),
                 },
                 Some(Outcome::Undefined { reason }),
             )

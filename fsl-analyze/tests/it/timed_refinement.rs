@@ -1104,3 +1104,90 @@ fn a_timed_refinement_settles_on_en6_through_analyze() {
         Some(BACKEND_ID)
     );
 }
+
+/// FR-900-AC-7's abstract `TReq` with the clock `y` in place of `x`, in its
+/// own package, so `y` is a field of `A`'s state object only.
+fn abstract_treq_y() -> Vec<u8> {
+    renamed_package(
+        &document(&["y"], &[("send", &["inflight", "y"])]),
+        "test/treq-abstract",
+    )
+}
+
+/// FR-900's refinement unit with both models timed and `invariant` as its
+/// one time invariant.
+fn both_timed(invariant: &str) -> Result<Refining, Vec<(String, String, String)>> {
+    refining(
+        &abstract_treq_y(),
+        &treq(),
+        &format!(
+            "{DENSE}time A dense unit ms;\n{CONTRACTS}{invariant}\n{}",
+            refinement("self.inflight")
+        ),
+    )
+}
+
+/// FR-900-AC-7 (FR-230 "Owning time source"): with two time sources, the
+/// abstract-only invariant reads `y`, a field of `A`'s state object alone,
+/// so `A` owns it and it is read on `A`'s clock.
+#[trace("TC-2538", "FR-900-AC-7")]
+#[test]
+#[ignore = "QSL-2243: a time invariant owned by the one timed model its reads name, with several time sources, not implemented yet"]
+fn an_abstract_only_time_invariant_is_read_on_the_abstract_clock() {
+    let world = both_timed("time invariant Bound when { true } { self.y <= 3 ms }")
+        .unwrap_or_else(|refusals| panic!("the abstract invariant is admitted: {refusals:?}"));
+    let models = world.package.graph().timed_models();
+    let abstract_model = models
+        .iter()
+        .find(|model| model.model() == "A")
+        .expect("A is a timed model");
+    let bound = abstract_model
+        .invariants()
+        .iter()
+        .find(|invariant| invariant.name() == "Bound")
+        .expect("A holds Bound");
+    let clocks: Vec<&str> = bound
+        .bounds()
+        .iter()
+        .map(|constraint| {
+            abstract_model
+                .clock(constraint.clock())
+                .expect("a clock of A")
+                .name()
+        })
+        .collect();
+    assert_eq!(clocks, ["y"]);
+    let concrete_model = models
+        .iter()
+        .find(|model| model.model() == "M")
+        .expect("M is a timed model");
+    assert!(
+        concrete_model
+            .invariants()
+            .iter()
+            .all(|invariant| invariant.name() != "Bound"),
+        "Bound is A's alone"
+    );
+}
+
+/// FR-900-AC-8 (FR-230 "Owning time source"): an invariant whose reads name
+/// the objects of both timed models has no single owning source.
+#[trace("TC-2538", "FR-900-AC-8")]
+#[test]
+#[ignore = "QSL-2243: a time invariant reading two timed models' objects refused ambiguous-name at the second model's read not implemented yet"]
+fn a_time_invariant_reading_both_timed_models_is_ambiguous() {
+    let Err(refusals) = both_timed(
+        "time invariant Both when { exists(c in M::calls : c.inflight) and \
+         exists(d in A::calls : d.inflight) } { self.x <= 3 ms }",
+    ) else {
+        panic!("an invariant over both timed models is refused");
+    };
+    assert_eq!(
+        refusals,
+        [(
+            "ambiguous_declaration".to_owned(),
+            "ambiguous-name".to_owned(),
+            "A::calls".to_owned()
+        )]
+    );
+}

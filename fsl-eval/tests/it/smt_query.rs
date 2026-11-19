@@ -926,6 +926,47 @@ fn a_field_with_no_smt_sort_is_refused_by_name() {
     );
 }
 
+/// FR-056-AC-61 (encoder half): a `Float64` model field has no `QF_LIA` sort,
+/// so a direct encoder call refuses `field-sort` naming the object and the
+/// field and writes no script; it never stands in a `Real` or `Int` constant.
+#[trace("TC-3006", "FR-056-AC-61")]
+#[test]
+#[ignore = "QSL-2176: a float model field reaching the SMT encoder and refusing field-sort not implemented yet"]
+fn a_float_field_is_refused_field_sort_by_name() {
+    let document = document(
+        "Counter",
+        vec![
+            field("Counter", "value", &ident("Level"), "required"),
+            field(
+                "Counter",
+                "reading",
+                "ix://filament/native/Float64",
+                "required",
+            ),
+        ],
+        vec![operation("Counter", "inc", &["value"])],
+    );
+    let world = world(
+        ("Counter", "c"),
+        &document,
+        COUNTER_CONTRACT,
+        INFINITE,
+        &["always holds(c.value <= 3)"],
+        &[(
+            "c",
+            json!({
+                "value": {"integer": "0"},
+                "reading": {"kind": "float64", "bits": "0000000000000000"},
+            }),
+        )],
+    );
+    assert!(matches!(
+        world.query(0, SmtQueryKind::Unrolling { depth: 1 }),
+        Err(SmtEncodingRefusal::Refused(Refusal::FieldSort { object, field, .. }))
+            if object == "c" && field == "reading"
+    ));
+}
+
 /// FR-315-AC-4 (the declarations and the presence reading): an optional field
 /// is a value constant and a `Bool` presence constant, the frame and the
 /// initial predicate read presence, and every term is linear. S3 refuses a

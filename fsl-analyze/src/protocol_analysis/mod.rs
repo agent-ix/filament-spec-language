@@ -23,7 +23,9 @@ pub(crate) use finite_replay::{
     finite_replay_item, ClaimReport, FiniteReplayReport, SuppliedTrace, TraceDefect,
 };
 pub(crate) use item::settle;
-pub use item::{projection_item, realizability_item, ProtocolAnalysisArtifact};
+pub use item::ProtocolAnalysisArtifact;
+pub use item::{projection_item, realizability_item};
+pub(crate) use item::{projection_item_owned, realizability_item_owned};
 pub use profile::{unsupported_construct, Profile};
 pub use project::{project, ProjectionOutcome, ProjectionRefusal, ProjectionRequest};
 #[cfg(feature = "test-support")]

@@ -7,6 +7,9 @@ relationships:
   - { target: ix://agent-ix/filament-spec-language/FR-036, type: traces_to }
   - { target: ix://agent-ix/filament-specification/AD-006, type: depends_on }
   - { target: ix://agent-ix/filament-specification/FR-149, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-148, type: depends_on }
+  - { target: ix://agent-ix/filament-specification/FR-181, type: depends_on }
+  - { target: ix://agent-ix/filament-spec-language/FR-397, type: depends_on }
   - { target: ix://agent-ix/filament-specification/FR-150, type: depends_on }
   - { target: ix://agent-ix/filament-specification/FR-151, type: depends_on }
   - { target: ix://agent-ix/filament-specification/FR-152, type: depends_on }
@@ -714,8 +717,9 @@ assembler runs. The assembler SHALL declare each object type of the admitted
 package in the package's type environment as `M::<artifact id>`, with its
 declared supertypes and fields, and SHALL resolve `M::<artifact id>` and
 `Reference<M::<artifact id>>` to that object type. A field is named by its
-member name. A native `Boolean` or `Integer` value type, an object type (as
-`Reference`) and a scalar type (as its `Int[lower, upper]` or its
+member name. A native `Boolean` or `Integer` value type, a native `Float32` or
+`Float64` (strict `exact` `ValueType::Float`, "Float model members" below), an
+object type (as `Reference`) and a scalar type (as its `Int[lower, upper]` or its
 `Text[min, max; profile]`) are its value type.
 Multiplicity `[1, 1]` gives the value type outright, and any other
 multiplicity gives the collection its `ordered` and `unique` flags name,
@@ -892,9 +896,13 @@ value sites, which remain JSON numbers subject to the number rules above.
 In particular, the generated safe-integer instance-wire number encoding in
 filament-core-data FR-144 is distinct from its integer IR value-site encoding.
 
+A systems part, port or allocation record is model structure, not a value
+type: the assembler admits it into the selected model view and adds no
+type-environment declaration for it, as FR-103 states, and FR-086 classifies
+and admits it.
+
 If an admitted package declares a record the type environment does not
-represent (a systems part, port or allocation, or a
-field whose value type or multiplicity has no kernel type, other than a member
+represent (a field whose value type or multiplicity has no kernel type, other than a member
 typed by bare `Text`, `Rational` or `Decimal`, which the paragraph on those
 natives above governs), then the
 assembler SHALL refuse it with
@@ -907,7 +915,6 @@ subtype distinctions above. Until the shared kernel and value environment
 represent a required type, the assembler's explicit
 `unknown_required_feature`/`unsupported-feature` result remains an unmet
 capability requirement; it does not establish K2 conformance.
-A `Float32` or `Float64` field SHALL refuse with `unknown_required_feature`/`unsupported-feature`; a floating type in a function signature or body is admitted (FR-091-OQ-4), and admitting the field is QSL-285.
 
 If a unit's `model` declaration carries any clause after its identity, then
 the parser refuses it `invalid_syntax`/`unexpected-token` at that token: the
@@ -915,6 +922,73 @@ grammar admits nothing after the identity. If a selection does not
 admit, spine intake SHALL refuse with the FR-154 refusal's code at the
 declaration. If a type name names no object type of an admitted package, then
 the assembler SHALL refuse it with `missing_declaration` at the name.
+
+### Float model members
+
+A field, an operation parameter, an operation result, a tuple position or a
+variant case `payloadType` whose `typeRef` is `ix://filament/native/Float32` or
+`ix://filament/native/Float64`, directly or through an alias, SHALL be admitted,
+and the assembler SHALL give it `ValueType::Float` of that width (IEEE 754-2019
+binary32 or binary64, FSpec FR-148) with the strict `exact` rounding mode. A
+model document spells no rounding mode, so the type is strict `exact` (FSpec
+FR-322 "Model-owned members"), and a bare `Float32` or `Float64` in a function
+signature is strict `exact` too (FR-091). A float model member and a bare float
+parameter therefore have one type and combine without a conversion.
+Multiplicity and presence wrap the float type as they wrap any other value
+type. No float member is narrowed, widened or replaced by an exact type.
+
+A unit whose selected model declares a float member admits the IEEE profile
+`filament.value.ieee754-2019-default/v1` under the role `ieee_profile` as a
+float form in its own source does (FR-397), so a rule over the member needs
+no float form of its own. Each IEEE node over the member carries that law.
+
+Arithmetic over a strict `exact` member computes the exact result and
+succeeds only when the width represents it. Otherwise it refuses
+`ieee_not_exact`/`rounding-required` with its `nearest-even` would-be flags and
+no rounded bits (FSpec FR-148). A rule that needs a rounding direction states
+it with `convert<Float64[m]>(self.f)`: the conversion retypes the value and
+changes no bit (FR-397). The language has no implicit rounding mode, because
+a mode the model did not write would change results the model's author never
+chose.
+
+**Equality and comparison.** Over two operands of one float type (one width
+and one rounding mode), `=` is FSpec FR-148 `numericEqual`, which is false when
+either operand is a NaN and true for `+0` against `-0`, and `!=` is its
+negation. `<`, `<=`, `>` and `>=` are the IEEE quiet comparisons FR-148
+composes: false when either operand is a NaN, `-0 < +0` false and `-0 <= +0`
+true. No comparison sets a flag. `=` over a record, tuple, option, union or
+sequence holding a float member compares that leaf by `numericEqual`, and a
+set, bag or ordered set, a collection key and a state key compare it by its
+bits (FSpec FR-149 "IEEE relations", FR-144, FR-181). `totalOrder` and
+`bitIdentical` are reached only by their intrinsic calls. These are the rules
+a float parameter of a function already follows.
+
+A float member compared or combined with an exact type (`Integer`, `Int[..]`,
+`Rational[..]`, `Decimal[..]` or a quantity), with a float of the other width
+or with a float of another rounding mode SHALL refuse `ill_typed`/`type-mismatch`
+at the operator, before any charge, naming both operand types. An exact
+literal such as `0` never becomes a float to fit the comparison (FR-764); a
+float constant is a bit constructor (FR-397).
+
+**Values on the wire.** A float member's value is its exact bits everywhere it
+crosses a boundary. In a snapshot, an invocation argument or a run result it is
+FR-106's `{"kind": "float32" or "float64", "bits": H}` (FR-650); in the
+typed canonical value and the state key it is FSpec FR-181's
+`{"type": "float32" or "float64", "bits": H}`; and in the checked package a
+constant is an FSpec FR-322 literal of `value_kind` `float32_bits` or
+`float64_bits`. `H` is 8 or 16 lowercase hexadecimal digits, so every sign of
+zero, infinity and NaN payload is kept.
+
+**Engines.** Every engine reads the float member as IEEE bits under the
+selected profile, or refuses it by name. No engine rounds a float to an exact
+value or substitutes decimal, rational or host floating point (FSpec FR-148).
+
+| Engine | Float model member |
+| --- | --- |
+| Simulation evaluator (FR-120, FR-181) | Admitted. It evaluates under the IEEE profile and the member's rounding mode, keys states by the member's bits (two states differing only in `+0` and `-0`, or in a NaN payload, are two states) and lists the member's domain as every bit pattern of its width. |
+| Explicit-state model checker (FR-101) | Admitted. The width's bit patterns form a finite domain under the ADR-014 §4 extent rule, so a float member never makes an item `RequiresBound`. An equation `self.f = e` over a bare float field is solved by `numericEqual` (FR-120 "Float fields"); an application that writes the member and has no solved equation enumerates its candidates under the candidate budget, and stops at `MaxCandidates` when the budget is smaller than the width's domain. It never samples or rounds the domain. |
+| SMT route (FR-315) | Not encoded: its scripts are `QF_LIA`, which has no exact IEEE sort. Negotiation settles the item per item `unsupported` (FR-290; FSpec FR-148 I13), with `unknown_required_feature`/`unsupported-feature` naming the float width, and package admission is unchanged. A direct encoder call refuses `field-sort` naming the object and field, or `parameter-domain` naming the operation and parameter, and writes no script. |
+| Export (FR-756) | Admitted. The member exports through FSpec FR-812's binary floating point mapping, a tagged value and generated operators that round an exact rational result by the member's rounding mode. Under strict `exact` the generated operator is defined only where the result is exact, as in FSL. A NaN exports as the `nan` tag carrying its exact bits, so states FSL keys apart by a NaN payload stay apart. |
 
 ## Constraints
 
@@ -947,7 +1021,7 @@ the assembler SHALL refuse it with `missing_declaration` at the name.
 | FR-056-AC-17 | The canonical native controls below admit exactly the stated UUID and Timestamp payloads, retain their distinct native identities and refuse the stated alternatives without normalization. K2's `Instant` resolves to `Timestamp`; changing that binding to `Integer` gives TC-235 M04 run 5's `invalid_model_binding`/`malformed-declaration` at `OrderPlaced`'s `TypeDefinition.occurrenceField`, rather than an admitted substitute. | Test |
 | FR-056-AC-18 | TC-235 M17 run 1 retains `TaxedMoney`'s inherited `amount_minor`, `currency` and invariant `NonNegative`, its own `tax_minor`, and conformance to `Money`: its stated value is admitted at `Order/total` and wherever a parameter or result names `Money`, yet is unequal to the stated `Money` value because their most-specific types differ. M17 runs 2 and 3 retain the exact wrong-meaning and specialization-cycle refusals, including the cycle list, rather than object-reference or Boolean substitutes. | Test |
 | FR-056-AC-19 | Offering K2 bytes that the actual Semantic IR reader refuses retains every reader diagnostic and exposes no declaration, effective view or `normalize.record` charge. No downstream native binding repairs a reader refusal. An intake diagnostic on the same member as a retained reader diagnostic is subsumed by it. A reader `DUPLICATE_IDENTITY` diagnostic is reported as the `invalid_model_binding`/`conflicting-binding` refusal of this requirement, and a further reader diagnostic on the same member, such as `DUPLICATE_PARAM`, is retained beside it as reader detail and is not a second refusal. Once the reader contract admits those inputs, K2's version `1`, unused `population` construct, Timestamp binding and all TC-235 vectors remain unchanged; native payload admission alone does not establish their declaration counts, refusals, normalization or runtime results. | Test |
-| FR-056-AC-20 | A selected domain package with an object field typed `ix://filament/native/Float32` or `ix://filament/native/Float64` has no assembled field type and refuses at the unit's `model` declaration with `unknown_required_feature`/`unsupported-feature`; it yields no `PackageDeclarations`. The refusal does not assign a rounding mode. A function parameter of either floating type remains admitted under FR-091-OQ-4. | Test |
+| FR-056-AC-20 | A selected domain package whose object type `Gauge` has a `[1, 1]` field `reading` typed `ix://filament/native/Float64` is admitted and assembles, and `reading`'s value type is `ValueType::Float` of width binary64 with rounding mode `exact`. The unit admits the IEEE profile with no float form of its own, and a `[0, 3]` field of the same type is a `Set<Float64>[0, 3]`. | Test (TC-405, TC-3004) |
 | FR-056-AC-21 | An admitted package containing record value type `Address { street: Text[0, 64; nfc] }`, object field `Account.address: Address` and a record subtype `PostalAddress` retains one `record` export per record, all effective fields and invariants, and subtype conformance. The type environment gives `Account.address` the record value type, an optional `Address` field `Option<Address>`, and an ordered non-unique `[0, 3]` field `Sequence<Address>[0, 3]`, never `Reference<Address>`; an operation parameter or result naming `Address` has the same value type. | Test |
 | FR-056-AC-22 | A record value type with an identity field or an operation refuses with FR-208's named cause before assembly; an object or record field whose `typeRef` names an event type, state machine, process, persistence interface or namespace refuses `invalid_model_binding`/`malformed-declaration` at intake. A valid finite recursive record field, such as `Node { next?: Node }`, retains its record type and optional edge in the type environment; it is not refused solely because the declaration graph is recursive. | Test |
 | FR-056-AC-23 | K2's native String value retains any Unicode scalar sequence exactly, including empty, ASCII, multibyte and UUID-looking text; equality is exact-sequence equality, its key is UTF-8 byte order, and Text normalization does not apply. The closed String object accepts exactly `kind: string` and `text`; an extra member and a lone surrogate refuse, and the typed result wire round trip preserves each value and its UTF-8 byte contribution to result sizing. Existing Text, UUID and Timestamp kind encodings remain unchanged. String gains no arithmetic, concatenation or general relational operator; its unit-language `=` and `!=` are FR-056-AC-35's. | Test |
@@ -975,6 +1049,16 @@ the assembler SHALL refuse it with `missing_declaration` at the name.
 | FR-056-AC-44 | A business bundle with model-declaring artifacts `FR-001` and `OP-001`, including the underscore member names and references in TC-145, passes the real FCD bundle-to-lift path and FSL's intake/read path. The admitted declarations retain keys `ix://<package identity>/FR-001` and `ix://<package identity>/OP-001`; field and operation member identities retain their authored names and references resolve to those declarations, with no refusal caused by the artifact ids' spelling. | Test (TC-145) |
 | FR-056-AC-51 | Over `function a1 using v(x: Text[0, 8; nfc]): Boolean pure { x = Text("\u00e9") }` and `function a2 using v(x: Text[0, 8; nfc]): Boolean pure { x = Text("e\u0301") }`, `x` holding U+00E9 gives `true` for both, and `x` holding the empty text gives `false` for both; the two bodies hold the one retained sequence U+00E9. Over `Text[0, 8; unicode-scalars]` the same bodies are `true` for U+00E9 and U+0065 U+0301 respectively and `false` for the other. `function r1 using v(): Text[1, 1; nfc] pure { Text("e\u0301") }` checks (the retained length is one) and returns the text U+00E9; `Text[0, 1; binary-utf8]` with `Text("\u00e9")` refuses `TextLiteralOutsideBounds` (two bytes) and `Text[0, 2; binary-utf8]` admits it. | Test (TC-1052) |
 | FR-056-AC-52 | `function b1 using v(): Text[0, 2; nfc] pure { Text("abc") }` refuses `ill_typed`/`type-mismatch` with the cause `TextLiteralOutsideBounds` naming `abc`, the bounds `0` and `2`, the profile `nfc`, the retained length `3` and the span of the call, and `Text[2, 2; nfc]` with `Text("e\u0301")` refuses it with retained length `1`; `Text[1, 8; nfc]` with `Text("")` refuses it with retained length `0`. A `Text("abc")` in the body of a function whose result is `String`, `Integer` or `UUID`, and as an operand of `=` against a `String` operand, each refuse `ill_typed`/`type-mismatch` at the call, and `r = Text("abc")` over `r: String` and `x = "abc"` over `x: Text[0, 8; nfc]` still refuse (FR-056-AC-41); no refusal yields a value or a coercion. | Test (TC-1052) |
+| FR-056-AC-53 | The AC-20 package with `reading` typed `ix://filament/native/Float32` is admitted and assembles, and `reading`'s value type is `ValueType::Float` of width binary32 with rounding mode `exact`. | Test (TC-3004) |
+| FR-056-AC-54 | An operation `calibrate` of the object type `ConfigVersion` whose parameter `offset` and whose result are typed `ix://filament/native/Float64` is admitted and assembles, and the parameter and the result each have `ValueType::Float` of width binary64 with rounding mode `exact`. | Test (TC-3004) |
+| FR-056-AC-55 | A tuple type `Pair` whose position 0 is typed `ix://filament/native/Float64` and whose position 1 is typed `ix://filament/native/Integer`, and a `ConfigVersion` field `pair` typed `Pair`, are admitted and assemble; `pair`'s position 0 is `ValueType::Float` of width binary64 with rounding mode `exact`. | Test (TC-3004) |
+| FR-056-AC-56 | A variant type `Sample` with a case `Read` whose `payloadType` is `ix://filament/native/Float32` and a nullary case `Missing`, and a `ConfigVersion` field `sample` typed `Sample`, are admitted and assemble; `Read`'s payload is `ValueType::Float` of width binary32 with rounding mode `exact`, and `Missing` has no payload. | Test (TC-3004) |
+| FR-056-AC-57 | Over `ConfigVersion` with Float64 fields `reading` and `limit`, the invariants `self.reading <= self.limit`, `self.reading + self.limit = self.limit` and `convert<Float64[nearest-even]>(self.reading) + convert<Float64[nearest-even]>(self.limit) <= convert<Float64[nearest-even]>(self.limit)` check. Each IEEE node carries the law `ieee_profile`, whose definition is `filament.value.ieee754-2019-default/v1`; the bare `+` has rounding mode `exact` and the converted `+` `nearest-even`. Evaluated with `reading` `3ff0000000000000` (1.0) and `limit` `3ca0000000000000` (2^-53), the bare `+` refuses `ieee_not_exact`/`rounding-required` with the flag `inexact` and no bits, and the converted `+` gives `3ff0000000000000` with `inexact`. | Test (TC-3005) |
+| FR-056-AC-58 | Over Float64 fields `a` and `b`, `self.a = self.b`, `self.a != self.b`, `self.a < self.b`, `self.a <= self.b` and `self.a = float64(bits: 0x0000000000000000)` check to `Boolean`. With `a` and `b` both `7ff8000000000000` (NaN), `=` is false, `!=` true and `<=` false; with `a` `0000000000000000` (+0) and `b` `8000000000000000` (-0), `=` is true, `<` false and `<=` true. A `Set<Float64>` holding +0 and -0 has two members, and two states differing only in `a` being +0 or -0 have distinct state keys. | Test (TC-3005) |
+| FR-056-AC-59 | Over a Float64 field `a`, each of `self.a = 0`, `self.a = self.versionNumber` (`Int[0, 1000]`), `self.a < self.count` (`Integer`), `self.a = self.f32` (a Float32 field), `self.a + 1 = self.a` and `self.a = convert<Float64[nearest-even]>(self.a)` refuses `ill_typed`/`type-mismatch` at the operator, naming both operand types, and the unit yields no checked graph. | Test (TC-3005) |
+| FR-056-AC-60 | Over a model whose `Gauge` has a Float64 field `a` and an operation `flip()` with frame `modifies a` and `post F { self.a = -pre(self.a) }`, the explicit-state checker returns no `RequiresBound`. From initial `a` `3ff0000000000000` (1.0) it reaches exactly the states 1.0 and `bff0000000000000` (-1.0), with one candidate per application. From initial `a` `0000000000000000` (+0) it reaches exactly +0 and `8000000000000000` (-0), two states with distinct keys, and each application has two candidates, because both zeros are `numericEqual` to the solved value (FR-120-AC-34). A simulation run applying `flip()` twice from 1.0 ends at 1.0 with no flag. | Test (TC-3006) |
+| FR-056-AC-61 | Over the AC-60 model, negotiation of an SMT item settles it `unsupported` with `unknown_required_feature`/`unsupported-feature` naming the width `float64`, and admission of the package is unchanged; a direct `encode_smt_query` call refuses `SmtEncodingRefusal` `field-sort` naming the object and `a`, and writes no script. No script holds a `Real` or `Int` constant for `a`. | Test (TC-3006) |
+| FR-056-AC-62 | Exporting the AC-60 model writes `a` through FSpec FR-812's binary floating point mapping, a tagged value with its sign, integer significand and exponent, and its `-` as the generated negation; the invariant `self.a != float64(bits: 0x7ff8000000000001)` exports its constant as `[tag \|-> "nan", bits \|-> "7ff8000000000001"]` (FSpec FR-812-AC-8); the export never holds `a` as a rational or decimal value. | Test (TC-3006) |
 
 ### FR-056-AC-17
 

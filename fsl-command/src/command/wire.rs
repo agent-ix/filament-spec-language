@@ -329,6 +329,9 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// NFR-130, FR-100: the call's evaluation limits; absent is `{}`.
+    #[serde(default, deserialize_with = "from_object")]
+    pub evaluation: Evaluation,
     /// FR-650: the file of the one current snapshot the call's Reference and
     /// Population arguments resolve against.
     #[serde(default)]
@@ -389,6 +392,36 @@ impl Accounting {
         .into_iter()
         .filter_map(|(setting, bound)| bound.map(|bound| (setting, bound)))
     }
+}
+
+/// The `evaluation` member of a [`Call`] (FR-100, NFR-130): a closed object
+/// whose one member, `live_occurrences`, is a JSON integer from 0 to
+/// `u64::MAX`. Any other member, or a malformed value, refuses at decode.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Evaluation {
+    #[serde(default, deserialize_with = "live_occurrence_limit")]
+    live_occurrences: Option<u64>,
+}
+
+impl Evaluation {
+    /// The live-occurrence limit the call evaluates under: the member's
+    /// value, or the FR-255 default 1048576 when it is omitted. Zero is a
+    /// real limit.
+    pub fn live_occurrences(&self) -> u64 {
+        self.live_occurrences
+            .unwrap_or(fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES)
+    }
+}
+
+/// A present `live_occurrences` is a JSON integer from 0 to `u64::MAX`; a
+/// malformed one refuses naming the member (NFR-130-AC-4).
+fn live_occurrence_limit<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(decoder).map(Some).map_err(|error| {
+        serde::de::Error::custom(format!("`call.evaluation.live_occurrences`: {error}"))
+    })
 }
 
 /// A present counter is a JSON integer from 0 to `u64::MAX`. This
@@ -780,6 +813,9 @@ pub(super) struct MonitorRequest {
     pub program: Program,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// Optional caller-supplied integer-division law (FR-767).
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
     #[serde(deserialize_with = "deserialize_objects")]

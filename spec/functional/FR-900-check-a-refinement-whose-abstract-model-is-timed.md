@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-145
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-377
     type: implements
   - target: ix://agent-ix/filament-specification/FR-740
@@ -81,6 +83,19 @@ the failing guard's bound does not reproduce.
 
 Negotiation routes the record to EN-6 when either side declares `time dense`.
 
+**Time invariants of either side.** A refinement unit with a timed abstract
+model holds two time sources, `time M` and `time A`. Each `time invariant`
+and `urgent` declaration of the unit belongs to the one model its reads
+name (FR-230 "Owning time source"), the rule a state clause's subject uses:
+an invariant whose reads name `A`'s objects is an abstract time invariant,
+read on `A`'s clock, and the product applies it as the mapped abstract
+state's invariant (Delay above); one whose reads name `M`'s objects is a
+concrete time invariant. Two time sources and an invariant are not
+ambiguous by themselves. A declaration whose reads name the objects of both
+`M` and `A` has no single owning source and refuses
+`ambiguous_declaration`/`ambiguous-name` at the first read of the second
+model.
+
 ### Decision: an abstract clock is a function of the concrete run, so the check is exact
 
 Timed language inclusion between two timed automata is undecidable in
@@ -103,6 +118,8 @@ function and could contradict it, so they are refused.
 | FR-900-AC-4 | A field row `y = self.x` mapping the abstract clock refuses `invalid_model_binding`/`malformed-declaration` at the row, naming `y`. A row that reads a concrete clock in a non-clock field still refuses as FR-430 states. | Test (TC-2539) |
 | FR-900-AC-5 | An untimed concrete `Req` refining the timed `TReq` holds, because every behaviour can delay 1 before `send`. With an abstract invariant `y <= 0` and guard `y >= 1`, it is refuted: the zone after the first step is empty. | Test (TC-2539) |
 | FR-900-AC-6 | A timed abstract liveness constraint `ensure fair weak Spec::TReq::send` over a concrete loop with positive total delay that never sends, while `send`'s guard holds at every instant, is refuted with a timed lasso. | Test (TC-2539) |
+| FR-900-AC-7 | Over AC-1's refinement of abstract `TReq` (clock `y`, `time A dense unit ms`) by concrete `TReq2` (clock `x`, `time M dense unit ms`), the abstract-only `time invariant Bound when { true } { self.y <= 3 ms }` is admitted: S3 refuses no `ambiguous_declaration`, `A`'s checked timed model holds `Bound` with the one bound `y <= 3`, and `M`'s holds no invariant named `Bound`. | Test (TC-2538) |
+| FR-900-AC-8 | The same unit with `time invariant Both when { exists(c in M::calls : c.inflight) and exists(d in A::calls : d.inflight) } { self.x <= 3 ms }`, whose reads name the objects of both timed models, refuses `ambiguous_declaration`/`ambiguous-name` at `A::calls`, with no checked package. | Test (TC-2538) |
 
 ## Dependencies
 
@@ -114,4 +131,6 @@ function and could contradict it, so they are refused.
 - [FR-244](FR-244-emit-a-zone-certificate-with-every-proof.md): the
   certificate.
 - [FR-145](FR-145-replay-a-refinement-counterexample.md): replay.
+- [FR-230](FR-230-check-time-declarations-clocks-and-clock-constraints.md):
+  the owning time source of a time invariant or urgency declaration.
 - FSpec FR-377 and FR-740.

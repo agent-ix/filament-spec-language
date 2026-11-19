@@ -484,7 +484,7 @@ pub struct TemporalValuation {
     pub clause: fsl_semantics::check::CheckedTemporalClause,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone.
-    pub positions: Option<fsl_eval::temporal::ObservedValuation>,
+    pub positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
     /// FR-931 `cross_evaluate.initial`: the valuation of every (instance,
     /// behaviour) closed trace of the model subject a snapshot builds;
     /// `None` for a supplied trace.
@@ -1469,6 +1469,7 @@ fn run_clause_reading(
             temporal_selections: &check_selections,
             clocks: by_name.then_some(&request.clocks),
             check_mode: None,
+            integer_division: None,
         };
         let checked = if let Some(function_modes) = function_modes {
             front_end::check_with_refinement_internals_and_function_modes(
@@ -1626,7 +1627,14 @@ fn run_clause_reading(
             ref arguments,
             ref snapshot,
             ref snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref()),
+        } => run_function(
+            &run,
+            models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        ),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -1788,7 +1796,7 @@ pub struct ProgramBatchOutcome {
 /// Evaluation results of one admitted value-invariant selection.
 pub struct ValueInvariantsBatchOutcome {
     /// The ordered evaluation result for each reached invariant/value pair.
-    pub evaluation: fsl_eval::value::ValueInvariantEvaluation,
+    pub evaluation: crate::spine_eval_api::SpineEvalValueInvariantEvaluation,
     /// FR-106 admission usage for this selection.
     pub admission_usage: fsl_semantics::model::observation::AdmissionUsage,
 }
@@ -2108,6 +2116,7 @@ fn compile_program_parts(
                 temporal_selections: &check_selections,
                 clocks: Some(clocks),
                 check_mode: None,
+                integer_division: None,
             },
             &models,
             dependencies,
@@ -2244,15 +2253,22 @@ fn run_compiled_clause_selection(
             arguments,
             snapshot,
             snapshot_path,
-        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref())
-            .unwrap_or_else(|_| {
-                report(ClauseDisposition::EvaluateFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "FR-050",
-                        "compiled-function-selection-runs",
-                    ),
-                ))
-            }),
+        } => run_function(
+            &run,
+            compiled.models.models(),
+            name,
+            arguments,
+            snapshot,
+            snapshot_path.as_deref(),
+        )
+        .unwrap_or_else(|_| {
+            report(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "FR-050",
+                    "compiled-function-selection-runs",
+                ),
+            ))
+        }),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -2938,6 +2954,7 @@ fn evaluate_operation_contracts(
 
 fn run_function(
     run: &CompiledRun<'_>,
+    models: &[fsl_semantics::model::intake::SelectedModel],
     name: &str,
     arguments: &[ClauseArgument],
     snapshot: &DocumentRef,
@@ -3055,6 +3072,16 @@ fn run_function(
             ))));
         }
     }
+    for (position, (parameter, _)) in selected.parameters.iter().enumerate() {
+        if slots[position].is_none() {
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                RunRefusal::UnboundParameter {
+                    parameter: parameter.clone(),
+                },
+            ))));
+        }
+    }
+    let mut environment = environment;
     let mut bound = Vec::with_capacity(selected.parameters.len());
     for (position, (parameter, value_type)) in selected.parameters.iter().enumerate() {
         let Some(value) = slots[position] else {
@@ -3064,6 +3091,24 @@ fn run_function(
                 },
             ))));
         };
+        if let (ValueType::Population(maximum), ClauseArgumentValue::Form(form)) =
+            (value_type, value)
+        {
+            if let Some(population) = form.get("population").and_then(serde_json::Value::as_str) {
+                environment = match super::call::bind_snapshot_population(
+                    environment,
+                    models,
+                    population,
+                    *maximum,
+                    position,
+                ) {
+                    Ok(environment) => environment,
+                    Err(refusal) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(refusal)));
+                    }
+                };
+            }
+        }
         let converted = match (value, value_type) {
             (ClauseArgumentValue::Integer(0), ValueType::Boolean) => Value::Boolean(false),
             (ClauseArgumentValue::Integer(1), ValueType::Boolean) => Value::Boolean(true),

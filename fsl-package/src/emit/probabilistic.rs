@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSpec FR-640, FSL FR-740: the checked random parameters and workloads
+//! FSpec FR-640, FSL FR-740: the checked random parameters, workloads and delays
 //! written as `probabilistic` nodes of the checked-package/v2 graph.
 //!
 //! A node's identity is `["probabilistic", form, operand...]` in the unit's
@@ -13,12 +13,14 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{
-    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
+    CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
 use filament_exact::{NodeKey, PathSegment, Rational, UnitId, Value};
 use fsl_semantics::check::wire_id::StructuralIds;
-use fsl_semantics::check::{CheckedGraph, ProbabilisticFeature, RandomParameter, Workload};
+use fsl_semantics::check::{
+    CheckedGraph, Delay, DelayDistribution, ProbabilisticFeature, RandomParameter, Workload,
+};
 
 use super::{
     body_reference_targets, checked_literal_json, claim_aggregate, claim_binding, encoding,
@@ -31,8 +33,8 @@ struct Pending {
     region: CheckedSourceRegion,
 }
 
-/// Write a `probabilistic` node for each checked random parameter and
-/// workload of `graph`, with its source-map entry.
+/// Write a `probabilistic` node for each checked random parameter, workload
+/// and delay of `graph`, with its source-map entry.
 ///
 /// # Errors
 ///
@@ -53,6 +55,9 @@ pub(super) fn append_probabilistic_nodes(
     }
     for workload in model.workloads() {
         pending.push(workload_node(ids, graph, nodes, source_map, workload)?);
+    }
+    for delay in model.delays() {
+        pending.push(delay_node(ids, graph, nodes, source_map, delay)?);
     }
     pending.sort_by(|left, right| left.node.node_id.cmp(&right.node.node_id));
     for Pending { node, region } in pending {
@@ -377,6 +382,122 @@ fn workload_node(
     ];
     Ok(Pending {
         node: node(graph, ids, "workload", operand, body)?,
+        region,
+    })
+}
+
+/// The member `position` of an aggregate `term`, bound or not.
+fn member(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
+    match term {
+        CheckedTerm::Aggregate { members } => match members.get(position)? {
+            CheckedTerm::Binding { value, .. } => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The unit node of the `dense` time source of the timed model rooted on
+/// `declaring`, read from the timed nodes already written. IR's reader
+/// types each delay time by this node (FR-640 Reader rule 5).
+pub(super) fn dense_unit(
+    nodes: &[CheckedSemanticNodeV2],
+    declaring: &CheckedNodeId,
+) -> Option<CheckedNodeId> {
+    let reference_of = |term: Option<&CheckedTerm>| match term {
+        Some(CheckedTerm::Reference { target }) => Some(target.clone()),
+        _ => None,
+    };
+    let root = nodes.iter().find(|node| {
+        CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
+            && &*node.semantic_form == "timed_model"
+            && reference_of(member(&node.body, 0)).as_ref() == Some(declaring)
+    })?;
+    let source = reference_of(member(&root.body, 2))?;
+    let source = nodes.iter().find(|node| node.node_id == source)?;
+    let dense = member(&source.body, 0)?
+        .literal_read()
+        .is_some_and(|read| matches!(read.value, CheckedLiteralValue::Text("dense")));
+    dense
+        .then(|| reference_of(member(&source.body, 1)))
+        .flatten()
+}
+
+fn delay_node(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    delay: &Delay,
+) -> Result<Pending, EmitRefusal> {
+    let operation = delay.operation();
+    let location = delay.declaration_location();
+    let unwritable = || {
+        refusal(
+            graph,
+            ProbabilisticFeature::Delay,
+            operation.name().to_owned(),
+            &location,
+        )
+    };
+    let region = region_of(graph, &location)?;
+    let (declaring_key, declaring) = model_node(
+        ids,
+        nodes,
+        operation.declaring_key().ok_or_else(unwritable)?,
+    )
+    .ok_or_else(unwritable)?;
+    // IR's reader admits a delay only on a model with a timed root whose
+    // source is `dense`, and types every time by that source's unit.
+    let unit = dense_unit(nodes, &declaring).ok_or_else(unwritable)?;
+    let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
+    let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
+    let time = |value: &Rational| literal(&unit, LiteralKind::Quantity, &spelling(value));
+    let (family, parameters, content) = match delay.distribution() {
+        DelayDistribution::Uniform => ("uniform", claim_aggregate(Vec::new()), String::new()),
+        DelayDistribution::UniformRange { a, b } => (
+            "uniform_interval",
+            claim_aggregate(vec![
+                claim_binding("lower", time(a)?),
+                claim_binding("upper", time(b)?),
+            ]),
+            format!("{},{}", spelling(a), spelling(b)),
+        ),
+        DelayDistribution::Exponential { rate } => (
+            "exponential",
+            claim_aggregate(vec![claim_binding(
+                "rate",
+                weight_literal(&rational, rate)?,
+            )]),
+            spelling(rate),
+        ),
+        DelayDistribution::Discrete(rows) => {
+            let mut content = Vec::with_capacity(rows.len());
+            let mut written = Vec::with_capacity(rows.len());
+            for (delay, weight) in rows {
+                content.push(format!("{}*{}", spelling(delay), spelling(weight)));
+                written.push(claim_aggregate(vec![
+                    claim_binding("delay", time(delay)?),
+                    claim_binding("weight", weight_literal(&rational, weight)?),
+                ]));
+            }
+            ("discrete", claim_aggregate(written), content.join(","))
+        }
+    };
+    let body = claim_aggregate(vec![
+        claim_binding("declaring", reference(declaring)),
+        claim_binding("operation", text_literal(&text, operation.name())?),
+        claim_binding("family", text_literal(&text, family)?),
+        claim_binding("parameters", parameters),
+    ]);
+    let operand = vec![
+        PathSegment::Node(declaring_key),
+        PathSegment::Text(operation.name().into()),
+        PathSegment::Text(family.into()),
+        PathSegment::Text(content),
+    ];
+    Ok(Pending {
+        node: node(graph, ids, "delay_distribution", operand, body)?,
         region,
     })
 }

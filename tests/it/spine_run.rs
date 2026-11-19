@@ -994,6 +994,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
                 accounting: default_accounting(work_units),
                 supplied: Default::default(),
                 backend: filament_eval::ExecutionBackendChoice::Interpreter,
+                live_occurrences: fsl_replay::spine::DEFAULT_LIVE_OCCURRENCES,
             },
             &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
             &filament_exact::Cancel::new(),
@@ -1170,6 +1171,34 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
     );
 }
 
+/// NFR-130-AC-4 (TC-2165) refusals: a `call.evaluation` whose
+/// `live_occurrences` is `-1`, `1.5` or `"x"`, or which holds an unknown
+/// member, refuses `invalid-request` at stage `request`, exit 20, naming the
+/// member.
+#[trace("TC-2165", "NFR-130-AC-4")]
+#[test]
+fn native_run_live_occurrence_limit_malformed_refuses() {
+    for (evaluation, member) in [
+        (json!({"live_occurrences": -1}), "live_occurrences"),
+        (json!({"live_occurrences": 1.5}), "live_occurrences"),
+        (json!({"live_occurrences": "x"}), "live_occurrences"),
+        (json!({"live_occurrences": 1, "depth": 1}), "depth"),
+    ] {
+        let (code, document, failure) = run_recursion(1, json!({"evaluation": evaluation}));
+        assert_eq!(code, Some(20), "{evaluation}: {failure}");
+        assert_eq!(document, Value::Null, "{evaluation}");
+        assert_eq!(
+            failure["code"], "invalid-request",
+            "{evaluation}: {failure}"
+        );
+        assert_eq!(failure["stage"], "request", "{evaluation}: {failure}");
+        assert!(
+            failure.to_string().contains(member),
+            "{evaluation}: {failure} names no `{member}`"
+        );
+    }
+}
+
 /// NFR-130-AC-4 request-boundary slice: omitted settings use the request
 /// default, and zero is accepted as an explicit limit value before execution.
 #[trace("TC-2165", "NFR-130-AC-4")]
@@ -1179,7 +1208,7 @@ fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": ZERO}})
+        json!({"kind": "completed", "value": {"integer": ZERO}})
     );
 
     let directory = tempfile::tempdir().unwrap();

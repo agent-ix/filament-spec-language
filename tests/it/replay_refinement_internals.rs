@@ -141,6 +141,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
             temporal_selections: &[],
             clocks: None,
             check_mode: None,
+            integer_division: None,
         },
         &models,
         &dependencies,

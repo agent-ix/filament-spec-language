@@ -90,13 +90,8 @@ mod tests {
     use filament_exact::{Origin, PathSegment, Role};
     use fsl_foundation::source::provenance::OccurrenceKey;
 
-    fn node(ordinal: u32) -> NodeKey {
-        NodeKey::new(
-            "pkg",
-            vec![PathSegment::Text("claim".to_owned())],
-            ordinal.into(),
-        )
-        .unwrap()
+    fn node(ordinal: u64) -> NodeKey {
+        NodeKey::new("pkg", vec![PathSegment::Text("claim".to_owned())], ordinal).unwrap()
     }
 
     #[test]

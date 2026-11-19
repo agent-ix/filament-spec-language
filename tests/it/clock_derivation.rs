@@ -409,3 +409,254 @@ fn a_clause_under_a_value_profile_alias_names_the_alias_and_its_selection() {
         "{message}"
     );
 }
+
+/// The `claim`/`hyperproperty` nodes of `package`, each with the NodeId of
+/// the body wrapper its `body` binding references (absent for a finite
+/// domain, whose body is a Boolean expression).
+fn hyper_nodes(package: &Value) -> Vec<(&Value, Option<&Value>)> {
+    package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("graph nodes")
+        .iter()
+        .filter(|node| node["semantic_form"] == "hyperproperty")
+        .map(|node| {
+            let body = node["body"]["members"]
+                .as_array()
+                .and_then(|members| members.iter().find(|member| member["name"] == "body"))
+                .map(|member| &member["value"]["target"]);
+            let wrapper = body.filter(|target| {
+                package["semantic_graph"]["nodes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|node| {
+                        &node["node_id"] == *target && node["semantic_form"] == "temporal_clause"
+                    })
+            });
+            (&node["node_id"], wrapper)
+        })
+        .collect()
+}
+
+/// The `trace` members of the binding rows keyed by `declaration`, in row order.
+fn traces_at<'a>(rows: &'a [Value], declaration: &Value) -> Vec<&'a str> {
+    rows.iter()
+        .filter(|row| &row["declaration"] == declaration)
+        .map(|row| row["trace"].as_str().expect("a trace member"))
+        .collect()
+}
+
+/// FR-488-AC-25: a hyper clause's per-trace binding rows are keyed by its
+/// `hyperproperty` node and its `claim` occurrence, never by its body
+/// wrapper, which has no binding row.
+#[trace("TC-1327", "FR-488-AC-25", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
+#[test]
+#[ignore = "QSL-2400: hyper binding rows keyed by the hyperproperty node, with no wrapper row, not implemented yet"]
+fn hyper_binding_rows_are_keyed_by_the_hyperproperty_node() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         hyper Same using e over behaviours (c: Config::ConfigVersion) \
+         forall trace a of Config forall trace b of Config \
+         { always[0,3] holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+    let output = compile_over_models(directory.path(), unit, &["example/config-version"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("rows");
+    let [(node, Some(wrapper))] = hyper_nodes(&package)[..] else {
+        panic!("one hyperproperty node with a wrapper");
+    };
+    assert_eq!(traces_at(rows, node), ["a", "b"]);
+    assert!(
+        traces_at(rows, wrapper).is_empty(),
+        "no row names the wrapper: {rows:?}"
+    );
+}
+
+/// FR-488-AC-26: two hyper clauses with equal bodies and reversed prefixes
+/// share one wrapper and each emit their rows on their own node, in their own
+/// quantifier order.
+#[trace("TC-3000", "FR-488-AC-26", "FSpec-TC-2027", "FSpec-FR-322-AC-463")]
+#[test]
+#[ignore = "QSL-2400: hyper clauses sharing a body wrapper emit their own per-trace rows, not implemented yet"]
+fn hyper_clauses_sharing_a_wrapper_emit_their_own_trace_rows() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         hyper Fwd using e over behaviours (c: Config::ConfigVersion) \
+         forall trace a of Config forall trace b of Config \
+         { always[0,3] holds(c.versionNumber @ a = c.versionNumber @ b) }\n\
+         hyper Rev using e over behaviours (c: Config::ConfigVersion) \
+         forall trace b of Config forall trace a of Config \
+         { always[0,3] holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+    let output = compile_over_models(directory.path(), unit, &["example/config-version"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("rows");
+    let nodes = hyper_nodes(&package);
+    let [(first, Some(wrapper)), (second, Some(shared))] = nodes[..] else {
+        panic!("two hyperproperty nodes with wrappers: {nodes:?}");
+    };
+    assert_eq!(wrapper, shared, "the two clauses share one wrapper");
+    assert!(traces_at(rows, wrapper).is_empty());
+    let mut orders = [traces_at(rows, first), traces_at(rows, second)];
+    orders.sort();
+    assert_eq!(orders, [vec!["a", "b"], vec!["b", "a"]]);
+}
+
+/// FR-898-AC-7: a finite-domain hyper clause emits one row per trace at its
+/// `hyperproperty` node, each carrying the domain binder `t` as its clock
+/// role and the configuration the request binds to it, under the lock's
+/// `temporal_profile` selection.
+#[trace("TC-3001", "FR-898-AC-7", "FSpec-TC-2028", "FSpec-FR-322-AC-464")]
+#[test]
+#[ignore = "QSL-2400: a finite-domain hyper clause emits one clock row per trace on role `t`, not implemented yet"]
+fn a_finite_domain_hyper_clause_emits_one_row_per_trace_on_its_domain_binder() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
+         hyper Det using e over t in Obs bounded 3 forall trace a forall trace b \
+         { (a.inp = b.inp) -> (a.out = b.out) }\n";
+    write(directory.path(), "unit.native", unit.as_bytes());
+    let clock = json!({"kind": "event_position", "sequence_authority": "obs"});
+    let request = |clocks: Option<Value>| {
+        let mut request = json!({"format": "native-compile/1", "request": {
+            "models": [],
+            "program": {"source": source("unit.native", "test:clocks-finite")}}});
+        if let Some(clocks) = clocks {
+            request["request"]["clocks"] = clocks;
+        }
+        request
+    };
+    let output = compile(
+        directory.path(),
+        &request(Some(json!({"t": clock.clone()}))),
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("rows");
+    let [(node, None)] = hyper_nodes(&package)[..] else {
+        panic!("one finite-domain hyperproperty node");
+    };
+    assert_eq!(traces_at(rows, node), ["a", "b"]);
+    for row in rows {
+        assert_eq!(row["clock_name"], "t", "{row}");
+        assert_eq!(row["clock"], clock, "{row}");
+    }
+    for refused in [
+        None,
+        Some(json!({"t": clock.clone(), "spare": clock.clone()})),
+        Some(json!({"t": {"kind": "fixed_sample",
+            "epoch": {"kind": "integer", "decimal": "0"},
+            "period": {"kind": "integer", "decimal": "1"}, "unit": "ms"}})),
+    ] {
+        let output = compile(directory.path(), &request(refused.clone()));
+        assert_eq!(output.status.code(), Some(20), "{refused:?}");
+        assert!(output.stdout.is_empty(), "no package for {refused:?}");
+    }
+}
+
+/// FR-488-AC-27 and FSpec FR-402-AC-10: two quantifier Groups with one
+/// `variable` text refuse at FR-402's Shape step with
+/// `ambiguous_declaration`/`ambiguous-name` at the later Group's `variable`
+/// binding, so each Group keys exactly one clock row.
+#[trace("TC-3007", "FR-488-AC-27")]
+#[trace("FSpec-TC-346", "FSpec-FR-402-AC-10")]
+#[test]
+#[ignore = "QSL-2400: a repeated quantifier variable refused at the hyperproperty Shape step not implemented yet"]
+fn a_repeated_quantifier_variable_is_refused_at_the_hyperproperty_shape() {
+    use filament_contract_model::{
+        CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageRefusalCause,
+        CheckedPackageRefusalCode, CheckedPackageV2, CheckedPackageV2ReadResult, JsonPointer,
+    };
+
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile i = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         hyper Same using i over behaviours (c: Config::ConfigVersion) \
+         forall trace a of Config forall trace b of Config \
+         { always holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+    let output = compile_over_models(directory.path(), unit, &["example/config-version"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let model = model_as("example/config-version");
+    let read = |bytes: &[u8]| {
+        let wire: Value = serde_json::from_slice(bytes).expect("package JSON");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire["lock"]["required_features"].as_array().unwrap() {
+            evidence.support_feature(feature.as_str().unwrap());
+        }
+        for (identity, document) in
+            fsl_semantics::model::intake::package_input([model.as_slice()]).unwrap()
+        {
+            evidence
+                .insert_domain_package_document(identity.as_str(), document)
+                .expect("a fresh evidence key");
+        }
+        CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence)
+    };
+    assert!(matches!(
+        read(&output.stdout),
+        CheckedPackageV2ReadResult::Admitted(_)
+    ));
+
+    let mut package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .expect("graph nodes");
+    let n = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "hyperproperty")
+        .expect("one hyperproperty node");
+    let variable = &mut nodes[n]["body"]["members"][3]["value"]["members"][1]["members"][0];
+    assert_eq!(variable["name"], "variable", "{variable}");
+    variable["value"]["value"] = json!("a");
+    let edited = serde_json::to_vec(&package).unwrap();
+
+    let CheckedPackageV2ReadResult::Refused(refusal) = read(&edited) else {
+        panic!("a repeated quantifier variable is refused");
+    };
+    assert_eq!(
+        refusal.code,
+        CheckedPackageRefusalCode::AmbiguousDeclaration
+    );
+    assert_eq!(
+        refusal.cause,
+        Some(CheckedPackageRefusalCause::AmbiguousName)
+    );
+    assert_eq!(
+        refusal.loci[0].path,
+        JsonPointer::parse(&format!(
+            "/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0"
+        ))
+    );
+}

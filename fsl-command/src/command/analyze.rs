@@ -19,8 +19,9 @@ use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
-    FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division,
+    require_complete_edition, wire, FileCounts, FormalSource, NativeResult, Result, RunCause,
+    RunError, RunLimits, RunResult,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -136,6 +137,8 @@ pub struct AnalyzeInput {
     pub limits: AnalyzeLimits,
     /// The run's deadline in milliseconds.
     pub deadline_ms: Option<u64>,
+    /// The optional request-supplied integer-division law.
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
 }
 
 impl PreparedAnalyze {
@@ -302,7 +305,7 @@ fn run_package(
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
 fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result<Readout<'d>> {
-    let request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
+    let mut request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
@@ -319,12 +322,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
             deadline_ms: request.deadline_ms,
         }));
     }
-    if request.integer_division.is_some() {
-        return Err(invalid(
-            "integer_division",
-            "an integer-division law is not read by this build",
-        ));
-    }
+    let integer_division = request_integer_division(request.integer_division.take())?;
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
     };
@@ -371,6 +369,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
             items: request.items,
             limits,
             deadline_ms: request.deadline_ms,
+            integer_division,
         },
         intake,
     ))
@@ -510,6 +509,7 @@ fn run_input(
         items,
         limits,
         deadline_ms,
+        integer_division,
     } = input;
     let routed = RoutedItems {
         documents,
@@ -526,9 +526,9 @@ fn run_input(
         sources,
         false,
         fsl_replay::spine::SpineLimits::default(),
+        integer_division,
         None,
-        None,
-        |checked, _, _, packages, libraries, _, _, _, _| {
+        |_intake, checked, _, _, packages, libraries, _, _, _, _| {
             let units = std::iter::once(&source).chain(libraries);
             let settled = settle_items(
                 checked.package(),

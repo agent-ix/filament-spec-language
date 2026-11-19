@@ -58,7 +58,13 @@ pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
-pub use fsl_eval::temporal::{AtomReading, ObservedValuation, TemporalOutcome};
+pub use crate::spine_eval_api::{
+    SpineEvalAtomReading as AtomReading, SpineEvalLateCutoff as LateCutoff,
+    SpineEvalObservedValuation as ObservedValuation,
+    SpineEvalStampInterval as StampInterval, SpineEvalTemporalOutcome as TemporalOutcome,
+    SpineEvalTemporalRefusal as TemporalRefusal,
+    SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
+};
 pub use fsl_package::checked_views::{
     support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
     Unmatched as TlUnmatched,
@@ -220,7 +226,7 @@ pub use call::{
     default_accounting, run, run_with_profile_catalog,
     run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
     CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
-    DEFAULT_WORK_UNITS,
+    DEFAULT_LIVE_OCCURRENCES, DEFAULT_WORK_UNITS,
 };
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
@@ -282,6 +288,7 @@ pub use native_result::{
     RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
     UnsupportedDiagnostic,
 };
+pub(crate) use native_result::{replay_locus_wire, replay_outcome_wire};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
@@ -1019,7 +1026,6 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
             format!("`{name}` names more than one candidate")
         }
         AssemblyCause::IllFormedBounds(_) => "a type's declared bounds are ill-formed".to_owned(),
-        AssemblyCause::FloatingType { .. } => "a floating type is not admitted".to_owned(),
         AssemblyCause::AliasCycle { edges } => format!(
             "the alias `{}` reaches itself",
             edges.first().map_or("", |(alias, _)| alias.as_str())

@@ -42,6 +42,12 @@ const REQUEST_BYTES: usize = 1_048_576;
 const TOTAL_BYTES: usize = 8_388_608;
 const FILES: usize = 64;
 
+fn request_integer_division(
+    value: Option<serde_json::Value>,
+) -> Result<Option<fsl_replay::AdmittedIntegerDivision>> {
+    read_integer_division(value.as_ref(), "integer_division")
+}
+
 /// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
@@ -925,8 +931,14 @@ pub enum RunCause {
     #[error("{}", .0.refusal)]
     Replay(Box<replay::ReplayFailure>),
     /// FR-862: the settled replay has no FR-323 per-item result encoding.
-    #[error("cannot serialize replay result: {0}")]
-    ReplayOutput(#[source] fsl_replay::CauseCodecError),
+    #[error("cannot serialize replay result: {error}")]
+    ReplayOutput {
+        /// The codec failure.
+        #[source]
+        error: fsl_replay::CauseCodecError,
+        /// The all-or-nothing outcome document for this failed row.
+        outcome: fsl_replay::OutcomeDocument,
+    },
     /// An item run violated an internal runtime invariant.
     #[error("an items run faulted")]
     ItemsFault,
@@ -1065,7 +1077,7 @@ impl RunCause {
             Self::ReplayRequest(_) => Code::InvalidRequest,
             Self::ReplayBytes { cause, .. } => cause.code(),
             Self::Replay(failure) => failure.refusal.code(),
-            Self::ReplayOutput(_) => Code::OutputFailure,
+            Self::ReplayOutput { .. } => Code::OutputFailure,
         }
     }
 
@@ -1093,7 +1105,7 @@ impl RunCause {
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
-            Self::ReplayOutput(_) => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ReplayOutput { .. } => filament_semantic_value::catalog::Category::InternalFailure,
             _ => self.code().category(),
         }
     }
@@ -1140,6 +1152,7 @@ impl RunError {
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
             RunCause::Replay(failure) => failure.outcome.clone(),
+            RunCause::ReplayOutput { outcome, .. } => outcome.clone(),
             RunCause::Source(failure) => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
@@ -1190,8 +1203,8 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
-            | RunCause::TlCorrespondence { .. }
             | RunCause::IntegerDivisionLaw { .. }
+            | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
             | RunCause::TlSubject(_)
             | RunCause::TlFault(_)
@@ -1220,10 +1233,12 @@ impl RunError {
             | RunCause::ReplayBytes { .. }
             | RunCause::UnknownRequirementClaim { .. }
             | RunCause::TemporalCorrection(_)
-            | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
-                    None,
+                    match &self.cause {
+                        RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        _ => None,
+                    },
                     self.cause.code().as_str(),
                     None,
                     self.outcome_message(),
@@ -2533,7 +2548,7 @@ fn complete_sources(
         limits,
         None,
         None,
-        |checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
@@ -2623,9 +2638,10 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
-    _integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     extension_catalog_override: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     finish: impl FnOnce(
+        &mut Intake<'_>,
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
         fsl_replay::spine::StateClauseExecutionPoints,
@@ -2790,6 +2806,7 @@ fn check_sources<T>(
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
                 check_mode: Some(request.check_mode),
+                integer_division: integer_division.as_ref(),
             },
             &models,
             &dependencies,
@@ -2828,6 +2845,7 @@ fn check_sources<T>(
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
                 check_mode: Some(request.check_mode),
+                integer_division: integer_division.as_ref(),
             },
             &models,
             &dependencies,
@@ -2852,6 +2870,7 @@ fn check_sources<T>(
         (checked, selections)
     };
     finish(
+        intake,
         checked,
         &package_selections,
         execution_points,
@@ -3477,6 +3496,7 @@ fn prepare_complete_run(
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    spine_call.live_occurrences = call.evaluation.live_occurrences();
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
             RunCause::ClauseRequest {
@@ -3810,6 +3830,41 @@ mod tests {
             ))),
             sources: crate::Sources::default(),
         }
+    }
+
+    #[test]
+    #[trace("FR-862-AC-3", "TC-2443")]
+    fn replay_row_output_failure_projects_internal_failure_without_partial_result() {
+        let codec = fsl_replay::CauseCodecError::Empty("result row");
+        let error = RunError {
+            cause: RunCause::ReplayOutput {
+                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(1, &codec),
+                error: codec,
+            },
+            sources: crate::Sources::default(),
+        };
+        let outcome: serde_json::Value = serde_json::from_slice(
+            &error
+                .outcome_document(fsl_replay::Operation::Replay)
+                .to_bytes()
+                .expect("failure outcome JSON"),
+        )
+        .expect("outcome document");
+        assert_eq!(error.category().exit_code(), 30);
+        assert_eq!(outcome["category"], "internal-failure");
+        assert_eq!(outcome["last_stage"], serde_json::Value::Null);
+        assert_eq!(outcome["result"], serde_json::Value::Null);
+        assert_eq!(outcome["diagnostics"][0]["cause"], "output-failure");
+        assert!(
+            outcome["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("row at position 1"),
+            "{outcome}"
+        );
+        let command = error.value().expect("command error document");
+        assert_eq!(command["stage"], "output");
+        assert_eq!(command["code"], "output-failure");
     }
 
     /// FR-100 "Internal failure at S6a" (FND-013): the `CheckedInvariant`

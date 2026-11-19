@@ -1463,7 +1463,7 @@ impl<'a> Typer<'a> {
                     CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
-                });
+                })
             }
             ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
                 self.population_objects(&name.name, &location)?
@@ -1512,7 +1512,7 @@ impl<'a> Typer<'a> {
                     (expression, case),
                     location,
                     frames,
-                ));
+                ))
             }
             ExprNode::Let {
                 name,
@@ -1526,7 +1526,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                );
+                )
             }
             ExprNode::If {
                 condition,
@@ -2815,9 +2815,9 @@ impl<'a> Typer<'a> {
         }
     }
 
-    /// Type the index form's source and static selector constraints. Map
-    /// lookup and sequence or ordered-set indexing produce separate checked
-    /// nodes; tuple projection remains unsupported.
+    /// Type the index form's source and static selector constraints. Tuple
+    /// projections require a literal in-range position; map and collection
+    /// indexes are checked and lowered through their own forms.
     fn accept_index<'e, 'r>(
         &mut self,
         frame: IndexFrame<'e>,
@@ -2858,21 +2858,24 @@ impl<'a> Typer<'a> {
                 let position = position
                     .to_u64()
                     .and_then(|position| usize::try_from(position).ok());
-                if position
-                    .and_then(|position| positions.get(position))
-                    .is_none()
-                {
+                let Some(position) = position.filter(|position| positions.get(*position).is_some())
+                else {
                     return Err(CheckRefusal::ill_typed(
                         &location,
                         IllTypedCause::OperatorIneligible,
                     ));
-                }
-                Err(refuse(
-                    &location,
-                    CheckCause::UnsupportedFeature {
-                        loci: vec![location.clone()],
+                };
+                let value_type = positions[position].clone();
+                let declaration = declaration.clone();
+                Ok(Step::Typed(node(
+                    NodeKind::TupleProject {
+                        operand: self.push(source),
+                        declaration,
+                        position,
                     },
-                ))
+                    value_type,
+                    &location,
+                )))
             }
             ValueType::Map(map_type) => {
                 let key_location = location.child(1);
@@ -4130,13 +4133,13 @@ impl<'a> Typer<'a> {
                             population,
                             &location,
                             Some(population_span),
-                        ));
+                        ))
                     }
                     None => {
                         return Err(refuse(
                             &location,
                             CheckCause::PopulationFormOutsideRefinement,
-                        ));
+                        ))
                     }
                 }
             }
@@ -4159,7 +4162,7 @@ impl<'a> Typer<'a> {
                     } else {
                         CheckCause::PopulationFormOutsideRefinement
                     },
-                ));
+                ))
             }
         };
         let element = self.element_type(&source)?;
@@ -4176,7 +4179,7 @@ impl<'a> Typer<'a> {
             (None, None) => {
                 return self
                     .finish_population(form, source, slot, None, None, &location)
-                    .map(Step::Typed);
+                    .map(Step::Typed)
             }
         };
         frames.push(Frame::Population(Box::new(PopulationFrame {

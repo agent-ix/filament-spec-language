@@ -265,7 +265,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ReplayRequest(_) | RunCause::ReplayBytes { .. } => {
             (types::Stage::Request, types::Details::None)
         }
-        RunCause::ReplayOutput(_) => (types::Stage::Output, types::Details::None),
+        RunCause::ReplayOutput { .. } => (types::Stage::Output, types::Details::None),
         RunCause::Replay(failure) => (
             match &failure.refusal {
                 fsl_replay::ReplayRefusal::Recompile(refusal)

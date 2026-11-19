@@ -1301,12 +1301,14 @@ fn probabilistic_plans_compute_exact_probabilities() {
     );
 }
 
-/// FR-1013-AC-2, FSpec FR-806-AC-3/AC-4: admission refuses a value-type
+/// FR-1013-AC-2, FSpec FR-806-AC-3/AC-4 and FR-823-AC-4: admission refuses a
+/// value-type declaration carrying the plan member `initial`, an unknown
 /// declaration, an unknown policy, a policy over another declaration and an
 /// inadmissible initial snapshot, each at its `/synthesis` pointer.
 #[test]
 #[trace("TC-2863", "FR-1013-AC-2")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-3")]
+#[trace("FSpec-TC-2038", "FSpec-FR-823-AC-4")]
 #[trace("FSpec-TC-1956", "FSpec-FR-806-AC-4")]
 #[ignore = "QSL-1978: plan request admission refusals are not implemented yet"]
 fn plan_requests_refuse_at_admission() {
@@ -1323,6 +1325,11 @@ fn plan_requests_refuse_at_admission() {
     for (synthesis, cause, pointer) in [
         (
             json!({"declaration": "Pick"}),
+            "unknown-member",
+            "/synthesis/initial",
+        ),
+        (
+            json!({"declaration": "Nope"}),
             "missing-name",
             "/synthesis/declaration",
         ),

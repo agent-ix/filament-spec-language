@@ -3956,6 +3956,7 @@ fn assert_rebuilds_s3(document: &[u8], body: &str) {
                     .collect(),
             })
             .collect(),
+        delays: Vec::new(),
     };
     let read = model
         .probabilistic_model(graph.scope().operations(), &package)
