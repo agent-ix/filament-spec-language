@@ -46,6 +46,8 @@ pub enum BareTerminalDeclaration {
 
 /// One `terminal` declaration of a package, read from its node.
 pub struct BareTerminal {
+    /// The declaration's `temporal`/`terminal` node.
+    pub node: NodeKey,
     /// The package identity of the model the declaration is on (FR-940: a
     /// model is named by identity on the package route, never by alias).
     pub model: String,
@@ -138,7 +140,11 @@ impl BarePackage<'_> {
                     })
                 }
             };
-            terminals.push(BareTerminal { model, declaration });
+            terminals.push(BareTerminal {
+                node: key(&row.node)?,
+                model,
+                declaration,
+            });
         }
         // FR-940: ordered by the model selection's identity, as the source
         // route orders its declarations.

@@ -165,12 +165,14 @@ pub fn read_terminal(
 /// One `terminal` declaration of a checked package as the package's emitted
 /// node gives it: the mode comes from the node, and a `when` declaration's
 /// checked predicate is the one the node's occurrence names.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PackageTerminal<'p> {
     /// The model alias the declaration is on.
     pub model: &'p str,
     /// The identity of the domain package the model selects.
     pub package: &'p str,
+    /// The declaration's `temporal`/`terminal` node.
+    pub node: filament_exact::NodeKey,
     /// The declared name.
     pub name: &'p str,
     /// The declaration.
@@ -243,6 +245,9 @@ pub fn resolve_terminals(
         resolved.push(PackageTerminal {
             model: checked.model(),
             package: checked.package(),
+            node: found
+                .map(|node| node.node.clone())
+                .ok_or_else(|| disagrees(checked.model()))?,
             name: checked.name().unwrap_or("terminal"),
             declaration,
         });

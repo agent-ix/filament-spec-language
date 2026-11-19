@@ -172,6 +172,14 @@ fn a_package_route_input_reads_a_terminal_declaration_as_the_source_does() {
             terminal_classes(&over_source),
         );
         assert_eq!(from_bytes, from_source, "{declaration}");
+        let source_keys = ModelCheckInput::source(&package).terminal_keys();
+        let package_keys = input.input().terminal_keys();
+        assert_eq!(
+            source_keys.mismatch(&package_keys),
+            None,
+            "{declaration}: the declarations join by selection identity"
+        );
+        assert_eq!(source_keys, package_keys, "{declaration}");
         assert_eq!(
             from_source
                 .iter()
@@ -443,7 +451,7 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
         }],
         &[("c", serde_json::json!({"value": {"integer": "0"}}))],
     );
-    let replayed = deadlock_parity(&world, true);
+    let replayed = deadlock_parity(&world, "Refuted");
     assert!(!replayed.contains("Undefined"), "{replayed}");
 }
 
@@ -468,13 +476,13 @@ fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal()
         }],
         &[("c", serde_json::json!({"value": {"integer": "0"}}))],
     );
-    let replayed = deadlock_parity(&world, false);
+    let replayed = deadlock_parity(&world, "Refuted");
     assert!(replayed.contains("Undefined"), "{replayed}");
 }
 
 /// The deadlock-freedom item over `world`, settled and replayed on both
 /// routes, which must agree; the source replay's settlement.
-fn deadlock_parity(world: &crate::model_world::World, joined: bool) -> String {
+fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
     use filament_exact::Cancel;
     use fsl_analyze::analyze::{
         analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
@@ -534,19 +542,15 @@ fn deadlock_parity(world: &crate::model_world::World, joined: bool) -> String {
         let mut records = analyze_items(&engines, vec![item], &Cancel::new());
         format!("{:?}", records.remove(0))
     };
-    // FR-411 "Deadlock-freedom verdict join" keys the terminal declarations by
-    // model alias, which the package route cannot name (FR-940), so the
-    // joined settlement is compared only for a package with no declaration.
-    if joined {
-        let from_source = settled(source_item());
-        assert_eq!(settled(package_item()), from_source);
-        assert!(from_source.contains("Refuted"), "{from_source}");
-    }
+    let from_source = settled(source_item());
+    assert_eq!(settled(package_item()), from_source);
+    assert!(from_source.contains(settles), "{from_source}");
 
     let outcome = fsl_analyze::model_check::check_model(source_item().request, &Cancel::new())
         .expect("checked");
     let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
-        panic!("the still Counter deadlocks: {outcome:?}");
+        assert_eq!(settles, "Proved", "a violation is expected: {outcome:?}");
+        return String::new();
     };
     let source_replay = (source_item().replay)(&counterexample).expect("the source replays");
     let package_replay = (package_item().replay)(&counterexample).expect("the bytes replay");
@@ -555,11 +559,38 @@ fn deadlock_parity(world: &crate::model_world::World, joined: bool) -> String {
         format!("{:?}", source_replay.settlement)
     );
     assert_eq!(package_replay.hints, source_replay.hints);
-    if joined {
-        assert_eq!(
-            source_replay.terminals.mismatch(&package_replay.terminals),
-            None
-        );
-    }
+    assert_eq!(
+        source_replay.terminals.mismatch(&package_replay.terminals),
+        None
+    );
     format!("{:?}", source_replay.settlement)
+}
+
+/// FR-411 "Deadlock-freedom verdict join", FR-940: a derived deadlock-freedom
+/// item over the Counter unit with `terminal any`, and one with `terminal
+/// when { self.value = 3 }`, is not refused `TerminalDeclaration` on the
+/// package route: the declarations are keyed by their model's selection
+/// identity on both routes, and the item settles, and replays, equal on
+/// both.
+#[trace("TC-1142", "FR-411-AC-5")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does() {
+    use crate::model_world::{counter, Clause, World, INFINITE};
+    // With `terminal any` there is no derived item (FR-411), so the item is
+    // written over the `when` declaration; `terminal any` joins by its keys
+    // (the terminal-class parity test above).
+    for terminal in ["terminal Done using v on M when { self.value = 3 };\n"] {
+        let world = World::new(
+            counter(),
+            &format!("{CONTRACT}{terminal}"),
+            INFINITE,
+            &[Clause {
+                activation: "on each (q: M::Counter)",
+                formula: "always holds(c.value <= 3)",
+            }],
+            &[("c", serde_json::json!({"value": {"integer": "0"}}))],
+        );
+        deadlock_parity(&world, "Proved");
+    }
 }

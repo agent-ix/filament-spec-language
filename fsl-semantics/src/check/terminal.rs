@@ -299,9 +299,16 @@ impl TerminalNode {
 pub struct TerminalKeys(BTreeMap<String, Option<NodeKey>>);
 
 impl TerminalKeys {
-    /// The first model alias, in ascending order, whose declaration differs
+    /// The keys of `declarations`, each a model selection identity with its
+    /// terminal node key: how the package route, which records no alias,
+    /// names the declarations a run reads (FR-411, FR-940).
+    pub fn of(declarations: impl IntoIterator<Item = (String, Option<NodeKey>)>) -> Self {
+        Self(declarations.into_iter().collect())
+    }
+
+    /// The first model selection identity, in ascending order, whose declaration differs
     /// between `self`, the declarations a request was written under, and
-    /// `read`, the declarations a run, check or replay read. An alias one
+    /// `read`, the declarations a run, check or replay read. An identity one
     /// side does not list has no declaration there.
     pub fn mismatch(&self, read: &Self) -> Option<TerminalMismatch> {
         let key = |keys: &Self, model: &str| keys.0.get(model).cloned().flatten();
@@ -362,7 +369,7 @@ impl CheckedGraph {
                 .iter()
                 .map(|terminal| {
                     (
-                        terminal.model().to_owned(),
+                        terminal.package().to_owned(),
                         terminal
                             .occurrence()
                             .map(|occurrence| occurrence.node().clone()),

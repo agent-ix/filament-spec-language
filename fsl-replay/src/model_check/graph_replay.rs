@@ -1379,7 +1379,7 @@ impl Loci<'_> {
     fn terminal_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,
-    ) -> Result<Option<String>, ReplayRefusal> {
+    ) -> Result<Option<fsl_eval::simulation::model::TerminalModel>, ReplayRefusal> {
         match self {
             Self::Source(package) => {
                 let terminals = fsl_package::resolve_terminals(package)
@@ -1390,7 +1390,12 @@ impl Loci<'_> {
                     else {
                         return None;
                     };
-                    (predicate.body().location() == locus).then(|| terminal.model.to_owned())
+                    (predicate.body().location() == locus).then(|| {
+                        fsl_eval::simulation::model::TerminalModel::new(
+                            terminal.package,
+                            terminal.model,
+                        )
+                    })
                 }))
             }
             Self::Package(input) => {

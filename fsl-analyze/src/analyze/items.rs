@@ -538,27 +538,29 @@ pub enum DerivedItemMismatch {
 
 /// What the FR-411 "Deadlock-freedom verdict join" reads of the package a
 /// derived item's run or certificate check is over.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum JoinPackage<'p> {
     /// The source route: the package's `CheckedGraph` (FR-531).
     Source(&'p CheckedPackage),
     /// The package route (FR-940): the model selections the admitted package
-    /// records. The package route's input admits no `terminal` node
-    /// ([`fsl_package::BarePackage::first_unread_model_form`] refuses one), so
-    /// the package declares no terminal state.
-    Package(&'p [fsl_semantics::model::domain_package::DomainPackageRef]),
+    /// records, and the terminal node keys its declarations carry, by the
+    /// selection identity of their model.
+    Package(
+        &'p [fsl_semantics::model::domain_package::DomainPackageRef],
+        TerminalKeys,
+    ),
 }
 
 impl JoinPackage<'_> {
     /// Whether the package holds a `model_root` node whose `generated`
     /// occurrence 0 is `claim`.
-    fn anchors(self, claim: &OccurrenceKey) -> bool {
+    fn anchors(&self, claim: &OccurrenceKey) -> bool {
         match self {
             Self::Source(package) => package
                 .graph()
                 .model_roots()
                 .any(|(_, root)| OccurrenceKey::generated(root) == *claim),
-            Self::Package(selections) => selections
+            Self::Package(selections, _) => selections
                 .iter()
                 .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
                 .any(|root| OccurrenceKey::generated(root) == *claim),
@@ -566,10 +568,10 @@ impl JoinPackage<'_> {
     }
 
     /// Each selected model's terminal node key.
-    fn terminal_keys(self) -> TerminalKeys {
+    fn terminal_keys(&self) -> TerminalKeys {
         match self {
             Self::Source(package) => package.graph().terminal_keys(),
-            Self::Package(_) => TerminalKeys::default(),
+            Self::Package(_, keys) => keys.clone(),
         }
     }
 }
@@ -595,7 +597,10 @@ fn joined<'p>(
 ) -> Result<JoinPackage<'p>, DerivedItemMismatch> {
     match (input.source_package(), input.admitted_package()) {
         (Some(package), _) => Ok(JoinPackage::Source(package)),
-        (None, Some(_)) => Ok(JoinPackage::Package(input.model_selections)),
+        (None, Some(_)) => Ok(JoinPackage::Package(
+            input.model_selections,
+            input.terminal_keys(),
+        )),
         (None, None) => Err(DerivedItemMismatch::OtherAnchor {
             index: derived.index(),
             occurrence: derived.occurrence().clone(),
@@ -731,7 +736,7 @@ pub fn derived_model_item<'a>(
         joined(&item.request.subject.simulation.input, derived)?,
         joined(&item.certificate.subject.simulation.input, derived)?,
     ];
-    join_anchor(derived, packages)?;
+    join_anchor(derived, packages.clone())?;
     let expected = join_terminals(derived, packages)?;
     item.replay = joined_replay(item.replay, expected);
     item.request.limits.limits = derived_graph_limits(limits);
@@ -875,7 +880,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
             derived,
         )?),
     ];
-    join_anchor(derived, packages)?;
+    join_anchor(derived, packages.clone())?;
     if kind == ItemKind::DeadlockFreedom {
         let expected = join_terminals(derived, packages)?;
         item.replay = joined_replay(item.replay, expected);
@@ -1253,9 +1258,7 @@ mod tests {
     #[test]
     fn admission_preserves_reference_literal_type_and_key_details() {
         let mut admission_record = record(Code::IllTyped, "operator-ineligible");
-        admission_record
-            .fields
-            .insert("type", "Counter".to_owned());
+        admission_record.fields.insert("type", "Counter".to_owned());
         admission_record.fields.insert("key", "62".to_owned());
         let failure = AdmissionFailure::Refused(Box::new(admission_record));
         let Refusal::DeclinedWithDetail(_, _, diagnostic, details) = admission(&failure) else {

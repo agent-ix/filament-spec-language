@@ -118,7 +118,7 @@ pub use probabilistic::{
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
-pub use terminal::TerminalClass;
+pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
     replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
     ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint,

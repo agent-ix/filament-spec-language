@@ -74,8 +74,10 @@ pub struct StateClauseEntry {
 /// package identity of its selection on the package route.
 #[derive(Clone, Debug)]
 pub struct ModelTerminal<'a> {
-    /// The model's name.
-    pub model: String,
+    /// The model, by selection identity.
+    pub model: super::TerminalModel,
+    /// The declaration's `temporal`/`terminal` node.
+    pub node: filament_exact::NodeKey,
     /// The declaration.
     pub declaration: ModelTerminalDeclaration<'a>,
 }
@@ -197,7 +199,8 @@ impl<'a> ModelCheckInput<'a> {
                 terminals
                     .into_iter()
                     .map(|terminal| ModelTerminal {
-                        model: terminal.model.to_owned(),
+                        model: super::TerminalModel::new(terminal.package, terminal.model),
+                        node: terminal.node.clone(),
                         declaration: match terminal.declaration {
                             PackageTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
                             PackageTerminalDeclaration::When(predicate) => {
@@ -211,6 +214,24 @@ impl<'a> ModelCheckInput<'a> {
             source: Some(package),
             admitted: None,
         }
+    }
+
+    /// FR-411 "Deadlock-freedom verdict join": each declared terminal's node
+    /// key, by its model's selection identity, on either route.
+    pub fn terminal_keys(&self) -> fsl_semantics::check::TerminalKeys {
+        fsl_semantics::check::TerminalKeys::of(
+            self.terminals
+                .as_ref()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|terminal| {
+                    (
+                        terminal.model.identity().to_owned(),
+                        Some(terminal.node.clone()),
+                    )
+                }),
+        )
     }
 
     /// The packages an admission of this package's observations
@@ -563,7 +584,8 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: terminal.model.clone(),
+                    model: super::TerminalModel::named(terminal.model.clone()),
+                    node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
                         fsl_package::BareTerminalDeclaration::When(predicate) => {

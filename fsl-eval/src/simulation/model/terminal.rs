@@ -20,6 +20,67 @@ use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::temporal::UndefinedCause;
 
+/// The model a `terminal` declaration is on, named by its selection
+/// identity, the key both routes compare by (FR-940). The label is the name
+/// a user reads: the source alias on the source route, the identity on the
+/// package route, which records no alias.
+#[derive(Clone, Eq)]
+pub struct TerminalModel {
+    identity: String,
+    label: String,
+}
+
+impl TerminalModel {
+    /// The model with selection identity `identity`, shown as `label`.
+    pub fn new(identity: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            identity: identity.into(),
+            label: label.into(),
+        }
+    }
+
+    /// A subject with no selection identity, named by `name` alone.
+    pub fn named(name: impl Into<String>) -> Self {
+        let name = name.into();
+        Self {
+            identity: name.clone(),
+            label: name,
+        }
+    }
+
+    /// The selection identity, the comparison key.
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// The display label.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+impl std::fmt::Debug for TerminalModel {
+    // The label is display only, so a record of either route prints the
+    // identity the routes compare by.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("TerminalModel")
+            .field(&self.identity)
+            .finish()
+    }
+}
+
+impl PartialEq for TerminalModel {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+
+impl std::hash::Hash for TerminalModel {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+    }
+}
+
 /// FR-124's classification of one state of a subject.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalClass {
@@ -32,8 +93,8 @@ pub enum TerminalClass {
     /// A `terminal when` predicate is undefined at the terminal state, so
     /// the state is neither intended nor deadlocked (ADR-018 UE-6).
     Undefined {
-        /// The model alias whose declaration it is.
-        model: String,
+        /// The model whose declaration it is.
+        model: TerminalModel,
         /// The first undefined evaluation, in object order.
         cause: UndefinedCause,
     },
@@ -41,8 +102,8 @@ pub enum TerminalClass {
     /// none undefined and none true: whether the state is intended is not
     /// known (ADR-018 V-6 `UndecidedSuccessor`).
     Undecided {
-        /// The model alias whose declaration it is.
-        model: String,
+        /// The model whose declaration it is.
+        model: TerminalModel,
     },
 }
 
