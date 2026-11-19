@@ -37,7 +37,7 @@ impl Lowering<'_> {
             &[Binder {
                 slot: 0,
                 parameter: candidate.clone().into(),
-                semantic_type: candidate_type.into(),
+                semantic_type: candidate_type.clone().into(),
             }],
         );
         let satisfies = self.expression(checked.satisfies.root(), &mut binders)?;
