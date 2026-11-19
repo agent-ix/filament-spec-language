@@ -328,7 +328,11 @@ pub struct ClauseMark {
     texts: BTreeMap<u64, String>,
     /// A `Timestamped` state's positions since the last evaluation, which an
     /// evaluation puts in canonical order.
-    tail: Option<(usize, Vec<Seen>, Vec<crate::spine_eval_api::SpineEvalTapeEntry>)>,
+    tail: Option<(
+        usize,
+        Vec<Seen>,
+        Vec<crate::spine_eval_api::SpineEvalTapeEntry>,
+    )>,
     window: crate::spine_eval_api::SpineEvalCarriedWindow,
     open_window: crate::spine_eval_api::SpineEvalCarriedWindow,
     objects: snapshot::SnapshotRead,
@@ -2114,6 +2118,7 @@ mod tests {
                 .check(
                     CheckMode::Linked,
                     filament_semantic_value::checking::CheckingLimits::default(),
+                    &fsl_eval::value::S6aRewardEvaluator,
                 )
                 .expect("the empty fixture package checks"),
         )
