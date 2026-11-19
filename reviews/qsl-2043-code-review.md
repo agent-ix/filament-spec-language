@@ -768,3 +768,35 @@ Plan completion: not assessed
   ]
 }
 ```
+
+## Dispositions
+
+Round 1, inspected fix head 9b818d6327f1ea0aaa94cc920fe67a8237d571b5.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Canonical broken-example negative removed. Original owned Cell.flag Boolean control and Integer-binder refusal preserve genuine result-type coverage without requiring authoritative examples to stay broken. |
+| FND-002 | fixed | Sent/Next and Seen/Delivered now resolve through checked source identities. Distinct correspondence values, the exact directed edge, and correct peer/Note event payloads are asserted independently of returned array order. |
+
+```json
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "reason": "Canonical broken-example negative removed. Original owned Cell.flag Boolean control and Integer-binder refusal preserve genuine result-type coverage without requiring authoritative examples to stay broken.",
+      "after_excerpt": "fn original_attempt_result_read_requires_the_operation_result_type() {\n    let directory = tempfile::tempdir().unwrap();\n    let control = corpus(\"original/attempt-result.native\");\n    let request = |file: &Path| {\n        json!({\"format\":\"native-compile/1\",\"request\":{\n        \"models\":[],\"program\":{\"source\":source(file)}}})\n    };\n    let accepted = command::compile_outcome(&write(directory.path(), &request(&control)))\n        .expect(\"a Boolean operation result can be read through its Boolean binder\");\n    assert!(!accepted.package_bytes().is_empty());\n    let wrong ="
+    },
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "reason": "Sent/Next and Seen/Delivered now resolve through checked source identities. Distinct correspondence values, the exact directed edge, and correct peer/Note event payloads are asserted independently of returned array order.",
+      "after_excerpt": "let (first, second, peer) = if sends {\n            (\"Sent\", \"Next\", \"Receiver\")\n        } else {\n            (\"Seen\", \"Delivered\", \"Sender\")\n        };\n        let mapped = |name| {\n            let port = fsl_package::protocol_view::PortRef {\n                node: node(name).node_id.clone(),\n                port: fsl_package::protocol_view::Port::Enter,\n            };\n            *witness\n                .correspondence\n                .0\n                .get(&port)\n                .unwrap_or_else(|| panic!(\"{role}: missing source event {name}\"))\n        };\n        let (first, second) = (mappe"
+    }
+  ]
+}
+```
+
+### Latest verdict
+
+PASS for the reviewed partial slice: every finding is fixed; no remaining review blocker. The original Findings and original Verdict are preserved above as historical review-pass evidence. QSL-2225 owns staged clock/handoff positives; QSL-2585 owns canonical examples repair. QSL-2043 remains partial. Accepted coder evidence: affected result-type and projection tests each passed 1/1, logs qsl-2043-fix1-result-2.log and qsl-2043-fix1-projection.log. No tests, builds, matrix or broad review repeated. Lead owns the final complete changed-route gate.

@@ -767,3 +767,28 @@ Plan completion: not assessed
   ]
 }
 ```
+
+## Dispositions
+
+Round 1, inspected fix head 9b818d6327f1ea0aaa94cc920fe67a8237d571b5.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Unrelated bare memory/time tags replaced by relevant FSL AC IDs on every route test. These assert portions of compound ACs; they do not claim full AC or ticket completion. |
+
+```json
+{
+  "dispositions": [
+    {
+      "fnd": "FND-001",
+      "outcome": "fixed",
+      "reason": "Unrelated bare memory/time tags replaced by relevant FSL AC IDs on every route test. These assert portions of compound ACs; they do not claim full AC or ticket completion.",
+      "after_excerpt": "#[trace(\"FR-570-AC-1\", \"FR-570-AC-2\")]\nfn source_projection_preserves_send_receive_direction_and_local_order() {\n#[trace(\"FR-381-AC-7\")]\nfn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {\n#[trace(\"FR-218-AC-44\")]\nfn original_attempt_result_read_requires_the_operation_result_type() {"
+    }
+  ]
+}
+```
+
+### Latest verdict
+
+PASS for the reviewed partial slice: every finding is fixed; no remaining review blocker. The original Findings and original Verdict are preserved above as historical review-pass evidence. QSL-2225 owns staged clock/handoff positives; QSL-2585 owns canonical examples repair. QSL-2043 remains partial. Accepted coder evidence: affected result-type and projection tests each passed 1/1, logs qsl-2043-fix1-result-2.log and qsl-2043-fix1-projection.log. No tests, builds, matrix or broad review repeated. Lead owns the final complete changed-route gate.
