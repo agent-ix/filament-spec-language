@@ -114,6 +114,19 @@ files are domain package documents and which `sources/` files are libraries) and
 the counts of nodes by form. Every value is taken from the in-process checked
 unit and the request, never from the emitted bytes.
 
+The node counts cover every node of a counted form that the unit's emission
+holds, whichever declaration mints it. The `temporal/temporal_clause` count
+is the number of distinct node keys among the unit's checked temporal
+clauses and the body wrappers of its hyper clauses (FR-488 "The body"),
+because a wrapper is a `temporal_clause` node that no checked temporal
+clause names and a count of clauses alone would refuse every handoff of a
+unit with a hyper clause on `package.nodes`. The `claim/hyperproperty`
+count is the number of distinct `hyperproperty` node keys, and
+`Selection::check` counts that form in the package. The expected number of
+`temporal_bindings` rows adds, for each hyper clause whose profile is
+clock-configured, one row per quantifier (FR-488 "Clause names and clock
+bindings").
+
 `checked_handoff::Selection::read(bytes)` parses the sidecar and
 `Selection::check(&self, &CheckedPackageV2) -> Result<(), SelectionRefusal>`
 compares an admitted package with it, counting every `temporal_bindings` row,
@@ -411,6 +424,7 @@ the three directories. The packages hold:
 | FR-517-AC-22 | A writer given a unit whose equality rows name a node the package does not hold returns `Error::Unnameable` and writes nothing, as for `inventory.json`; the written file holds no source text, no digest and no member the encoding of FR-531 does not list. | Test (TC-1312) |
 | FR-517-AC-23 | The writer emits the required `identities/5` source-record, source-tuple, source-union, source-operation and source-object lists from the same final emission as the package: original opaque keys, final structural/type references, original member identities and order round-trip through native joins. The reader requires all five lists and refuses the old format or an omitted list; an `identities/4` or `identities/3` document is the old format and is refused; no optional compatibility path or source fallback supplies them. | Test (TC-1312) |
 | FR-517-AC-24 | `compile` over a directory `write` wrote returns a `CompiledHandoff` whose checked package emits the bytes of `checked-package.json` and whose admitted package passes `Selection::check`; the sidecar names the package name, the unit's file and the execution points the request gave. A directory whose `checked-package.json` is edited to other bytes the reader admits returns `Error::ReadBackDiffers`, one whose sidecar `unit` leaves the directory, and one whose `models/0.json` is a symbolic link to a file outside it, return `Error::Label`, and one whose sidecar is removed returns `Error::Read`; none returns a package. | Test (TC-1312) |
+| FR-517-AC-25 | `write` over a unit declaring the temporal clause `Bounded` and the hyper clause `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`) writes a sidecar whose `temporal/temporal_clause` count is 2 and whose `claim/hyperproperty` count is 1; `compile` over that directory returns a `CompiledHandoff` whose admitted package passes `Selection::check`, and a `native-compile/1` request carrying the `handoff` member over the unit exits 0. The same sidecar with the `temporal/temporal_clause` count set to 1 refuses the package on `package.nodes`, so the comparison can fail. | Test (TC-3128) |
 
 ## Dependencies
 

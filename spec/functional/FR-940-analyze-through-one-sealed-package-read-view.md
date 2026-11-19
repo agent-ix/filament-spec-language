@@ -17,6 +17,18 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-397
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-488
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-532
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-163
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-173
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-174
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-631
+    type: references
 ---
 # FR-940: Analyze a checked package through one sealed read view over source-built and byte-read packages
 
@@ -369,6 +381,151 @@ route reads them and settles the item with the source route's record.
   `/claim_names/{i}/name`, `items` `[]`, `last_stage` `null`, exit `20`,
   before any item is resolved and before any engine runs.
 
+### Package form of a hyper clause
+
+A hyper clause (FR-172) is analyzed from its `claim`/`hyperproperty` node,
+the body wrapper that node's `body` binding references, and the nodes they
+reference (FR-488), and from nothing else. The engines of FR-631 (EN-1's
+product, copy-swap, witness-set, projected and single-existential checks,
+settlement, replay and FR-163's product-closure checker) read the clause
+through one record, the **hyper form**, which both routes read through this
+view.
+
+#### Decision: one hyper form on both routes, read from the bytes
+
+The engines take a `CheckedHyperClause` and evaluate its atoms and `match`
+conjuncts. S3's clause cannot serve the package route, and it also cannot
+serve as the value the package route's rebuilt clause must equal member for
+member. Three of its members are spelled by facts the bytes do not carry
+(FR-531 "What the bytes do not carry"): its formula arena is numbered in
+source arena order, its copy-swap normal form sorts operands by their
+checked encoding (FR-174), and its atom conditions and conjuncts are
+source-checked bodies. A package-route clause numbered and sorted from the
+bytes would hand the engines different atom indices, a different body
+automaton numbering and therefore different product-state keys, so the
+certificate, counterexample letters and refusal positions of the two routes
+would differ for one package.
+
+The hyper form is therefore read from the package on both routes, as FR-531
+already requires for every other fact the bytes carry: on the source route
+from the `AdmittedPackageRead` of the unit's own S4 emission, on the package
+route from the `BarePackage`. Both are the same bytes, so the engines read
+one value per fact and FR-850's equality holds by construction. S3's
+`CheckedHyperClause` keeps its role in checking and emission (FR-172 to
+FR-174, FR-487, FR-488) and is never read by an analysis engine. The two
+routes still differ in one place only, the body of an atom or conjunct: the
+source route evaluates S3's checked body, the package route the node's
+reader projection, through the one evaluator port, as for a state-graph
+predicate.
+
+The rebuilt clause is a `CheckedHyperClause` built by
+`CheckedHyperClause::of_package_form`, as a state-graph claim and a temporal
+clause are rebuilt. It holds package node keys and slot counts for its atom
+and conjunct bodies and no source-checked body, and it is neither a
+`CheckedPackage` nor a `CheckedGraph`, so FR-087 R-10 is not touched. Neither
+route recompiles source to obtain it: on the package route there is no
+source, and FSL never falls back to it.
+
+#### What a hyper form receives
+
+`AnalysisView::hyper_clause_form(claim: &OccurrenceKey) ->
+Result<PackageHyperForm, BareClauseRefusal>` SHALL read the hyper form of
+the clause whose `claim` occurrence `claim` is, as `claim_name` resolves it
+("Claim names", "Claim occurrence ordinals"), from these package facts:
+
+| Fact of the hyper form | Package source |
+| --- | --- |
+| occurrence key | the clause's `claim_names` row's (`declaration`, `occurrence`) on its `hyperproperty` node |
+| name and span | that row's `name` and `declaration_region` (FR-850 "Equality with the source route") |
+| profile | the `temporal_profile` law of the body wrapper's `filament.op.temporal.clause` application, read as the package's `profile_selections` row it equals |
+| aliases | the `subjects` bindings, in order: each binding's name is the alias and its `model_root` reference the package identity it selects, read from `model_selections()` |
+| object parameters | the `parameters` bindings in order: the name, and the object type `T` of the `model` node it references; its alias is the alias of the trace variables whose atom slots read it (S3 refuses one parameter read under two aliases); a parameter no atom slot reads takes the first `subjects` alias whose package declares `T`, and reads nothing in any engine |
+| quantifier prefix | the `quantifiers` Tuple: per Group in order, `variable`, `quantifier` (`forall` or `exists`), `alias`, and the fairness set as the `temporal`/`fairness` nodes its references name, in order, each read as FR-337's fairness argument is read |
+| atom slots | the `value`/`parameter` slot nodes the atom terms read (FR-488 "Atom slots as parameter nodes"), slot `k` being the node at level `k`, the wrapper's `over` reference being slot 0; each slot's trace variable `t` and parameter `p` are decoded from its reserved name `slot_s<esc(p)>_s<esc(t)>` (FR-488 "Slot node names") |
+| body | the wrapper's `formula` reference, read as `formula_graph()` in pre-order as FR-515 reads a temporal clause's formula, operators, intervals and operands as FR-337 writes them |
+| atoms | each distinct `holds` operand node, numbered by first use in that pre-order (FR-532 "Atom index"), with its slot count; the component of each model read in it is the trace variable of the slots at the read's roots, which FR-488 "Clauses S4 does not emit" makes exist and agree for every read S4 writes, and an indexed reference literal takes the component of the read that encloses it |
+| `match` conjuncts | the `match` aggregate's terms in package order; a conjunct belongs to `μ_E` when a slot node it reads names an existential variable of the prefix in its decoded reserved name (`op_s<t>`, `rcv_s<t>`, `arg_s<t>_…`), and to `μ_U` otherwise, a constant conjunct included; its index within its part is its rank among the package-order conjuncts of that part, which is S3's index (FR-488 "Match conjuncts" writes them in source order) |
+| `align skip` | the `align_skip` references in order, each `state`/`operation_anchor` node read as the operation key it anchors |
+| form | FR-173's classification applied to the profile, prefix, fairness sets, `align skip` and body above |
+| copy group | FR-174's copy-swap detection applied to the prefix, fairness sets, `μ_U` and body above, the normal form sorting the operands of `and`, `or`, `=` and `!=` by the FR-322 node key of each operand's term in place of its checked encoding |
+
+Each row of this table is a fact of FR-531's table of facts read from the
+bytes, so both implementations of the view return it ("Package forms of the
+source-checked evaluators"). The record charges nothing. It reads no source text, no `source_map` region
+other than the `declaration_region` of its row, no occurrence site label and
+no `NodeRef` path.
+
+#### What a hyper form returns
+
+- `CheckedHyperClause::of_package_form(&PackageHyperForm, types)` SHALL
+  return the clause the engines read, with `occurrence()` the form's key,
+  `condition(atom)` returning `None` for every atom (no source-checked body),
+  and the atom node key and slot count of each atom and the node key of each
+  conjunct in their place.
+- On both routes the analysis entry SHALL resolve a hyper item by
+  `claim_name`, read the form through the route's view and rebuild the
+  clause, and SHALL NOT take the clause from `CheckedGraph::hyper_clauses()`.
+- The rebuilt clause's name, span, profile, aliases, object parameters that
+  an atom slot reads, quantifier prefix with fairness sets, atom slots,
+  number of conjuncts in each part, `align skip`, form, copy-group classes
+  and occurrence SHALL equal S3's checked clause for the package and the
+  source it was compiled from. Its formula arena, atom indices and copy
+  generators SHALL equal S3's after S3's atoms are renumbered by FR-532's
+  atom index. Copy-swap's swappable relation is independent of the operand
+  order, because either encoding is equal for two operands exactly when
+  their terms are structurally equal.
+- `CheckedHyperLetters::new`, `CheckedStepMatch::new` and
+  `ProductClosureRequest` SHALL take the route's `ModelEvaluator` in place of
+  a `CheckedPackage`, and SHALL read reference literals, component reads and
+  atom slots from the rebuilt clause, never from a `CheckedGraph`.
+- `ModelEvaluator::evaluate_hyper_holds` and `evaluate_step_predicate` SHALL
+  be keyed by the clause's occurrence key and the atom index or the
+  (`part`, conjunct index) pair. The package implementation evaluates the
+  atom or conjunct node's reader projection, its slots bound to the slot
+  nodes at their levels. The source implementation evaluates S3's checked
+  body of the clause whose `assembled_occurrence()` is that key, at the atom
+  whose condition S4 lowered to that atom node, never by arena position.
+  Both run the one `fsl-eval` expression evaluator under the same meter and
+  charges ("Package forms of the source-checked evaluators"), so an atom or
+  conjunct gives the same value, `Undefined`, refusal or charge log on both
+  routes.
+- FR-163's checker SHALL rebuild the clause from the same view the item was
+  analyzed through, recompute successors through that route's
+  `ModelEvaluator`, and read nothing from the engine's search but the
+  certificate. On the package route it reads no source.
+- So a hyper item SHALL settle on the package route with the verdict,
+  record, counterexample (every copy's trace, the exhausted witness set),
+  copy-by-copy replay and certificate the source route gives for the same
+  item (FR-850 "Equality with the source route"). The package route SHALL NOT
+  settle a hyper item `unsupported`, or refuse it or its request
+  `unsupported_construct`/`not-yet-implemented`, for any fact this section
+  lists.
+
+#### Refusals
+
+- A `package` selection whose bytes the strict reader refuses, or whose
+  directory holds no `identities.json`, refuses the whole request at the
+  request stage (FR-850 "Admission"): category refusal, the reader's code,
+  cause and pointer, `items` `[]`, `last_stage` `null`, exit `20`, and no
+  engine runs and no source is compiled.
+- An item whose occurrence `hyper_clause_form` finds no `claim`/
+  `hyperproperty` node at, after `claim_name` returned it, is a view defect:
+  the lookup returns `hyper-root-unresolved` at the triple (FR-488 "Outputs")
+  and the item settles `failed` with that internal fault.
+- A `hyperproperty` node the strict reader admitted whose aggregate does not
+  read as FR-488 writes it is a reader defect, not an analysis outcome:
+  `hyper_clause_form` refuses it `MalformedNode` with the node key, and the
+  item settles `failed` with that internal fault, never a verdict. The cases
+  are: a `body` binding that references no `temporal`/`temporal_clause` node;
+  a slot node whose `name` is not in the reserved form or decodes to a trace
+  variable no quantifier Group declares; two slot nodes of one clause at one
+  level, or a level with no slot node below the highest; a model read whose
+  root slots name two trace variables; and a `match` term that references
+  neither an `expression` node nor a Boolean `value`/`literal` node.
+- A clause FR-173 places in HP-4 settles `unsupported` V-8
+  `unsupported-requested-capability` at negotiation (FR-173) on both
+  routes, because the classification reads the same form.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -388,6 +545,10 @@ route reads them and settles the item with the source route's record.
 | FR-940-AC-13 | Over FR-531-AC-35's unit, the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes return equal `requirement_items()` and equal `value_validity_records_of` for `f`, `f2`, `sq` and `g`, and their rows equal `CheckedGraph::requirements()` position for position. For FR-961-AC-1's `Even` unit, the FR-331 request items written on the package route from these rows (claim, request index, kind, extent, result bound, path condition, candidates) equal the source route's for the same registry, and the linked engine settles each item with the source route's record; for RR-12's `f` with `n` an `Integer`, each item is `unbounded` with one `integer` domain at `n`'s parameter node and `finite_bound_available` true on both routes. A test-only view whose record of `f`'s `+` row lacks its one guard makes the package-route linked engine's record differ from the source route's (the guard `n >= 0 and n < 10` is no longer assumed), so the comparison can fail. | Test (TC-2620) |
 | FR-940-AC-14 | For FR-1033-AC-1's `SB` unit and its handoff directory, the protocol clause the package route builds for `SB` from the admitted `protocol` nodes and `protocol_locations` rows equals S3's FR-218 checked clause in every member; the subject built on each route for `subject.protocol` with `roles` `w` and `c` bound to `test/litmus` binds `w` to `M::Cell` and `c` to `M::Core` with the same selection, the same `over` universe and the same resolved model of `SB::Both` (`Sc` with no `memory`, `Tso` with the `tso` entry); a `roles` entry for `w` naming a model the package does not select settles `declined` with `invalid_runtime_input`/`wrong-role-mapping` naming `w` on both routes. A test-only package whose `SB::Both` `parallel` node carries `memory` `tso` makes the package-built clause differ from the source clause, so the comparison can fail. | Test (TC-3050) |
 | FR-940-AC-15 | For FR-397-AC-30's and FR-397-AC-31's bodies, the source form and the package form of the expression evaluator, given the same inputs and remaining budget, write equal outcomes and equal charge logs; a package form that charges every `numeric_equal` node one `compare_ieee` writes a log for `p < q` with entries the source form lacks, so the comparison can fail. | Test (TC-3077) |
+| FR-940-AC-16 | Over AC-4's Counter unit with the hyper clauses `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`, universal, copy-swap symmetric), `Partner` (forall-exists equality), `CanReachThree` (single existential) and a projection-aligned clause with an `align skip` list and a `match` block holding one universal and one existential conjunct, `hyper_clause_form` of each clause's `claim_name` occurrence returns equal records over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, and the clause `of_package_form` rebuilds equals S3's checked clause in name, span, profile, aliases, read object parameters, quantifier prefix with fairness sets, atom slots, conjunct count per part, `align skip`, form, copy-group classes and occurrence, and in formula arena, atom indices and copy generators after S3's atoms are renumbered by FR-532's atom index; `condition` of every rebuilt atom is `None`. A test-only view that files the existential conjunct under `μ_U` makes the rebuilt clause differ from S3's, so the comparison can fail. | Test (TC-3126) |
+| FR-940-AC-17 | A `program` request and a `package` request over the handoff directory of AC-16's unit, written by its compile request's `handoff` member, with the items `Equal`, `Partner`, `CanReachThree` and the projection-aligned clause, and the same items over the unit with `Equal`'s bound lowered to `c.value @ b <= 2` so it refutes, give equal item records, counterexamples (one trace per copy; for `Partner` the exhausted witness set), copy-by-copy replays with `reproduced` `true` and product-closure certificates accepted by FR-163's checker; `Equal` settles `proved` with certification `certified` on both routes; no record is `unsupported` and no diagnostic is `not-yet-implemented`. Each atom and conjunct evaluated through the `ModelEvaluator` at each explored joint state gives the same value and charge log on both routes. | Test (TC-3127) |
+| FR-940-AC-18 | AC-17's `package` request run after the unit's source file is overwritten with bytes that are not a native unit and the handoff directory's `sources/` is deleted settles `Equal` `proved` with the record of AC-17's source request; FR-163's checker run on that route accepts the certificate with no source present. | Test (TC-2958) |
+| FR-940-AC-19 | Test-only packages of AC-16's unit, each admitted by the strict reader, in which `Equal`'s `hyperproperty` node has a slot node renamed `slot_sc_sz` (`z` declared by no Group), two slot nodes at level 0, a model read rooted in slots of `a` and `b`, or a `body` binding referencing an `expression` node, each settle the `Equal` item `failed` with `MalformedNode` naming that node key and no verdict, while a sibling `Partner` item settles as in AC-17; a handoff directory whose `checked-package.json` holds AC-16's bytes with the `hyperproperty` node's `quantifiers` Tuple removed refuses the whole request at the request stage with the reader's code, cause and pointer, `items` `[]`, `last_stage` `null`, exit `20`, compiling no source. | Test (TC-3127) |
 
 ## Dependencies
 

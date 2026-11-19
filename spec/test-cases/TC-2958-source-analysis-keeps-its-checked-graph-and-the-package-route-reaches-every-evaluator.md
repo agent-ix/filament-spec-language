@@ -13,7 +13,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6 and FR-940-AC-18.
 
 ## Test Procedure
 
@@ -26,6 +26,9 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6.
    and the `SB` litmus claim under `tso` over both routes (the package route
    over the handoff directory), a handoff directory whose `checked-package.json`
    the strict reader refuses, and one with no `identities.json`.
+4. Overwrite the hyper Counter unit's source with bytes that are not a native
+   unit, delete the handoff directory's `sources/`, and analyze `Equal`
+   (FR-940-AC-16) through the `package` selection; check its certificate.
 
 Test: `fsl-analyze/tests/it/analyze_package_selection.rs`.
 
@@ -36,3 +39,5 @@ Test: `fsl-analyze/tests/it/analyze_package_selection.rs`.
 - Step 2: item records equal to step 1's.
 - Step 3: equal records, counterexamples and replays, none `unsupported`; the
   refused directories settle no item and compile no source.
+- Step 4: `Equal` settles `proved` with the source route's record, and the
+  certificate is accepted with no source present.

@@ -217,9 +217,11 @@ the one rule this requirement's new nodes can break there.
   `CheckedHyperClause::conjuncts()`, which this requirement adds to FR-487's
   accessors: the conjuncts of both parts as `(MatchPart, index)` pairs
   ordered by `CheckedStepPredicate::span()` start. The package keeps no part
-  or index, so a package-only reader cannot recover the split between `μ_U`
-  and `μ_E`; the part is recomputed from the checked clause, which FR-315's
-  `match-conjunct` refusal reads. Each term is the conjunct's lowered
+  or index member. A package reader recovers both from the slot nodes a
+  conjunct reads: a conjunct is in `μ_E` exactly when one of its slot names
+  decodes to an existential variable, and its index is its rank among the
+  conjuncts of its part in this order (FR-940 "Package form of a hyper
+  clause"). FR-315's `match-conjunct` refusal reads the part of S3's clause. Each term is the conjunct's lowered
   condition (§ "Match conjuncts"). The
   aggregate is empty with no `match` block.
 - `align_skip`: one `reference` per listed operation, in the order written,
