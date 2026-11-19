@@ -65,7 +65,7 @@ use super::super::temporal_clause::{
     FormulaNode, HorizonFault, IntervalReading,
 };
 use super::model::{literal, site_location, Pass, Site};
-use super::{exact, exact_refusal, refusal, ProbabilisticCause};
+use super::{exact, exact_refusal, refusal, ProbabilisticCause, TimeTypeMismatchReason};
 use crate::family::CheckContext;
 use crate::family::{ClaimEvidence, ClaimExtent, Requirements};
 use crate::model::clause_observation::Observation;
@@ -1243,6 +1243,7 @@ impl Pass<'_, '_> {
                             refusal(ProbabilisticCause::TimeTypeMismatch {
                                 claim: claim.claim().to_owned(),
                                 span: root_span(threshold, claim.form.span),
+                                reason: TimeTypeMismatchReason::MissingTimeBinding,
                             })
                         });
                     let source = keep(refusals, source);
@@ -1703,6 +1704,7 @@ impl Pass<'_, '_> {
                         refusal(ProbabilisticCause::TimeTypeMismatch {
                             claim: claim.claim().to_owned(),
                             span: *span,
+                            reason: TimeTypeMismatchReason::MissingTimeBinding,
                         })
                     })?;
                 let target = self
@@ -1737,6 +1739,7 @@ impl Pass<'_, '_> {
                         return Err(refusal(ProbabilisticCause::TimeTypeMismatch {
                             claim: claim.claim().to_owned(),
                             span: steps.span,
+                            reason: TimeTypeMismatchReason::IncompatiblePosition,
                         }));
                     }
                 };
@@ -1810,6 +1813,7 @@ impl Pass<'_, '_> {
                         refusal(ProbabilisticCause::TimeTypeMismatch {
                             claim: claim.claim().to_owned(),
                             span: quantity.span,
+                            reason: TimeTypeMismatchReason::MissingTimeBinding,
                         })
                     })?;
                 let target = self
@@ -1859,6 +1863,7 @@ impl Pass<'_, '_> {
                             refusal(ProbabilisticCause::TimeTypeMismatch {
                                 claim: claim.claim().to_owned(),
                                 span: weighting.name.span,
+                                reason: TimeTypeMismatchReason::MissingTimeBinding,
                             })
                         })?;
                     Ok(Weighting::Delay)
