@@ -93,3 +93,11 @@ Round 1 at `98bf9a61cab8ec925022329989b14bf212aa61f4`.
 | FND-001 | still-open | Commit 98bf9a61ca removed the full missing-parameter check added in d788390536. The missing-first fixture now passes, but declaring (p[4], q[1], flag), supplying the same population for p and q and omitting flag still reaches the binding conflict for q before checking flag. FR-109 requires FR-100 name binding, and FR-100-AC-16 gives missing parameters precedence over all value admission. Check all slots for missing arguments after validating supplied names and before converting the first slot. |
 | FND-002 | fixed | The helper takes ownership of the accumulator. Both no-op branches return the environment directly and the final insertion consumes it. |
 | FND-003 | fixed | Targeted rustfmt reported only unchanged imports at the top of clause.rs. The edited continuation and integration-test import now match rustfmt. |
+
+Round 2 at `88ec8d43a5c98eb6fc97ba53f9affed00e9b37da`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The full missing-slot check runs after unknown and duplicate name checks and before value admission. The new test supplies one population at two bounds, omits the final flag, and asserts UnboundParameter for flag. The existing regression covers an omitted first parameter. |
+
+FND-002 and FND-003 remain fixed. The binding helper consumes its environment. The formatter reported differences only on pre-existing imports outside the diff. The dispatch reports four focused tests passed.

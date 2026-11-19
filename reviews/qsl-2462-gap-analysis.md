@@ -101,3 +101,7 @@ Round 1 at `98bf9a61cab8ec925022329989b14bf212aa61f4`.
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | fixed | The focused regression now traces to run-value-form criterion FR-650-AC-7. The examples-gate criterion remains the responsibility of QSL-2184. This disposition verifies the local trace correction. |
+
+Round 2 at `88ec8d43a5c98eb6fc97ba53f9affed00e9b37da`.
+
+Round 1 closed FND-001. At this head, the local function-claim admission regression still carries FR-650-AC-7. Evidence for the six shop examples remains with QSL-2184.
