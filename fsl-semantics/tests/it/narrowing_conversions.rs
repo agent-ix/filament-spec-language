@@ -31,7 +31,7 @@ fn check(source: &str, mode: CheckMode) -> Result<CheckedGraph, Vec<CheckRefusal
     )
 }
 
-fn assert_operation(source: &str, identity: &str, mode: CheckMode) {
+fn assert_operation(source: &str, identity: &str, mode: CheckMode) -> CheckedGraph {
     let graph = check(source, mode).unwrap_or_else(|errors| panic!("{source}: {errors:?}"));
     let operations: Vec<_> = graph
         .semantic_graph()
@@ -63,6 +63,22 @@ fn assert_operation(source: &str, identity: &str, mode: CheckMode) {
             "explicit narrowing must retain its class: {operations:?}"
         );
     }
+    graph
+}
+
+fn assert_parameter_narrow(graph: &CheckedGraph) {
+    use fsl_semantics::check::{BodyTerm, LeafTerm, MemberTerm};
+    let parameter = graph
+        .semantic_graph()
+        .nodes()
+        .find(|node| node.semantic_form() == "parameter")
+        .expect("one parameter")
+        .key();
+    assert!(graph.semantic_graph().nodes().any(|node| {
+        let BodyTerm::Application(application) = node.body() else { return false; };
+        application.operation.identity() == "filament.op.numeric.narrow"
+            && matches!(application.arguments.as_slice(), [MemberTerm::Leaf(LeafTerm::Reference { target })] if target.admitted() == Some(&parameter))
+    }), "the authored narrowing must wrap the parameter, independently of the else literal");
 }
 
 fn assert_unproved(source: &str) {
@@ -82,7 +98,8 @@ fn assert_unproved(source: &str) {
 #[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn guarded_int_narrowing_checks_and_lowers_to_numeric_narrow() {
-    assert_operation("function f using v(q: Int[0,20]): Int[0,9] pure { if q <= 9 then convert<Int[0,9]>(q) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
+    let graph = assert_operation("function f using v(q: Int[0,20]): Int[0,9] pure { if q <= 9 then convert<Int[0,9]>(q) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
+    assert_parameter_narrow(&graph);
 }
 
 #[trace("FR-096", "FSpec-FR-149")]
@@ -94,7 +111,8 @@ fn unguarded_int_narrowing_refuses_unproved_range() {
 #[trace("FR-093-AC-67", "FSpec-FR-149")]
 #[test]
 fn integer_source_under_guard_narrows() {
-    assert_operation("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 9 then convert<Int[0,9]>(n) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
+    let graph = assert_operation("function f using v(n: Integer): Int[0,9] pure { if n >= 0 and n <= 9 then convert<Int[0,9]>(n) else 0 }", "filament.op.numeric.narrow", CheckMode::Linked);
+    assert_parameter_narrow(&graph);
     assert_unproved("function f using v(n: Integer): Int[0,9] pure { convert<Int[0,9]>(n) }");
     assert_unproved("function f using v(n: Integer): Int[0,9] pure { if n <= 9 then convert<Int[0,9]>(n) else 0 }");
     assert_unproved("function f using v(n: Integer): Int[0,9] pure { if n >= 0 then convert<Int[0,9]>(n) else 0 }");
