@@ -112,6 +112,12 @@ Pass 1 was checked against head 544461c15e18d11b7a724eca22e28eccf1989a8b, which 
 | FND-012 | fixed | `to_wire(model, locate)` returns a `Value` for both kinds, with the four catalogued `UndefinedCause` spellings. An unlocatable locus gives a wire `Err`, never `failed` |
 | FND-013 | fixed | The `interval()` helper builds `{lower: rational(..), upper: rational(..)}`. No string horizon, bound or certificate step is left in the hybrid fixtures |
 | FND-014 | fixed | 8c8282076 boxes the payload (`Refuted(Box<HybridCounterexample>)`) and removes the `#[allow]`. No `#[allow]` remains in `git diff origin/main...HEAD` |
+| FND-015 | fixed | Round 2 (5d18d1ba0): the unused `hybrid_certificate` field and the `HybridReport.certificate` field were removed. The module, seam and crate docs now say the certificate is neither checked nor written to the outcome until QSL-2531 (FR-751) |
+| FND-016 | fixed | Round 2: the `FR-750-AC-1` tag was removed from `the_providers_deadline_is_the_requests_deadline`, with a doc line saying no FR-750 criterion states it |
+| FND-017 | accepted-no-change | Arch W73 (language PR #3010, open at review time) amends FR-750 to the five-parameter `read_entry(entry, counterexamples, graph, claim, wire)`. The code stays as is, and spec and code agree once #3010 merges |
+| FND-018 | fixed | Round 2: the package is emitted once per item, before the provider runs. An emission failure settles `failed` `runtime_invariant` (an FSL fault) instead of handing the provider an empty `WireGraph`. `unsupported_construct` and `counterexample_wire` reuse that wire graph |
+| FND-019 | fixed | Round 2: the unused `WireGraph::of_keys` was removed from fsl-semantics |
+| FND-020 | fixed | Round 2: the claim is found by `candidate == claim` (structural equality) instead of `std::ptr::eq`. `hybrid_locus_site` uses the position only for the claim's model, so equal claims resolve the same model |
 
 ## Gates run (disposition pass 1, reviewer worktree at 544461c15)
 
@@ -119,3 +125,11 @@ Pass 1 was checked against head 544461c15e18d11b7a724eca22e28eccf1989a8b, which 
 - `cargo test -p fsl-replay --lib -- hybrid`: 49 passed, 0 failed.
 - `cargo test -p fsl-analyze --lib -- hybrid`: 1 passed (`each_replay_refusal_settles_by_its_row`).
 - `cargo test -p fsl-analyze --test it -- hybrid` (with the two house skips): 12 passed, 0 failed, 26 ignored. Every ignore has a QSL-2234 reason.
+
+## Gates run (disposition pass 2, reviewer worktree at 5d18d1ba0)
+
+- clippy `-p fsl-hybrid-reference -p fsl-replay -p fsl-route -p fsl-analyze -p fsl-semantics -p xtask --all-targets -- --cap-lints warn`: no warning in any diff file.
+- `cargo test -p fsl-replay --lib -- hybrid`: 49 passed. This covers the edited `tests.rs` after the duplicated `#[trace]` line was deleted.
+- `cargo test -p fsl-analyze --lib -- hybrid_item`: 1 passed.
+- `cargo test -p fsl-analyze --test it -- hybrid` (with both house skips, one thread): 12 passed, 0 failed, 26 ignored. Each ignore names its slice ticket, QSL-2529 to QSL-2534.
+- No `#[allow]` in `git diff origin/main...HEAD`. The committed `reviews/` SRs matched the reviewer's round-1 versions.

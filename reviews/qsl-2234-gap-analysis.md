@@ -72,3 +72,6 @@ Pass 1 was checked against head 544461c15e18d11b7a724eca22e28eccf1989a8b.
 | FND-003 | fixed | The AC-3 test asserts `diagnostic_detail` `kind`/`requirement`. The AC-1 test asserts `seen.calls() == 1` |
 | FND-004 | fixed | The AC-6 ignore reason now names what remains (`options` defaults and the solver step budget) |
 | FND-005 | fixed | Active TC-3035/TC-3037 tests now cover AC-6, AC-7 (in process), AC-8, the AC-9 writer, AC-11, the analyze half of AC-12, AC-13 and the AC-14 comparison. Ignored QSL-2234 stubs with accurate reasons cover the AC-7 process half, AC-9/AC-14 read-back, AC-10, the AC-11 process half, the AC-12 exact-replay and replay-request halves, and FR-1021-AC-3 |
+| FND-006 | fixed | Round 2: `item_options_reach_the_provider_as_strings` is now tagged `#[trace("TC-3035", "FR-750-AC-6")]` |
+| FND-007 | fixed | Round 2: `#[trace("FSpec-TC-2051", "FSpec-FR-193-AC-25")]` is on the AC-13 locus test, and `FSpec-FR-193-AC-26` is on the AC-14 comparison test and on the ignored read-back stub |
+
