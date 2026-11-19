@@ -10,7 +10,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRef;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, DocumentRef, Observation, ObservationLimits, admit_current_snapshot,
+    admit_current_snapshot, AdmissionFailure, DocumentRef, Observation, ObservationLimits,
 };
 
 use super::BarePackage;
@@ -45,26 +45,31 @@ impl BarePackage<'_> {
         AdmissionFailure,
     > {
         let unsupported = |reason: &str| {
-            AdmissionFailure::Refused(refused(
+            AdmissionFailure::Refused(Box::new(refused(
                 CatalogCode::new("unknown_required_feature", "unsupported-feature"),
                 BTreeMap::from([
                     ("package", self.package().name().to_owned()),
                     ("reason", reason.to_owned()),
                 ]),
-            ))
+            )))
         };
         if let Err(failure) = self.witness() {
-            return Err(unsupported(
-                &crate::reader_protocol_projection::UnsupportedReason::from(failure).name(),
-            ));
+            let reason = match failure {
+                crate::BareSelectionFailure::Identity(refusal) => {
+                    crate::reader_protocol_projection::UnsupportedReason::from(refusal).name()
+                }
+                _ => "missing-type-representation".to_owned(),
+            };
+            return Err(unsupported(&reason));
         }
         let world = self
             .world()
             .map_err(|_| unsupported("missing-type-representation"))?;
         self.object_declarations()
             .map_err(|_| unsupported("missing-type-representation"))?;
+        let model_selections = self.model_selections();
         fsl_semantics::model::observation::admit_current_snapshot(
-            self.model_selections(),
+            model_selections.as_slice(),
             world.types(),
             packages,
             model_limits,
