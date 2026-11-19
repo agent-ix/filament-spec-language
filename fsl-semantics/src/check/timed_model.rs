@@ -4496,7 +4496,23 @@ fn timed_declaration_owner(
                     let owners = timed_models
                         .iter()
                         .filter(|(_, model)| {
-                            state_object(model, inputs.models, inputs.types, declaration_span)
+                            let clock_path = clock_fields(model).iter().any(|clock| {
+                                clock
+                                    .path
+                                    .iter()
+                                    .filter_map(|step| match step {
+                                        PlaceStep::Field(name) => Some(name.as_str()),
+                                        PlaceStep::Slot(_) | PlaceStep::Union(_) => None,
+                                    })
+                                    .eq(names.iter().copied())
+                            });
+                            clock_path
+                                || state_object(
+                                    model,
+                                    inputs.models,
+                                    inputs.types,
+                                    declaration_span,
+                                )
                                 .ok()
                                 .is_some_and(|(context, _)| {
                                     model_declares_field_path(inputs.types, &context, &names)
@@ -4519,6 +4535,8 @@ fn timed_declaration_owner(
             }
         }
     }
+
+    evidence.sort_by_key(|(_, span)| span.start);
 
     let mut possible: BTreeSet<String> = timed_models
         .iter()
