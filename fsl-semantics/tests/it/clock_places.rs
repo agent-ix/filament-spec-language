@@ -3155,14 +3155,14 @@ fn clock_tuple_and_union_document() -> Vec<u8> {
 #[trace("FSpec-TC-1361", "FSpec-FR-415-AC-28")]
 #[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
 #[test]
-#[ignore = "QSL-2251: Clock tuple positions and union case payloads as clock places not implemented yet"]
 fn a_clock_tuple_position_and_union_case_are_clock_places() {
     let document = clock_tuple_and_union_document();
     let body = format!(
         "{UNITS}{DENSE}\
          pre Armed using v on Config::Call::bump {{ present(self.p.Armed) and value(self.p.Armed) >= 1 ms }}\n\
          pre Slotted using v on Config::Call::reply {{ self.s[0] >= 2 ms }}\n\
-         post Arm using v on Config::Call::bump {{ self.p = Phase::Armed(0 ms) }}\n"
+         pre Data using v on Config::Call::reply {{ self.s[1] >= 0 }}\n\
+         post Arm using v on Config::Call::bump {{ self.p = Config::Phase::Armed(0 ms) }}\n"
     );
     let graph = check(&document, &body).expect("clock tuple and union places check");
     let model = timed(&graph);
@@ -3170,8 +3170,8 @@ fn a_clock_tuple_position_and_union_case_are_clock_places() {
         .clock_fields()
         .map(|(_, field)| field.name().to_owned())
         .collect();
-    assert!(names.iter().any(|name| name == "s"), "{names:?}");
-    assert!(names.iter().any(|name| name == "p"), "{names:?}");
+    assert!(names.iter().any(|name| name == "s.0"), "{names:?}");
+    assert!(names.iter().any(|name| name == "p.Armed"), "{names:?}");
     assert_eq!(
         model
             .resets()

@@ -4385,6 +4385,68 @@ fn a_model_variant_union_is_finite_by_its_payloads() {
     assert_eq!(format!("{:?}", bound.domains).matches("Node {").count(), 1);
 }
 
+/// A union's Clock payload has no data value and is live only in that case.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-415-AC-28")]
+#[test]
+fn a_model_union_clock_is_live_only_in_its_active_case() {
+    let choice = ident("ClockChoice");
+    let mut armed = json!({"identity": ident("variant/ClockChoice-Armed"), "name": "Armed",
+        "origin": origin(&ident("variant/ClockChoice-Armed"))});
+    armed["payloadType"] = json!("ix://filament/native/Clock");
+    let idle = json!({"identity": ident("variant/ClockChoice-Idle"), "name": "Idle",
+        "origin": origin(&ident("variant/ClockChoice-Idle"))});
+    let document = cells_document(
+        vec![wire_type(
+            &choice,
+            "mode",
+            json!({"variants": [armed, idle]}),
+        )],
+        vec![("choice", choice, Some(json!("optional")))],
+        &["choice"],
+        &[],
+    );
+    let world = world_holding(
+        document,
+        "",
+        &only(&["work"], ""),
+        json!({"t": {"record": {"type": ident("Timer"), "fields": {"n": {"integer": "0"}}}},
+            "choice": {"absent": {}}}),
+    );
+    let held = system(&world);
+    let timed = TimedSystem::new(&held, "M").expect("a timed model");
+    let [initial] = &timed.initial()[..] else {
+        panic!("one initial state");
+    };
+    let steps = timed
+        .steps(initial)
+        .expect("the union's data domain is finite");
+    assert_eq!(
+        steps.len(),
+        3,
+        "absent, Armed and Idle are the three data values"
+    );
+    let base_clocks = timed.live_clocks(initial.discrete());
+    let mut armed_states = 0;
+    for (_, state) in steps {
+        let key = String::from_utf8(held.state_key(state.discrete()).expect("state key").0)
+            .expect("UTF-8");
+        let armed = key.contains("Armed");
+        armed_states += usize::from(armed);
+        assert_eq!(
+            timed.live_clocks(state.discrete()),
+            base_clocks + u64::from(armed),
+            "{key}"
+        );
+        if armed {
+            assert!(
+                !key.contains("Clock\""),
+                "the active case carries no Clock data value: {key}"
+            );
+        }
+    }
+    assert_eq!(armed_states, 1);
+}
+
 /// FR-120-AC-26 (TC-1270) with the STD-508 ruling on collections of bare
 /// clocks: `sk: Sequence<Clock>[0, 3]` has 4 values and `st: Set<Clock>`
 /// with no declared maximum 2, one for each element count, each a root no

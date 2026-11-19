@@ -2860,7 +2860,8 @@ impl<'a> Typer<'a> {
                 };
                 let position = position
                     .to_u64()
-                    .and_then(|position| usize::try_from(position).ok());
+                    .and_then(|position| usize::try_from(position).ok())
+                    .and_then(|position| self.scope.tuple_data_position(declaration, position));
                 let Some(position) = position.filter(|position| positions.get(*position).is_some())
                 else {
                     return Err(CheckRefusal::ill_typed(

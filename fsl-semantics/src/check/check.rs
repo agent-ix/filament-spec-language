@@ -960,11 +960,17 @@ pub struct ModelRecords {
     /// holds an empty map.
     renamed: BTreeMap<(filament_exact::NodeKey, filament_exact::NodeKey), BTreeMap<String, String>>,
     events: BTreeSet<filament_exact::NodeKey>,
+    /// Authored tuple positions mapped to data positions; clocks have no data slot.
+    tuple_positions: BTreeMap<filament_exact::NodeKey, Vec<Option<usize>>>,
 }
 
 impl DebugWith for ModelRecords {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
-        let Self { renamed, events } = self;
+        let Self {
+            renamed,
+            events,
+            tuple_positions,
+        } = self;
         f.debug_struct("ModelRecords")
             .field(
                 "renamed",
@@ -979,6 +985,13 @@ impl DebugWith for ModelRecords {
                     .collect::<Vec<_>>(),
             )
             .field("events", &NodeList(events.iter(), table))
+            .field(
+                "tuple_positions",
+                &tuple_positions
+                    .iter()
+                    .map(|(key, positions)| (NodeKeyDebug(key, table), positions))
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -1010,12 +1023,21 @@ impl ModelRecords {
         self.events.insert(declaration);
     }
 
+    pub(crate) fn declare_tuple_positions(
+        &mut self,
+        declaration: filament_exact::NodeKey,
+        positions: Vec<Option<usize>>,
+    ) {
+        self.tuple_positions.insert(declaration, positions);
+    }
+
     /// Every entry of `other`.
     pub(crate) fn extend(&mut self, other: ModelRecords) {
         for (key, names) in other.renamed {
             self.renamed.entry(key).or_default().extend(names);
         }
         self.events.extend(other.events);
+        self.tuple_positions.extend(other.tuple_positions);
     }
 
     /// The name under which a value of `declaration` keeps `field`.
@@ -2087,6 +2109,19 @@ impl Scope {
         };
         let name = self.model_records.own_name(declaration, field);
         fields.iter().position(|candidate| candidate.name() == name)
+    }
+
+    pub(crate) fn tuple_data_position(
+        &self,
+        declaration: &filament_exact::NodeKey,
+        position: usize,
+    ) -> Option<usize> {
+        self.model_records
+            .tuple_positions
+            .get(declaration)
+            .map_or(Some(position), |positions| {
+                positions.get(position).copied().flatten()
+            })
     }
 
     /// The package's model object types' declared operations (FR-103).

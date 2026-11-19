@@ -2134,6 +2134,13 @@ fn self_path(form: &ExpressionForm, id: ExprId) -> Option<Vec<PlaceStep>> {
                 path.push(PlaceStep::Field(field.clone()));
                 at = *operand;
             }
+            ExprNode::Index { operand, index } => {
+                let ExprNode::Integer(position) = form.expression.get(*index)?.node() else {
+                    return None;
+                };
+                path.push(PlaceStep::Field(position.to_u64()?.to_string()));
+                at = *operand;
+            }
             ExprNode::SelfRef if !path.is_empty() => {
                 path.reverse();
                 return Some(path);
@@ -3758,7 +3765,11 @@ fn clock_parameters(
 
 /// The span of the first selector `p[s]` in `form` that is no part of a
 /// `ref`'s place (FR-230 "Selection"): only `ref` checks a selector so far.
-fn unchecked_selector(form: &ExpressionForm) -> Option<Span> {
+fn unchecked_selector(
+    form: &ExpressionForm,
+    clocks: &Clocks<'_>,
+    context: &EffectiveId,
+) -> Option<Span> {
     let mut under_ref = BTreeSet::new();
     for node in form.expression.iter() {
         if matches!(node.node(), ExprNode::Ref(_)) {
@@ -3777,7 +3788,15 @@ fn unchecked_selector(form: &ExpressionForm) -> Option<Span> {
             matches!(
                 node.node(),
                 ExprNode::Select { .. } | ExprNode::Index { .. }
-            ) && !under_ref.contains(&node.id())
+            ) && !under_ref.contains(&node.id()) && !self_path(form, node.id()).is_some_and(|path| {
+                let Some((PlaceStep::Field(position), parent)) = path.split_last() else { return false; };
+                position.parse::<usize>().is_ok() && clocks.fields.iter().any(|clock| {
+                    clock.path.len() > parent.len()
+                        && same_place(&clock.path[..parent.len()], parent)
+                        && matches!(&clock.path[parent.len()], PlaceStep::Field(name) if name.parse::<usize>().is_ok())
+                        && clocks.model.conforms(context.clone(), clock.owner.clone())
+                })
+            })
         })
         .and_then(|node| spans.get(node.id().index()).copied())
 }
@@ -3795,7 +3814,7 @@ fn read_clause(
         expression: clause.body.clone(),
         spans: clause.spans.body.clone(),
     };
-    if let Some(span) = unchecked_selector(&form) {
+    if let Some(span) = unchecked_selector(&form, clocks, &clause.context) {
         return Err(timed(TemporalCause::SelectionNotChecked { span }));
     }
     let Some(located) = Located::with_parameters(&form, clocks, &clause.context, parameters) else {

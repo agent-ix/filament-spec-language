@@ -824,8 +824,7 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_)
-            | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
+            Self::TimedNotChecked(_) | Self::SynthesisNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -2209,6 +2208,12 @@ fn model_object_types(
         positions.sort_by_key(|position| position.ordinal);
         let mut elements = Vec::with_capacity(positions.len());
         for position in positions {
+            if matches!(
+                sequence_items(&position.value_type, &records),
+                ValueTypeRef::Clock
+            ) {
+                continue;
+            }
             match model_value_type(
                 &position.value_type,
                 Multiplicity {
@@ -2275,7 +2280,11 @@ fn model_object_types(
         let mut members = Vec::with_capacity(cases.len());
         for case in cases {
             let mut payload = Vec::new();
-            if let Some(payload_type) = &case.payload_type {
+            if let Some(payload_type) = case
+                .payload_type
+                .as_ref()
+                .filter(|payload| !matches!(sequence_items(payload, &records), ValueTypeRef::Clock))
+            {
                 match model_value_type(
                     payload_type,
                     Multiplicity {
@@ -2332,6 +2341,42 @@ fn model_object_types(
         ));
     }
     let mut model_records = record_renames(model, &records, &own_handles);
+    for record in &package.records {
+        let DomainPackageRecord::TupleValueType(tuple) = record else {
+            continue;
+        };
+        let Some(handle) = meaning_handles.get(&tuple.key) else {
+            continue;
+        };
+        let mut positions: Vec<_> = package
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                DomainPackageRecord::TuplePosition(position) if position.owner == tuple.key => {
+                    Some(position)
+                }
+                _ => None,
+            })
+            .collect();
+        positions.sort_by_key(|position| position.ordinal);
+        let mut data_position = 0;
+        let projection = positions
+            .iter()
+            .map(|position| {
+                if matches!(
+                    sequence_items(&position.value_type, &records),
+                    ValueTypeRef::Clock
+                ) {
+                    None
+                } else {
+                    let projected = data_position;
+                    data_position += 1;
+                    Some(projected)
+                }
+            })
+            .collect();
+        model_records.declare_tuple_positions(handle.clone(), projection);
+    }
     for (key, handle) in &own_handles {
         if matches!(records.get(key), Some(DomainPackageRecord::EventType(_))) {
             model_records.declare_event(handle.clone());

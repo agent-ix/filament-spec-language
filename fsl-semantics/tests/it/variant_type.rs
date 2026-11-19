@@ -367,25 +367,13 @@ fn a_resolving_payload_is_retained_on_its_case() {
     assert_eq!(cases[1].payload_type, None);
 }
 
-/// TC-995: a unit or Clock payload is not an admitted variant payload and
+/// TC-995: a unit payload is not an admitted variant payload and
 /// refuses at the typed payload member (FSpec FR-154-AC-25).
 #[trace("TC-995", "FR-056-AC-25")]
 #[test]
-fn a_unit_or_clock_payload_refuses_as_unsupported_at_its_member() {
+fn a_unit_payload_refuses_as_unsupported_at_its_member() {
     let mut document = payload_tiers();
     document["types"][0]["variants"][1]["payloadType"] = json!("ix://filament/unit/ms");
-    let found = refusals(&document);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].code, Code::UnsupportedConstruct);
-    assert!(matches!(
-        found[0].cause,
-        ModelRefusalCause::UnsupportedDeclarationForm { .. }
-    ));
-    assert_eq!(node_of(&found[0]), id("variant/Tier-Gold"));
-    assert_eq!(member_of(&found[0]), path("Variant.payloadType"));
-
-    let mut document = payload_tiers();
-    document["types"][0]["variants"][1]["payloadType"] = json!("ix://filament/native/Clock");
     let found = refusals(&document);
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, Code::UnsupportedConstruct);
@@ -398,14 +386,11 @@ fn a_unit_or_clock_payload_refuses_as_unsupported_at_its_member() {
 }
 
 /// TC-1860: a `Clock` payload is admitted as a clock payload (FSpec FR-154-AC-25,
-/// FSpec FR-322 "Clock positions and payloads"). When this lands, the `Clock`
-/// half of `a_unit_or_clock_payload_refuses_as_unsupported_at_its_member` is
-/// removed.
+/// FSpec FR-322 "Clock positions and payloads").
 #[trace("TC-1860", "FR-056-AC-25")]
 #[trace("FSpec-TC-1361", "FSpec-FR-154-AC-25")]
 #[trace("FSpec-TC-1361", "FSpec-FR-322-AC-399")]
 #[test]
-#[ignore = "QSL-2251: Clock union case payload admitted as a clock place not implemented yet"]
 fn a_clock_payload_is_admitted_as_a_clock_case() {
     let mut document = payload_tiers();
     document["types"][0]["variants"][1]["payloadType"] = json!("ix://filament/native/Clock");
@@ -413,6 +398,66 @@ fn a_clock_payload_is_admitted_as_a_clock_case() {
     let cases = variants_of(&package, "Tier");
     assert_eq!(cases[0].case, "Gold");
     assert_eq!(cases[0].payload_type, Some(ValueTypeRef::Clock));
+}
+
+/// The published Clock payload and position intake vectors exercise the real
+/// selected document, retaining each clock's authored member identity.
+#[trace("TC-1860", "FR-230-AC-63", "FSpec-FR-322-AC-399")]
+#[test]
+fn conformance_clock_tuple_union_intake_vectors_are_admitted() {
+    let vectors =
+        crate::published_fspec::json("proposals/checked-package-v2/model-tuple-union-vectors.json");
+    let base = crate::published_fspec::json(
+        "proposals/checked-package-v2/domain-package-acme-shapes.json",
+    );
+    for name in ["TK-08", "TK-09"] {
+        let vector = vectors["intake_cases"]
+            .as_array()
+            .expect("intake cases")
+            .iter()
+            .find(|case| case["name"] == name)
+            .expect("published vector");
+        assert_eq!(vector["expected"], json!({"admitted": true}), "{name}");
+        let [patch] = vector["patch"].as_array().expect("patch").as_slice() else {
+            panic!("one replacement");
+        };
+        assert_eq!(patch["op"], "replace");
+        let (owner, member, ordinal) = match patch["path"].as_str().expect("path") {
+            "/variant_types/0/cases/0/payloadType" => (
+                &vectors["domain_package"]["variant_types"][0]["node"],
+                "variants",
+                "payloadType",
+            ),
+            "/tuple_types/0/positions/0/typeRef" => (
+                &vectors["domain_package"]["tuple_types"][0]["node"],
+                "positions",
+                "typeRef",
+            ),
+            other => panic!("unexpected Clock vector path {other}"),
+        };
+        let mut document = base.clone();
+        let declared = document["types"]
+            .as_array_mut()
+            .expect("types")
+            .iter_mut()
+            .find(|ty| &ty["identity"] == owner)
+            .expect("declared owner");
+        declared[member][0][ordinal] = patch["value"].clone();
+        let package = admitted(&document);
+        assert!(
+            package.records.iter().any(|record| match record {
+                DomainPackageRecord::Variant(case) =>
+                    case.owner.node == owner.as_str().expect("owner")
+                        && case.payload_type == Some(ValueTypeRef::Clock),
+                DomainPackageRecord::TuplePosition(position) =>
+                    position.owner.node == owner.as_str().expect("owner")
+                        && position.ordinal == 0
+                        && position.value_type == ValueTypeRef::Clock,
+                _ => false,
+            }),
+            "{name}: the admitted member retains Clock"
+        );
+    }
 }
 
 fn single_type(mutate: impl FnOnce(&mut Value)) -> Value {

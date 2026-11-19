@@ -662,10 +662,16 @@ impl Lowering<'_> {
             let keys = self.map_key_types(clock);
             for (index, step) in clock.path().iter().enumerate() {
                 let members = match step {
-                    PlaceStep::Field(name) => vec![
-                        ("kind", self.text_literal("field", location)?),
-                        ("name", self.text_literal(name, location)?),
-                    ],
+                    PlaceStep::Field(name) => match name.parse::<u64>() {
+                        Ok(position) => vec![
+                            ("kind", self.text_literal("tuple", location)?),
+                            ("index", count(position)),
+                        ],
+                        Err(_) => vec![
+                            ("kind", self.text_literal("field", location)?),
+                            ("name", self.text_literal(name, location)?),
+                        ],
+                    },
                     PlaceStep::Union(case) => vec![
                         ("kind", self.text_literal("union", location)?),
                         ("case", self.text_literal(case, location)?),
