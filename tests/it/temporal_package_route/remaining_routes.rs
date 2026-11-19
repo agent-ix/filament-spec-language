@@ -398,12 +398,34 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
         }
     }
     request["request"]["items"] = json!([{"claim":"AbsentTemporalClaim"}]);
-    let error = command::analyze(
+    let unknown = command::analyze(
         &write(directory.path(), &request),
         &crate::negotiation::Fr290,
         &Cancel::new(),
     )
-    .expect_err("an unknown claim is a request refusal");
-    assert_eq!(error.category().exit_code(), 20, "{error}");
-    assert!(error.to_string().contains("AbsentTemporalClaim"), "{error}");
+    .expect("an unknown claim settles its own item");
+    assert_eq!(unknown.exit_code, 20, "{}", unknown.value);
+    let item = &unknown.value.as_value()["items"][0];
+    assert_eq!(item["claim_name"], "AbsentTemporalClaim", "{item}");
+    assert_eq!(item["record"]["result"], "invalid-request", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{item}"
+    );
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert!(item["record"].get("backend").is_none(), "{item}");
+
+    request["request"]["items"] = json!([{"claim":"ServedIfEachAcquireIsStronglyFair",
+        "temporal":{"limits":{"max_states":1}}}]);
+    let limited = command::analyze(
+        &write(directory.path(), &request),
+        &crate::negotiation::Fr290,
+        &Cancel::new(),
+    )
+    .expect("a bounded analysis gives an incomplete item");
+    assert_eq!(limited.exit_code, 22, "{}", limited.value);
+    let item = &limited.value.as_value()["items"][0];
+    assert_eq!(item["record"]["result"], "incomplete", "{item}");
+    assert_eq!(item["exploration"]["states"], 1, "{item}");
+    assert!(item.get("counterexample").is_none(), "{item}");
 }
