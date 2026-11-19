@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const FLOOR_HALF: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -174,6 +174,7 @@ fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
 /// identity/version pair and does not need the source file to remain present.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
 fn package_export_uses_its_explicit_source_package_without_source_reads() {
     let directory = tempfile::tempdir().unwrap();
     compile(directory.path(), FLOOR_HALF);
@@ -197,6 +198,7 @@ fn package_export_uses_its_explicit_source_package_without_source_reads() {
 /// package path is read; checked-package/v2 does not retain formal_revision.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
 fn package_export_without_source_package_refuses_before_package_read() {
     let directory = tempfile::tempdir().unwrap();
     let (exit, value) = run(
@@ -216,9 +218,11 @@ fn package_export_without_source_package_refuses_before_package_read() {
 /// as a typed request refusal before the checked-package path is read.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-1")]
+#[trace("TC-3019", "FR-1039-AC-4")]
 fn package_export_with_malformed_source_package_refuses_before_package_read() {
     let directory = tempfile::tempdir().unwrap();
     for source_package in [
+        json!(null),
         json!("not-an-object"),
         json!({"identity": 42, "version": "7"}),
         json!({"identity": "recorded:package-run-unit", "version": false}),

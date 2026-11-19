@@ -3,8 +3,8 @@
 
 use filament_contract_model as ir;
 use filament_semantic_value::checking::CheckMode;
-use fsl_foundation::AccountingSetting;
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
+use fsl_foundation::AccountingSetting;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
@@ -619,15 +619,7 @@ pub(super) struct RunPackageSelection {
     pub directory: Option<String>,
     /// The exact source reference required when this package is exported.
     #[serde(default, deserialize_with = "from_object_opt")]
-    pub source_package: Option<PackageSource>,
-}
-
-/// Source identity supplied alongside a checked package for export metadata.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PackageSource {
-    pub identity: String,
-    pub version: String,
+    pub source_package: Option<serde_json::Value>,
 }
 
 /// A supplied document and its optional FR-821 provision identity.
