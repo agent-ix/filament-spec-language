@@ -133,6 +133,7 @@ impl SynthesisOutcomeDocument {
     }
 
     /// Attach the independent check result and its typed candidate value.
+    #[cfg(test)]
     pub(super) fn with_candidate(
         mut self,
         value: Value,
@@ -152,6 +153,7 @@ impl SynthesisOutcomeDocument {
     }
 
     /// Attach the source node and deterministic candidate lineage.
+    #[cfg(test)]
     pub(super) fn with_lineage(
         mut self,
         node: Value,

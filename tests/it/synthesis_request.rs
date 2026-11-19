@@ -8,9 +8,9 @@
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use crate::support::front_end::emitted;
 
 const VALUE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -203,7 +203,6 @@ const OUTCOME_MEMBERS: [&str; 13] = [
 #[trace("TC-3017", "FR-1037-AC-1")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
-#[ignore = "QSL-2235: the value synthesis request member and outcome are not implemented yet"]
 fn the_synthesis_member_writes_the_synthesis_outcome() {
     let (exit, found) = run(
         &pick("Pick * Pick = 49", ""),
@@ -245,9 +244,18 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(
+        optimal["synthesis"]["objective"]["direction"], "minimize",
+        "{optimal}"
+    );
     assert_eq!(optimal["synthesis"]["explored"]["visited"], 4, "{optimal}");
     assert_eq!(
         optimal["synthesis"]["objective"]["expression"], "Pick",
+        "{optimal}"
+    );
+    assert_eq!(
+        optimal["synthesis"]["objective"]["value"],
+        json!({"type": "integer", "value": "3"}),
         "{optimal}"
     );
     let (exit, limited) = run(
@@ -265,7 +273,6 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
 #[trace("TC-3017", "FR-1037-AC-2")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-4")]
-#[ignore = "QSL-2235: synthesis declaration selection is not implemented yet"]
 fn the_synthesis_member_selects_one_declaration_or_refuses() {
     let only = pick("Pick * Pick = 49", "");
     let (exit, value) = run(&only, json!({}));
@@ -326,7 +333,6 @@ fn the_synthesis_member_selects_one_declaration_or_refuses() {
 /// qualified name selects one.
 #[test]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-3")]
-#[ignore = "QSL-2235: synthesis declaration selection is not implemented yet"]
 fn a_bare_name_two_scopes_declare_is_ambiguous() {
     let unit = format!(
         "{VALUE_HEADER}type Digit = Int[0, 9];\n\
