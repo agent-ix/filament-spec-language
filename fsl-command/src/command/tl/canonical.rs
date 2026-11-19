@@ -113,6 +113,7 @@ impl CheckedExpression {
             };
             let (text, precedence) = match &node.kind {
                 NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
+                NodeKind::Coerce(operand, _) => (child(*operand)?, child_prec(*operand)?),
                 NodeKind::Local(slot) => (
                     binders
                         .get(*slot)
