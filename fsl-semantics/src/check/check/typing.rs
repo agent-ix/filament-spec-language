@@ -3887,8 +3887,9 @@ impl<'a> Typer<'a> {
         shape: CollectionShape,
         location: &Location,
     ) -> Option<Node> {
-        let ValueType::Composite(declaration) = receiver.value_type.clone() else {
-            return None;
+        let declaration = match &receiver.value_type {
+            ValueType::Composite(declaration) => declaration.clone(),
+            _ => return None,
         };
         let bound = match shape.max {
             Some(maximum) => Some(CardinalityBound::new(shape.min, maximum).ok()?),
