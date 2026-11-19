@@ -296,6 +296,31 @@ restated here for the emitter and is deterministic and injective:
   its (name, level, type) key (FR-322), and the level rule above is
   unchanged.
 
+### Reserved slot names
+
+FSpec FR-402 "Reserved slot names" reserves every name its slot decoder
+accepts to slot parameters, and a reader classifies a `value`/`parameter`
+node as a slot parameter by its name alone. The reserved slot form is a tag
+`slot`, `op`, `rcv` or `arg`, then exactly that tag's field count (2, 1, 1,
+4) of fields, each `_s` and one or more units (an ASCII letter or digit,
+`__`, or `_x` and two uppercase hexadecimal digits) whose decoded bytes are
+well-formed UTF-8; non-canonical escapes such as `op_s_x41` are in the form.
+
+The checker SHALL refuse a source identifier in the reserved slot form
+wherever the emitter would write that identifier as the `name` of a
+`value`/`parameter` node: a function or operation parameter, a clause's
+`over` parameter, trigger or capture, a quantifier or clock-guard binder, a
+synthesis candidate, and every other declaration that lowers to a
+`value`/`parameter` node. The refusal is
+`ambiguous_declaration`/`ambiguous-name` at the identifier's declaring source
+region, naming the identifier and the slot tag it decodes as, and the unit
+emits no package. A source parameter named `op_sx` would otherwise be read
+as the operation label of a trace `x`, and a hyper body wrapper whose formula
+reads it would lose its `model_root` `over`. A name outside the form, such as
+`slot_sv`, `op_sa_sb`, `rcv_s`, `op_sa_x4`, `op_s_xC3`, `op_s_xc3` or
+`slotted`, is an ordinary identifier, and a created timed binder such as
+`ts#0` is never in the form.
+
 ### The body
 
 - The emitter SHALL write the body of the clause as one
@@ -338,9 +363,9 @@ restated here for the emitter and is deterministic and injective:
   `hyper <c> body`, one `expression` occurrence of each formula node at
   `hyper <c> node <i>`, `i` its arena index, and the condition's
   occurrences at `hyper <c> holds <n>` (FR-487). The wrapper's `over`
-  parameter is named `slot_s<esc(p)>_s<esc(t)>`, a name a unit's temporal
-  clause could in principle also declare; a standalone clause that equalled
-  the wrapper in every node would share it.
+  parameter is named `slot_s<esc(p)>_s<esc(t)>`, a name no source clause can
+  declare (§ "Reserved slot names"), so no standalone clause shares the
+  wrapper's `over` parameter.
 - **Consequence.** FR-370 gives a `temporal_clause` node `claim`
   occurrences only, and FSpec FR-402 "Body wrapper" makes the wrapper's
   `claim` occurrences the hyper clause's and gives it no name row (the
@@ -495,6 +520,7 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-26 | Two hyper clauses with equal bodies, `Fwd` over `forall trace a of V forall trace b of V` and `Rev` over `forall trace b of V forall trace a of V`, emit two `hyperproperty` nodes whose `body` references one wrapper, and binding rows `a`, `b` at `Fwd`'s node and `b`, `a` at `Rev`'s node, none at the wrapper; the package is admitted. | Test (TC-3000) |
 | FR-488-AC-27 | The package FSL emits for `hyper Same using inf over behaviours (c: Config::ConfigVersion) forall trace a of Config forall trace b of Config { always holds(c.versionNumber @ a = c.versionNumber @ b) }`, edited so its second quantifier Group's `variable` is `a`, is refused by the reader with `ambiguous_declaration`/`ambiguous-name` at that Group's `variable` binding, `/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0`; the unedited package is admitted. | Test (TC-3007) |
 | FR-488-AC-28 | `hyper Whole using inf over behaviours () forall trace a of V forall trace b of V { always holds(true) }` over the vault model emits a body wrapper whose `over` argument references the `model`/`model_root` node of the vault package, which is among the wrapper's `dependencies`, and the strict reader admits the package; `NonInterference`, whose body reads `v @ a`, keeps `over` on the slot node `slot_sv_sa`. A package whose wrapper for `NonInterference` has `over` edited to the model root refuses `invalid_model_binding`/`malformed-declaration` at `/semantic_graph/nodes/{w}/body/arguments/0`, and one whose wrapper for `Whole` references the root of a package no `subjects` binding names refuses the same. | Test (TC-3010) |
+| FR-488-AC-29 | The checker refuses `ambiguous_declaration`/`ambiguous-name` at the parameter's declaring source region, naming `op_sa` and the tag `op`, for `function f(op_sa: Integer): Integer pure { op_sa }`, and naming `op_s_x41` and the tag `op` for the same function with that parameter name; it refuses the same, naming `slot_sx_sy` and the tag `slot`, for the clock guard binder of `pre F using v on Config::ConfigVersion::attemptUpdate { forall(slot_sx_sy in self.us: slot_sx_sy.x < 5 ms) }` over a `us: Sequence<Timer>` field; no refused unit emits a package. The function with its parameter named `slot_sv`, `op_sa_sb`, `rcv_s`, `op_sa_x4`, `op_s_xC3`, `op_s_xc3` or `slotted` is admitted and emits a parameter node of that name (FSpec FR-402-AC-12). | Test (TC-3082) |
 
 ## Open FSpec questions
 
