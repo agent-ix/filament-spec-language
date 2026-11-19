@@ -396,7 +396,8 @@ type `Int[0, 1000]` with a range obligation (FSpec FR-149, FR-104), and the
 sum of 1000 and one leaves that range, so the checker refuses it
 `undefined_expression`/`unproved-range`. The example unit keeps the two
 invariants and replaces that post clause with one that advances the version
-modulo 3, which keeps the reachable model at 9 states. The post clause spells
+modulo 3, so its rows stay small: 9 reachable states instead of the shipped
+unit's 1,002,001. The post clause spells
 the wrap out, because `(pre(self.versionNumber) + 1) mod 3` is an unbounded
 `Int`, and `mod` gets no expected type from the bounded field, so the
 equality does not type-check against it; the guard `pre(self.versionNumber) < 2`
@@ -487,10 +488,10 @@ stays in the initial product state's accepting SCC.
 adds the subject's deadlock-freedom item (DL-3). Each of the 9 reachable
 states has two successors, so EN-1 settles it `proved`, V-1. In the shipped
 unit every state keeps its two result-`false` self-loops, so no state is a
-deadlock, but a proof visits all 1,002,001 states, whose expansions charge
-far more candidates than the request's 1,000,000; EN-1 then stops with
-`Stopped{ResourceExhausted, {MaxCandidates, 1000000}}`, the example unit's 9
-states being the reason its rows use `Cycles`.
+deadlock: a proof visits all 1,002,001 states and 4,006,002 transitions, each
+expansion charging 6,006 candidates against the per-expansion
+`max_candidates` (FR-120), within the default `max_states` and
+`max_transitions`, and EN-1 settles it `proved`, V-1.
 
 **A bounded variant.** `eventually[0,5] holds(c.versionNumber = 2)` under
 event-position false-extension, `on origin`, is TP-2 with `h = 5`. It settles
