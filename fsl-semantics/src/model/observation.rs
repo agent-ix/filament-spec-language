@@ -1357,7 +1357,6 @@ fn structure_identity<'t>(
                                     bytes.extend_from_slice(&interner.len().to_le_bytes());
                                 }
                             }
-                            done.push(intern(interner, bytes));
                         }
                         (_, RawNativeKind::Known(NativeKind::Rational)) => {
                             match document::rational_payload(native) {
