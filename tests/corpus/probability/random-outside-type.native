@@ -1,14 +1,9 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
-object Switch {
-  enabled: Boolean;
-  population switches;
-  operation choose(bit: Boolean): Boolean;
-  operation clear(): Boolean;
+model Link = "test/link";
+random Link::Msg::send_a(lost) ~ { 2: 3, false: 1 };
+workload Input on Link {
+  weight Link::Msg::send_a = 1;
+  weight Link::Msg::send_b = 0;
 }
-random Switch::choose(bit) ~ { 2: 3, false: 1 };
-workload Input on Switch {
-  weight Switch::choose = 1;
-  weight Switch::clear = 0;
-}
-reward effort on Switch::choose = 2;
+reward effort on Link::Msg::send_a = 2;
