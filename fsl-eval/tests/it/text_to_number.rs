@@ -812,6 +812,16 @@ fn finite_ieee_text_rounds_once_to_the_target_width() {
         ieee_flags(&toward_zero_overflow),
         [IeeeFlag::Overflow, IeeeFlag::Inexact]
     );
+    let toward_zero_inexact = call(
+        &package,
+        "float_zero",
+        text_value("0.1", TextProfile::UnicodeScalars),
+    );
+    assert!(matches!(
+        completed(&toward_zero_inexact),
+        Value::Float(value) if value.bits() == 0x3fb9_9999_9999_9999
+    ));
+    assert_eq!(ieee_flags(&toward_zero_inexact), [IeeeFlag::Inexact]);
     let toward_positive_underflow = call(
         &package,
         "float_positive",
