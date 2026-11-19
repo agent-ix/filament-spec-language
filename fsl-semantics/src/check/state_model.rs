@@ -614,6 +614,7 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::check::DispatchOperation;
     use crate::check::family::fixtures::{empty_scope, root_location};
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
@@ -662,6 +663,10 @@ mod tests {
             &mut context,
         )
         .map(|checked| checked.into_value())
+        .map_err(|failure| match failure {
+            fsl_foundation::diagnostic::StageFailure::Refused(refusal) => refusal,
+            failure => panic!("dispatch arity check stopped unexpectedly: {failure:?}"),
+        })
     }
 
     #[trace("FSpec-FR-151-AC-20")]
@@ -670,7 +675,9 @@ mod tests {
         assert!(matches!(check_dispatch_arity(1), Ok(Checked::Operation(0))));
         assert!(matches!(check_dispatch_arity(2), Ok(Checked::Operation(0))));
         for arity in [0, 3] {
-            let refusal = check_dispatch_arity(arity).expect_err("invalid arity is refused");
+            let Err(refusal) = check_dispatch_arity(arity) else {
+                panic!("invalid arity {arity} must be refused");
+            };
             assert!(matches!(
                 refusal.cause,
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)

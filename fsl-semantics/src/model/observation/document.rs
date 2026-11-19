@@ -4368,7 +4368,14 @@ mod tests {
             &[("maybe".to_owned(), snapshot(r#"{"absent":{}}"#))],
         )
         .expect("an explicit absent optional argument admits");
-        assert_eq!(omitted, explicit);
+        let [(omitted_name, omitted_value)] = omitted.as_slice() else {
+            panic!("the optional parameter is materialized at full arity");
+        };
+        let [(explicit_name, explicit_value)] = explicit.as_slice() else {
+            panic!("the explicit optional parameter is materialized at full arity");
+        };
+        assert_eq!(omitted_name, explicit_name);
+        assert_eq!(format!("{omitted_value:?}"), format!("{explicit_value:?}"));
     }
 
     fn reference(population: &str, key: &str) -> SnapshotValue {
