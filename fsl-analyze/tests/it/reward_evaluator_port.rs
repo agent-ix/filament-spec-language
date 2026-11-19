@@ -13,7 +13,6 @@ use ix_trace_rs::trace;
 #[test]
 #[trace("TC-3027", "FR-185-AC-13")]
 #[trace("TC-2061", "FR-185-AC-11")]
-#[ignore = "QSL-2252: the S3 negative-reward check through the RewardEvaluator port is not implemented yet"]
 fn s3_refuses_a_negative_reward_through_the_reference_evaluator() {
     let Err(refusals) = World::try_new(&prob_world::service(
         "reward refund on Server::attempt = d - 3;",

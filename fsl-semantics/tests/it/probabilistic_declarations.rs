@@ -15,14 +15,15 @@
 //! `unit ms`, so a quantity literal types.
 
 use filament_checked::node::CheckedLiteral;
-use filament_exact::{Integer, IntegerInterval, Rational, ValueType};
+use filament_exact::{Integer, IntegerInterval, Meter, Rational, Value as KernelValue, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, SemanticNode, WeightOwner,
+    ProbabilisticFeature, ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator,
+    SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -32,6 +33,34 @@ use serde_json::{json, Value};
 use crate::model_operations::{parse_and_build, wire_envelope, wire_field, PACKAGE_IDENTITY};
 
 const P: &str = PACKAGE_IDENTITY;
+
+struct ZeroRewardEvaluator;
+
+impl RewardEvaluator for ZeroRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        Ok(KernelValue::Integer(Integer::from(0_i64)))
+    }
+}
+
+struct NegativeRewardEvaluator;
+
+impl RewardEvaluator for NegativeRewardEvaluator {
+    fn evaluate(
+        &self,
+        _graph: &CheckedGraph,
+        _reward: &Reward,
+        _arguments: Vec<KernelValue>,
+        _meter: &mut Meter,
+    ) -> Result<KernelValue, RewardEvaluationFailure> {
+        Ok(KernelValue::Integer(Integer::from(-1_i64)))
+    }
+}
 
 fn id(node: &str) -> String {
     format!("ix://{P}/{node}")
@@ -347,7 +376,11 @@ fn assemble_over(document: &[u8], body: &str) -> PackageDeclarations {
 
 fn checked(body: &str) -> CheckedGraph {
     assemble(body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
 }
 
@@ -357,13 +390,21 @@ fn semantic_nodes(graph: &CheckedGraph) -> Vec<SemanticNode> {
 
 fn checked_timed_service(body: &str) -> CheckedGraph {
     assemble_over(&timed_service_document(), body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
 }
 
 fn refusals_of(body: &str) -> Vec<CheckRefusal> {
     assemble(body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
         .expect_err("the unit refuses")
 }
 
@@ -3394,7 +3435,13 @@ fn a_negative_workload_weight_is_refused() {
 #[test]
 fn s3_refuses_a_reward_that_can_be_negative() {
     let body = service(None, "reward refund on Server::attempt = d - 3;");
-    let refusals = refusals_of(&body);
+    let refusals = assemble(&body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &NegativeRewardEvaluator,
+        )
+        .expect_err("the recording evaluator reports a negative reward");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
