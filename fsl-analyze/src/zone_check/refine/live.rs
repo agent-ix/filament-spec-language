@@ -219,11 +219,20 @@ impl Product<'_, '_> {
             }
         }
         let mut identities = BTreeMap::new();
-        let taken = live.arcs.iter().filter_map(|arc| match &arc.taken {
-            Some(Taken::Abstract(transitions)) => Some(transitions.as_slice()),
-            _ => None,
-        });
-        for transition in enabled.values().flatten().chain(taken.flatten()) {
+        for transition in enabled
+            .values()
+            .flatten()
+            .chain(live.arcs.iter().flat_map(|arc| {
+                arc.taken.iter().flat_map(|taken| match taken {
+                    Taken::Abstract(transitions) => transitions.iter().collect::<Vec<_>>(),
+                    Taken::CandidateSteps(steps) => steps
+                        .iter()
+                        .filter_map(|step| step.transition.as_ref())
+                        .collect(),
+                    Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => Vec::new(),
+                })
+            }))
+        {
             let key = self
                 .abstract_system
                 .transition_key(transition)

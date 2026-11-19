@@ -323,6 +323,7 @@ fn each_corrupted_field_is_rejected() {
             tampered.successors[at][number].taken = match edge.taken {
                 Taken::Stutter => Taken::Abstract(Vec::new()),
                 Taken::Abstract(_) => Taken::Stutter,
+                Taken::CandidateSteps(_) => Taken::Stutter,
                 Taken::Protocol(_) => Taken::Stutter,
                 Taken::ProtocolTraces(_) => Taken::Stutter,
             };

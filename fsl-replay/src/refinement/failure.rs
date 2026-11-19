@@ -171,7 +171,9 @@ impl RefinementFailure {
             | Self::Undefined { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),
-            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => None,
+            Self::Divergence { .. } | Self::AbstractUnfair { .. } | Self::HiddenUnfair { .. } => {
+                None
+            }
         }
     }
 }
@@ -184,11 +186,25 @@ pub enum Taken {
     Stutter,
     /// Every accepted abstract transition identity, in canonical order.
     Abstract(Vec<ModelTransition>),
+    /// Accepted abstract steps paired with their source and target candidate
+    /// states. `transition: None` is a candidate-local stutter.
+    CandidateSteps(Vec<CandidateStep>),
     /// Abstract protocol transitions accepted by FR-148.
     Protocol(Vec<ProtocolTransition>),
     /// Candidate-specific protocol paths, including internal closure steps.
     /// `candidates[n]` is the state reached by `transitions[n]`.
     ProtocolTraces(Vec<ProtocolTrace>),
+}
+
+/// One abstract transition (or stutter) between hidden-field candidates.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CandidateStep {
+    /// Canonical state-key bytes of the candidate before the concrete step.
+    pub pre_state: Vec<u8>,
+    /// The abstract transition taken, or `None` for stutter.
+    pub transition: Option<ModelTransition>,
+    /// Canonical state-key bytes of the candidate after the concrete step.
+    pub post_state: Vec<u8>,
 }
 
 /// One admitted path through an abstract protocol candidate graph.

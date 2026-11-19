@@ -1925,6 +1925,10 @@ impl<O> Checker<'_, '_, O> {
         };
         let transitions = match *taken {
             Taken::Abstract(transitions) => transitions,
+            Taken::CandidateSteps(steps) => steps
+                .into_iter()
+                .filter_map(|step| step.transition)
+                .collect(),
             Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
                 self.auxiliary_invariants(&post, zone)?;
                 return Ok(());
