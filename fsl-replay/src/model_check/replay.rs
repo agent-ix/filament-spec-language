@@ -1599,6 +1599,53 @@ fn resolve_item<'p, T: SubjectTransition>(
             expected_key: Box::new(expected_key),
         })
     };
+    if let CounterexampleKind::LoopProof(proof) = &envelope.family_payload().kind {
+        let DerivedAnchors::Protocol(name) = anchors else {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        };
+        let Some(clause_node) = package
+            .graph()
+            .protocol_node_keys(name)
+            .and_then(|keys| keys.clause.clone())
+        else {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        };
+        let valid_repeat = package
+            .graph()
+            .protocol(name)
+            .is_some_and(|protocol| {
+                protocol.slots.repeats.iter().any(|repeat| {
+                    repeat.node.0 == proof.repeat && repeat.loop_proof.is_some()
+                })
+            });
+        if !valid_repeat {
+            return Err(identity_mismatch(
+                clause_node.clone(),
+                OccurrenceKey::new(
+                    clause_node.clone(),
+                    filament_exact::Origin::new(
+                        filament_exact::Role::new("repeat"),
+                        u64::try_from(proof.repeat).unwrap_or(u64::MAX),
+                    ),
+                ),
+            ));
+        }
+        let expected = OccurrenceKey::new(
+            clause_node.clone(),
+            filament_exact::Origin::new(
+                filament_exact::Role::new("repeat"),
+                u64::try_from(proof.repeat).unwrap_or(u64::MAX),
+            ),
+        );
+        if envelope.clause_node() != &clause_node || envelope.occurrence_key() != &expected {
+            return Err(identity_mismatch(clause_node, expected));
+        }
+        return Ok(None);
+    }
     let found = package
         .graph()
         .temporal_clauses()
