@@ -944,7 +944,11 @@ mod tests {
         );
         fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the identity function checks"),
         )
     }
@@ -989,7 +993,11 @@ mod tests {
         .expect("the declarations assemble");
         let source = fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the source-supported package checks"),
         );
         (source, models)
@@ -1217,7 +1225,11 @@ mod tests {
         .expect("the declarations assemble");
         let source = fsl_package::CheckedPackage::link(
             declarations
-                .check(CheckMode::Linked, CheckingLimits::default())
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &crate::value::S6aRewardEvaluator,
+                )
                 .expect("the set-returning function checks"),
         );
         let limits = fsl_package::V2ReadLimits::fixture();

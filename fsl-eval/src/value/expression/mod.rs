@@ -3049,7 +3049,11 @@ mod tests {
             declarations.functions = vec![identity_function()];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("id(x: Integer[0,10]): Integer[0,10] = x checks cleanly");
         let identity = graph
             .function_identity("id")
@@ -3156,7 +3160,11 @@ mod tests {
             )];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("flip(x: Boolean): Boolean = not x checks cleanly");
         let flip = graph.function_identity("flip").expect("flip is declared");
         let package = fsl_package::CheckedPackage::link(graph);
@@ -3266,7 +3274,11 @@ mod tests {
                 "fixture".to_owned(),
                 fsl_foundation::IdentityLimits::default(),
             )
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::value::S6aRewardEvaluator,
+            )
             .expect("an empty package checks cleanly"),
         );
         let objects = ObjectEnvironment::default();
@@ -3325,7 +3337,11 @@ mod tests {
             declarations.functions = vec![identity_function()];
             declarations
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::value::S6aRewardEvaluator,
+        )
         .expect("id(x: Integer[0,10]): Integer[0,10] = x checks cleanly");
         let identity = graph
             .function_identity("id")

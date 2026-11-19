@@ -34,7 +34,11 @@ fn world() -> World {
         "fixture".to_owned(),
         fsl_foundation::IdentityLimits::default(),
     )
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::value::S6aRewardEvaluator,
+    )
     .expect("the empty fixture package checks");
     World {
         scope: scope_with(fixture::types(object_type()), Vec::new()),
