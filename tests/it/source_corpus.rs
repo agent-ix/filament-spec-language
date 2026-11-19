@@ -214,6 +214,12 @@ fn execute_request(
             match ran {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
+                    if value.get("format").and_then(Value::as_str) == Some("native-run-result/2") {
+                        let bytes = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+                        fsl_replay::spine::read_native_run_result(&bytes).map_err(|error| {
+                            format!("{}: invalid native result: {error}", request.display())
+                        })?;
+                    }
                     let outcome = value.get("outcome");
                     let (category, last_stage) = match &result.outcome {
                         Some(document) => lifecycle(document)?,
@@ -995,7 +1001,7 @@ fn corpus_collections() {
     println!("{report}");
 }
 
-#[trace("FR-106", "FR-107", "FR-312")]
+#[trace("FR-106", "FR-107", "FR-312-AC-1")]
 #[test]
 fn corpus_operations() {
     let directory = corpus_root().join("operations");
