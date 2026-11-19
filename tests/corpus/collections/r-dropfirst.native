@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function same using v(a: Sequence<Integer>[0,3],b: Sequence<Integer>[0,2]): Boolean pure { dropFirst(a)=b }
+function f using v(): Boolean pure { same(sequence[2,1,2],sequence[1,2]) }

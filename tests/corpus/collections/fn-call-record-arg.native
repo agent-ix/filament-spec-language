@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record Point { x: Integer; }
+function get using v(p: Point): Integer pure { p.x }
+function f using v(): Integer pure { get(Point{x:7}) }

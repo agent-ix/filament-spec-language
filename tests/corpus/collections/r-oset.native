@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function n using v(s: OrderedSet<Integer>[0,3]): Integer pure { size(s) }
+function f using v(): Integer pure { n(orderedSet[4,3,4]) }

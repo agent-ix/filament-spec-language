@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function elementAt using v(s: Sequence<Integer>[2,2]): Integer pure { s[1] }
+function f using v(): Integer pure { elementAt(sequence[7,8]) }

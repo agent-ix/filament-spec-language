@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type N = Int[0,3];
+function f using v(s: Sequence<Integer>[0,3]): N pure { size<N>(s) }
