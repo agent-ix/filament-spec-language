@@ -2357,6 +2357,19 @@ fn compile_outcome_inner(
             (Some(member), None) => Some(directory.join(&member.package)),
             (None, supplied) => supplied.map(Path::to_path_buf),
         };
+        if let (Some(handoff), Some(output)) = (&request.handoff, &output) {
+            let handoff_directory = directory.join(&handoff.directory);
+            if output.starts_with(&handoff_directory) {
+                return Err(RunCause::ClauseRequest {
+                    member: "output and handoff".to_owned(),
+                    reason: format!(
+                        "output path {} is inside handoff directory {}",
+                        output.display(),
+                        handoff_directory.display()
+                    ),
+                });
+            }
+        }
         if request.program.extraction {
             return Err(RunCause::ExtractionRequiresRun);
         }
