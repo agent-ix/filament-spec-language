@@ -260,7 +260,6 @@ fn a_loop_that_takes_abstract_steps_but_never_flip_b_is_abstract_unfair() {
 #[trace("TC-548", "FR-143-AC-4")]
 #[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-#[ignore = "QSL-2243: liveness through a hidden abstract field settles Unsupported instead of being decided"]
 fn liveness_through_a_hidden_abstract_field_is_decided() {
     let unit = Unit::register();
     let ensured = hidden_register_history();
@@ -715,7 +714,6 @@ fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
 #[trace("TC-548", "FR-143-AC-6")]
 #[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-#[ignore = "QSL-2243: a hidden field with a strong constraint settles Unsupported instead of being decided"]
 fn a_hidden_field_with_a_strong_constraint_is_decided() {
     let unit = Unit::register();
     let strong = hidden_register_history().replace("ensure fair weak", "ensure fair strong");
