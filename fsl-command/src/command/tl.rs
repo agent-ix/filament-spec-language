@@ -12,7 +12,7 @@ use fsl_replay::spine::{TemporalValuation, TlClosure, TlSupport, TlTarget, TlUnm
 use fsl_semantics::check::{
     BinaryTemporal, CheckedFormula, CheckedInterval, FormulaNode, FormulaNodeId, UnaryTemporal,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use tl_syntax::{
     Formula, InfiniteClock, InfiniteFormulaDocument, InfiniteNode, InfiniteNodeKind, Interval,
     LassoTraceDocument, Node, NodeId, NodeKind, PartialValuation, PartialValue, PropositionId,
@@ -20,6 +20,8 @@ use tl_syntax::{
 };
 
 use super::{Result, RunCause};
+
+mod canonical;
 
 /// The four correspondence identities a request may name (FR-931).
 const CORRESPONDENCES: [TlTarget; 4] = [
@@ -386,7 +388,7 @@ fn is_closed(interval: Option<&CheckedInterval>) -> bool {
 
 fn lowering_record(
     valuation: &TemporalValuation,
-    source: &str,
+    _source: &str,
     named: Option<TlTarget>,
     mapping: &AtomMapping,
     form: TraceForm,
@@ -485,8 +487,9 @@ fn lowering_record(
             reason: TraceForm::reason(classified),
         });
     }
+    let labels = canonical::source_labels(valuation)?;
     let mut lowered = Lowered::default();
-    let root = lowered.lower(formula, formula.root(), source)?;
+    let root = lowered.lower(formula, formula.root(), &labels)?;
     let tl = lowered.document(classified, root)?;
     record.insert("disposition".to_owned(), json!("supported"));
     record.insert("correspondence".to_owned(), json!(classified.identity()));
@@ -657,12 +660,12 @@ impl Lowered {
     }
 
     /// Lower node `id` of `formula`, each `holds` leaf one proposition
-    /// named by its text in `source`.
+    /// named by its canonical checked-expression label.
     fn lower(
         &mut self,
         formula: &CheckedFormula,
         id: FormulaNodeId,
-        source: &str,
+        labels: &std::collections::BTreeMap<FormulaNodeId, String>,
     ) -> std::result::Result<NodeId, String> {
         let node = formula
             .nodes()
@@ -671,14 +674,14 @@ impl Lowered {
         let kind = match node {
             FormulaNode::Constant(true) => NodeKind::True,
             FormulaNode::Constant(false) => NodeKind::False,
-            FormulaNode::Holds { span } => {
+            FormulaNode::Holds { .. } => {
                 let index = match self.atoms.iter().position(|(atom, _)| *atom == id) {
                     Some(index) => index,
                     None => {
-                        let text = source
-                            .get(span.start..span.end)
-                            .ok_or_else(|| "holds leaf span in the source".to_owned())?;
-                        self.atoms.push((id, text.to_owned()));
+                        let text = labels
+                            .get(&id)
+                            .ok_or_else(|| "holds atom has a checked condition label".to_owned())?;
+                        self.atoms.push((id, text.clone()));
                         self.atoms.len() - 1
                     }
                 };
@@ -692,19 +695,19 @@ impl Lowered {
                 return Err("a window aggregate atom has no TL atom".to_owned());
             }
             FormulaNode::Not(operand) => NodeKind::Not {
-                operand: self.lower(formula, *operand, source)?,
+                operand: self.lower(formula, *operand, labels)?,
             },
             FormulaNode::And(left, right) => NodeKind::And {
-                left: self.lower(formula, *left, source)?,
-                right: self.lower(formula, *right, source)?,
+                left: self.lower(formula, *left, labels)?,
+                right: self.lower(formula, *right, labels)?,
             },
             FormulaNode::Or(left, right) => NodeKind::Or {
-                left: self.lower(formula, *left, source)?,
-                right: self.lower(formula, *right, source)?,
+                left: self.lower(formula, *left, labels)?,
+                right: self.lower(formula, *right, labels)?,
             },
             FormulaNode::Implies(left, right) => NodeKind::Implies {
-                left: self.lower(formula, *left, source)?,
-                right: self.lower(formula, *right, source)?,
+                left: self.lower(formula, *left, labels)?,
+                right: self.lower(formula, *right, labels)?,
             },
             FormulaNode::Unary {
                 operator,
@@ -712,7 +715,7 @@ impl Lowered {
                 operand,
             } => {
                 let interval = Self::interval(interval.as_ref())?;
-                let operand = self.lower(formula, *operand, source)?;
+                let operand = self.lower(formula, *operand, labels)?;
                 match operator {
                     UnaryTemporal::Eventually => NodeKind::Future { interval, operand },
                     UnaryTemporal::Always => NodeKind::Globally { interval, operand },
@@ -727,8 +730,8 @@ impl Lowered {
                 right,
             } => {
                 let interval = Self::interval(interval.as_ref())?;
-                let left = self.lower(formula, *left, source)?;
-                let right = self.lower(formula, *right, source)?;
+                let left = self.lower(formula, *left, labels)?;
+                let right = self.lower(formula, *right, labels)?;
                 match operator {
                     BinaryTemporal::Until => NodeKind::Until {
                         interval,
