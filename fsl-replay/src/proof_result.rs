@@ -3600,6 +3600,7 @@ mod tests {
         let compile = CallSiteRefusal::Compile {
             code: Code::StaleDependency,
             message: "refused".to_owned(),
+            region: None,
         };
         assert_eq!(
             TerminalValue::from_call_site_refusal(&compile),

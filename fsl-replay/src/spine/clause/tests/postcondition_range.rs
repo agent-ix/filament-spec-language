@@ -295,7 +295,7 @@ fn bank_site(bank: Bank, unit: &str) -> Result<CallSite<OperationSite>, Box<Call
 /// The first refusal of `result`, a `Compile` refusal with its message.
 fn refusal(result: Result<impl std::fmt::Debug, Box<CallSiteRefusal>>) -> String {
     let refused = result.expect_err("the unit is refused");
-    let CallSiteRefusal::Compile { code, message } = *refused else {
+    let CallSiteRefusal::Compile { code, message, .. } = *refused else {
         panic!("expected a Compile refusal, got {refused:?}");
     };
     assert_eq!(code, fsl_foundation::Code::UndefinedExpression, "{message}");
@@ -417,6 +417,26 @@ fn a_precondition_declared_after_the_postcondition_discharges_it_with_the_same_i
     let moved = identities(unit(&[DEBITED, CAN_AFFORD, NON_NEGATIVE]));
     assert_eq!(first.0.clauses.len(), 2);
     assert_eq!(first, moved);
+}
+
+#[trace("TC-1416", "FR-121-AC-37")]
+#[test]
+fn the_refusal_region_spans_exactly_the_bytes_of_the_unproved_node() {
+    let unit = without_can_afford();
+    let refused = bank_site(PLAIN, &unit).expect_err("refused");
+    let CallSiteRefusal::Compile { code, region, .. } = *refused else {
+        panic!("expected a Compile refusal");
+    };
+    assert_eq!(code, fsl_foundation::Code::UndefinedExpression);
+    let region = region.expect("an unproved range is located");
+    // The region names the unit's own source.
+    assert_eq!(region.source().authority(), "agent-ix");
+    assert_eq!(region.source().identity(), "clause-run-fixture");
+    let start = unit.find(DIFFERENCE).expect("in the unit");
+    assert_eq!(
+        (region.start() as usize, region.end() as usize),
+        (start, start + DIFFERENCE.len())
+    );
 }
 
 #[trace("TC-1416", "FR-577-AC-3", "FR-577-AC-4")]
