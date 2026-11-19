@@ -716,7 +716,11 @@ impl World {
             };
         let base = unit_text_with_functions(other, vault, reset, function, &ieee_package_clause);
         let graph = declarations(&documents, &base)
-            .check(mode, CheckingLimits::default())
+            .check(
+                mode,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
             .unwrap_or_else(|refusals| panic!("{base}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
         let text =
