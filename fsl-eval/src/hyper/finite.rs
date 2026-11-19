@@ -70,7 +70,7 @@ impl<T: PartialEq> FiniteTracePopulation<T> {
         closure: FiniteTraceClosure,
         traces: Vec<FiniteTrace<T>>,
     ) -> Result<Self, FinitePopulationError> {
-        let mut indices = BTreeMap::new();
+        let mut indices: BTreeMap<String, usize> = BTreeMap::new();
         let mut unique: Vec<FiniteTrace<T>> = Vec::with_capacity(traces.len());
         for trace in traces {
             if trace.identity.is_empty() {
@@ -82,7 +82,7 @@ impl<T: PartialEq> FiniteTracePopulation<T> {
                 });
             }
             if let Some(index) = indices.get(&trace.identity).copied() {
-                if unique[index].records == trace.records {
+                if unique[index].records.as_slice() == trace.records.as_slice() {
                     continue;
                 }
                 return Err(FinitePopulationError::ConflictingTraceIdentity {
