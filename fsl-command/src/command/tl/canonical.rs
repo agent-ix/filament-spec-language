@@ -215,7 +215,9 @@ impl CheckedExpression {
                         "record constructor has checked declaration field order".to_owned()
                     })?;
                     if fields.len() != slots.len() {
-                        return Err("record constructor slots match its declaration".to_owned());
+                        return Err("record constructor slots match its declaration"
+                            .to_owned()
+                            .into());
                     }
                     let members = fields
                         .iter()
@@ -329,9 +331,9 @@ impl CheckedExpression {
                     (format!("{prefix}({population})"), 10)
                 }
                 _ => {
-                    return Err(
-                        "checked expression has no canonical printer for this form".to_owned()
-                    );
+                    return Err("checked expression has no canonical printer for this form"
+                        .to_owned()
+                        .into());
                 }
             };
             rendered[index] = Some((text, precedence));
@@ -340,7 +342,7 @@ impl CheckedExpression {
             .get(self.root)
             .and_then(Option::as_ref)
             .map(|(text, _)| text.clone())
-            .ok_or_else(|| "checked expression root is rendered".to_owned())
+            .ok_or_else(|| "checked expression root is rendered".to_owned().into())
     }
 }
 
