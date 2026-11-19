@@ -1223,7 +1223,7 @@ impl Enabled<'_> {
         let env = Env {
             variables: self.solution,
             captures: &[],
-            activation: &[],
+            activation: self.solution,
         };
         if !Self::holds(&quantified.guard, &env, at, decisions)? {
             return Ok(false);

@@ -391,7 +391,7 @@ pub enum ExactGap {
     ActivationState,
     /// A fairness constraint reads the enabledness of a transition whose
     /// reset leaves two or more variables free that the target mode's
-    /// invariant couples in one condition. Remaining work: QSL-2529.
+    /// invariant couples in one condition. Remaining work: QSL-2639.
     #[error("fairness reads a reset whose free variables the target invariant couples")]
     CoupledReset {
         /// The source mode's position.
@@ -508,13 +508,13 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        //
-        // TEMPORARY (QSL-2529): `ActivationState` and `CoupledReset` are
+        // TEMPORARY (QSL-2529 for `ActivationState`, QSL-2639 for
+        // `CoupledReset`): both are
         // gaps FR-750 deletes, because exact replay decides those claims
         // (tau as a second real variable; quantifier elimination over
         // several coupled free variables). Until that replay exists they
         // also settle `NotExact`, the only honest answer short of a
-        // verdict; the ignored QSL-2529 tests name the cases.
+        // verdict; the ignored tests name the cases.
         Err(HybridReplayRefusal::Exact(
             ExactGap::RecursiveCall | ExactGap::ActivationState | ExactGap::CoupledReset { .. },
         )) => Ok(ExactReplay::NotExact),

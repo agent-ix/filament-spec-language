@@ -26,9 +26,9 @@ use fsl_foundation::SourceIdentity;
 use fsl_replay::{ExactReplay, HybridReplayMeter};
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
+use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -454,8 +454,10 @@ fn hybrid_replay_request(
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
-            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
-                .expect("the claim name is an identifier")])
+            fsl_replay::QualifiedName::new(vec![
+                filament_exact::Identifier::new("TooSlow")
+                    .expect("the claim name is an identifier"),
+            ])
             .expect("the claim name is qualified"),
         ),
         source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
@@ -761,10 +763,7 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
         vec![hybrid_fixture("hybrid-fixture", &entry(grow_witness(8)))],
     );
     assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
-    assert_eq!(
-        rejected["certificate"]["rule"], "witness-violation",
-        "{rejected}"
-    );
+    assert_eq!(rejected["certificate"]["rule"], "witness-violation", "{rejected}");
     let text = rejected.to_string();
     assert!(text.contains("replay-parity"), "{rejected}");
     assert!(text.contains("not-exact"), "{rejected}");
@@ -1166,7 +1165,7 @@ fn shuttle_lasso_entry() -> Value {
 /// admitting a post-jump `v` in `[1, 2]`, and the whole constraint is taken
 /// every period by the self-loop. `fair Moving::Stopped;` is enabled at every
 /// instant and never taken, so `L` is unfair, the replay is `NotReproduced`
-/// at check 5 and the item settles `inconclusive`, `replay-parity`; with the
+/// at check 5 and the item settles `inconclusive`, `replay-parity` with the `hybrid-trace` reason; with the
 /// reset `v <= 1/2`, which no state under `Stopped`'s invariant meets, the
 /// enabled set is empty and the item settles `refuted`.
 #[test]
@@ -1191,6 +1190,10 @@ fn exact_replay_decides_nondeterministic_reset_fairness_claims() {
     assert_eq!(unfair["record"]["result"], "inconclusive", "{unfair}");
     assert_eq!(
         unfair["record"]["cause"]["kind"], "replay-parity",
+        "{unfair}"
+    );
+    assert_eq!(
+        unfair["record"]["cause"]["parity"]["reason"], "hybrid-trace",
         "{unfair}"
     );
     let never_enabled = run("hybrid-750-12-never", "v <= 1/2", "Named");

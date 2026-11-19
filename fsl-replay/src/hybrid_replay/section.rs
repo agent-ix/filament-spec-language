@@ -8,6 +8,17 @@
 //! exactly by the sign of a polynomial in `t` at `u`. No floating-point step
 //! is taken and no field is constructed: a coefficient is a polynomial in
 //! `t`, and zero is decided by [`ExactReal::sign_of`].
+//!
+//! Work accounting: the meter is charged once per enablement and once per
+//! sample of the free variable in [`Section::exists`]. The steps inside one
+//! sample (subresultant interpolation, pseudo-remainder Sturm sequences, root
+//! isolation and refinement) are not charged individually. Each is bounded by
+//! the degrees of the polynomials involved: the sequences have at most
+//! `degree + 1` terms, interpolation takes `bound + 1` determinants of fixed
+//! size, and isolation and refinement halve a rational interval around a root
+//! until it separates it from the others, which terminates because the roots
+//! are distinct after squarefree reduction. The charged samples scale with
+//! the same degrees, so the metered total bounds the unmetered inner work.
 
 use std::cmp::Ordering;
 

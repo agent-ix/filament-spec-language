@@ -71,7 +71,7 @@ fn cube_root_of_four() -> ExactReal {
 
 /// `x * x = t` has a real solution exactly where `t >= 0`, at rational and
 /// at irrational instants, the root `t = 0` included.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn a_square_has_a_real_root_exactly_where_it_is_not_negative() {
     let body = compare(
@@ -100,7 +100,7 @@ fn a_square_has_a_real_root_exactly_where_it_is_not_negative() {
 /// solution begins exactly at the cube root of 4, where the second holds with
 /// equality: the section's own value is decided exactly, not by sampling
 /// either side of it.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn a_solution_that_exists_only_from_an_irrational_instant_is_decided_exactly() {
     let x = || Exp::Variable(0);
@@ -116,7 +116,7 @@ fn a_solution_that_exists_only_from_an_irrational_instant_is_decided_exactly() {
 
 /// `x * x * x = 2 and x * x = t` has a real solution at one instant, the
 /// cube root of 4, and nowhere else.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn a_solution_at_one_irrational_instant_is_found_and_no_neighbour_has_one() {
     let x = || Exp::Variable(0);
@@ -132,7 +132,7 @@ fn a_solution_at_one_irrational_instant_is_found_and_no_neighbour_has_one() {
 
 /// The projection of `x * x - t` has the one root `t = 0`: where its two
 /// real roots in `x` merge and then vanish.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn the_projection_of_a_square_has_its_discriminant_root() {
     let square = Poly2::new(vec![
@@ -154,7 +154,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
 
 /// `x - t` and `x - 1` cross at `t = 1`: the pair's resultant has that
 /// root, and no other.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn the_projection_of_two_lines_has_their_crossing() {
     let moving = Poly2::new(vec![Poly::new(vec![n(0), n(-1)]), Poly::constant(n(1))]);
@@ -212,7 +212,7 @@ fn pulse_trace() -> HybridTrace {
 /// which it is not, so the lasso is fair and the claim, false at `v = 0`,
 /// reproduces; a strong constraint needs it taken when enabled infinitely
 /// often, which the lasso never does, so it is unfair.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() {
     let graph = check(PULSE);
@@ -230,31 +230,93 @@ fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() 
     );
 }
 
-/// Quantifier elimination is charged to the caller's meter before each step,
-/// with no fixed cap: a bound of 30 stops it, and its consumption grows with
-/// the work rather than stopping at a constant.
-#[trace("TC-1221", "FR-450-AC-7")]
+/// `Pulse` with a deterministic `Run -> Gone` reset: the same lasso and
+/// claims, so the same dwell segments, but no quantifier elimination.
+fn pulse_without_elimination() -> String {
+    PULSE
+        .replace("reset { w >= 0 }", "reset { w = 1 }")
+        .replace(
+            "mode Gone invariant { w * w = v and w * w * w = 2 }",
+            "mode Gone invariant { w >= 0 }",
+        )
+}
+
+fn consumed_by(source: &str) -> u64 {
+    let graph = check(source);
+    let mut meter = HybridReplayMeter::new(u64::MAX);
+    crate::hybrid_replay::exact_replay(&graph, claim(&graph, "Strong"), &pulse_trace(), &mut meter)
+        .expect("the lasso replays");
+    meter.consumed()
+}
+
+/// Quantifier elimination is charged to the caller's meter, with no fixed
+/// cap: the quantified claim costs strictly more than its deterministic twin
+/// over the same segments, and a bound at the twin's cost exhausts only the
+/// quantified claim.
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn quantifier_elimination_is_charged_to_the_callers_meter() {
+    let without = consumed_by(&pulse_without_elimination());
+    let with = consumed_by(PULSE);
+    assert!(with > without, "{with} <= {without}");
     let graph = check(PULSE);
-    let lasso = pulse_trace();
-    let strong = claim(&graph, "Strong");
-    let mut small = HybridReplayMeter::new(30);
+    let mut bounded = HybridReplayMeter::new(without);
     assert_eq!(
-        crate::hybrid_replay::exact_replay(&graph, strong, &lasso, &mut small),
+        crate::hybrid_replay::exact_replay(
+            &graph,
+            claim(&graph, "Strong"),
+            &pulse_trace(),
+            &mut bounded
+        ),
         Err(HybridReplayRefusal::ResourceExhausted {
             counter: filament_exact::LimitKind::WorkUnits,
         })
     );
-    let mut large = HybridReplayMeter::new(u64::MAX);
-    assert!(crate::hybrid_replay::exact_replay(&graph, strong, &lasso, &mut large).is_ok());
-    assert!(large.consumed() > 30, "{}", large.consumed());
+}
+
+/// A reset conjunct that reads a free variable's pre-jump value is decided:
+/// `w = v + 1` reads the pre-jump `v` (in `[0, 1]`), so `w >= 1` holds and a
+/// post-jump `v` in `[1, 2]` exists at every instant; the transition is
+/// enabled throughout, never taken, and the lasso is unfair.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn a_reset_reading_a_free_variables_pre_jump_value_is_decided() {
+    let graph = check(
+        "hybrid Shift using p {\n\
+           mode Run invariant { v >= 0 and v <= 1 and w >= 0 and w <= 1 } flow { v' = 1; w' = 0; }\n\
+             transition to Run when { v = 1 } reset { v = 0 };\n\
+             transition to Gone when { true } reset { v >= 1 and w = v + 1 };\n\
+           mode Gone invariant { v <= 2 and w >= 1 } flow { v' = 0; w' = 0; }\n\
+         }\n\
+         temporal Fairly using p over (h: Shift) clock \"model-time\" on origin {\n\
+           fair Run::Gone;\n\
+           always holds(h.v >= 1)\n\
+         }\n",
+    );
+    let lasso = HybridTrace {
+        start: state(0, n(0), &[n(0), n(0)]),
+        jumps: vec![TraceJump {
+            transition: 0,
+            before: Some(before(n(1), &[n(1), n(0)])),
+            state: state(0, n(1), &[n(0), n(0)]),
+        }],
+        delta: None,
+        loop_to: Some(0),
+        end: None,
+    };
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Fairly"), &lasso),
+        Ok(ExactReplay::NotReproduced {
+            at: JsonPointer::root(),
+            check: ExactCheck::Claim,
+        })
+    );
 }
 
 /// Two free variables that the target invariant couples in one condition are
-/// the one reset shape exact replay does not yet decide (QSL-2529 remaining
+/// the one reset shape exact replay does not yet decide (QSL-2639 remaining
 /// work), so the trace settles `NotExact`.
-#[trace("TC-1221", "FR-450-AC-6")]
+#[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn coupled_free_variables_are_not_yet_decided() {
     let graph = check(
