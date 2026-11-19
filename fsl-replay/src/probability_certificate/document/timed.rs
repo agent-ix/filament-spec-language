@@ -322,7 +322,7 @@ fn enumerate_region_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
-            let mut choice = Vec::new();
+            let mut choice: Vec<ProbabilityEdge> = Vec::new();
             let mut enabled = true;
             for draw in action.draws {
                 if draw.successors.len() != 1 {
@@ -517,11 +517,10 @@ fn phase_at(
     if elapsed > deadline {
         return Ok(Phase::Rejected);
     }
-    let [reading] = system
+    let readings = system
         .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
-        .map_err(|_| ProbabilityDocumentError::Unsupported)?
-        .as_slice()
-    else {
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    let [reading] = readings.as_slice() else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
     match reading {
@@ -550,7 +549,7 @@ fn region_key(
         .map_err(ProbabilityDocumentError::KeyEncoding)?;
     let discrete: JsonValue =
         serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
-    let binding = binding
+    let binding: Option<JsonValue> = binding
         .map(|reference| {
             let text = fsl_eval::simulation::model::reference_canonical_text(reference)
                 .map_err(|_| ProbabilityDocumentError::Unsupported)?;
@@ -854,7 +853,7 @@ fn charge_work(
 }
 
 fn one() -> Rational {
-    Rational::from_integer(Integer::from(1))
+    Rational::from_integer(Integer::from(1_i64))
 }
 
 /// The checker derives the route from the checked clock constraints and
