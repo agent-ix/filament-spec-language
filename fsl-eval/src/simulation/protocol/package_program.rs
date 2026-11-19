@@ -42,10 +42,14 @@ pub struct PackageControl {
     pub operation_anchor: Option<NodeKey>,
     /// The attempt's role node identity.
     pub role: Option<fsl_package::CheckedNodeId>,
+    /// The attempt result binder node identity.
+    pub binder: Option<fsl_package::CheckedNodeId>,
     /// The attempt's explicit memory ordering.
     pub ordering: Option<fsl_forms::AccessOrdering>,
     /// The state clauses selected by an attempt's `contracts` member.
     pub contracts: Vec<fsl_package::CheckedNodeId>,
+    /// The FR-531 identities of the selected state clauses.
+    pub contract_keys: Vec<NodeKey>,
 }
 
 /// One static role binding from the admitted package.
@@ -183,7 +187,7 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut controls = BTreeMap::new();
         for control in &form.controls {
             let name = control.path.last().cloned().unwrap_or_default();
-            let (children, branches, role, operation_anchor, ordering, contracts) =
+            let (children, branches, role, binder, operation_anchor, ordering, contracts) =
                 match &control.body {
                     ControlBody::Sequence { children } => (
                         children
@@ -196,6 +200,7 @@ impl<'a> PackageProtocolProgram<'a> {
                             })
                             .collect::<Result<Vec<_>, _>>()?,
                         Vec::new(),
+                        None,
                         None,
                         None,
                         None,
@@ -216,13 +221,14 @@ impl<'a> PackageProtocolProgram<'a> {
                             })
                             .collect::<Result<Vec<_>, _>>()?;
                         let children = branches.iter().map(|(_, id)| *id).collect();
-                        (children, branches, None, None, None, Vec::new())
+                        (children, branches, None, None, None, None, Vec::new())
                     }
                     ControlBody::Attempt {
                         role,
                         operation,
                         ordering,
                         contracts,
+                        binder,
                         ..
                     } => {
                         let anchor =
@@ -233,6 +239,7 @@ impl<'a> PackageProtocolProgram<'a> {
                             Vec::new(),
                             Vec::new(),
                             Some((*role).clone()),
+                            Some((*binder).clone()),
                             Some(anchor),
                             *ordering,
                             contracts
@@ -255,6 +262,15 @@ impl<'a> PackageProtocolProgram<'a> {
             } else {
                 None
             };
+            let contract_keys = contracts
+                .iter()
+                .map(|contract| {
+                    input
+                        .evaluator
+                        .package_node_key(contract)
+                        .ok_or_else(|| PackageProgramRefusal::MissingIdentity(contract.clone()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             controls.insert(
                 control.id,
                 PackageControl {
@@ -269,8 +285,10 @@ impl<'a> PackageProtocolProgram<'a> {
                     constraint,
                     operation_anchor,
                     role,
+                    binder,
                     ordering,
                     contracts,
+                    contract_keys,
                 },
             );
         }
