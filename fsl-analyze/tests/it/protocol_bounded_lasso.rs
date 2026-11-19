@@ -18,6 +18,7 @@ use filament_exact::Meter;
 use fsl_eval::model_subject::ModelLetters;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
     evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace,
@@ -25,15 +26,16 @@ use fsl_eval::temporal::{
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, DisagreementCause, ModelCheckOutcome,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, TemporalCounterexample,
+    replay_protocol_trace_with_temporal_selections, CounterexampleKind, DisagreementCause, Lasso,
+    ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
-use crate::fill::{attempt, contracts, document, instance, protocol, universe};
+use crate::fill::{attempt, contracts, document, instance, protocol, sc_system, universe};
 use crate::model_settle::{envelope_at, request};
 use crate::protocol_counted_steps::{claim, lossy_channel, Case, CellV};
 
@@ -464,7 +466,7 @@ fn assert_unfair_with_default_fairness(
 #[test]
 fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     let adversarial = lossy_channel("scheduling adversarial;");
-    let payload = refutation(&adversarial, &CellV(is_one));
+    let payload = duplicate_lose_lasso(&adversarial);
     let lasso = payload.lasso.expect("a lasso");
     assert!(payload.fairness.is_empty(), "no scheduler constraint");
     assert!(payload.prefix[lasso.entry..]
@@ -487,6 +489,56 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     // distance-1 window holds no `p`.
     let window = lossy_window("scheduling adversarial;");
     assert_reproduced_at(replay(&window, &CellV(is_one), &payload), 0);
+}
+
+/// Execute the three transitions of the duplicate/lose witness directly,
+/// retaining their real identities and state keys without exploring unrelated
+/// protocol activations. Replay independently re-executes the resulting lasso.
+fn duplicate_lose_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
+    let subject = case.subject("P");
+    let system = sc_system(&subject);
+    let mut state = system.initial().remove(0);
+    let mut prefix = Vec::new();
+    let mut entry = None;
+    for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
+        let (transition, next) = system
+            .successors(&state)
+            .expect("the protocol position expands")
+            .successors
+            .into_iter()
+            .find(|(transition, next)| {
+                transition.kind() == kind
+                    && (kind != StepKind::Lose
+                        || SubjectSystem::state_key(&system, next).expect("a state key")
+                            == *entry.as_ref().expect("the send establishes the loop entry"))
+            })
+            .unwrap_or_else(|| panic!("the witness has an enabled {kind:?} step"));
+        let post_state = SubjectSystem::state_key(&system, &next).expect("a state key");
+        if kind == StepKind::Send {
+            entry = Some(post_state.clone());
+        }
+        prefix.push(ModelStep {
+            transition,
+            post_state,
+            delay: None,
+        });
+        state = next;
+    }
+    assert_eq!(Some(prefix[2].post_state.clone()), entry, "the loop closes");
+    TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: Some(instance("c")),
+        fairness: Vec::new(),
+        kind: CounterexampleKind::Formula,
+        lasso: Some(Lasso {
+            entry: 1,
+            terminal_stutter: false,
+        }),
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    }
 }
 
 /// `lossy_channel`'s package with the claim `eventually[1,1] holds(k.v = 1)`.
