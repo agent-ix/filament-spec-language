@@ -33,8 +33,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, Rational, ValueType};
-use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
+use filament_semantic_value::location::ExpressionLocation;
 use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
@@ -4646,7 +4646,10 @@ fn typed_in(
 /// The binder name of each element-presence quantifier of `body`, typed
 /// from `form`, by its checked node's location: the source quantifier the
 /// location's path reaches (FR-930).
-fn presence_binders(body: &CheckedBody, form: &ExpressionForm) -> Vec<(ExpressionLocation, String)> {
+fn presence_binders(
+    body: &CheckedBody,
+    form: &ExpressionForm,
+) -> Vec<(ExpressionLocation, String)> {
     body.root()
         .descendants()
         .into_iter()
