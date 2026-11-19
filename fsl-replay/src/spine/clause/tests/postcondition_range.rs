@@ -424,9 +424,10 @@ fn a_precondition_declared_after_the_postcondition_discharges_it_with_the_same_i
 fn the_refusal_region_spans_exactly_the_bytes_of_the_unproved_node() {
     let unit = without_can_afford();
     let refused = bank_site(PLAIN, &unit).expect_err("refused");
-    let CallSiteRefusal::Compile { region, .. } = *refused else {
+    let CallSiteRefusal::Compile { code, region, .. } = *refused else {
         panic!("expected a Compile refusal");
     };
+    assert_eq!(code, fsl_foundation::Code::UndefinedExpression);
     let region = region.expect("an unproved range is located");
     // The region names the unit's own source.
     assert_eq!(region.source().authority(), "agent-ix");
