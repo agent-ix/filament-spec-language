@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use filament_eval::{
-    Admission, BodyFactory, CallFailure, Evaluation, Progress, Registry, Session, Signature,
+    Admission, BodyFactory, CallFailure, Evaluation, Progress, Registry, Session, SessionLimits,
+    Signature,
 };
 use filament_exact::{
     Identifier, Meter, NodeKey, Origin as OccurrenceOrigin, Presence, Role, UnionMember, Value,
@@ -513,9 +514,28 @@ impl CheckedClosureHandle {
 
     /// Create a fresh registry over the designated FSL adapter and leaf scheduler.
     pub fn registry(&self) -> ApplicationRegistry {
+        self.registry_with_session_limits(SessionLimits::default())
+    }
+
+    /// Create a fresh acquired-closure registry with an explicit bound for
+    /// its checked calls.
+    ///
+    /// This is the public leaf-session facade, not the native run request
+    /// path. The bound reaches both the leaf scheduler and the synchronous
+    /// S6a machine. Its returned `Evaluation::peak_live_occurrences` remains
+    /// the leaf scheduler's peak; native run uses the per-request call helper
+    /// to merge the S6a peak into its result.
+    pub fn registry_with_session_limits(
+        &self,
+        session_limits: SessionLimits,
+    ) -> ApplicationRegistry {
         ApplicationRegistry {
             acquisition: Arc::clone(&self.acquisition),
-            inner: Registry::new(PackageClosure::new(Arc::clone(&self.package))),
+            session_limits,
+            inner: Registry::new(PackageClosure::new_with_session_limits(
+                Arc::clone(&self.package),
+                session_limits,
+            )),
         }
     }
 }
@@ -875,6 +895,7 @@ pub enum ApplicationBeginRefusal {
 /// A binding set over precisely one retained acquisition.
 pub struct ApplicationRegistry {
     acquisition: Arc<()>,
+    session_limits: SessionLimits,
     inner: Registry<Adapter>,
 }
 
@@ -909,7 +930,7 @@ impl ApplicationRegistry {
             .begin_call(
                 selection.key.clone(),
                 arguments,
-                filament_eval::SessionLimits::default(),
+                self.session_limits,
                 &environment.0,
                 meter,
             )
@@ -1144,6 +1165,38 @@ mod tests {
                 "{kind:?}"
             );
         }
+    }
+
+    /// NFR-130-AC-1: the public application evaluator forwards an explicit
+    /// bound into its synchronous FSL machine, not only the leaf scheduler.
+    #[trace("NFR-130-AC-1")]
+    #[test]
+    fn explicit_registry_live_occurrence_limit_stops_machine_recursion() {
+        let source = format!(
+            "{HEADER}function d using v(n: Int[0, 1000000]): Integer pure decreases(n) {{ if n > 0 then d(n - 1) else 0 }}\n"
+        );
+        let acquired = acquire(&source, &DependencyInput::default());
+        let handle = acquired.handle();
+        let selection = handle
+            .lookup_callable(handle.package_name(), &wire(&handle.package, "d"))
+            .expect("recursive function");
+        let limits = SessionLimits {
+            live_occurrences: 8,
+        };
+        let mut registry = handle.registry_with_session_limits(limits);
+        let environment = ApplicationEnvironment::new(ObjectClosure::default());
+        let mut meter = meter(100_000);
+        let evaluation = registry
+            .begin_call(&selection, vec![int(1_000)], &environment, &mut meter)
+            .expect("begin checked recursion")
+            .run()
+            .expect("bounded evaluation");
+        let FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) = evaluation.outcome else {
+            panic!("explicit live-occurrence limit should stop recursion");
+        };
+        assert_eq!(incomplete.limit_kind, LimitKind::LiveOccurrences);
+        assert_eq!(incomplete.limit, limits.live_occurrences);
+        assert_eq!(incomplete.consumed, limits.live_occurrences);
     }
 
     /// Owner selection precedes node lookup, including an imported callable.

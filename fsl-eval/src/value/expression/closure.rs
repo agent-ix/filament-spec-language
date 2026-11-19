@@ -98,6 +98,17 @@ where
         }
     }
 
+    /// A closure configured with the call-stack bound supplied by its caller.
+    pub const fn new_with_session_limits(package: P, session_limits: SessionLimits) -> Self {
+        Self {
+            package,
+            pre_admitted: false,
+            session_limits,
+            peak_live_occurrences: None,
+            expression: PhantomData,
+        }
+    }
+
     /// A closure for a caller that supplied the arguments and session bound.
     pub(super) fn pre_admitted_with_session_limits(
         package: P,
