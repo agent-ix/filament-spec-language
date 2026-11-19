@@ -12,14 +12,14 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
 use fsl_eval::simulation::protocol::{
-    ProtocolState, ProtocolSystem, ProtocolTransition, ResolvedMemory, Sc, StepKind,
+    ProtocolSystem, ProtocolState, ProtocolTransition, ResolvedMemory, Sc, StepKind,
 };
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
+    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
