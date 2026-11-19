@@ -26,6 +26,7 @@ mod probabilistic;
 mod production_core;
 mod production_source_forms;
 mod production_value_forms;
+mod production_protocol_forms;
 mod protocol_memory_refinement;
 mod readme_snippets;
 mod reserved_declaration_names;
