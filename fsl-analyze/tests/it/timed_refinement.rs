@@ -1132,7 +1132,6 @@ fn both_timed(invariant: &str) -> Result<Refining, Vec<(String, String, String)>
 /// so `A` owns it and it is read on `A`'s clock.
 #[trace("TC-2538", "FR-900-AC-7")]
 #[test]
-#[ignore = "QSL-2243: a time invariant owned by the one timed model its reads name, with several time sources, not implemented yet"]
 fn an_abstract_only_time_invariant_is_read_on_the_abstract_clock() {
     let world = both_timed("time invariant Bound when { true } { self.y <= 3 ms }")
         .unwrap_or_else(|refusals| panic!("the abstract invariant is admitted: {refusals:?}"));
@@ -1174,7 +1173,6 @@ fn an_abstract_only_time_invariant_is_read_on_the_abstract_clock() {
 /// the objects of both timed models has no single owning source.
 #[trace("TC-2538", "FR-900-AC-8")]
 #[test]
-#[ignore = "QSL-2243: a time invariant reading two timed models' objects refused ambiguous-name at the second model's read not implemented yet"]
 fn a_time_invariant_reading_both_timed_models_is_ambiguous() {
     let Err(refusals) = both_timed(
         "time invariant Both when { exists(c in M::calls : c.inflight) and \
