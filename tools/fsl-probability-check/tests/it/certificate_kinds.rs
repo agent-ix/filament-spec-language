@@ -5,7 +5,7 @@
 //! The certificates are produced by the analyzer over the cyclic `link`
 //! model, as the other suites of this binary produce theirs.
 
-use super::bounded::{document, mutate, request_with, run};
+use super::bounded::{document, key, mutate, request_with, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -70,6 +70,11 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
     let doc = document(request);
     let kind = doc["kind"].as_str().expect("a certificate kind");
     assert!(kinds.contains(&kind), "{kind} not in {kinds:?}");
+    // FR-196: every state is named by the complete eight-member key.
+    for row in doc["values"].as_array().expect("values") {
+        let members = key(&row["state"]);
+        assert_eq!(members.as_array().map(Vec::len), Some(8), "{members}");
+    }
 
     let altered = mutate(request, |doc| {
         doc["values"][0]["value"] = json!({"numerator": "1", "denominator": "7"});

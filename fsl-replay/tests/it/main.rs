@@ -11,6 +11,7 @@ mod checked_body_failure;
 mod compile_ieee_profile;
 mod compile_protocol_profile;
 mod compile_text_literals;
+mod conditioned_product_key;
 mod declaration_only_unit;
 mod format_outcome_facade;
 mod hyper_identity;

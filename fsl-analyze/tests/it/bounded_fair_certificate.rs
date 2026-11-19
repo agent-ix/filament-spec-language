@@ -171,7 +171,7 @@ fn actual_fairness_stages_preserve_requested_deadline_and_caller_ceilings() {
     }
 }
 
-#[trace("TC-1406", "FR-201-AC-47", "FR-201-AC-49")]
+#[trace("TC-1406", "FR-201-AC-47")]
 #[test]
 fn empty_multiple_bindings_and_refuted_fair_bound_never_emit_new_profile_proofs() {
     let model = prob_world::link(CLAIM);
