@@ -10086,7 +10086,11 @@ mod tests {
     fn protocol_population_types_debug_joins_the_shared_node_table() {
         use filament_exact::{NodeKey, PathSegment};
         let mut graph = depth_forms::declarations(depth_forms::Form::Add, 2)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &crate::check::test_support::ZeroRewardEvaluator,
+            )
             .unwrap();
         let leaf = NodeKey::new(
             "population_scope",
@@ -10224,7 +10228,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one record declaration checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10283,7 +10291,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a package-qualified declared name checks cleanly");
 
         let nodes: Vec<&CheckedTypeNode> = graph.checked_type_nodes().collect();
@@ -10386,7 +10398,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("one enum declaration checks cleanly");
 
         let mut checked_nodes = 0;
@@ -10469,7 +10485,11 @@ mod tests {
             literal_function("caller_one", call_helper()),
             literal_function("caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("two callers of one no-argument function check cleanly");
 
         // Steps 2-3: both call sites mint the same identity, but distinct
@@ -10522,7 +10542,11 @@ mod tests {
             literal_function("renamed_caller_one", call_helper()),
             literal_function("renamed_caller_two", call_helper()),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("renaming the callers changes no checking outcome");
         assert!(
             renamed.occurrence(call_identity.clone(), &first).is_some(),
@@ -10572,7 +10596,11 @@ mod tests {
                 ),
             ),
         ])
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect("a caller of a one-parameter function checks");
         let mut nodes = 0;
         for node in graph.semantic_graph().nodes() {
@@ -10601,7 +10629,11 @@ mod tests {
                 fsl_foundation::IdentityLimits::default(),
             )
         }
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),
