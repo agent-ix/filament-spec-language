@@ -2984,6 +2984,11 @@ fn model_operation(
             }
             Err(error) => return Err(error),
         };
+        let value_type = if parameter.presence == filament_exact::Presence::Optional {
+            ValueType::Option(Arc::new(value_type))
+        } else {
+            value_type
+        };
         parameters.push((parameter_name.to_owned(), value_type));
     }
     let clock_result = operation

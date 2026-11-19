@@ -1672,6 +1672,42 @@ fn validate_option_types(domain_package: &DomainPackage) -> Vec<ModelRefusal> {
                     });
                 }
             }
+            DomainPackageRecord::OperationMember(operation) => {
+                for (index, parameter) in operation.parameters.iter().enumerate() {
+                    if parameter.presence != Presence::Optional
+                        || parameter.multiplicity.lower != 1
+                        || parameter.multiplicity.upper != Some(1)
+                    {
+                        continue;
+                    }
+                    let is_option = crate::model::domain_package::unaliased(
+                        &parameter.value_type,
+                        |key| records.get(key).copied(),
+                    )
+                    .is_some_and(|(value_type, sequences)| {
+                        sequences == 0
+                            && matches!(value_type, ValueTypeRef::Package(key)
+                                if matches!(records.get(key), Some(DomainPackageRecord::OptionType(_))))
+                    });
+                    if is_option {
+                        refusals.push(ModelRefusal {
+                            code: Code::InvalidModelBinding,
+                            cause: malformed_at(
+                                domain_package,
+                                &parameter.key,
+                                MemberPath::new(MemberRoot::Operation)
+                                    .name("params")
+                                    .index(index)
+                                    .name("presence"),
+                            ),
+                            detail: format!(
+                                "{}: Operation.params[].presence: an Option<T> parameter cannot also be optional at multiplicity [1,1]",
+                                parameter.key.node
+                            ),
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }

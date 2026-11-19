@@ -2706,10 +2706,21 @@ fn read_operation_parameter(
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
     let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
+    let presence = match ctx.str_field("presence")? {
+        "required" => Presence::Required,
+        "optional" => Presence::Optional,
+        other => {
+            return Err(ctx.malformed_in(
+                "presence",
+                format!("{other:?} is not required/optional, the only presences this reader recognizes"),
+            ))
+        }
+    };
     Ok(OperationParameterRecord {
         key: declaration_key(package, node),
         value_type,
         multiplicity,
+        presence,
     })
 }
 
