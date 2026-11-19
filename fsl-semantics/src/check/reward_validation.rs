@@ -26,7 +26,7 @@ impl Domain {
 
     fn advance(&mut self) -> bool {
         match self {
-            Self::Values { values, index } if index + 1 < values.len() => {
+            Self::Values { values, index } if *index + 1 < values.len() => {
                 *index += 1;
                 true
             }
@@ -96,15 +96,13 @@ fn check_reward(
         let domain = graph
             .probabilistic_model()
             .random_parameter(reward.operation().key(), name)
-            .map(|random| {
-                Domain::Values(
-                    random
-                        .support()
-                        .iter()
-                        .map(|support| support.value.0.clone())
-                        .collect(),
-                    0,
-                )
+            .map(|random| Domain::Values {
+                values: random
+                    .support()
+                    .iter()
+                    .map(|support| support.value.0.clone())
+                    .collect(),
+                index: 0,
             })
             .or_else(|| finite_domain(ty));
         let Some(domain) = domain else {

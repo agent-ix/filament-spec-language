@@ -577,7 +577,7 @@ impl ProbabilisticCause {
             | Self::TimeTypeMismatch { span, .. }
             | Self::OverNotObjectType { span, .. }
             | Self::NotStatePredicate { span, .. } => Some(*span),
-            Self::RandomReadInPrecondition { .. } => None,
+            Self::RandomReadInPrecondition { .. } | Self::NegativeReward { .. } => None,
         }
     }
 

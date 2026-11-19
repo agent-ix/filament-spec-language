@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! S3's port to the one S6a reward expression evaluator (FR-185).
 
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::string::String;
+use std::vec::Vec;
 
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
