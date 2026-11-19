@@ -78,7 +78,21 @@ fn fixture(
     .expect("source read");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let unit = fsl_forms::build_unit(&parsed).expect("unit forms built");
-    let domain_bytes = serde_json::to_vec(&tc1070::document()).expect("domain serializes");
+    let mut domain = tc1070::document();
+    domain["types"]
+        .as_array_mut()
+        .expect("domain types")
+        .push(tc1070::model::declaration(
+            "Link",
+            "record",
+            json!({
+                "fields": [
+                    tc1070::model::field("Link", "source", &tc1070::model::id("Node")),
+                    tc1070::model::field("Link", "target", &tc1070::model::id("Node")),
+                ]
+            }),
+        ));
+    let domain_bytes = serde_json::to_vec(&domain).expect("domain serializes");
     let packages = package_input([domain_bytes.as_slice()]).expect("domain package admitted");
     let models = admit_unit(
         &unit.selections().models,
@@ -350,18 +364,18 @@ protocol Purchase using P over (view: M::Node) on origin {
   role Buyer on M::Node;
   role Seller on M::Node;
   relationship Owns = M::owns;
-  channel Pay from Buyer to Seller carries M::Node
+  channel Pay from Buyer to Seller carries M::Link
       ordering unordered delivery at-least-once capacity 2 overflow block;
   run sequence Main {
-    send Sent via Pay as (sent: M::Node) { true };
-    receive Got via Pay of Main::Sent as (got: M::Node) { true };
+    send Sent via Pay as (sent: M::Link) { true };
+    receive Got via Pay of Main::Sent as (got: M::Link) { true };
   }
   finish Closed as (closed: M::Flag) { true };
 }
 "#;
     let correlated_send = source.replace(
-        "as (sent: M::Node) { true }",
-        "as (sent: M::Node) related by Owns (sent, view) { true }",
+        "as (sent: M::Link) { true }",
+        "as (sent: M::Link) related by Owns (sent.source, view) { true }",
     );
     let sends = reachable_with_relation(&correlated_send, true);
     assert_eq!(
@@ -370,8 +384,8 @@ protocol Purchase using P over (view: M::Node) on origin {
     );
 
     let correlated_receive = source.replace(
-        "as (got: M::Node) { true }",
-        "as (got: M::Node) related by Owns (got, view) { true }",
+        "as (got: M::Link) { true }",
+        "as (got: M::Link) related by Owns (got.source, view) { true }",
     );
     let receives = reachable_with_relation(&correlated_receive, true);
     assert_eq!(
