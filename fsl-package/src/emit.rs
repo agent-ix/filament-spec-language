@@ -7029,6 +7029,7 @@ fn emit_package_inner(
         required_features: vec![root.into()],
         dependency_selections: dependency_selections(package),
         refinement_internals: None,
+        dependency_clock_selections: None,
     };
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     let emitted_node_ids = write_index_segments(
@@ -7582,6 +7583,7 @@ fn source_object_rows(
             })
             .collect();
         let mut operations = Vec::new();
+        let mut row_operations = Vec::new();
         for record in graph
             .source_packages()
             .iter()
@@ -7602,9 +7604,33 @@ fn source_object_rows(
                 .strip_prefix(&format!("{}/", operation.owner.node))
                 .filter(|name| !name.is_empty() && !name.contains('/'))
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let identity: Box<str> = format!("{}::{name}", source_identity.as_str()).into();
+            let query = operation.result.is_some() && operation.effect.is_empty();
+            let parameter_prefix = format!("{}/", operation.key.node);
+            let clock_parameters = operation
+                .parameters
+                .iter()
+                .filter(|parameter| {
+                    parameter.value_type == fsl_semantics::model::domain_package::ValueTypeRef::Clock
+                })
+                .map(|parameter| {
+                    parameter
+                        .key
+                        .node
+                        .strip_prefix(&parameter_prefix)
+                        .filter(|name| !name.is_empty() && !name.contains('/'))
+                        .map(Box::<str>::from)
+                        .ok_or(EmitRefusal::SourceMapInvariant)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             operations.push(SourceObjectOperationFacts {
-                identity: format!("{}::{name}", source_identity.as_str()).into(),
-                query: operation.result.is_some() && operation.effect.is_empty(),
+                identity: identity.clone(),
+                query,
+            });
+            row_operations.push(filament_contract_model::SelectedSourceObjectOperation {
+                identity,
+                query,
+                clock_parameters,
             });
         }
         rows.push((
@@ -7620,6 +7646,7 @@ fn source_object_rows(
                     .collect(),
                 members,
                 populations,
+                operations: row_operations,
             },
             member_facts,
             operations,

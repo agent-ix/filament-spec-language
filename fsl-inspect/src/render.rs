@@ -2346,6 +2346,7 @@ mod tests {
         )));
         let undefined = OutcomeDocument::from_call(&CallOutcome::Undefined {
             reason: "sum-out-of-domain",
+            location: None,
         });
         let incomplete = OutcomeDocument::from_call(&CallOutcome::Incomplete(CallIncomplete {
             record: filament_exact::Incomplete {
