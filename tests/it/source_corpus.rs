@@ -464,7 +464,7 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             .is_some_and(|value| actual.result.as_ref() != Some(value));
     differs.then(|| {
         format!(
-            "{}: expectation mismatch: verb={} exit_code expected={} actual={} category expected={} actual={} last_stage expected={} actual={} code expected={} actual={} cause expected={} actual={} flips_with={}",
+            "{}: expectation mismatch: verb={} exit_code expected={} actual={} category expected={} actual={} last_stage expected={} actual={} code expected={} actual={} cause expected={} actual={} result expected={:?} actual={:?} flips_with={}",
             program.display(),
             expected.verb,
             expected.exit_code,
@@ -477,6 +477,8 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             display_option(&actual.code),
             display_option(&expected.cause),
             display_option(&actual.cause),
+            expected.result,
+            actual.result,
             expected.flips_with.as_deref().unwrap_or("none"),
         )
     })

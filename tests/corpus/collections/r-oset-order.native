@@ -1,4 +1,4 @@
 language "ix:native" edition "1-draft";
 profile v = "filament.value.complete/v1";
-function same using v(a: OrderedSet<Integer>[0,3],b: OrderedSet<Integer>[0,3]): Boolean pure { a<>b }
+function same using v(a: OrderedSet<Integer>[0,3],b: OrderedSet<Integer>[0,3]): Boolean pure { a!=b }
 function f using v(): Boolean pure { same(orderedSet[2,1],orderedSet[1,2]) }
