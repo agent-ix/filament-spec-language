@@ -119,24 +119,24 @@ fn run_at_stage(fence: &Fence) -> Result<Option<String>, String> {
     } else {
         format!("{HEADER}{}", fence.text)
     };
-    let parsed = fsl_cst::parse(
-        SourceIdentity {
-            authority: "test".into(),
-            identity: "test:doc-snippets".into(),
-        },
-        "fence.native",
-        source.as_bytes(),
-        Limits::default(),
-    )
-    .map_err(|error| format!("{error:?}"))?;
-    if let Some(first) = parsed.diagnostics().first() {
-        return Ok(Some(format!(
-            "{}/{}",
-            first.code.as_str(),
-            first.cause.as_str()
-        )));
-    }
     if stage == "parse" {
+        let parsed = fsl_cst::parse(
+            SourceIdentity {
+                authority: "test".into(),
+                identity: "test:doc-snippets".into(),
+            },
+            "fence.native",
+            source.as_bytes(),
+            Limits::default(),
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        if let Some(first) = parsed.diagnostics().first() {
+            return Ok(Some(format!(
+                "{}/{}",
+                first.code.as_str(),
+                first.cause.as_str()
+            )));
+        }
         return Ok(None);
     }
     let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
