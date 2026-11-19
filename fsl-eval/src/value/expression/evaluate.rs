@@ -658,13 +658,21 @@ impl Position {
         }
     }
 
-    fn right(self, operand_is_not: bool) -> Position {
+    fn right<'a, N: NodeSource<'a>>(self, operand: N) -> Position {
         match self {
             Self::Ordering => Self::Tail,
-            Self::Tail if operand_is_not => Self::NotPart,
+            Self::Tail if matches!(operand.kind(), NodeKind::Not(_)) => Self::NotPart,
             Self::Parts | Self::Tail | Self::NotPart | Self::Part => Self::Part,
         }
     }
+}
+
+/// Whether an applied node charges the meter: an ordering part decides
+/// without charging (FR-397 "Ordering parts").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Application {
+    Standalone,
+    OrderingPart,
 }
 
 /// The one local or IEEE literal an ordering operand reads.
@@ -2271,9 +2279,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     }
                     None => {
                         self.tasks.push(Task::Retain(node, left_owner));
-                        let right_position = position.map(|position| {
-                            position.right(matches!(node.at(*right).kind(), NodeKind::Not(_)))
-                        });
+                        let right_position =
+                            position.map(|position| position.right(node.at(*right)));
                         self.push_operand(node.at(*right), right_position);
                     }
                 }
@@ -2458,11 +2465,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn apply(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, false)
+        self.apply_as(node, Application::Standalone)
     }
 
     fn apply_ordering_part(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, true)
+        self.apply_as(node, Application::OrderingPart)
     }
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
@@ -2637,7 +2644,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn apply_as(&mut self, node: N, ordering_part: bool) -> Result<(), Halt> {
+    fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
             | NodeKind::ReferenceLiteral { .. }
@@ -3261,7 +3268,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         "typed-ieee-equality-operands-are-not-floats",
                     )));
                 };
-                if !ordering_part {
+                if application == Application::Standalone {
                     // A standalone `=` or `numericEqual` is the one owned
                     // core of FR-148: it charges its operands and result.
                     if !self.world.has_ieee_profile() {

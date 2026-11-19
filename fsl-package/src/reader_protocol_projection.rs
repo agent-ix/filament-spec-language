@@ -2620,6 +2620,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [operand] = children.as_slice() else {
                     return Err(fault("reader-ieee-negation-has-one-operand").into());
                 };
+                self.ieee_width_matches(id, identity)?;
                 Ok((NodeKind::Negate(*operand), children))
             }
             Some(
@@ -2639,6 +2640,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let operator = identity
                     .and_then(arithmetic_operator)
                     .ok_or_else(|| fault("reader-ieee-arithmetic-is-catalogued"))?;
+                self.ieee_width_matches(id, identity)?;
                 let rounding = ieee_rounding(operation)?;
                 Ok((NodeKind::Ieee(operator, rounding, *left, *right), children))
             }
@@ -2647,6 +2649,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [operand] = children.as_slice() else {
                     return Err(fault("reader-ieee-square-root-has-one-operand").into());
                 };
+                self.ieee_width_matches(id, identity)?;
                 let rounding = ieee_rounding(operation)?;
                 Ok((NodeKind::IeeeSquareRoot(rounding, *operand), children))
             }
@@ -2660,6 +2663,25 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 id,
                 identity.unwrap_or("unidentified operation"),
             )),
+        }
+    }
+
+    /// A width-specific IEEE identity (`float32.*` or `float64.*`) names the
+    /// width of the float its application yields; a mismatch is an admitted
+    /// package the source lowering never writes.
+    fn ieee_width_matches(
+        &self,
+        id: &CheckedNodeId,
+        identity: Option<&str>,
+    ) -> Result<(), BuildError> {
+        let named = match identity.and_then(|identity| identity.strip_prefix("filament.op.ieee.")) {
+            Some(rest) if rest.starts_with("float32.") => filament_exact::IeeeWidth::Binary32,
+            Some(rest) if rest.starts_with("float64.") => filament_exact::IeeeWidth::Binary64,
+            _ => return Err(fault("reader-ieee-identity-names-a-width").into()),
+        };
+        match self.value_type(id)? {
+            ValueType::Float(float) if float.width() == named => Ok(()),
+            _ => Err(fault("reader-ieee-width-matches-its-operation").into()),
         }
     }
 
@@ -3304,9 +3326,14 @@ pub(crate) fn node_value_type(
             .and_then(|_| index.graph.key(declaration).ok())
     };
     if unresolved && error.form.as_deref() == Some("bounded_domain/float_rounding") {
-        return at
-            .and_then(|failed| crate::checked_v2::float_rounding_type(index.admitted, failed))
-            .ok_or(TypeError::Unsupported);
+        // Only the requested node's own float type is typed here; a float
+        // nested in an option, collection, tuple, record or map is refused
+        // like the sibling scalar forms.
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return Ok(crate::checked_v2::float_rounding_type(
+            index.admitted,
+            declaration,
+        )?);
     }
     match error.form.as_deref().and_then(split_tag_form) {
         Some((WireTag::ScalarType, WireForm::Text)) if unresolved => {
