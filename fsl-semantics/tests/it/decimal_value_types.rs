@@ -375,9 +375,9 @@ fn admit_meter(checked: &Checked, fields: Value) -> Result<(), (String, Option<S
     }
 }
 
-/// FR-056-AC-69 (TC-3042 step 4): snapshot values admit by FSpec FR-140
+/// FR-056-AC-71 (TC-3042 step 4): snapshot values admit by FSpec FR-140
 /// membership by value in the field's Decimal value type.
-#[trace("TC-3042", "FR-056-AC-69")]
+#[trace("TC-3042", "FR-056-AC-71")]
 #[test]
 #[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
 fn snapshot_decimals_admit_by_membership() {
@@ -411,10 +411,10 @@ fn snapshot_decimals_admit_by_membership() {
     }
 }
 
-/// FR-056-AC-70 (TC-3042 step 5): each single defect refuses once at intake
+/// FR-056-AC-72 (TC-3042 step 5): each single defect refuses once at intake
 /// with the code, cause, diagnostic and named item the criterion lists, and
 /// builds no declaration.
-#[trace("TC-3042", "FR-056-AC-70")]
+#[trace("TC-3042", "FR-056-AC-72")]
 #[test]
 #[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
 fn decimal_policy_defects_refuse_once() {

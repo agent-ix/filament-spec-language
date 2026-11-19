@@ -21,7 +21,7 @@ the walk. Also verify that:
 - snapshot values are admitted by FSpec FR-140 membership;
 - every refusal row is reported once at its node, with no declaration built.
 
-Scope: FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-69, FR-056-AC-70.
+Scope: FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-71, FR-056-AC-72.
 
 ## Test Procedure
 
@@ -41,9 +41,9 @@ Scope: FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-69, FR-056-AC-70.
    of the FSpec planning fixture under `model M = "example/plan-battery";` and
    check `invariant SocFloor using v on M::Battery at current { self.soc >= 0.20 }`.
 4. Over the step 1 package, admit current snapshots of population `meters`
-   whose `Meter` supplies the `soc`, `margin` and `tax` values FR-056-AC-69
+   whose `Meter` supplies the `soc`, `margin` and `tax` values FR-056-AC-71
    lists, one value at a time. Every other field holds a member of its type.
-5. Apply each single defect FR-056-AC-70 lists to the step 1 package and admit
+5. Apply each single defect FR-056-AC-72 lists to the step 1 package and admit
    it. Each added constraint gets an identity of its own. Then apply the
    `unit` and `enumValues` defects together.
 
@@ -54,8 +54,8 @@ Tag the steps as follows:
 | 1, first part | `#[trace("TC-3042", "FR-056-AC-66")]` |
 | 1, second part | `#[trace("TC-3042", "FR-056-AC-67")]` |
 | 2-3 | `#[trace("TC-3042", "FR-056-AC-68")]` |
-| 4 | `#[trace("TC-3042", "FR-056-AC-69")]` |
-| 5 | `#[trace("TC-3042", "FR-056-AC-70")]` |
+| 4 | `#[trace("TC-3042", "FR-056-AC-71")]` |
+| 5 | `#[trace("TC-3042", "FR-056-AC-72")]` |
 
 ## Expected Results
 
@@ -80,7 +80,7 @@ Tag the steps as follows:
   - Each refused value refuses `invalid-value` at its field, naming the
     declared Decimal type and the supplied coefficient and scale.
 - Step 5:
-  - Each defect gives exactly one refusal with the code and cause FR-056-AC-70
+  - Each defect gives exactly one refusal with the code and cause FR-056-AC-72
     lists, and intake builds no declaration.
   - Validator rows keep the validator diagnostic.
   - Reader rows (`unit`, `enumValues`, a second `min`, `lo > hi`) carry no
