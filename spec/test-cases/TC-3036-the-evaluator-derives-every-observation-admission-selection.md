@@ -50,11 +50,11 @@ the relabelling case of FR-944-AC-4.
    valuation, one sample, one instance valuation and one label, each alone;
    add a position equal to another in all but its `EvidenceRef` identity;
    repeat step 4 with that position. Inspect a spine position of step 1.
-6. Over FR-501-AC-1's clause with `p` defined as `1 / x > 0`, give one
-   position `x = 0`; evaluate and derive the partial facts.
+6. Over FR-327-AC-5's closed `Counter` trace (`c.value` 0, 1, 2), evaluate
+   `always[0,2] holds(3 mod (2 - c.value) >= 0)` `on origin`, whose atom `p`
+   is undefined at position 2, and derive the partial facts.
 7. Admit FR-501-AC-13's request (clock unit `ms`) and an event-position
-   request; derive every partial fact; read the binding identity text and
-   the FSL report.
+   request; derive every partial fact; read the FSL report.
 
 ## Expected Results
 
@@ -100,8 +100,10 @@ the relabelling case of FR-944-AC-4.
   `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}` for
   `p`, no partial fact is derived for `p` there, the evaluator reports its
   own undefined outcome unchanged, no owner answer for it is `Missing`,
-  `Conflicting` or `Indeterminate`, and it is ineligible where an owner read
-  needs its possibility set; the other positions' facts read back.
+  `Conflicting` or `Indeterminate`, no owner read consumes `p`'s possibility
+  set there, and the clause outcome is
+  `Undefined{where: 2, cause: division-by-zero}`; positions 0 and 1 have
+  their facts read back.
 - Step 7: binding, record and interval units are all `ms/4` (all
   `position/4` for the event-position request) and every `partial::derive`
-  succeeds; the binding identity text and the FSL report name `ms`.
+  succeeds; the FSL report names `ms`.
