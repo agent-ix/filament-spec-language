@@ -509,13 +509,10 @@ struct Declaration<'a> {
     span: Span,
 }
 
-/// FR-640: the configuration a declaration over model traces derives, the
-/// one every trace derives (FR-640 "Behavior"); `None` when the profile and
-/// binding configure none. A clause whose traces derive different
-/// configurations, or an event-position trace with no determined sequence
-/// authority, needs one configuration per trace, which a binding row cannot
-/// carry yet: it refuses `unsupported_construct`/`not-yet-implemented` naming
-/// the clause (FR-763's form).
+/// FR-640: each configured model trace's derived clock and, for hyper
+/// clauses, its quantifier alias. `None` means the profile and binding do not
+/// configure any trace. An event-position trace with no determined sequence
+/// authority refuses as `unsupported_construct`/`not-yet-implemented`.
 fn derived_configurations(
     declaration: &Declaration<'_>,
     traces: &[Option<String>],
@@ -541,6 +538,17 @@ fn derived_configurations(
         }
     }
     Ok((!derived.is_empty()).then_some(derived))
+}
+
+/// Refuse an event-position model trace whose parameters do not identify one
+/// sequence authority for that trace.
+fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
+    Box::new(CompileRefusal::Emit(
+        EmitRefusal::PerTraceClockConfigurations {
+            declaration: declaration.name.to_owned(),
+        },
+        region(&declaration.source, declaration.span),
+    ))
 }
 
 /// The `kind` of the configuration a declaration under `profile` takes a
