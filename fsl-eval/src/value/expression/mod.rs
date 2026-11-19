@@ -38,7 +38,7 @@ pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
-use filament_eval::Registry;
+use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::admission::AdmissionRecord;
 use filament_semantic_value::call::InputRefusal;
@@ -1254,6 +1254,7 @@ fn evaluate_declaration(
         location,
         losses,
         frame_depth,
+        peak_live_occurrences: 0,
     })
 }
 
@@ -2016,7 +2017,7 @@ fn evaluate_expression(
     let mut registry =
         Registry::new(PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(package));
     registry
-        .begin_expression(expression, arguments, objects, meter)?
+        .begin_expression(expression, arguments, SessionLimits::default(), objects, meter)?
         .run()
 }
 
@@ -2175,6 +2176,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     location: None,
                     losses: Vec::new(),
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 });
             }
             capture.drain(meter, Some(state.body.location()));
@@ -2193,6 +2195,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     location: Some(state.body.location().clone()),
                     losses: Vec::new(),
                     frame_depth: 0,
+                    peak_live_occurrences: 0,
                 });
             }
             function_evaluations = 1;
@@ -2261,7 +2264,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             PackageClosure::<&CheckedPackage, &CheckedExpression>::pre_admitted(self),
         );
         registry
-            .begin_call(callable.identity, arguments, objects, meter)?
+            .begin_call(callable.identity, arguments, SessionLimits::default(), objects, meter)?
             .run()
     }
 

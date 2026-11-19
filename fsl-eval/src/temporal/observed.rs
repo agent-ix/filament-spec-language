@@ -1263,6 +1263,7 @@ mod tests {
             location: None,
             losses: Vec::new(),
             frame_depth: 0,
+            peak_live_occurrences: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,
@@ -1312,6 +1313,7 @@ mod tests {
             location: None,
             losses: Vec::new(),
             frame_depth: 0,
+            peak_live_occurrences: 0,
         };
         let reading = ObservedLetters::reading(
             &mut stopped,
