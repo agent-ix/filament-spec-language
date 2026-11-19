@@ -43,7 +43,7 @@ use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
     ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
     ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
-    TemporalCause, TimeUnitCause, TopologyRetained,
+    TemporalCause, TimeTypeMismatchReason, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1981,7 +1981,19 @@ fn check_message_one(first: &CheckRefusal) -> String {
                      probabilistic claim has a model subject, and observed statistics of a trace \
                      are window aggregates (FR-194)"
                 ),
-                ProbabilisticCause::TimeTypeMismatch { claim, .. } => format!(
+                ProbabilisticCause::TimeTypeMismatch {
+                    claim,
+                    reason: TimeTypeMismatchReason::MissingTimeBinding,
+                    ..
+                } => format!(
+                    "{message}: claim `{claim}` has a time-valued position, but its subject's \
+                     model declares no time binding"
+                ),
+                ProbabilisticCause::TimeTypeMismatch {
+                    claim,
+                    reason: TimeTypeMismatchReason::IncompatiblePosition,
+                    ..
+                } => format!(
                     "{message}: the time-valued position of claim `{claim}` does not match its \
                      model's time type"
                 ),
