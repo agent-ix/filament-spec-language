@@ -8603,9 +8603,26 @@ fn claim_name_rows(
             }
         }
     }
-    rows.sort_by(|left, right| {
-        (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
+    // The reader orders rows by the graph's own node order, which resolves
+    // operand IDs and so need not agree with the plain `CheckedNodeId` order.
+    let position: BTreeMap<&CheckedNodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(at, node)| (&node.node_id, at))
+        .collect();
+    // Every row's declaration was taken from an emitted node, so a miss is an
+    // emitter fault, not an ordering to guess.
+    let mut ranked = Vec::with_capacity(rows.len());
+    for row in rows {
+        let at = *position
+            .get(&row.declaration)
+            .ok_or(EmitRefusal::UnresolvedNodeReference)?;
+        ranked.push((at, row));
+    }
+    ranked.sort_by(|(left_at, left), (right_at, right)| {
+        (left_at, &left.occurrence).cmp(&(right_at, &right.occurrence))
     });
+    let mut rows: Vec<_> = ranked.into_iter().map(|(_, row)| row).collect();
     rows.dedup_by(|later, earlier| {
         later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
     });

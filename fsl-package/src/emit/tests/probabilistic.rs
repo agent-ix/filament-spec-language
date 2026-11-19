@@ -2073,6 +2073,36 @@ fn probabilistic_refusals_have_locus() {
     }
 }
 
+/// FSpec FR-322 "Claim declaration names": the `claim_names` rows are in the
+/// package's node order, which resolves operand IDs, so a package with
+/// several state clauses and a claim carries its rows in the order the
+/// strict reader checks them.
+#[trace("TC-621", "FR-186-AC-5")]
+#[test]
+fn claim_names_rows_follow_the_graphs_node_order() {
+    let package = claims_package(&[&claim("Stable", "0.5")]);
+    let wire = wire(&emit_checked(&package).expect("the package emits"));
+    let nodes: Vec<&Value> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the graph has nodes")
+        .iter()
+        .map(|node| &node["node_id"])
+        .collect();
+    let at: Vec<usize> = wire["claim_names"]
+        .as_array()
+        .expect("claim_names rows")
+        .iter()
+        .map(|row| {
+            nodes
+                .iter()
+                .position(|id| **id == row["declaration"])
+                .expect("a row names a graph node")
+        })
+        .collect();
+    assert!(at.len() > 1, "several claim-bearing nodes: {at:?}");
+    assert!(at.windows(2).all(|pair| pair[0] <= pair[1]), "{at:?}");
+}
+
 /// FSpec FR-322, TC-1563: a reward on a source-declared object is a clause
 /// function whose owner is the source object's declaration `[O, step, reward,
 /// cost]` at ordinal 0, with the clause kind `reward`. The strict reader does not
