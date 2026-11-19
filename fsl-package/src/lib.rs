@@ -21,7 +21,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
-pub use analysis_view::{AnalysisView, DependencyClosure};
+pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
 #[cfg(feature = "std")]
 pub use model_input_form::UnreadModelForm;
 #[cfg(feature = "std")]

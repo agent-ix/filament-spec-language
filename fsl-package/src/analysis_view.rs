@@ -17,9 +17,9 @@
 //!
 //! [`package`]: AnalysisView::package
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
-use filament_contract_model::{CheckedNodeId, CheckedPackageV2, TemporalClauseName};
+use filament_contract_model::{CheckedNodeId, CheckedPackageV2, ClaimNameRow, TemporalClauseName};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::domain_package::DomainPackageRef;
 
@@ -111,6 +111,39 @@ pub trait AnalysisView: sealed::Sealed {
         self.package().temporal_clause_names().unwrap_or_default()
     }
 
+    /// The admitted `claim_names` rows, in package order (FR-940 "Claim
+    /// names"). Empty when the package carries none.
+    fn claim_names(&self) -> &[ClaimNameRow] {
+        self.package().claim_names().unwrap_or_default()
+    }
+
+    /// FR-940 "Claim names": the occurrence a request's claim `name` names,
+    /// resolved against the rows of both name tables (FSpec FR-322 "One claim
+    /// namespace"). A temporal clause is reached by its bare name; any other
+    /// claim by its `qualified_name`, whole (`a::Name`) or by a bare name that
+    /// is the last segment of one declaration's rows. Among the nodes that
+    /// declaration's rows name, the answer is its own node (the one whose
+    /// declaration set nests strictly inside every other's) at its claim row:
+    /// the least `claim` occurrence, else the least row (FSpec FR-322 "Rows
+    /// of one declaration"). `None` for a name no row carries or one that
+    /// names no single declaration.
+    fn claim_name(&self, name: &str) -> Option<ClaimOccurrence> {
+        if let Some(row) = self
+            .clause_names()
+            .iter()
+            .find(|row| row.name.as_ref() == name)
+        {
+            return Some(ClaimOccurrence {
+                declaration: row.declaration.clone(),
+                occurrence: filament_contract_model::CheckedOccurrence {
+                    role: filament_contract_model::CheckedOccurrenceRole::Claim,
+                    ordinal: row.occurrence,
+                },
+            });
+        }
+        own_claim_row(self.claim_names(), name)
+    }
+
     /// The claim nodes whose name the package does not carry: each node
     /// with a `claim` occurrence that is neither a temporal clause with a
     /// `temporal_clause_names` row, nor a named declaration, nor a `pre` or
@@ -167,6 +200,81 @@ pub trait AnalysisView: sealed::Sealed {
             })
             .collect()
     }
+}
+
+/// The (`declaration`, `occurrence`) a claim name resolves to (FR-940).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimOccurrence {
+    /// The claim-bearing node.
+    pub declaration: CheckedNodeId,
+    /// One of its `declaration` or `claim` occurrences.
+    pub occurrence: filament_contract_model::CheckedOccurrence,
+}
+
+/// A row's declaration key (FSpec FR-322 "Rows of one declaration"): its
+/// `declaration_region` as (`source`, `start`, `end`).
+fn declaration_key(row: &ClaimNameRow) -> (&str, &str, u64, u64) {
+    let region = &row.declaration_region;
+    (
+        region.source.authority.as_ref(),
+        region.source.identity.as_ref(),
+        region.start,
+        region.end,
+    )
+}
+
+/// The claim row of the one declaration whose `qualified_name` `name`
+/// names (whole, or by its last segment), on that declaration's own node.
+fn own_claim_row(rows: &[ClaimNameRow], name: &str) -> Option<ClaimOccurrence> {
+    use filament_contract_model::CheckedOccurrenceRole;
+    let path: Vec<&str> = name.split("::").collect();
+    let matches = |row: &ClaimNameRow| {
+        let qualified: Vec<&str> = row.qualified_name.iter().map(AsRef::as_ref).collect();
+        if path.len() == 1 {
+            qualified.last() == path.last()
+        } else {
+            qualified == path
+        }
+    };
+    let named: Vec<&ClaimNameRow> = rows.iter().filter(|row| matches(row)).collect();
+    let first = named.first()?;
+    // One declaration: every matching row shares its declaration key.
+    if named
+        .iter()
+        .any(|row| declaration_key(row) != declaration_key(first))
+    {
+        return None;
+    }
+    let mut nodes: Vec<&CheckedNodeId> = named.iter().map(|row| &row.declaration).collect();
+    nodes.sort();
+    nodes.dedup();
+    let set = |node: &CheckedNodeId| -> BTreeSet<(&str, &str, u64, u64)> {
+        rows.iter()
+            .filter(|row| row.declaration == *node)
+            .map(declaration_key)
+            .collect()
+    };
+    let own = nodes.iter().copied().find(|node| {
+        let own = set(node);
+        nodes.iter().filter(|other| **other != *node).all(|other| {
+            let other = set(other);
+            own.is_subset(&other) && own != other
+        })
+    })?;
+    let on_own: Vec<&&ClaimNameRow> = named.iter().filter(|row| row.declaration == *own).collect();
+    let row = on_own
+        .iter()
+        .filter(|row| row.occurrence.role == CheckedOccurrenceRole::Claim)
+        .min_by(|left, right| left.occurrence.cmp(&right.occurrence))
+        .or_else(|| {
+            on_own
+                .iter()
+                .min_by(|left, right| left.occurrence.cmp(&right.occurrence))
+        })?;
+    Some(ClaimOccurrence {
+        declaration: row.declaration.clone(),
+        occurrence: row.occurrence.clone(),
+    })
 }
 
 fn closure(package: &CheckedPackageV2) -> DependencyClosure<'_> {
