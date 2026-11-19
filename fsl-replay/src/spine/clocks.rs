@@ -206,21 +206,23 @@ impl RequestClocks {
                 None,
             ));
         }
-        if let Some(name) = self
-            .dependency_members
-            .keys()
-            .find(|name| !used.contains(&(false, (*name).clone())))
-        {
-            return Err(emit_refusal(
-                ClockSelectionRefusal {
-                    cause: ClockSelectionCause::UnusedClockSelection,
-                    clock: name.clone(),
-                    declaration: None,
-                    supplied: None,
-                    unit: None,
-                },
-                None,
-            ));
+        if self.program_source.is_some() {
+            if let Some(name) = self
+                .dependency_members
+                .keys()
+                .find(|name| !used.contains(&(false, (*name).clone())))
+            {
+                return Err(emit_refusal(
+                    ClockSelectionRefusal {
+                        cause: ClockSelectionCause::UnusedClockSelection,
+                        clock: name.clone(),
+                        declaration: None,
+                        supplied: None,
+                        unit: None,
+                    },
+                    None,
+                ));
+            }
         }
         Ok(selections)
     }
