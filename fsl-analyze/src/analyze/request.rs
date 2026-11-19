@@ -857,6 +857,7 @@ fn work<'a>(
                 &item.claim,
                 item.request_index,
                 form,
+                digital.then_some(crate::model_check::manifest::METHOD_DIGITAL_CLOCKS),
             )
             .unwrap_or_else(absent)
         }
@@ -1160,7 +1161,11 @@ fn work<'a>(
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
-            Some(crate::model_check::manifest::BACKEND_ID)
+            Some(if super::document::timed(package) && !digital {
+                crate::zone_check::manifest::BACKEND_ID
+            } else {
+                crate::model_check::manifest::BACKEND_ID
+            })
         }
         Some(ItemForm::Temporal(form))
             if digital
