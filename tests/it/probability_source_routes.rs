@@ -37,7 +37,7 @@ fn write(directory: &Path, value: &Value) -> PathBuf {
 }
 
 #[test]
-#[trace("FR-186-AC-1")]
+#[trace("FR-186-AC-1", "FR-498-AC-4")]
 fn original_probability_forms_compile_under_every_scheduler() {
     let directory = tempfile::tempdir().unwrap();
     for name in [
@@ -47,10 +47,39 @@ fn original_probability_forms_compile_under_every_scheduler() {
         "scheduler-mean",
         "scheduler-long-run",
     ] {
-        let file = corpus(&format!("original/{name}.native"));
+        let file = corpus(&format!("{name}.native"));
         let output = command::compile_outcome(&write(directory.path(), &request(&file)))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        assert!(!output.package_bytes().is_empty(), "{name}");
+        let package: Value =
+            serde_json::from_slice(output.package_bytes()).expect("checked package JSON");
+        let nodes = package["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("semantic graph");
+        let claims = nodes
+            .iter()
+            .filter(|node| {
+                node["node_tag"] == "claim" && node["semantic_form"] == "probabilistic_claim"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            claims.len(),
+            1,
+            "{name}: exactly the authored claim is emitted"
+        );
+        assert_eq!(claims[0]["node_id"]["path"][2], "Available", "{name}");
+        let rows = package["checked_term_data"]["probabilistic_claims"]
+            .as_array()
+            .expect("claim sidecar");
+        assert_eq!(rows.len(), 1, "{name}");
+        assert_eq!(rows[0]["declaration"], claims[0]["node_id"], "{name}");
+        assert_eq!(
+            claims[0]["occurrences"]
+                .as_array()
+                .expect("claim occurrence")
+                .as_slice(),
+            &[rows[0]["occurrence"].clone()],
+            "{name}"
+        );
     }
 }
 
