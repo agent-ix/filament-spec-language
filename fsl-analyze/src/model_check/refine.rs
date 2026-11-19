@@ -43,7 +43,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
@@ -2636,11 +2636,13 @@ impl Run<'_, '_> {
             let mut queue = VecDeque::from([(start, neutral, Vec::<RetainedPathEdge>::new())]);
             while let Some((source, summary, path)) = queue.pop_front() {
                 self.poll()?;
-                let node = self
+                let edges = self
                     .nodes
                     .get(source)
-                    .ok_or_else(|| fault("a-summary-names-a-product-state"))?;
-                for (edge_index, edge) in node.edges.iter().enumerate() {
+                    .ok_or_else(|| fault("a-summary-names-a-product-state"))?
+                    .edges
+                    .clone();
+                for (edge_index, edge) in edges.iter().enumerate() {
                     let target = usize::try_from(edge.post)
                         .map_err(|_| fault("a-summary-edge-names-a-product-state"))?;
                     let edge_concrete = self.concrete_edge_label(
@@ -3321,12 +3323,8 @@ fn concrete_label_is_fair(label: &[FairMark], constraints: &[Constraint]) -> boo
         .iter()
         .zip(constraints)
         .all(|(mark, constraint)| match constraint.strength() {
-            filament_semantic_value::fairness::Strength::Weak => {
-                mark.taken || !mark.enabled_everywhere
-            }
-            filament_semantic_value::fairness::Strength::Strong => {
-                mark.taken || !mark.enabled_somewhere
-            }
+            Strength::Weak => mark.taken || !mark.enabled_everywhere,
+            Strength::Strong => mark.taken || !mark.enabled_somewhere,
         })
 }
 
