@@ -71,7 +71,6 @@ fn text(value: &Value) -> &str {
 #[test]
 #[trace("TC-3002", "FR-1015-AC-5")]
 #[trace("FSpec-TC-2029", "FSpec-FR-811-AC-6")]
-#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant (a preserved record) is not implemented yet"]
 fn only_what_the_target_cannot_state_is_unrepresented() {
     let (exit, value) = counter_export(tla(json!(["Bounded"])));
     assert_eq!(exit, 0, "{value}");
@@ -152,7 +151,6 @@ fn obligations_are_nonempty_declared_names() {
 /// obligation, the precondition and the unknown name are refused records.
 #[test]
 #[trace("TC-3002", "FR-1015-AC-6")]
-#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant (a preserved record) is not implemented yet"]
 fn an_invariant_among_refused_names_is_preserved() {
     let (exit, value) = counter_export(tla(json!(["CanInc", "Bounded", "Nope"])));
     let records = value["export"]["records"].as_array().expect("records");
@@ -184,7 +182,6 @@ fn the_floor_is_decided_before_the_text_is_charged() {
 /// FR-1015-AC-7: a lowered export over `export.output_bytes` is `incomplete`.
 #[test]
 #[trace("TC-3002", "FR-1015-AC-7")]
-#[ignore = "QSL-1979: the FR-812 lowering of the counter's invariant is not implemented yet"]
 fn a_lowered_text_over_the_byte_limit_is_incomplete() {
     let mut member = tla(json!(["Bounded"]));
     member["limits"] = json!({"export.output_bytes": 1});

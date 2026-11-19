@@ -5,6 +5,7 @@
 //! `filament.export-outcome/v1` document and, when a file is named and a
 //! package was assembled, the target file.
 
+mod lower;
 mod map;
 mod request;
 
@@ -91,6 +92,8 @@ pub(super) enum Mapped {
 pub(super) struct Unlowered {
     pub(super) obligation: String,
     pub(super) construct: String,
+    /// What the build does not lower; empty when the whole construct is not.
+    pub(super) detail: String,
 }
 
 /// The facts of the compiled program the outcome's `package` member names.
@@ -292,7 +295,7 @@ fn compile_and_map(
          packages,
          _,
          _libraries,
-         _models,
+         models,
          _inventory,
          failure| {
             let cancel = filament_exact::Cancel::new();
@@ -314,7 +317,6 @@ fn compile_and_map(
                 construct: "checked package".to_owned(),
                 reason: "the package the run compiled is not admitted".to_owned(),
             })?;
-            let _ = &initial;
             let graph = checked.package().graph();
             let clauses: Vec<map::ClauseFact> = graph
                 .state_clauses()
@@ -341,7 +343,15 @@ fn compile_and_map(
                         }),
                 )
                 .collect();
-            map::run(&admitted, &program.identity, &clauses, request, &effective)
+            map::run(
+                &admitted,
+                &program.identity,
+                &clauses,
+                &models,
+                initial.as_ref(),
+                request,
+                &effective,
+            )
         },
     )?;
     Ok((mapped, program))
@@ -457,9 +467,14 @@ fn assembled(
         return Err(RunCause::ExportMapper {
             construct: unlowered.construct.clone(),
             reason: format!(
-                "obligation `{}` is representable in {} and this build has no lowering for it",
+                "obligation `{}` is representable in {} and this build has no lowering for it{}",
                 unlowered.obligation,
-                request.target.profile()
+                request.target.profile(),
+                if unlowered.detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", unlowered.detail)
+                }
             ),
         });
     }

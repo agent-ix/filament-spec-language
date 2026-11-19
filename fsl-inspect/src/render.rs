@@ -483,6 +483,14 @@ fn outcome_text(
             }
             return Ok(());
         }
+        if kind == "exported" {
+            if let Some(export) = result.get("export") {
+                for line in export_result_lines(export)? {
+                    writer.unit(|| line)?;
+                }
+                return Ok(());
+            }
+        }
         let mut members = result
             .as_object()
             .cloned()
@@ -496,6 +504,44 @@ fn outcome_text(
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+/// Text lines for an export result (FR-865-AC-7): the target, the bytes
+/// written and the output path, or for an incomplete export the bytes
+/// written and the limit reached.
+fn export_result_lines(export: &serde_json::Value) -> Result<Vec<String>, Failure> {
+    let text = |value: Option<&serde_json::Value>| {
+        value.and_then(serde_json::Value::as_str).map(str::to_owned)
+    };
+    let written = export
+        .get("output")
+        .and_then(|output| output.get("bytes_written"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if export.get("status").and_then(serde_json::Value::as_str) == Some("incomplete") {
+        let setting = text(export.get("cause").and_then(|cause| cause.get("setting")))
+            .ok_or_else(|| fault("an incomplete export names no setting"))?;
+        let bound = export
+            .get("cause")
+            .and_then(|cause| cause.get("value"))
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| fault("an incomplete export names no bound"))?;
+        return Ok(vec![
+            format!("bytes written: {written}\n"),
+            format!("limit reached: {setting} {bound}\n"),
+        ]);
+    }
+    let family = text(export.get("target_family"))
+        .ok_or_else(|| fault("an export names no target family"))?;
+    let profile = text(export.get("mapping_profile_id"))
+        .ok_or_else(|| fault("an export names no profile"))?;
+    let path = text(export.get("output").and_then(|output| output.get("path")))
+        .unwrap_or_else(|| "none".to_owned());
+    Ok(vec![
+        format!("target: {family} {profile}\n"),
+        format!("bytes written: {written}\n"),
+        format!("output: {path}\n"),
+    ])
 }
 
 /// Text lines for the replay rows, with the typed document shape checked
