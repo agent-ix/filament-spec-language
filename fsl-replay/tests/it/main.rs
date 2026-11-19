@@ -15,6 +15,7 @@ mod conditioned_product_key;
 mod declaration_only_unit;
 mod format_outcome_facade;
 mod hyper_identity;
+mod hyper_per_trace_clock;
 mod hyper_query;
 mod hyper_smt_settle;
 mod indexed_read_stage;
