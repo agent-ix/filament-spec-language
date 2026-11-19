@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F32 = Float32[nearest-even];
+type F64 = Float64[nearest-even];
+function op00 using v(a: F32,b: F32): F32 pure { a+b }
+function op01 using v(a: F32,b: F32): F32 pure { a-b }
+function op02 using v(a: F32,b: F32): F32 pure { a*b }
+function op10 using v(a: F64,b: F64): F64 pure { a+b }
+function op11 using v(a: F64,b: F64): F64 pure { a-b }
+function op12 using v(a: F64,b: F64): F64 pure { a*b }

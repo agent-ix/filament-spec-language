@@ -1,0 +1,17 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F = Float64[nearest-even];
+record R { n: Integer; }
+tuple T(Integer,Integer);
+union U { A(Integer),B }
+record RF { n: F; }
+tuple TF(F,F);
+union UF { A(F),B }
+function equal0 using v(a: R,b: R): Boolean pure { a=b }
+function equal1 using v(a: T,b: T): Boolean pure { a=b }
+function equal2 using v(a: U,b: U): Boolean pure { a=b }
+function equal3 using v(a: RF,b: RF): Boolean pure { a=b }
+function equal4 using v(a: TF,b: TF): Boolean pure { a=b }
+function equal5 using v(a: UF,b: UF): Boolean pure { a=b }
+function equal6 using v(a: Option<F>,b: Option<F>): Boolean pure { a=b }
+function equal7 using v(a: Sequence<F>[0,3],b: Sequence<F>[0,3]): Boolean pure { a=b }

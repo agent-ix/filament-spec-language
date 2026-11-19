@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Label = Text[0,8;nfc];
+function ordered using v(a: Label,b: Label): Boolean pure { a<b }

@@ -1,0 +1,7 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+dimension Time;
+unit m : Length = rational(1,1);
+unit s : Time = rational(1,1);
+function divide using v(a: Quantity<m>,b: Quantity<s>): Quantity<m*s^-1> pure { a/b }

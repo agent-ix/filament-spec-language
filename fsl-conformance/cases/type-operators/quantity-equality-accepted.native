@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+dimension Time;
+unit m : Length = rational(1,1);
+unit s : Time = rational(1,1);
+function equal using v(a: Quantity<m>,b: Quantity<m>): Boolean pure { a=b }
+function durationEqual using v(a: Quantity<s>,b: Quantity<s>): Boolean pure { a=b }
