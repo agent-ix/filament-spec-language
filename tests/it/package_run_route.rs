@@ -28,7 +28,7 @@ fn source(file: &str) -> Value {
 fn compile(directory: &Path, unit: &str, members: Value) {
     std::fs::write(directory.join("unit.native"), unit).unwrap();
     let mut request = json!({"models": [], "program": {"source": source("unit.native")},
-        "output": {"file": "package.json"},
+        "output": {"package": "package.json"},
         "handoff": {"directory": "handoff", "package_name": "w60-unit",
             "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}});
     for (key, value) in members.as_object().into_iter().flatten() {
@@ -71,7 +71,7 @@ fn names(value: &Value, text: &str) {
 #[test]
 #[trace("TC-3019", "FR-1039-AC-1")]
 #[trace("TC-3019", "FR-100-AC-22")]
-#[ignore = "QSL-2390: native-run over a selected checked package is not implemented for every member yet"]
+#[ignore = "QSL-1989: native-compile/1 does not take the integer_division member yet, so the package this run selects cannot be compiled"]
 fn a_package_only_run_uses_the_recorded_law_without_source() {
     let directory = tempfile::tempdir().unwrap();
     compile(directory.path(), HALF, json!({"integer_division": "floor"}));

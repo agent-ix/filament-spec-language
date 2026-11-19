@@ -256,12 +256,14 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
 pub(super) struct Request {
     #[serde(deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
-    #[serde(deserialize_with = "from_object")]
-    pub program: Program,
-    /// FR-767/FR-100/FR-031: selected package artifact, mutually exclusive
-    /// with extraction; a precompiled package does not take a request-selected law.
+    /// FR-100: the program source selection; exactly one of `program` and
+    /// `package` is present.
     #[serde(default, deserialize_with = "from_object_opt")]
-    pub package: Option<FileSelection>,
+    pub program: Option<Program>,
+    /// FR-100, FR-1039: a selected checked package in place of `program`; a
+    /// package takes no request-selected law (FR-767).
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<RunPackageSelection>,
     #[serde(default, deserialize_with = "from_object")]
     pub limits: Limits,
     /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
@@ -598,13 +600,15 @@ pub(super) struct HandoffSelection {
     pub directory: String,
 }
 
-/// A `{file}` selection of a supplied document or checked package.
+/// FR-1039: a run request's `package` selection, exactly one of `{file}`, a
+/// checked-package v2 file, and `{directory}`, an FR-517 handoff directory.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct FileSelection {
-    /// Deserialized so the selection's shape is validated; no consumer reads it yet.
-    #[allow(dead_code)]
-    pub file: String,
+pub(super) struct RunPackageSelection {
+    #[serde(default)]
+    pub file: Option<String>,
+    #[serde(default)]
+    pub directory: Option<String>,
 }
 
 /// A supplied document and its optional FR-821 provision identity.

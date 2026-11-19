@@ -8,6 +8,8 @@ mod items;
 mod monitor;
 mod output;
 mod output_file;
+mod package_run;
+pub use package_run::PreparedPackageRun;
 mod replay;
 mod requirements;
 mod settle;
@@ -620,6 +622,9 @@ pub enum PreparedRun {
     /// FR-931: a `tl_lowering` request: the clause's valuation run, the
     /// lowering it asks for, and the program text its atoms are named in.
     TlLowering(Box<PreparedLowering>),
+    /// FR-100, FR-1039: a call over a selected checked package, run from the
+    /// package's own records without compiling source.
+    Package(Box<package_run::PreparedPackageRun>),
 }
 
 /// A typed clause request together with every source admitted to prepare it.
@@ -671,6 +676,7 @@ impl PreparedRun {
             ),
             Self::Clause(request) => request.sources.clone(),
             Self::TlLowering(prepared) => prepared.sources.clone(),
+            Self::Package(prepared) => prepared.sources(),
         }
     }
 }
@@ -1947,18 +1953,19 @@ fn read_clause_run_request_bytes(
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
     let request: wire::Request = request(bytes)?;
+    let program = required_program(&request)?;
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.package.is_some() {
+    if program.extraction.is_some() && request.package.is_some() {
         return Err(RunCause::ExtractionPackageConflict);
     }
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.call.is_some() {
+    if program.extraction.is_some() && request.call.is_some() {
         return Err(RunCause::ExtractionRequiresRun);
     }
     #[cfg(feature = "quire-extraction")]
-    if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+    if program.extraction.is_some() && program.clauses.len() != 1 {
         return Err(RunCause::ExtractionClauseCount {
-            actual: request.program.clauses.len(),
+            actual: program.clauses.len(),
         });
     }
     let clause = request
@@ -1989,10 +1996,10 @@ fn read_clause_run_request_bytes(
         None => intake(directory, counts)?,
     };
     reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-    let source = intake.source(&request.program.source, "program.source")?;
+    let source = intake.source(&program.source, "program.source")?;
     #[cfg(feature = "quire-extraction")]
-    if let Some(extraction) = &request.program.extraction {
-        let binding = &request.program.clauses[0];
+    if let Some(extraction) = &program.extraction {
+        let binding = &program.clauses[0];
         let context = fsl_source::clause_context(&binding.package, source.source())
             .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
         let body_identity = fsl_foundation::SourceIdentity::new(
@@ -3189,18 +3196,16 @@ fn prepare_run_bytes_with_sources(
     admitted_sources: &mut crate::Sources,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
-    if request.package.is_some() && request.integer_division.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: "integer_division".to_owned(),
-            reason: "a package already carries its selected integer-division law".to_owned(),
-        });
+    // FR-100, FR-1039: a selected checked package runs from its own records,
+    // refusing every member that would restate them before any file is read.
+    if let Some(package) = &request.package {
+        let prepared = package_run::prepare(directory, &request, package, dependent_bytes);
+        if let Ok(prepared) = &prepared {
+            *admitted_sources = prepared.sources();
+        }
+        return prepared.map(|prepared| PreparedRun::Package(Box::new(prepared)));
     }
-    if request.package.is_some() {
-        return Err(RunCause::ClauseRequest {
-            member: "package".to_owned(),
-            reason: "package-only native-run execution is tracked by QSL-2390".to_owned(),
-        });
-    }
+    let program = required_program(&request)?;
     let integer_division =
         read_integer_division(request.integer_division.as_ref(), "integer_division")?;
     let library_integer_division = request
@@ -3258,7 +3263,7 @@ fn prepare_run_bytes_with_sources(
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         // The program source is read exactly once; its declared edition decides
         // the runner before any model or library source is read (FR-100).
-        let source = intake.source(&request.program.source, "program.source")?;
+        let source = intake.source(&program.source, "program.source")?;
         require_complete_edition(source.source())?;
         prepare_complete_run(
             &mut intake,
@@ -3469,34 +3474,7 @@ fn prepare_complete_run(
                 fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
             )
         })?;
-    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
-    // object; the run reads it against its parameter's declared type.
-    let wire_arguments = call
-        .arguments
-        .iter()
-        .enumerate()
-        .map(|(index, argument)| {
-            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
-                return Err(RunCause::ClauseRequest {
-                    member: format!("/call/arguments/{index}/value"),
-                    reason: "expected a JSON integer in the signed 64-bit range or an object"
-                        .to_owned(),
-                });
-            }
-            Ok(fsl_replay::spine::WireArgument {
-                parameter: argument.parameter.clone(),
-                value: argument.value.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut spine_call = fsl_replay::spine::Call::new(
-        call.function.clone(),
-        Vec::new(),
-        call_accounting(&call.accounting),
-        request.limits.supplied.unwrap_or_default(),
-    );
-    spine_call.wire_arguments = wire_arguments;
-    spine_call.live_occurrences = call.evaluation.live_occurrences();
+    let mut spine_call = read_call(call, request)?;
     if let Some(file) = &call.snapshot {
         let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
             RunCause::ClauseRequest {
@@ -3602,6 +3580,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
+        PreparedRun::Package(prepared) => return package_run::execute(*prepared),
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
             let report =
@@ -3738,6 +3717,52 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             ),
     );
     Ok(result)
+}
+
+/// FR-100, FR-650: the spine call a request's `call` names, its arguments in
+/// the run value form, before any snapshot is read.
+fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::spine::Call> {
+    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
+    // object; the run reads it against its parameter's declared type.
+    let wire_arguments = call
+        .arguments
+        .iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("/call/arguments/{index}/value"),
+                    reason: "expected a JSON integer in the signed 64-bit range or an object"
+                        .to_owned(),
+                });
+            }
+            Ok(fsl_replay::spine::WireArgument {
+                parameter: argument.parameter.clone(),
+                value: argument.value.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut spine_call = fsl_replay::spine::Call::new(
+        call.function.clone(),
+        Vec::new(),
+        call_accounting(&call.accounting),
+        request.limits.supplied.unwrap_or_default(),
+    );
+    spine_call.wire_arguments = wire_arguments;
+    spine_call.live_occurrences = call.evaluation.live_occurrences();
+    Ok(spine_call)
+}
+
+/// FR-100: the request's `program`; a request selecting neither `program`
+/// nor `package` refuses `invalid-request` naming `program`.
+fn required_program(request: &wire::Request) -> Result<&wire::Program> {
+    request
+        .program
+        .as_ref()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "program".to_owned(),
+            reason: "a request selects exactly one of program and package".to_owned(),
+        })
 }
 
 /// The package name a program compiles under: its source identity's

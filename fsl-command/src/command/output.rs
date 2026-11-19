@@ -734,6 +734,42 @@ pub(super) fn spine_run_result_for_source(
     outcome: fsl_replay::spine::CallOutcome,
     settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
+    let mut result = spine_run_document(
+        RunEcho::Source(types::RunSource {
+            identity: source.identity(),
+            path: source.path(),
+        }),
+        function,
+        outcome,
+        settled,
+    )?;
+    result.sources = crate::Sources::from_sources([source.clone()]);
+    Ok(result)
+}
+
+/// FR-1039 "Outputs": the run result of a call over a selected checked
+/// package, equal to the source route's with the request's `package`
+/// selection echoed where a source run names its program.
+pub(super) fn spine_run_result_for_package(
+    package: &serde_json::Value,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+) -> super::Result<RunResult> {
+    spine_run_document(RunEcho::Package(package), function, outcome, None)
+}
+
+/// What a run result names its run's selection by.
+enum RunEcho<'a> {
+    Source(types::RunSource<'a>),
+    Package(&'a serde_json::Value),
+}
+
+fn spine_run_document(
+    echo: RunEcho<'_>,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
     let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
@@ -813,12 +849,14 @@ pub(super) fn spine_run_result_for_source(
             limit: incomplete.limits_field(),
         },
     };
+    let (source, package) = match echo {
+        RunEcho::Source(source) => (Some(source), None),
+        RunEcho::Package(package) => (None, Some(package)),
+    };
     let document = types::SpineRunReport {
         format: types::Format::SpineRunResult,
-        source: types::RunSource {
-            identity: source.identity(),
-            path: source.path(),
-        },
+        source,
+        package,
         function,
         outcome,
         requirements,
@@ -829,7 +867,7 @@ pub(super) fn spine_run_result_for_source(
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
         requirements: results,
-        sources: crate::Sources::from_sources([source.clone()]),
+        sources: crate::Sources::default(),
     })
 }
 

@@ -350,7 +350,6 @@ fn malformed_or_unknown_member_refuses_before_any_file_is_read() {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-4")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn no_member_and_no_header_still_refuses_missing_selection() {
     let directory = tempfile::tempdir().unwrap();
     let program = format!("{HEADER}{BODY}");
@@ -381,7 +380,6 @@ fn no_member_and_no_header_still_refuses_missing_selection() {
 
 #[test]
 #[trace("TC-2188", "FR-767-AC-5", "FSpec-TC-1652", "FSpec-FR-570-AC-6")]
-#[ignore = "QSL-1989: the request integer_division member is not implemented yet"]
 fn library_entry_takes_its_own_law() {
     let directory = tempfile::tempdir().unwrap();
     write(
@@ -488,4 +486,38 @@ fn top_level_law_reaches_every_unit_of_a_multi_unit_program() {
         document["diagnostics"][0]["cause"], "missing-selection",
         "{document}"
     );
+}
+
+/// FR-767, FR-100: a request that selects a package compiled under each law
+/// runs `q` and `r` under the package's recorded law, with the program source
+/// removed, and compiles nothing.
+#[test]
+#[trace("TC-2188", "FR-767-AC-1", "FR-767-AC-3")]
+fn package_only_run_uses_the_recorded_integer_division_law() {
+    for (law, quotient, remainder) in [
+        ("truncating", "-2", "-1"),
+        ("floor", "-3", "2"),
+        ("euclidean", "-3", "2"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let program =
+            format!("{HEADER}profile d = \"filament.value.integer-division.{law}/v1\";\n{BODY}");
+        let mut compile = compile_body(None);
+        compile["output"] = json!({"package": "package.json"});
+        let path = request(
+            directory.path(),
+            Some(&program),
+            "native-compile/1",
+            compile,
+        );
+        command::compile(&path).unwrap_or_else(|error| panic!("{law} compiles: {error}"));
+        std::fs::remove_file(directory.path().join("program.native")).unwrap();
+        for (function, expected) in [("q", quotient), ("r", remainder)] {
+            let mut body = run_body(None, function);
+            body.as_object_mut().unwrap().remove("program");
+            body["package"] = json!({"file": "package.json"});
+            let path = request(directory.path(), None, "native-run/1", body);
+            assert_eq!(returned(&path), expected, "{function} under {law}");
+        }
+    }
 }
