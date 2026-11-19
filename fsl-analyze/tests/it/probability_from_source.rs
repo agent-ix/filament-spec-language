@@ -96,6 +96,9 @@ fn timed_unit(claims: &str) -> String {
     );
     format!(
         "{source}\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         time M dense unit ms;\n\
          delay Msg::send_a ~ uniform[1 ms, 2 ms];\n\
          delay Msg::send_b ~ uniform[1 ms, 2 ms];\n\
          {claims}\n"
