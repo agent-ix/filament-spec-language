@@ -176,6 +176,17 @@ pub(super) fn replay(
         }
         previous = reached;
     }
+    if let Some(end) = &trace.end {
+        if !possibly(
+            CompareOp::Ge,
+            &Interval::point(end.time.upper.clone()),
+            &Interval::point(previous.time.lower.clone()),
+            &delta,
+        ) || !checker.invariant(previous.mode.get(), &intervals(&end.enclosure))?
+        {
+            return inconsistent(JsonPointer::root().key("end"), StaticCheck::End);
+        }
+    }
     // Check 5: a lasso's last state meets the state it returns to.
     if let Some(loop_to) = trace.loop_to {
         let target = usize::try_from(loop_to)

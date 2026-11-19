@@ -86,6 +86,8 @@ pub struct HybridTrace {
     /// The state the last state returns to: 0 for `start`, `k` for the state
     /// of `jumps[k - 1]`.
     pub loop_to: Option<u64>,
+    /// The endpoint of the final dwell for a finite trace prefix.
+    pub end: Option<TraceBefore>,
 }
 
 impl HybridTrace {
@@ -119,6 +121,9 @@ pub enum TraceFault {
     /// `loop` names the last state or a state past it.
     #[error("the loop names the last state or one past it")]
     LoopNotBeforeLast,
+    /// A finite end cannot coexist with a lasso.
+    #[error("a trace cannot carry both `end` and `loop`")]
+    EndWithLoop,
     /// `mode` names no mode of the model.
     #[error("the mode names no mode of the model")]
     UnknownMode,
@@ -201,6 +206,9 @@ pub fn admit(model: &CheckedHybridModel, trace: &HybridTrace) -> Result<(), Trac
         return refuse(JsonPointer::root().key("delta"), TraceFault::NegativeDelta);
     }
     if let Some(loop_to) = trace.loop_to {
+        if trace.end.is_some() {
+            return refuse(JsonPointer::root().key("end"), TraceFault::EndWithLoop);
+        }
         let last = trace.state_count() - 1;
         if usize::try_from(loop_to).map_or(true, |loop_to| loop_to >= last) {
             return refuse(loop_pointer(), TraceFault::LoopNotBeforeLast);
@@ -229,6 +237,9 @@ pub fn admit(model: &CheckedHybridModel, trace: &HybridTrace) -> Result<(), Trac
         }
         Ok(())
     };
+    if let Some(end) = &trace.end {
+        intervals(JsonPointer::root().key("end"), &end.time, &end.enclosure)?;
+    }
     let start = state_pointer(0);
     if model.modes.get(trace.start.mode.get()).is_none() {
         return refuse(start.key("mode"), TraceFault::UnknownMode);
@@ -288,7 +299,9 @@ fn enclosure_wire(model: &CheckedHybridModel, enclosure: &[ExactInterval]) -> se
             .variables
             .iter()
             .zip(enclosure)
-            .map(|(variable, interval)| (variable.name.as_str().to_owned(), interval_wire(interval)))
+            .map(|(variable, interval)| {
+                (variable.name.as_str().to_owned(), interval_wire(interval))
+            })
             .collect(),
     )
 }
@@ -331,6 +344,12 @@ impl HybridTrace {
         }
         if let Some(loop_to) = self.loop_to {
             wire["loop"] = loop_to.into();
+        }
+        if let Some(end) = &self.end {
+            wire["end"] = serde_json::json!({
+                "time": interval_wire(&end.time),
+                "enclosure": enclosure_wire(model, &end.enclosure),
+            });
         }
         wire
     }

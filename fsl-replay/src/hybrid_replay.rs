@@ -69,6 +69,8 @@ pub enum StaticCheck {
     Jump,
     /// 5: a lasso's last state meets the state it returns to.
     Loop,
+    /// 6: the finite end of the final dwell.
+    End,
 }
 
 impl StaticCheck {
@@ -80,6 +82,7 @@ impl StaticCheck {
             Self::Time => 3,
             Self::Jump => 4,
             Self::Loop => 5,
+            Self::End => 6,
         }
     }
 }
@@ -186,9 +189,13 @@ impl HybridCounterexample {
         let kind = match &self.kind {
             HybridCounterexampleKind::Formula => serde_json::json!("formula"),
             HybridCounterexampleKind::UndefinedEvaluation { at, cause } => {
-                let (lower, upper) = match &at.time {
-                    ExactReal::Rational(point) => (point, point),
-                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                let (lower, upper) = if let Some(interval) = &at.time_interval {
+                    (&interval.lower, &interval.upper)
+                } else {
+                    match &at.time {
+                        ExactReal::Rational(point) => (point, point),
+                        ExactReal::Root(root) => (root.lower(), root.upper()),
+                    }
                 };
                 serde_json::json!({
                     "type": "undefined-evaluation",
@@ -235,6 +242,9 @@ impl HybridCounterexample {
                 .sum::<usize>()
             + trace.delta.as_ref().map_or(0, rational)
             + trace.loop_to.map_or(0, |_| 8)
+            + trace.end.as_ref().map_or(0, |end| {
+                interval(&end.time) + end.enclosure.iter().map(interval).sum::<usize>()
+            })
     }
 }
 
@@ -263,6 +273,9 @@ pub struct UndefinedInstant {
     /// value on an open stretch of instants only, this is the stretch's
     /// start, the infimum of those instants.
     pub time: ExactReal,
+    /// The provider's claimed rational interval for this instant, when read
+    /// from the wire. Exact replay retains the claim for parity checks.
+    pub time_interval: Option<ExactInterval>,
     /// The expression.
     pub locus: ExpressionLocus,
 }

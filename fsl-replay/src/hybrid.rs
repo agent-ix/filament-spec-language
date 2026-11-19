@@ -30,7 +30,9 @@ use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, Hybrid
 mod process_request;
 mod locus;
 mod provider;
-pub use locus::{hybrid_locus_site, hybrid_locus_wire};
+pub use locus::{
+    hybrid_counterexample_locus, hybrid_locus_site, hybrid_locus_wire, hybrid_term_at_locus,
+};
 pub use provider::{
     HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
     UnsupportedConstruct,
@@ -514,9 +516,13 @@ fn agrees(claimed: &HybridCounterexampleKind, replayed: &HybridCounterexampleKin
             HybridCounterexampleKind::UndefinedEvaluation { at: claim, cause: claim_cause },
             HybridCounterexampleKind::UndefinedEvaluation { at: found, cause: found_cause },
         ) => {
-            let (lower, upper) = match &claim.time {
-                ExactReal::Rational(point) => (point, point),
-                ExactReal::Root(root) => (root.lower(), root.upper()),
+            let (lower, upper) = if let Some(interval) = &claim.time_interval {
+                (&interval.lower, &interval.upper)
+            } else {
+                match &claim.time {
+                    ExactReal::Rational(point) => (point, point),
+                    ExactReal::Root(root) => (root.lower(), root.upper()),
+                }
             };
             claim.state == found.state
                 && claim.locus == found.locus

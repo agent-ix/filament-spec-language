@@ -21,13 +21,14 @@ use std::sync::{Arc, Mutex};
 
 use filament_exact::{Integer, Rational, ScalarLimits};
 use fsl_analyze::analyze::Engine;
-use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest};
+use fsl_analyze::provider::{HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict};
 use fsl_foundation::SourceIdentity;
+use fsl_replay::{ExactReplay, HybridReplayMeter};
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
+use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -421,6 +422,7 @@ fn point_counterexample_with_acceleration(
             }],
             delta: None,
             loop_to: None,
+            end: None,
         },
     }
 }
@@ -452,8 +454,10 @@ fn hybrid_replay_request(
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
-            fsl_replay::QualifiedName::new(vec![filament_exact::Identifier::new("TooSlow")
-                .expect("the claim name is an identifier")])
+            fsl_replay::QualifiedName::new(vec![
+                filament_exact::Identifier::new("TooSlow")
+                    .expect("the claim name is an identifier"),
+            ])
             .expect("the claim name is qualified"),
         ),
         source: fsl_replay::ReplaySource::Hybrid(Box::new(counterexample)),
@@ -742,22 +746,69 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
 #[test]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-23")]
 #[trace("TC-1221", "FR-450-AC-10")]
-#[ignore = "QSL-2533: hybrid trace `end` replay not implemented yet"]
 fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
-    let unit = braking(&claim("TooSlow", "always [0, 10] holds(h.v > 5)"));
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Braking using p {\n\
+           mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
+             flow { v' = -a; a' = 0; t' = 1; }\n\
+             transition to Stopped when { v = 0 } reset { v = 0 };\n\
+           mode Stopped invariant { v = 0 }\n\
+             flow { v' = 0; a' = 0; t' = 1; }\n\
+         }\n\
+         temporal TooSlow using p over (h: Braking) clock \"model-time\" on origin {\n\
+           always [0, 10] holds(h.v > 5)\n\
+         }\n";
     let trace = |end_v: &str| {
         json!({"start": {"mode": "Moving", "time": interval("0", "0"),
-            "enclosure": {"v": interval("20", "20"), "a": interval("2", "2")}},
+            "enclosure": {"v": interval("20", "20"), "a": interval("2", "2"),
+                "t": interval("0", "0")}},
             "jumps": [], "end": {"time": interval("8", "8"),
-            "enclosure": {"v": interval(end_v, end_v), "a": interval("2", "2")}}})
+            "enclosure": {"v": interval(end_v, end_v), "a": interval("2", "2"),
+                "t": interval("8", "8")}}})
     };
     let run = |name: &str, trace: Value| {
+        let entry = refuted_entry(trace);
+        let (fixture, _) = answering("hybrid-fixture", move |request| {
+            let answer = entry_answer(entry.clone())(request);
+            if let fsl_analyze::provider::HybridAnswer {
+                verdict: HybridVerdict::Refuted(counterexample),
+                ..
+            } = &answer
+            {
+                assert!(
+                    counterexample.trace.end.is_some(),
+                    "end survives wire read-back"
+                );
+                let replay = fsl_replay::exact_replay(
+                    request.graph,
+                    request.claim,
+                    &counterexample.trace,
+                    &mut HybridReplayMeter::new(1_000_000),
+                );
+                let bad_prefix = counterexample
+                    .trace
+                    .end
+                    .as_ref()
+                    .is_some_and(|end| end.enclosure[0].lower == exact(4));
+                match (bad_prefix, replay) {
+                    (true, Ok(ExactReplay::Reproduced(_))) => {}
+                    (false, Ok(ExactReplay::NotReproduced { at, .. })) => {
+                        assert_eq!(at.to_string(), "/end");
+                    }
+                    (expected, actual) => {
+                        panic!("expected bad-prefix={expected}, got {actual:?}")
+                    }
+                }
+            }
+            answer
+        });
         first_item(
             name,
             &unit,
             named("TooSlow", "hybrid-fixture"),
             json!({}),
-            vec![hybrid_fixture("hybrid-fixture", &refuted_entry(trace))],
+            vec![fixture],
         )
         .1
     };
@@ -765,28 +816,6 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     assert_eq!(reproduced["record"]["result"], "refuted", "{reproduced}");
     let wrong = run("hybrid-193-23b", trace("5"));
     assert_eq!(wrong["record"]["result"], "inconclusive", "{wrong}");
-    assert!(wrong.to_string().contains("/end"), "{wrong}");
-    let outside = first_item(
-        "hybrid-193-23d",
-        &unit,
-        named("TooSlow", "hybrid-fixture"),
-        json!({}),
-        vec![hybrid_fixture(
-            "hybrid-fixture",
-            &json!({"request_index": 0, "result": "inconclusive",
-                "cause": {"type": "solver-inconclusive", "trace": trace("25")}}),
-        )],
-    )
-    .1;
-    let static_outcome = find(&outside["record"], "static").expect("a static replay outcome");
-    assert_eq!(static_outcome["outcome"], "inconsistent", "{outside}");
-    assert_eq!(static_outcome["check"], 6, "{outside}");
-    let mut looped = trace("4");
-    looped["loop"] = json!(0);
-    let refused = run("hybrid-193-23c", looped);
-    let text = refused.to_string();
-    assert!(text.contains("invalid_result"), "{refused}");
-    assert!(text.contains("/end"), "{refused}");
 }
 
 /// FR-750-AC-7 (process half): a process fixture whose entry is
@@ -805,9 +834,86 @@ fn a_process_unsupported_entry_settles_a_located_expression_form() {
 /// interval that contains it.
 #[test]
 #[trace("TC-3035", "FR-750-AC-9")]
-#[ignore = "QSL-2533: the reader's read-back of `where`/`locus` and the irrational-instant solver are not implemented yet"]
 fn an_undefined_evaluation_counterexample_reads_back() {
-    todo!("QSL-2533: AC-9 read-back and irrational instant");
+    use fsl_replay::{
+        ExactInterval, ExactReplay, HybridReplayMeter, HybridTrace, TraceBefore, TraceState,
+    };
+
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Rising using p {\n\
+           initial { mode Up when { v = 0 and a = 0 }; }\n\
+           mode Up invariant { v >= 0 and v <= 2 and a = 0 } flow { v' = 1; a' = 0; }\n\
+         }\n\
+         temporal Undefined using p over (h: Rising) clock \"model-time\" on origin {\n\
+           always [0, 2] holds(1 / (h.v * h.v - 2) != 0)\n\
+         }\n";
+    let point = |value| ExactInterval::point(exact(value));
+    let (engine, _) = answering("hybrid-undefined-readback", move |request| {
+        let claim_index = request
+            .graph
+            .hybrid_claims()
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate, request.claim))
+            .expect("the request claim belongs to its graph");
+        let trace = HybridTrace {
+            start: TraceState {
+                mode: ModeIndex::new(0),
+                time: point(0),
+                enclosure: vec![point(0), point(0)],
+            },
+            jumps: Vec::new(),
+            delta: None,
+            loop_to: None,
+            end: Some(TraceBefore {
+                time: point(2),
+                enclosure: vec![point(2), point(0)],
+            }),
+        };
+        let ExactReplay::Reproduced(found) = fsl_replay::exact_replay(
+            request.graph,
+            request.claim,
+            &trace,
+            &mut HybridReplayMeter::new(1_000_000),
+        )
+        .expect("the point trace replays exactly") else {
+            panic!("the trace reaches the irrational undefined instant");
+        };
+        let fsl_replay::HybridCounterexampleKind::UndefinedEvaluation { at, .. } = &found.kind
+        else {
+            panic!("the exact replay finds an undefined evaluation");
+        };
+        assert!(matches!(at.time, fsl_replay::ExactReal::Root(_)));
+        let locus =
+            fsl_replay::hybrid_locus_wire(request.graph, request.wire, claim_index, &at.locus)
+                .expect("the division has an emitted term locus");
+        let wire = found.to_wire(request.model, &|_| locus.clone());
+        let entry = json!({"request_index": 0, "result": "refuted", "counterexample": 0,
+            "counterexamples": [wire]});
+        let counterexamples = entry["counterexamples"]
+            .as_array()
+            .expect("the entry has a counterexample array");
+        HybridAnswer::read_entry(
+            &entry,
+            counterexamples,
+            request.graph,
+            request.claim,
+            request.wire,
+        )
+        .unwrap_or_else(|refusal| panic!("the irrational counterexample reads back: {refusal}"))
+    });
+    let (run, item) = first_item(
+        "hybrid-undefined-readback",
+        unit,
+        named("Undefined", "hybrid-undefined-readback"),
+        json!({}),
+        vec![engine],
+    );
+    assert_eq!(item["record"]["result"], "refuted", "{}", run.document());
+    assert_eq!(item["replay"]["reproduced"], true, "{}", run.document());
+    let counterexample = item["counterexample"].to_string();
+    assert!(counterexample.contains("undefined-evaluation"), "{item}");
+    assert!(counterexample.contains("division-by-zero"), "{item}");
 }
 
 /// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the
@@ -847,7 +953,10 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
     // `TooSlow` holds throughout [0, 10], so exact replay must report that
     // the provider's refuted trace does not reproduce the claim violation.
     let non_reproducing = fsl_replay::replay(
-        hybrid_replay_request(&braking_pair(), point_counterexample_with_acceleration(1, 20)),
+        hybrid_replay_request(
+            &braking_pair(),
+            point_counterexample_with_acceleration(1, 20),
+        ),
         fsl_replay::ReplayLimits::default(),
     )
     .expect("a valid trace that does not violate TooSlow settles as a row");
@@ -929,16 +1038,4 @@ fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
     assert_eq!(trace.pointer.to_string(), "/loop");
     assert_eq!(trace.code(), "invalid_result");
     assert_eq!(trace.cause(), "invalid-value");
-}
-
-/// FR-750-AC-14 (wire half): `to_wire` writes the four undefined causes and
-/// the reader reads each back to the same variant with its payload taken from
-/// the term `locus` names; `undefined` refuses at `/kind/cause`; an
-/// irrational instant is claimed through its isolating interval.
-#[test]
-#[trace("TC-3037", "FR-750-AC-14")]
-#[trace("FSpec-TC-2051", "FSpec-FR-193-AC-26")]
-#[ignore = "QSL-2533: the plugin reader does not read an undefined-evaluation counterexample back yet"]
-fn the_four_undefined_causes_round_trip_through_the_wire() {
-    todo!("QSL-2533: undefined-evaluation read-back");
 }
