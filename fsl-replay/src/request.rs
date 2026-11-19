@@ -863,9 +863,7 @@ impl ReplayRequest {
         // FSpec FR-323 decode rule 1: before any byte-provision rule.
         let (replay_target, over) = if matches!(
             wire.source,
-            ReplaySource::ModelGraph(_)
-                | ReplaySource::ProtocolAnalysis(_)
-                | ReplaySource::Hybrid(_)
+            ReplaySource::ModelGraph(_) | ReplaySource::ProtocolAnalysis(_)
         ) {
             let target = std::mem::take(&mut wire.replay_target);
             let member = if target.members.function.is_some() {
@@ -888,6 +886,15 @@ impl ReplayRequest {
         } else {
             let over = wire.replay_target.over.clone();
             let replay_target = decode_target(std::mem::take(&mut wire.replay_target))?;
+            if matches!(wire.source, ReplaySource::Hybrid(_))
+                && (replay_target.member() != TargetMember::StateClause
+                    || replay_target.occurrence_key().is_some()
+                    || over.is_some())
+            {
+                return Err(ReplayRequestRefusal::UnexpectedModelGraphTarget {
+                    member: Some(replay_target.member()),
+                });
+            }
             if over.is_some() && replay_target.member() != TargetMember::StateClause {
                 return Err(ReplayRequestRefusal::UnexpectedOverBinding);
             }
