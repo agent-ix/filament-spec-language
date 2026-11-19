@@ -3062,7 +3062,7 @@ impl Run<'_, '_> {
                         .successors
                         .into_iter()
                         .filter(|(transition, _)| transition == application)
-                        .map(|(_, post)| post)
+                        .map(|(_, post)| post.state().clone())
                         .collect::<Vec<_>>()
                 } else {
                     vec![state.clone()]
