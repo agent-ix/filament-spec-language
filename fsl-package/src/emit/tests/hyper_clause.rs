@@ -1330,7 +1330,7 @@ fn a_clocked_hyper_clause_binds_each_quantifier_on_its_hyperproperty_node() {
 /// I2 read admits the package. The temporal claim is named by its own
 /// sidecar; the hyper clause's `claim` node sorts before the `state_clause` node although
 /// it is placed later in the graph.
-#[trace("TC-1266", "FR-488-AC-10")]
+#[trace("TC-1266", "FR-488-AC-24")]
 #[test]
 fn state_temporal_and_hyper_claims_are_named_in_the_readers_order() {
     let declarations = format!(
@@ -1355,7 +1355,7 @@ fn state_temporal_and_hyper_claims_are_named_in_the_readers_order() {
 /// The rover mode-machine shape (a state-clause postcondition beside a
 /// fair-weak `temporal` claim over `behaviours` of one model) is admitted by
 /// the package route's strict read.
-#[trace("TC-1266", "FR-488-AC-10")]
+#[trace("TC-1266", "FR-447-AC-19")]
 #[test]
 fn a_postcondition_beside_a_fair_temporal_claim_is_admitted() {
     let declarations = "pre Ready using v on Config::ConfigVersion::attemptUpdate { true }\n\
