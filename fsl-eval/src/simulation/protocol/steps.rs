@@ -881,6 +881,69 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         Ok(true)
     }
 
+    /// The first relationship premise that rejects `transition` at `state`.
+    /// Replay uses this only after expansion reports that the transition is
+    /// not enabled, so a node-constraint or control-flow refusal keeps its
+    /// ordinary cause instead of being mislabeled as a relationship failure.
+    pub fn related_by_failure(
+        &self,
+        state: &ProtocolState<M>,
+        transition: &ProtocolTransition,
+    ) -> Option<String> {
+        let path = transition.node()?;
+        let thread = transition.thread()?;
+        let control = self
+            .program
+            .controls
+            .values()
+            .find(|control| control.text == path)?;
+        let clauses = self.program.related.get(&control.node)?;
+        let instance = state.instances.get(&thread.instance)?;
+        let observation = self.model.observation_of(&state.model).ok()?;
+        let mut frame = self.frame(instance, thread, control.node);
+        if let (Some(slot), Some(record)) = (
+            self.program.binder_of.get(&control.node).copied(),
+            transition.binder_record(),
+        ) {
+            if let Some(entry) = frame.get_mut(slot) {
+                *entry = Some(record.clone());
+            }
+        }
+        for clause in clauses {
+            let first = self
+                .evaluate_value_in(clause.ends[0], frame.clone(), &observation)
+                .ok()?;
+            let second = self
+                .evaluate_value_in(clause.ends[1], frame.clone(), &observation)
+                .ok()?;
+            let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
+            else {
+                return self
+                    .protocol
+                    .relationships
+                    .iter()
+                    .find(|relationship| relationship.key == clause.relationship)
+                    .map(|relationship| relationship.name.clone());
+            };
+            let holds = state.model.state().extents.iter().any(|extent| {
+                extent.relationship == clause.relationship
+                    && extent
+                        .instances
+                        .iter()
+                        .any(|pair| pair.0 == source && pair.1 == target)
+            });
+            if !holds {
+                return self
+                    .protocol
+                    .relationships
+                    .iter()
+                    .find(|relationship| relationship.key == clause.relationship)
+                    .map(|relationship| relationship.name.clone());
+            }
+        }
+        None
+    }
+
     /// ST-2: for a domain `event` or `commit` node, one step per record of
     /// its type that satisfies its constraint; the binder is bound and the
     /// model state is unchanged.

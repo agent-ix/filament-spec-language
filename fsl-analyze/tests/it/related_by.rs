@@ -9,26 +9,26 @@
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
+use fsl_eval::simulation::SubjectSystem;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
-use fsl_eval::simulation::SubjectSystem;
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_protocol_trace, ModelCheckItem, ModelCheckLimits, ModelTraceSubject,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    ModelCheckItem, ModelCheckLimits, ModelTraceSubject, ProtocolTraceSubject, ReplayLimits,
+    ReplayRefusal, replay_protocol_trace,
 };
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::counter::Letters;
 use crate::fill::{
-    attempt, contracts, document, instance, json_of, model_subject, package_over, protocol,
-    reachable, sc_system, source_memory, unit_text_with, universe, Documents, PACKAGE,
+    Documents, PACKAGE, attempt, contracts, document, instance, json_of, model_subject,
+    package_over, protocol, reachable, sc_system, source_memory, unit_text_with, universe,
 };
 use crate::model_settle::{envelope_at, protocol_anchor, request};
 use crate::protocol_system::violated;
@@ -236,6 +236,79 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
     assert_eq!(
         (refusal.code(), refusal.cause()),
         (Code::InvalidRuntimeInput, "invalid-value")
+    );
+}
+
+/// FR-731-AC-3: a node constraint refusal is not a relationship refusal.
+#[trace("TC-2023", "FR-731-AC-3")]
+#[test]
+fn replay_does_not_call_a_false_node_constraint_a_related_by_failure() {
+    let model = related_document();
+    let (documents, start) = related_documents(&model);
+    let related_body = body("related by Owns (k, r.p)");
+    let related = package_over(model.clone(), "package", "", &related_body);
+    let related_subject = subject(&related, &documents, &start);
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: subject(&related, &documents, &start),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        &Cancel::new(),
+    )
+    .expect("the related protocol checks");
+    let counterexample = violated(&outcome);
+    let at = counterexample
+        .prefix
+        .iter()
+        .position(|step| step.transition.kind() == StepKind::Event)
+        .expect("the counterexample takes Pick");
+
+    let false_body = body("related by Owns (k, r.p)").replace("{ true }", "{ false }");
+    let false_related = package_over(model.clone(), "package", "", &false_body);
+    let (node, occurrence) = protocol_anchor(&false_related, "P");
+    let replayed = replay_protocol_trace(
+        request(
+            &false_related,
+            &[],
+            &model,
+            documents.snapshots.iter(),
+            &unit_text_with("", &false_body).into_bytes(),
+        ),
+        &ProtocolTraceSubject {
+            model: ModelTraceSubject {
+                timed: None,
+                initial: vec![start.clone()],
+                universes: universe(&["c", "d"]),
+                expansion: ExpansionLimits {
+                    max_candidates: 1_000_000,
+                },
+            },
+            protocol: "P".to_owned(),
+            over: instance("c"),
+            roles: related_subject.roles.clone(),
+            capacities: Vec::new(),
+            memory: related_subject.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        },
+        &envelope_at(counterexample, node, occurrence),
+        &NO_ATOMS,
+        ReplayLimits::default(),
+    );
+    let Err(ReplayRefusal::ModelTrace(refusal)) = replayed else {
+        panic!("a false node constraint refuses: {replayed:?}");
+    };
+    assert!(
+        matches!(*refusal, fsl_replay::ModelTraceRefusal::ProtocolNotEnabled { step, .. } if step == at),
+        "the unrelated cause keeps the ordinary not-enabled refusal: {refusal:?}"
     );
 }
 

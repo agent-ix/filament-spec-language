@@ -1191,7 +1191,6 @@ pub fn replay_protocol_trace_with_temporal_selections(
             let replayed = ProtocolReplay {
                 payload,
                 clause,
-                protocol,
                 letters,
                 meter,
             };
@@ -1226,50 +1225,11 @@ pub fn replay_protocol_trace_with_temporal_selections(
 struct ProtocolReplay<'r> {
     payload: &'r TemporalCounterexample<ProtocolTransition>,
     clause: Option<&'r CheckedTemporalClause>,
-    protocol: &'r CheckedProtocol,
     letters: &'r dyn ModelLetters,
     meter: ScalarLimits,
 }
 
-fn protocol_related_by_not_enabled(
-    protocol: &CheckedProtocol,
-    step: usize,
-    transition: &ProtocolTransition,
-) -> Option<ModelTraceRefusal> {
-    let path = transition.node()?;
-    let control = protocol
-        .controls
-        .controls
-        .iter()
-        .find(|control| control.path.join("/") == path)?;
-    let related = protocol
-        .slots
-        .related
-        .iter()
-        .find(|related| related.node == control.node)?;
-    let relationship = protocol
-        .relationships
-        .get(related.relationship)?
-        .name
-        .clone();
-    Some(ModelTraceRefusal::ProtocolRelatedBy {
-        step,
-        node: path.to_owned(),
-        relationship,
-    })
-}
-
 impl ProtocolReplay<'_> {
-    /// Name the first checked relation of a node whose observed transition
-    /// was rejected by exploration's event-premise filtering.
-    fn related_by_not_enabled(
-        &self,
-        step: usize,
-        transition: &ProtocolTransition,
-    ) -> Option<ModelTraceRefusal> {
-        protocol_related_by_not_enabled(self.protocol, step, transition)
-    }
-
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
     fn settle<M: MemoryModel>(
@@ -1302,20 +1262,22 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = match replay_prefix(system, payload, &PROTOCOL_STEPS) {
-            Ok(replayed) => replayed,
-            Err(ReplayRefusal::ModelTrace(refusal)) => {
-                let ModelTraceRefusal::ProtocolNotEnabled { step, transition } = *refusal else {
-                    return Err(ReplayRefusal::ModelTrace(refusal));
-                };
-                if let Some(refusal) = self.related_by_not_enabled(step, &transition) {
-                    return Err(refused(refusal));
+        let replayed = match replay_prefix_with_not_enabled(
+            system,
+            payload,
+            &PROTOCOL_STEPS,
+            |step, state, transition| {
+                if let Some(relationship) = system.related_by_failure(state, transition) {
+                    return ModelTraceRefusal::ProtocolRelatedBy {
+                        step,
+                        node: transition.node().unwrap_or("<unknown>").to_owned(),
+                        relationship,
+                    };
                 }
-                return Err(refused(ModelTraceRefusal::ProtocolNotEnabled {
-                    step,
-                    transition,
-                }));
-            }
+                protocol_not_enabled(step, transition)
+            },
+        ) {
+            Ok(replayed) => replayed,
             Err(refusal) => return Err(refusal),
         };
         if self.clause.is_some() && payload.fairness != fairness {
@@ -1904,6 +1866,17 @@ fn replay_prefix<S: SubjectSystem>(
     Ok(replay_prefix_stopped(system, payload, rules)?.ok())
 }
 
+/// [`replay_prefix`] with a subject-specific explanation for a transition
+/// that is not enabled at its observed pre-state.
+fn replay_prefix_with_not_enabled<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    rules: &StepRules<S::TransitionId>,
+    not_enabled: impl FnMut(usize, &S::State, &S::TransitionId) -> ModelTraceRefusal,
+) -> Result<Option<Replayed<S>>, ReplayRefusal> {
+    Ok(replay_prefix_stopped_with_not_enabled(system, payload, rules, not_enabled)?.ok())
+}
+
 /// [`replay_prefix`], naming the stop an expansion returned.
 #[allow(
     clippy::type_complexity,
@@ -1913,6 +1886,21 @@ fn replay_prefix_stopped<S: SubjectSystem>(
     system: &S,
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
+) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
+    replay_prefix_stopped_with_not_enabled(system, payload, rules, |step, _, transition| {
+        (rules.not_enabled)(step, transition)
+    })
+}
+
+#[allow(
+    clippy::type_complexity,
+    reason = "a replay or the stop of an expansion, or a refusal"
+)]
+fn replay_prefix_stopped_with_not_enabled<S: SubjectSystem>(
+    system: &S,
+    payload: &TemporalCounterexample<S::TransitionId>,
+    rules: &StepRules<S::TransitionId>,
+    mut not_enabled: impl FnMut(usize, &S::State, &S::TransitionId) -> ModelTraceRefusal,
 ) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
     if let Some(step) = payload.prefix.iter().position(|step| step.delay.is_some()) {
         return Err(refused(ModelTraceRefusal::UntimedDelay {
@@ -1964,7 +1952,11 @@ fn replay_prefix_stopped<S: SubjectSystem>(
             state_keys.push(state_key);
         }
         if !enabled {
-            return Err(refused((rules.not_enabled)(index, &step.transition)));
+            return Err(refused(not_enabled(
+                index,
+                &current.state,
+                &step.transition,
+            )));
         }
         let (next, replayed) = reached.ok_or_else(|| {
             refused(ModelTraceRefusal::PostState {
