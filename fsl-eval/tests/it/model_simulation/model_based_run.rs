@@ -21,6 +21,25 @@ const RESET: &str = "pre CanReset using v on M::Counter::reset { self.value = 5 
 const JAM: &str = "pre CanJam using v on M::Counter::jam { self.value > 5 }\n\
                    post Jam using v on M::Counter::jam { self.value = 0 }";
 
+/// FSpec FR-190's typed evidence retains FR-301's exit code for every result
+/// category, including unsupported and internal-failure outcomes.
+#[trace("TC-2102", "FR-752-AC-5")]
+#[test]
+fn model_based_test_evidence_preserves_fr301_exit_codes() {
+    use ModelBasedTestEvidence::{Failed, Incomplete, Inconclusive, Refuted, Tested, Unsupported};
+
+    for (evidence, expected) in [
+        (Tested, 0),
+        (Refuted, 10),
+        (Inconclusive, 22),
+        (Incomplete, 22),
+        (Failed, 30),
+        (Unsupported, 21),
+    ] {
+        assert_eq!(evidence.exit_code(), expected, "{evidence:?}");
+    }
+}
+
 fn counter_run_world(invariant: &str, expression: &str) -> World {
     let clauses = format!(
         "{INC}\n{RESET}\n{JAM}\ninvariant {invariant} using v on M::Counter at current {{ {expression} }}"
