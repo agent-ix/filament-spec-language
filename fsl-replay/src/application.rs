@@ -2,12 +2,14 @@
 //! FR-485: in-process checked-closure acquisition and application through the replay facade.
 
 use filament_checked::node::NodeKind;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use filament_eval::{
-    Admission, BodyFactory, CallFailure, Evaluation, Progress, Registry, Session, SessionLimits,
-    Signature,
+    Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, LiveContext, Progress,
+    Registry, Resume, Session, SessionLimits, Signature, Transition,
 };
 use filament_exact::{
     Identifier, Meter, NodeKey, Origin as OccurrenceOrigin, Presence, Role, UnionMember, Value,
@@ -892,9 +894,11 @@ impl ApplicationRegistry {
         if !Arc::ptr_eq(&self.acquisition, &selection.acquisition) {
             return Err(SelectionRefusal::WrongAcquisition);
         }
-        let admission = self
-            .inner
-            .register(selection.key.clone(), signature, factory);
+        let admission = self.inner.register(
+            selection.key.clone(),
+            signature,
+            ChildRequestTrackingFactory(factory),
+        );
         if admission == Admission::Accepted {
             self.host_bindings.insert(selection.key.clone());
         }
@@ -917,6 +921,7 @@ impl ApplicationRegistry {
             return Err(ApplicationBeginRefusal::WrongAcquisition);
         }
         let host_root = self.host_bindings.contains(&selection.key);
+        let child_requested = Arc::new(AtomicBool::new(false));
         self.inner
             .begin_call(
                 selection.key.clone(),
@@ -925,7 +930,12 @@ impl ApplicationRegistry {
                 &environment.0,
                 meter,
             )
-            .map(|inner| CheckedApplicationSession { inner, host_root })
+            .map(|inner| CheckedApplicationSession {
+                inner,
+                host_root,
+                held: limits.held,
+                child_requested,
+            })
             .map_err(ApplicationBeginRefusal::Call)
     }
 
@@ -959,25 +969,95 @@ impl ApplicationRegistry {
 pub struct CheckedApplicationSession<'a> {
     inner: Session<'a, Adapter>,
     host_root: bool,
+    held: u64,
+    child_requested: Arc<AtomicBool>,
 }
 
 impl<'a> CheckedApplicationSession<'a> {
     /// Take one leaf transition, consuming this session.
     pub fn step(self) -> CheckedApplicationProgress<'a> {
         let host_root = self.host_root;
+        let held = self.held;
+        let child_requested = Arc::clone(&self.child_requested);
+        // Every admitted frame charges at least one occurrence, so a count
+        // above `held` proves the registered root was pushed successfully.
+        let host_root_opened = host_root && self.inner.live_occurrences() > held;
+        let _active_request = ActiveChildRequest::enter(Arc::clone(&child_requested));
         match self.inner.step() {
-            Progress::Runnable(inner) => {
-                CheckedApplicationProgress::Runnable(Self { inner, host_root })
-            }
+            Progress::Runnable(inner) => CheckedApplicationProgress::Runnable(Self {
+                inner,
+                host_root,
+                held,
+                child_requested,
+            }),
             Progress::Terminal(result) => {
-                CheckedApplicationProgress::Terminal(account_for_host_root(result, host_root))
+                let count_host_root = host_root_opened && child_requested.load(Ordering::Relaxed);
+                CheckedApplicationProgress::Terminal(account_for_host_root(result, count_host_root))
             }
         }
     }
 
     /// Drive this leaf session to its terminal result.
     pub fn run(self) -> Result<Evaluation, CallFailure> {
-        account_for_host_root(self.inner.run(), self.host_root)
+        let mut session = self;
+        loop {
+            match session.step() {
+                CheckedApplicationProgress::Runnable(next) => session = next,
+                CheckedApplicationProgress::Terminal(result) => return result,
+            }
+        }
+    }
+}
+
+struct ChildRequestTrackingFactory<F>(F);
+
+impl<F: BodyFactory> BodyFactory for ChildRequestTrackingFactory<F> {
+    fn begin(&self) -> Box<dyn Body> {
+        Box::new(ChildRequestTrackingBody(self.0.begin()))
+    }
+}
+
+struct ChildRequestTrackingBody(Box<dyn Body>);
+
+impl Body for ChildRequestTrackingBody {
+    fn resume(
+        &mut self,
+        input: Resume,
+        context: &mut LiveContext,
+        meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
+        let transition = self.0.resume(input, context, meter)?;
+        if matches!(&transition, Transition::Call(_)) {
+            ACTIVE_CHILD_REQUEST.with(|active| {
+                if let Some(tracker) = active.borrow().as_ref() {
+                    tracker.store(true, Ordering::Relaxed);
+                }
+            });
+        }
+        Ok(transition)
+    }
+}
+
+thread_local! {
+    // Body::resume has no session argument; this scoped tracker keeps child
+    // requests associated with the CheckedApplicationSession being stepped.
+    static ACTIVE_CHILD_REQUEST: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+struct ActiveChildRequest(Option<Arc<AtomicBool>>);
+
+impl ActiveChildRequest {
+    fn enter(tracker: Arc<AtomicBool>) -> Self {
+        let previous = ACTIVE_CHILD_REQUEST.with(|active| active.replace(Some(tracker)));
+        Self(previous)
+    }
+}
+
+impl Drop for ActiveChildRequest {
+    fn drop(&mut self) {
+        ACTIVE_CHILD_REQUEST.with(|active| {
+            active.replace(self.0.take());
+        });
     }
 }
 
@@ -986,10 +1066,10 @@ impl<'a> CheckedApplicationSession<'a> {
 /// caller frame retained by the interpreted Machine path.
 fn account_for_host_root(
     result: Result<Evaluation, CallFailure>,
-    host_root: bool,
+    count_host_caller: bool,
 ) -> Result<Evaluation, CallFailure> {
     result.map(|mut evaluation| {
-        if host_root
+        if count_host_caller
             && matches!(
                 &evaluation.outcome,
                 filament_eval::FamilyOutcome::Evaluated(
@@ -1283,13 +1363,7 @@ mod tests {
         let environment = ApplicationEnvironment::new(ObjectClosure::default());
         let mut meter = meter(100_000);
         let evaluation = registry
-            .begin_call(
-                &g,
-                vec![int(100)],
-                limits,
-                &environment,
-                &mut meter,
-            )
+            .begin_call(&g, vec![int(100)], limits, &environment, &mut meter)
             .expect("begin bounded host call")
             .run()
             .expect("host and FSL evaluation return an incomplete outcome");

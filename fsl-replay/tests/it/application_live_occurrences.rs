@@ -12,8 +12,8 @@ use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    ApplicationEnvironment, CallableSelection, CheckedClosureHandle, CompileUnit, DependencyInput,
-    ReplayLimits, StageLimits, acquire_checked_closure, call_site,
+    acquire_checked_closure, call_site, ApplicationEnvironment, CallableSelection,
+    CheckedClosureHandle, CompileUnit, DependencyInput, ReplayLimits, StageLimits,
 };
 use ix_trace_rs::trace;
 
@@ -93,7 +93,7 @@ fn source(c_has_three_arguments: bool) -> String {
 
 fn key(source: &str, name: &str) -> fsl_replay::NodeKey {
     let selection = fsl_replay::QualifiedName::new(vec![
-        Identifier::new(name).expect("function name is an identifier"),
+        Identifier::new(name).expect("function name is an identifier")
     ])
     .expect("function name is non-empty");
     call_site(
@@ -257,6 +257,17 @@ fn live_occurrences_aggregate_across_host_and_interpreted_roots() {
     );
     assert_eq!(interpreted_complete.peak_live_occurrences, 10);
     assert_eq!(host_complete.peak_live_occurrences, 10);
+}
+
+/// A refused root has not opened a frame and must not contribute caller depth.
+#[trace("NFR-130-AC-5")]
+#[test]
+fn unopened_host_root_is_not_counted_in_live_frame_depth() {
+    let fixture = fixture(true);
+    let evaluation = run(&fixture, true, true, 2);
+
+    assert_incomplete(&evaluation, 2, 0, 3);
+    assert_eq!(evaluation.frame_depth, 0);
 }
 
 /// TC-3125: the acquired application facade forwards the caller's session limit.
