@@ -8,7 +8,7 @@ use ix_trace_rs::trace;
 
 fn unit_clause_body(body: &str) -> Expression {
     let text = format!(
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\npre Own using v on M::T::op {{ {body} }}\n"
+        "language \"ix:native\" edition \"1-draft\";\nprofile p = \"filament.value.complete/v1\";\npre Clause using p on M::T::op {{ {body} }}\n"
     );
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
