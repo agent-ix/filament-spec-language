@@ -109,7 +109,9 @@ result on both routes because both routes read the same bytes.
   `equality.json` when present. These rows are the identity witness the
   reader projection (`BarePackage::world()`, the bare walker and observation
   admission) reads; they come from the handoff files only, never from the
-  package bytes (FR-531).
+  package bytes (FR-531). Printing a clause's atom text (FR-931 "The lowering
+  input") is not evaluation: it reads names and term structure from the
+  package's own nodes, needs no identity row and builds no world.
 
 ## Outputs
 

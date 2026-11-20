@@ -104,7 +104,26 @@ impl<'p> BarePackage<'p> {
         clause: &NodeKey,
         position: usize,
     ) -> Result<BareClauseTerm, BareSelectionFailure> {
-        self.project_clause_term(clause, ClauseTerm::Holds(position))?
+        self.project_clause_term(clause, ClauseTerm::Holds(position), false)?
+            .ok_or_else(|| SlotSelectionFailure::MalformedNode(clause.clone()).into())
+    }
+
+    /// [`Self::project_holds`] read to print the condition (FR-931 "The
+    /// lowering input"): printing is not evaluation, so the walk reads names
+    /// and term structure from the package alone and a node whose exact type
+    /// the identity rows do not select is typed by its own declaration node.
+    /// The package world is neither built nor consulted.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::project_holds`], less every refusal that is a missing
+    /// identity row.
+    pub fn project_holds_for_print(
+        &self,
+        clause: &NodeKey,
+        position: usize,
+    ) -> Result<BareClauseTerm, BareSelectionFailure> {
+        self.project_clause_term(clause, ClauseTerm::Holds(position), true)?
             .ok_or_else(|| SlotSelectionFailure::MalformedNode(clause.clone()).into())
     }
 
@@ -119,7 +138,7 @@ impl<'p> BarePackage<'p> {
         &self,
         clause: &NodeKey,
     ) -> Result<Option<BareClauseTerm>, BareSelectionFailure> {
-        self.project_clause_term(clause, ClauseTerm::Guard)
+        self.project_clause_term(clause, ClauseTerm::Guard, false)
     }
 
     #[ix_trace_rs::string_edge]
@@ -127,6 +146,7 @@ impl<'p> BarePackage<'p> {
         &self,
         clause: &NodeKey,
         term: ClauseTerm,
+        print: bool,
     ) -> Result<Option<BareClauseTerm>, BareSelectionFailure> {
         let package = self.package();
         let (_supply, identities) = self.witness()?;
@@ -247,6 +267,7 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
         )
         .map_err(SlotSelectionFailure::Fault)?;
+        let walker = if print { walker.printing() } else { walker };
         let root_key = graph
             .key(root)
             .map_err(|_| fault("bare-package-has-structural-keys"))?;
@@ -267,11 +288,13 @@ impl<'p> BarePackage<'p> {
                 filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name: site },
             )
             .map_err(walk_failure)?;
-        let world = self.world()?;
-        if projection.has_unrepresented_types(world.types()) {
-            return Err(BareSelectionFailure::Unsupported(Box::new(
-                UnsupportedView::missing_type(package.name(), root_key),
-            )));
+        if !print {
+            let world = self.world()?;
+            if projection.has_unrepresented_types(world.types()) {
+                return Err(BareSelectionFailure::Unsupported(Box::new(
+                    UnsupportedView::missing_type(package.name(), root_key),
+                )));
+            }
         }
         let binders = keys
             .iter()
@@ -987,5 +1010,73 @@ fn region_span(region: &filament_contract_model::CheckedSourceRegion) -> fsl_fou
     fsl_foundation::Span {
         start: usize::try_from(region.start).unwrap_or(usize::MAX),
         end: usize::try_from(region.end).unwrap_or(usize::MAX),
+    }
+}
+
+/// The names of a record, tuple or union declaration of a package, in
+/// declaration order, read from its declaration node alone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DeclaredShape {
+    /// A record's field names.
+    Record(Vec<String>),
+    /// A union's member names.
+    Union(Vec<String>),
+    /// A tuple, which names no member.
+    Tuple,
+}
+
+/// A record, tuple or union declaration node of a package.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeclaredComposite {
+    /// The declaration node's structural key.
+    pub key: NodeKey,
+    /// Its member names.
+    pub shape: DeclaredShape,
+}
+
+impl BarePackage<'_> {
+    /// Every record, tuple and union declaration node of the package with
+    /// the member names its body lists, in node order. The printer of an
+    /// atom reads these names when no identity row selects the declaration
+    /// (FR-931 "The lowering input"). Charges nothing.
+    pub fn declared_composites(&self) -> Vec<DeclaredComposite> {
+        use crate::wire_form::{has_form, WireForm, WireTag};
+        use filament_contract_model::CheckedBindingNameKind;
+
+        let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
+            let CheckedTerm::Aggregate { members } = &node.body else {
+                return Vec::new();
+            };
+            members
+                .iter()
+                .filter_map(|member| match member {
+                    CheckedTerm::Binding { name, .. } => match name.kind() {
+                        CheckedBindingNameKind::Other(name) => Some(name.to_owned()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        self.package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let shape = if has_form(node, WireTag::CompositeType, WireForm::Record) {
+                    DeclaredShape::Record(names(node))
+                } else if has_form(node, WireTag::CompositeType, WireForm::Union) {
+                    DeclaredShape::Union(names(node))
+                } else if has_form(node, WireTag::CompositeType, WireForm::Tuple) {
+                    DeclaredShape::Tuple
+                } else {
+                    return None;
+                };
+                Some(DeclaredComposite {
+                    key: self.node_key(&node.node_id)?,
+                    shape,
+                })
+            })
+            .collect()
     }
 }
