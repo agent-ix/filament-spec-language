@@ -1996,13 +1996,13 @@ fn declaring_low(declarations: &str, leaf: &str) -> String {
 }
 
 /// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630, package
-/// half): the checker records the alias a `count` type argument names, the
-/// emitter writes it as the member's `alias`, and the package route prints
-/// the declaration key the source route prints. A structural argument and a
-/// chain of aliases print as the source route prints them.
+/// half): the source route prints the declaration key a `count` type argument
+/// names, a chain of aliases at the outer alias, and a structural argument
+/// structurally. The package route cannot yet print this atom: its reader
+/// projection has no `sequence` literal operation.
 #[test]
 #[trace("TC-2601", "FR-931-AC-16")]
-fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
+fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
     let items = "q";
     let identity = "test:s1-16:unit.native";
     for (declarations, argument, printed) in [
@@ -2019,14 +2019,11 @@ fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
              in count<{argument}>(x in {items}: x > 1) >= 1)"
         );
         let unit = declaring_low(declarations, &leaf);
-        let (from_source, from_package) =
-            unit_both_routes(&unit, json!({"directory": "handoff"}));
+        let (code, value) = run(&unit, true, ("tl_lowering", json!({"clause": "Low"})));
+        assert_eq!(code, 0, "{value}");
+        let from_source = value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned();
         let expected = format!("count<{printed}>(x in q: x > 1)");
         assert!(from_source.contains(&expected), "{from_source}");
-        // The package route needs a reader projection for the `sequence` literal
-        // operation (`MissingOperationProjection`), which the projection lacks;
-        // the alias itself is asserted at the projection in `fsl-package`.
-        let _ = from_package;
     }
 }
 

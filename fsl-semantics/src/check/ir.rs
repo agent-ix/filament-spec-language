@@ -502,6 +502,15 @@ impl CheckedBody {
         Self::new(nodes)
     }
 
+    /// The fixture's root typed binder, for a root `seq`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_root_binder_annotation(mut self, annotation: ValueType) -> Self {
+        if let Some(root) = self.data.nodes.last_mut() {
+            root.binder_annotation = Some(annotation);
+        }
+        self
+    }
+
     /// Link the reachability `id`, over a relationship end or a field edge,
     /// to the authored bound of the population it walks (FR-380). A node
     /// that is no such reachability is left as it is.

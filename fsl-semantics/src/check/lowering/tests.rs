@@ -655,8 +655,8 @@ fn binder_levels_count_enclosing_binders() {
     );
 }
 
-/// FR-391-AC-10: `seq(i in low .. high: i)` lowers as a collection map over
-/// the checked integer range, with the sequence binder as its map binding.
+/// FR-391-AC-10: `seq(i in low .. high: i)` lowers as a `filament.op.collection.seq`
+/// application over its two bounds, with the sequence binder as its binding.
 #[trace("FR-391-AC-10", "TC-544")]
 #[test]
 fn seq_lowers_as_a_map_over_its_integer_range() {
@@ -675,7 +675,8 @@ fn seq_lowers_as_a_map_over_its_integer_range() {
             body: ids[2],
         },
         sequence,
-    );
+    )
+    .with_root_binder_annotation(int(0, 1));
     let scope = empty_scope();
     let owner = SourceOwner::from(&fixture_source());
     let mut occurrences = OccurrenceMap::default();
@@ -701,27 +702,20 @@ fn seq_lowers_as_a_map_over_its_integer_range() {
         .expect("seq lowers");
     lowering.settle_mixed_cycle(false).expect("the drafts settle");
     let semantic = lowering.finish(&location).expect("lowering finishes").graph;
-    let map = application(&semantic, "filament.op.collection.map");
-    let arguments = &map["body"]["arguments"];
-    assert_eq!(arguments[0]["term"], "reference");
-    let range_key = arguments[0]["target"]["digest"]
-        .as_str()
-        .expect("range source key");
-    let range = semantic
-        .nodes()
-        .find(|node| node.key().to_string() == range_key)
-        .expect("the map source is its integer range");
-    assert_eq!(range.semantic_form(), "integer_range");
-    assert_eq!(arguments[1]["term"], "binding");
-    assert_eq!(arguments[1]["name"], "i");
+    let seq = application(&semantic, "filament.op.collection.seq");
+    let arguments = &seq["body"]["arguments"];
+    assert_eq!(arguments[0]["term"], "reference", "the low bound");
+    assert_eq!(arguments[1]["term"], "reference", "the high bound");
+    assert_eq!(arguments[2]["term"], "binding");
+    assert_eq!(arguments[2]["name"], "i");
     assert_eq!(
-        arguments[1]["value"]["term"], "reference",
+        arguments[2]["value"]["term"], "reference",
         "the fixture body references its third literal operand"
     );
     let _ = parameter_named(&semantic, "i");
     assert_eq!(
-        map["body"]["operation"]["identity"],
-        "filament.op.collection.map"
+        seq["body"]["operation"]["identity"],
+        "filament.op.collection.seq"
     );
 }
 
