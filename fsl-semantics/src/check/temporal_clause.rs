@@ -2544,17 +2544,21 @@ pub enum PackageFormulaNode {
     Or(usize, usize),
     /// `implies`.
     Implies(usize, usize),
-    /// An unbounded unary temporal operator.
+    /// A unary temporal operator.
     Unary {
         /// Which operator.
         operator: UnaryTemporal,
+        /// Its step interval, when it has one.
+        interval: Option<CheckedInterval>,
         /// Its operand.
         operand: usize,
     },
-    /// An unbounded binary temporal operator.
+    /// A binary temporal operator.
     Binary {
         /// Which operator.
         operator: BinaryTemporal,
+        /// Its step interval, when it has one.
+        interval: Option<CheckedInterval>,
         /// Its left operand.
         left: usize,
         /// Its right operand.
@@ -2615,6 +2619,53 @@ pub enum PackageClauseRefusal {
     ClockBinding,
 }
 
+/// A bounded package formula's horizon, as [`horizon`] reads it from the
+/// source form: the greatest sum of interval upper bounds along a path from
+/// the root. Each operator precedes its operands in the arena.
+fn package_horizon(nodes: &[FormulaNode]) -> Result<u64, PackageClauseRefusal> {
+    let mut reach = vec![0_u64; nodes.len()];
+    for (index, node) in nodes.iter().enumerate().rev() {
+        let (operands, interval): (Vec<usize>, Option<&CheckedInterval>) = match node {
+            FormulaNode::Constant(_)
+            | FormulaNode::Holds { .. }
+            | FormulaNode::Aggregate { .. } => continue,
+            FormulaNode::Not(operand) => (vec![operand.0], None),
+            FormulaNode::And(left, right)
+            | FormulaNode::Or(left, right)
+            | FormulaNode::Implies(left, right) => (vec![left.0, right.0], None),
+            FormulaNode::Unary {
+                interval, operand, ..
+            } => (vec![operand.0], interval.as_ref()),
+            FormulaNode::Binary {
+                interval,
+                left,
+                right,
+                ..
+            } => (vec![left.0, right.0], interval.as_ref()),
+        };
+        let mut deepest = 0_u64;
+        for operand in operands {
+            deepest = deepest.max(
+                reach
+                    .get(operand)
+                    .copied()
+                    .ok_or(PackageClauseRefusal::Arena)?,
+            );
+        }
+        let own = match interval {
+            Some(CheckedInterval::Steps(steps)) => match steps.upper() {
+                TemporalUpper::Finite(upper) => upper,
+                TemporalUpper::Open => 0,
+            },
+            Some(CheckedInterval::Timed(_)) | None => 0,
+        };
+        *reach.get_mut(index).ok_or(PackageClauseRefusal::Arena)? = deepest
+            .checked_add(own)
+            .ok_or(PackageClauseRefusal::Arena)?;
+    }
+    reach.first().copied().ok_or(PackageClauseRefusal::Arena)
+}
+
 impl CheckedTemporalClause {
     /// FR-940: the model-check form of a temporal clause a checked package
     /// carries, rebuilt from `form` as S3 builds it from source: the same
@@ -2622,9 +2673,9 @@ impl CheckedTemporalClause {
     /// model checker reads an equal clause on both routes. `types` is the
     /// package's type environment and `position_limit` S3's domain limit.
     ///
-    /// Only an untimed clause over the infinite-trace profile with no
-    /// fairness, aggregate or interval is read yet; the package form of any
-    /// other clause is refused, never built without the fact it lacks.
+    /// Only an untimed clause with no fairness or aggregate is read yet,
+    /// its step intervals and bounded horizon included; the package form of
+    /// any other clause is refused, never built without the fact it lacks.
     ///
     /// # Errors
     ///
@@ -2634,9 +2685,10 @@ impl CheckedTemporalClause {
         types: &filament_semantic_value::declaration::TypeEnvironment,
         position_limit: u64,
     ) -> Result<Self, PackageClauseRefusal> {
-        if form.profile != TemporalProfile::InfiniteTrace {
+        if form.profile == TemporalProfile::Timed {
             return Err(PackageClauseRefusal::Profile(form.profile));
         }
+        let bounded = form.profile.is_bounded();
         let mut nodes = Vec::with_capacity(form.formula.len());
         let mut operators = Vec::new();
         for (index, node) in form.formula.iter().enumerate() {
@@ -2659,10 +2711,14 @@ impl CheckedTemporalClause {
                     FormulaNode::Implies(id(left), id(right)),
                     Some(TemporalOperator::Implies),
                 ),
-                PackageFormulaNode::Unary { operator, operand } => (
+                PackageFormulaNode::Unary {
+                    operator,
+                    interval,
+                    operand,
+                } => (
                     FormulaNode::Unary {
                         operator: *operator,
-                        interval: None,
+                        interval: interval.clone(),
                         operand: id(operand),
                     },
                     Some(match operator {
@@ -2674,12 +2730,13 @@ impl CheckedTemporalClause {
                 ),
                 PackageFormulaNode::Binary {
                     operator,
+                    interval,
                     left,
                     right,
                 } => (
                     FormulaNode::Binary {
                         operator: *operator,
-                        interval: None,
+                        interval: interval.clone(),
                         left: id(left),
                         right: id(right),
                     },
@@ -2698,10 +2755,16 @@ impl CheckedTemporalClause {
                 return Err(PackageClauseRefusal::Arena);
             }
             if let Some(operator) = operator {
+                let interval = match &checked {
+                    FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
+                        interval.clone()
+                    }
+                    _ => None,
+                };
                 operators.push(CheckedOperator {
                     node: TemporalNodeId::from_index(index),
                     operator,
-                    interval: None,
+                    interval,
                 });
             }
             nodes.push(checked);
@@ -2709,6 +2772,7 @@ impl CheckedTemporalClause {
         if nodes.is_empty() {
             return Err(PackageClauseRefusal::Arena);
         }
+        let horizon = bounded.then(|| package_horizon(&nodes)).transpose()?;
         let formula = CheckedFormula {
             nodes,
             root: FormulaNodeId(0),
@@ -2736,11 +2800,11 @@ impl CheckedTemporalClause {
             clock: form.clock,
             clock_binding,
             operators,
-            horizon: None,
+            horizon,
             claim: TemporalClaim {
                 kind: Capability::TemporalSatisfaction,
                 parameter_domains,
-                infinite_trace: true,
+                infinite_trace: !bounded,
                 populations: form
                     .populations
                     .into_iter()

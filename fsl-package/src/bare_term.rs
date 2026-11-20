@@ -843,10 +843,32 @@ impl<'p> BarePackage<'p> {
     /// select; [`BareClauseRefusal::Pending`] for a fact the form does not
     /// read yet: a fairness set, an interval, an aggregate atom or a
     /// formula node used twice.
-    #[ix_trace_rs::string_edge]
     pub fn temporal_clause_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
+        self.read_temporal_clause_form(claim, false)
+    }
+
+    /// [`Self::temporal_clause_form`] with each operator's step interval read
+    /// into the form, for a run that evaluates the clause over a trace. A
+    /// timed interval is still a pending fact.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::temporal_clause_form`], less the step interval.
+    pub fn temporal_clause_valuation_form(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
+        self.read_temporal_clause_form(claim, true)
+    }
+
+    #[ix_trace_rs::string_edge]
+    fn read_temporal_clause_form(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+        intervals: bool,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
         use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
@@ -936,9 +958,13 @@ impl<'p> BarePackage<'p> {
             if !seen.insert(entry.node) {
                 return Err(pending("shared-formula-node"));
             }
-            if entry.interval.is_some() {
-                return Err(pending("interval"));
-            }
+            let interval = match (&entry.interval, intervals) {
+                (None, _) => None,
+                (Some(interval), true) => {
+                    Some(checked_interval(interval).ok_or_else(|| pending("interval"))?)
+                }
+                (Some(_), false) => return Err(pending("interval")),
+            };
             let operand =
                 |position: usize| entry.operands.get(position).copied().ok_or_else(malformed);
             let kind = entry.kind().ok_or_else(malformed)?;
@@ -963,6 +989,7 @@ impl<'p> BarePackage<'p> {
                 | FormulaOperation::Always
                 | FormulaOperation::Once
                 | FormulaOperation::Historically => PackageFormulaNode::Unary {
+                    interval,
                     operator: match kind {
                         FormulaOperation::Eventually => UnaryTemporal::Eventually,
                         FormulaOperation::Always => UnaryTemporal::Always,
@@ -975,6 +1002,7 @@ impl<'p> BarePackage<'p> {
                 | FormulaOperation::Release
                 | FormulaOperation::Since
                 | FormulaOperation::Triggered => PackageFormulaNode::Binary {
+                    interval,
                     operator: match kind {
                         FormulaOperation::Until => BinaryTemporal::Until,
                         FormulaOperation::Release => BinaryTemporal::Release,
@@ -1004,6 +1032,24 @@ impl<'p> BarePackage<'p> {
             populations: Vec::new(),
         })
     }
+}
+
+/// The step interval a package operator carries; a timed interval has none.
+fn checked_interval(
+    interval: &crate::CheckedOperationInterval,
+) -> Option<fsl_semantics::check::CheckedInterval> {
+    use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
+
+    let crate::CheckedOperationInterval::Integer { lower, upper } = interval else {
+        return None;
+    };
+    let upper = match upper {
+        None => TemporalUpper::Open,
+        Some(upper) => TemporalUpper::Finite(upper.to_u64()?),
+    };
+    Some(fsl_semantics::check::CheckedInterval::Steps(
+        TemporalInterval::new(lower.to_u64()?, upper).ok()?,
+    ))
 }
 
 fn region_span(region: &filament_contract_model::CheckedSourceRegion) -> fsl_foundation::Span {

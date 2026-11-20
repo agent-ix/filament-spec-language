@@ -79,9 +79,10 @@ pub use observed::{
     evaluate_observed_timed,
     evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
     evaluate_sampled, evaluate_sampled_finite_window, letters_valuation, observed_valuation,
-    push_object, push_sample, read_object_stop, read_sample_stop, CarriedWindow, DescentSlice,
-    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedValuation,
-    ObservedWindowRun, SampleStop, ValuationStop, WindowValuations,
+    package_observed_valuation, push_object, push_sample, read_object_stop, read_sample_stop,
+    CarriedWindow, DescentSlice, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions,
+    ObservedRun, ObservedValuation, ObservedWindowRun, PackagePositions, SampleStop,
+    ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{

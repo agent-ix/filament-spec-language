@@ -1334,6 +1334,112 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
     }
 }
 
+/// Compiles the unit in `directory` to its FR-517 handoff `handoff`, with the
+/// spine model selected, and removes the unit's source. Returns the request's
+/// `models` member.
+fn compile_handoff(directory: &Path, unit: &str) -> Value {
+    std::fs::write(directory.join("unit.native"), unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.join("unit.native")).unwrap();
+    models
+}
+
+/// FR-931-AC-18, FR-931-AC-9: the lasso `cross_evaluate` request over the
+/// unit's FR-517 handoff `{"directory": D}` with the source removed returns
+/// the source route's record, `cross_evaluation` included, byte-equal and with
+/// the same exit code; over `{file}` and `{file, equality}` it refuses
+/// `invalid-request` with `requires: directory`.
+#[test]
+#[trace("TC-2601", "FR-931-AC-18")]
+fn a_lasso_cross_evaluation_over_a_handoff_directory_returns_the_source_record() {
+    let unit = counter_unit("");
+    let lower = json!({"clause": "C", "cross_evaluate": {"trace": {"lasso": {"prefix": [],
+        "loop": [{"sample": {"level": {"integer": "0"}}}]}}}});
+    let (source_code, from_source) = run(&unit, true, ("tl_lowering", lower.clone()));
+    assert_eq!(source_code, 0, "{from_source}");
+    let cross = &from_source["tl_lowering"]["cross_evaluation"];
+    assert_eq!(cross["traces"], 1, "{from_source}");
+    assert_eq!(cross["agree"], true, "{from_source}");
+
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let models = compile_handoff(directory.path(), &unit);
+    let (code, from_package) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+    );
+    assert_eq!(code, source_code, "{from_package}");
+    assert_eq!(from_package, from_source);
+    for package in [
+        json!({"file": "package.json"}),
+        json!({"file": "package.json", "equality": "handoff/equality.json"}),
+    ] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": package, "tl_lowering": lower}}),
+        );
+        assert_eq!(code, 20, "{package}: {value}");
+        assert_eq!(value["code"], "invalid-request", "{package}: {value}");
+        assert_eq!(
+            value["details"],
+            json!({"member": "tl_lowering.cross_evaluate", "requires": "directory"}),
+            "{package}: {value}"
+        );
+    }
+}
+
+/// FR-1039-AC-6 (FR-931-AC-6's snapshot): `cross_evaluate` `{"initial": S,
+/// "max_steps": N}` over the handoff `{"directory": D}` with the source removed
+/// returns the source route's record with its `cross_evaluation`, byte-equal,
+/// for each step bound, and an `over` population with no object gives zero
+/// traces on both.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-6")]
+fn an_initial_cross_evaluation_over_a_handoff_directory_returns_the_source_record() {
+    let unit = bump_low();
+    for (keys, max_steps) in [(&["a", "b"][..], 1), (&["a", "b"][..], 2), (&[][..], 2)] {
+        let directory = bump_directory(&unit, keys, true);
+        let lower = json!({"clause": "Low",
+            "cross_evaluate": {"initial": "s.json", "max_steps": max_steps}});
+        let (source_code, from_source) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {
+                "models": [{"format": "semantic-ir/2.0.0",
+                    "source": source("spine-model.semantic-ir.json")}],
+                "program": {"source": source("unit.native")}, "tl_lowering": lower}}),
+        );
+        assert_eq!(source_code, 0, "{from_source}");
+        let traces = from_source["tl_lowering"]["cross_evaluation"]["traces"]
+            .as_u64()
+            .expect("a trace count");
+        assert_eq!(traces == 0, keys.is_empty(), "{from_source}");
+
+        let models = compile_handoff(directory.path(), &unit);
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+        );
+        assert_eq!(code, source_code, "{keys:?} {max_steps}: {from_package}");
+        assert_eq!(from_package, from_source, "{keys:?} {max_steps}");
+    }
+}
+
 /// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
 /// gives every `case` and `let` binding site the declared names the
 /// in-process read gives, observed through the one printer that reads them,
@@ -1998,6 +2104,21 @@ fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() 
     assert_eq!(cross["agree"], true, "{value}");
 }
 
+/// FR-931-AC-9's infinite-trace clause `C` over FR-932's `Counter` record,
+/// with `constraint` before its formula.
+fn counter_unit(constraint: &str) -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile m = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.infinite-trace/v1\";\n\
+         model Config = \"example/config-version\";\n\
+         record Counter {{ level: Int[0, 9]; }}\n\
+         temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
+         {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
+    )
+}
+
 /// FR-931-AC-10, fairness half (TC-3023 step 4): the infinite-trace clause
 /// `C` with a weak fairness constraint over an observed lasso settles
 /// `MissingFairnessPremise` as FR-329 settles it, exit 21, and its record
@@ -2006,18 +2127,7 @@ fn tl_cross_evaluation_refuses_an_incomplete_universe_and_counts_an_empty_one() 
 #[test]
 #[trace("TC-3023", "FR-931-AC-10")]
 fn a_fairness_constraint_over_a_lasso_settles_missing_fairness_premise() {
-    let unit = |constraint: &str| {
-        format!(
-            "language \"ix:native\" edition \"1-draft\";\n\
-             profile v = \"filament.value.complete/v1\";\n\
-             profile m = \"filament.model.complete/v1\";\n\
-             profile t = \"filament.temporal.infinite-trace/v1\";\n\
-             model Config = \"example/config-version\";\n\
-             record Counter {{ level: Int[0, 9]; }}\n\
-             temporal C using t over (c: Counter) clock \"steps\" on each (q: Counter) \
-             {{ {constraint}once[1,1] not holds(c.level = 0) }}\n"
-        )
-    };
+    let unit = counter_unit;
     let lasso = json!({"lasso": {"prefix": [],
         "loop": [{"sample": {"level": {"integer": "0"}}}]}});
     let lower = |unit: String| {

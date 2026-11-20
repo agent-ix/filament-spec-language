@@ -68,6 +68,8 @@ pub use temporal::{
     TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
     name_clause_atom, run_package_temporal, run_package_temporal_bounded, sample_position,
 };
+pub use model_trace::{run_package_behaviours, PackageBehaviours};
+pub use trace_refusal::profile_reads;
 pub use temporal::SAMPLE_AUTHORITY;
 pub(crate) use temporal::{trace_refusal, verdict};
 pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};

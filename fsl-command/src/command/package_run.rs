@@ -42,8 +42,9 @@ pub struct PreparedPackageRun {
 enum Work {
     /// FR-945: call a function the package names.
     Call(Box<fsl_replay::spine::Call>),
-    /// FR-1039: lower a temporal clause the package names (FR-931).
-    Lowering(super::tl::TlLowering),
+    /// FR-1039: lower a temporal clause the package names (FR-931). The
+    /// bytes are the `cross_evaluate.initial` snapshot.
+    Lowering(super::tl::TlLowering, Option<Vec<u8>>),
 }
 
 /// The package bytes and handoff rows admitted for a selected package. The
@@ -215,18 +216,16 @@ fn prepare_lowering(
         ));
     }
     let lowering = super::tl::decode(member)?;
-    if lowering.cross.is_some() {
-        if package.file.is_some() {
-            return Err(RunCause::RequiresDirectory {
-                member: "tl_lowering.cross_evaluate".to_owned(),
-            });
-        }
-        return Err(invalid(
-            "tl_lowering.cross_evaluate",
-            "cross-evaluating over a handoff directory is not implemented yet",
-        ));
+    if lowering.cross.is_some() && package.file.is_some() {
+        return Err(RunCause::RequiresDirectory {
+            member: "tl_lowering.cross_evaluate".to_owned(),
+        });
     }
-    let admitted = admit(directory, request, package, dependent_bytes, None)?;
+    let initial = match &lowering.cross {
+        Some(super::tl::CrossEvaluate::Initial { initial, .. }) => Some(initial.as_str()),
+        Some(super::tl::CrossEvaluate::Trace { .. }) | None => None,
+    };
+    let admitted = admit(directory, request, package, dependent_bytes, initial)?;
     Ok(PreparedPackageRun {
         package: admitted.package,
         identities: admitted.identities,
@@ -234,7 +233,7 @@ fn prepare_lowering(
         budget: admitted.budget,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
-        work: Work::Lowering(lowering),
+        work: Work::Lowering(lowering, admitted.snapshot),
         selection: admitted.selection,
         models: admitted.models,
     })
@@ -593,8 +592,16 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         })?;
     let call = match work {
         Work::Call(call) => *call,
-        Work::Lowering(lowering) => {
-            let record = super::tl::lower_over_package(&bare, &lowering)?;
+        Work::Lowering(lowering, snapshot) => {
+            let record = super::tl::lower_over_package(
+                &bare,
+                &lowering,
+                &super::tl::PackageRun {
+                    packages: &packages,
+                    model_limits,
+                    snapshot: snapshot.as_deref(),
+                },
+            )?;
             return Ok(RunResult {
                 exit_code: record.exit_code,
                 value: super::NativeResult::lowering_document(super::tl::document(record.record)),

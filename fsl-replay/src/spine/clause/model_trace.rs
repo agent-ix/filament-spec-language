@@ -69,12 +69,12 @@ struct ObjectRead {
 /// snapshots declare, its keys the union of their objects' keys in reference
 /// order. `None` when an admitted snapshot is not there to read.
 fn universes(
-    run: &CompiledRun<'_>,
+    snapshots: &fsl_semantics::model::observation::DocumentProvision,
     documents: &[crate::DocumentRef],
 ) -> Option<Vec<PopulationUniverse>> {
     let mut found: BTreeMap<DeclarationKey, (Vec<String>, BTreeSet<String>)> = BTreeMap::new();
     for reference in documents {
-        let bytes = run.provisions.snapshots.get(reference)?;
+        let bytes = snapshots.get(reference)?;
         let read = serde_json::from_slice::<SnapshotRead>(bytes).ok()?;
         for population in read
             .populations
@@ -175,7 +175,7 @@ pub(super) fn run_model(
             Err(failure) => return stopped(ClauseDisposition::Admit(failure), admitted),
         }
     }
-    let Some(universes) = universes(run, universe_documents) else {
+    let Some(universes) = universes(run.provisions.snapshots, universe_documents) else {
         return fault("admitted-universe-snapshot-reads");
     };
     let request = ModelSimulationRequest {
@@ -346,7 +346,8 @@ pub(super) fn run_behaviours(
     ) {
         return ClauseDisposition::Admit(failure);
     }
-    let Some(mut universes) = universes(run, std::slice::from_ref(initial)) else {
+    let Some(mut universes) = universes(run.provisions.snapshots, std::slice::from_ref(initial))
+    else {
         return fault("admitted-universe-snapshot-reads").disposition;
     };
     for universe in &mut universes {
@@ -391,6 +392,89 @@ pub(super) fn run_behaviours(
         )),
         Err(refusal) => replay_refusal(refusal),
     }
+}
+
+/// FR-931 `cross_evaluate.initial` over a checked package: what
+/// [`run_package_behaviours`] reads.
+pub struct PackageBehaviours<'a> {
+    /// The package route's model-check input.
+    pub input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    /// The package form of the temporal clause.
+    pub clause: &'a fsl_semantics::check::CheckedTemporalClause,
+    /// The clause node's key.
+    pub key: &'a filament_exact::NodeKey,
+    /// The domain packages the package selects.
+    pub packages: &'a fsl_semantics::model::intake::PackageInput,
+    /// The limits admission re-normalizes the domain packages under.
+    pub model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    /// The snapshot documents, holding `initial`.
+    pub snapshots: &'a fsl_semantics::model::observation::DocumentProvision,
+    /// The snapshot the subject starts from.
+    pub initial: &'a crate::DocumentRef,
+    /// FR-106's observation limits.
+    pub observation_limits: fsl_semantics::model::observation::ObservationLimits,
+    /// The evaluation meter's accounting limits.
+    pub accounting: filament_exact::ScalarLimits,
+    /// The longest behaviour, in steps.
+    pub max_steps: usize,
+}
+
+/// [`run_behaviours`] over a checked package: the valuation of the clause
+/// over every behaviour of 1 to `max_steps` steps of the model subject the
+/// snapshot builds, for every instance of the clause's `over` parameter, the
+/// atoms read through the package's own evaluator. A refusal or stop is the
+/// disposition the source route reports for it.
+///
+/// # Errors
+///
+/// The [`ClauseDisposition`] of an admission refusal, a refused behaviour or a
+/// broken invariant.
+pub fn run_package_behaviours(
+    request: PackageBehaviours<'_>,
+) -> Result<crate::BehaviourValuations, ClauseDisposition> {
+    let PackageBehaviours {
+        input,
+        clause,
+        key,
+        packages,
+        model_limits,
+        snapshots,
+        initial,
+        observation_limits,
+        accounting,
+        max_steps,
+    } = request;
+    let Some(mut universes) = universes(snapshots, std::slice::from_ref(initial)) else {
+        return Err(fault("admitted-universe-snapshot-reads").disposition);
+    };
+    for universe in &mut universes {
+        universe.keys.sort();
+    }
+    let system = ModelSystem::new(ModelSimulationRequest {
+        input,
+        packages,
+        normalization: model_limits,
+        snapshots,
+        initial: vec![initial.clone()],
+        universes,
+        observation: observation_limits,
+        expansion: ExpansionLimits {
+            max_candidates: crate::spine::DEFAULT_MODEL_MAX_CANDIDATES,
+        },
+        meter: accounting,
+        emit: fsl_package::EmitLimits::new(u64::MAX),
+    })
+    .map_err(ClauseDisposition::Admit)?;
+    let Ok(instances) = system.instances(&clause.over().1) else {
+        return Err(fault("model-instances-are-listed").disposition);
+    };
+    let Ok(letters) = system.package_clause_letters(clause, key) else {
+        return Err(fault("model-clause-has-letters").disposition);
+    };
+    crate::model_check::replay::behaviour_valuations(
+        &system, clause, &letters, &instances, max_steps, accounting,
+    )
+    .map_err(replay_refusal)
 }
 
 /// The disposition of an expansion that stopped before the behaviour was

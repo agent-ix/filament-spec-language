@@ -1544,6 +1544,148 @@ pub fn observed_valuation(
     letters_valuation(clause.clause(), &mut letters, trace, meter)
 }
 
+/// What the represented positions of a package-route valuation hold.
+#[derive(Clone, Copy, Debug)]
+pub enum PackagePositions<'a> {
+    /// Snapshot positions: the object environment each admitted, and the
+    /// object the clause's `over` parameter names.
+    Objects {
+        /// The environment of each represented position.
+        environments: &'a [ObjectEnvironment],
+        /// The object bound to `over`.
+        over: &'a ObjectReference,
+    },
+    /// Record samples of a declared record trace subject, one per
+    /// represented position.
+    Samples(&'a [Value]),
+}
+
+/// The `holds` atoms and `on each` guard of a clause a checked package
+/// carries, read at the positions of an observed trace through the package's
+/// own evaluator.
+struct PackageLetters<'a> {
+    evaluator: &'a dyn crate::simulation::model::ModelEvaluator,
+    clause: &'a fsl_semantics::check::CheckedTemporalClause,
+    key: &'a filament_exact::NodeKey,
+    positions: PackagePositions<'a>,
+    trace: TemporalTrace,
+    /// The environment a sample position reads: it holds no object.
+    empty: ObjectEnvironment,
+    stopped: Option<HoldsStop>,
+}
+
+impl PackageLetters<'_> {
+    /// The environment position `position` observes and the value its `over`
+    /// parameter takes there: a lasso wraps past its last represented
+    /// position into the loop.
+    fn subject(
+        &self,
+        position: TemporalPosition,
+    ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
+        let index = position.index();
+        let slot = match self.trace {
+            TemporalTrace::Finite { .. } => Some(index),
+            TemporalTrace::Lasso { prefix, loop_len } => {
+                if index < prefix {
+                    Some(index)
+                } else {
+                    (index - prefix)
+                        .checked_rem(loop_len)
+                        .and_then(|offset| prefix.checked_add(offset))
+                }
+            }
+        }
+        .and_then(|slot| usize::try_from(slot).ok());
+        let found = match self.positions {
+            PackagePositions::Objects { environments, over } => slot
+                .and_then(|slot| environments.get(slot))
+                .map(|environment| (environment, Value::Reference(over.clone()))),
+            PackagePositions::Samples(samples) => slot
+                .and_then(|slot| samples.get(slot))
+                .map(|sample| (&self.empty, sample.clone())),
+        };
+        found.ok_or_else(|| {
+            LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "position-has-an-environment",
+            ))
+        })
+    }
+}
+
+impl TemporalLetters for PackageLetters<'_> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let (objects, over) = self.subject(position)?;
+        let named = crate::value::HoldsAtom {
+            clause: self.key.clone(),
+            position: atom.index(),
+        };
+        let evaluation = self
+            .evaluator
+            .evaluate_holds(&named, over, &[], objects, meter);
+        ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)
+    }
+
+    fn activation(
+        &mut self,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let (objects, over) = self.subject(position)?;
+        let evaluation = self
+            .evaluator
+            .evaluate_guard(self.key, over, objects, meter);
+        ObservedLetters::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)
+    }
+
+    fn captures(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut Meter,
+    ) -> Result<CaptureReading, LetterStop> {
+        if self.clause.captures().len() == 0 {
+            return Ok(CaptureReading::Fixed);
+        }
+        Err(LetterStop::Fault(InternalFault::new(
+            "temporal.observed",
+            "package-form-reads-no-capture-yet",
+        )))
+    }
+}
+
+/// [`observed_valuation`] for a clause a checked package carries: its `holds`
+/// atoms and guard read through the package's own evaluator `evaluator`,
+/// the clause's formula and activation from its package form `clause`, whose
+/// node is `key`. A clause with captures is not read.
+///
+/// # Errors
+///
+/// [`ValuationStop`], as for [`observed_valuation`].
+pub fn package_observed_valuation(
+    evaluator: &dyn crate::simulation::model::ModelEvaluator,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    key: &filament_exact::NodeKey,
+    positions: PackagePositions<'_>,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let mut letters = PackageLetters {
+        evaluator,
+        clause,
+        key,
+        positions,
+        trace,
+        empty: ObjectEnvironment::default(),
+        stopped: None,
+    };
+    letters_valuation(clause, &mut letters, trace, meter)
+}
+
 /// [`observed_valuation`] over any letter source: each `holds` atom of
 /// `clause` read through `letters` at every position of the closed finite
 /// `trace`, the activation positions, and the formula's value at each, on
