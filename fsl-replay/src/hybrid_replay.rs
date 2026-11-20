@@ -22,7 +22,9 @@ mod expand;
 mod flow;
 mod interval;
 mod poly;
+mod poly2;
 mod real;
+mod section;
 mod signal;
 mod static_replay;
 mod trace;
@@ -387,10 +389,11 @@ pub enum ExactGap {
     /// its own captured values.
     #[error("an `on each` claim under model-time reads its activation position's state")]
     ActivationState,
-    /// A fairness constraint whose enabledness depends on a reset that does
-    /// not determine the state after the jump.
-    #[error("fairness reads the enabledness of a transition with a nondeterministic reset")]
-    NondeterministicReset {
+    /// A fairness constraint reads the enabledness of a transition whose
+    /// reset leaves two or more variables free that the target mode's
+    /// invariant couples in one condition. Remaining work: QSL-2639.
+    #[error("fairness reads a reset whose free variables the target invariant couples")]
+    CoupledReset {
         /// The source mode's position.
         mode: usize,
         /// The transition's position in the mode.
@@ -505,16 +508,15 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2529): `ActivationState` and
-        // `NondeterministicReset` are gaps FR-750 deletes, because exact
-        // replay decides those claims (tau as a second real variable,
-        // quantifier elimination for reset enabledness). Until that replay
-        // exists they also settle `NotExact`, the only honest answer short of
-        // a verdict; the ignored QSL-2529 test names the case.
+        // TEMPORARY (QSL-2529 for `ActivationState`, QSL-2639 for
+        // `CoupledReset`): both are
+        // gaps FR-750 deletes, because exact replay decides those claims
+        // (tau as a second real variable; quantifier elimination over
+        // several coupled free variables). Until that replay exists they
+        // also settle `NotExact`, the only honest answer short of a
+        // verdict; the ignored tests name the cases.
         Err(HybridReplayRefusal::Exact(
-            ExactGap::RecursiveCall
-            | ExactGap::ActivationState
-            | ExactGap::NondeterministicReset { .. },
+            ExactGap::RecursiveCall | ExactGap::ActivationState | ExactGap::CoupledReset { .. },
         )) => Ok(ExactReplay::NotExact),
         other => other,
     }

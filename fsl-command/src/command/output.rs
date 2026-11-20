@@ -1133,7 +1133,10 @@ mod tests {
             })
         );
 
-        let type_name = DeclarationKey::fixture("foreign/W");
+        let type_name = DeclarationKey {
+            package: "test/orders".to_owned(),
+            node: "foreign/W".to_owned(),
+        };
         let type_refusal = RunError {
             cause: RunCause::SpineRun(Box::new(RunRefusal::Admission {
                 position: 3,

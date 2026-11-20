@@ -5463,9 +5463,17 @@ impl<'a> Lowering<'a> {
                         ..plain("filament.op.quantity.convert")
                     }
                 } else {
+                    use super::numeric_conversion::{classify, Class};
+                    let identity = match classify(node.at(*operand).value_type(), &target) {
+                        Some(Class::RangeNarrowing) => "filament.op.numeric.narrow",
+                        Some(Class::RationalNarrowing) => "filament.op.rational.narrow",
+                        Some(Class::Exact) | Some(Class::ScaleReduction) | None => {
+                            "filament.op.numeric.convert"
+                        }
+                    };
                     Operation {
                         member: Some(member),
-                        ..plain("filament.op.numeric.convert")
+                        ..plain(identity)
                     }
                 };
                 (

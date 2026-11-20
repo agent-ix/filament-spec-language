@@ -6,8 +6,8 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, NodeRef, NodeTag, PlaceStep,
-    SlotRef,
+    BindingValue, BodyTerm, ClockOp, CollectionShape, LeafTerm, LiteralValue, MemberTerm, NodeRef,
+    NodeTag, PlaceStep, SlotRef,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -2206,6 +2206,75 @@ fn an_option_clock_reads_its_presence_bit() {
             "{clause}"
         );
     }
+}
+
+/// In a population binder, the presence read's owner is the visited
+/// `Reference<Call>` itself. Keep the binder term as the second operand of
+/// the clock place's `presence_read`; lowering an object dereference here
+/// would give each place two encodings.
+#[trace(
+    "TC-685",
+    "FR-829-AC-3",
+    "FR-1040-AC-4",
+    "FSpec-FR-322-AC-455"
+)]
+#[test]
+fn a_population_clock_presence_read_uses_the_visited_reference() {
+    let document = option_clock_document();
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant PopulationPresence when {{ \
+             exists(c in Config::calls : present(c.v)) }} {{ self.x <= 1 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("population presence read checks: {refusals:?}"));
+    let semantic_graph = graph.semantic_graph();
+    let reads: Vec<_> = semantic_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.present" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    let [read] = reads.as_slice() else {
+        panic!("one population presence_read: {reads:?}");
+    };
+    let [
+        MemberTerm::Leaf(LeafTerm::Reference { target: place }),
+        MemberTerm::Leaf(LeafTerm::Reference { target: owner }),
+    ] = read.arguments.as_slice()
+    else {
+        panic!("presence_read has the template then the owner term: {read:?}");
+    };
+    let place = semantic_graph
+        .node(place.admitted().expect("place template is admitted").clone())
+        .expect("place template node exists");
+    assert_eq!(place.semantic_form(), "clock_place");
+    let owner = semantic_graph
+        .node(owner.admitted().expect("owner term is admitted").clone())
+        .expect("owner node exists");
+    assert_eq!(owner.node_tag(), NodeTag::Value);
+    assert_eq!(owner.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(owner_body) = owner.body() else {
+        panic!("the owner parameter carries its binder name");
+    };
+    let Some(MemberTerm::Binding(name)) = owner_body.members.first() else {
+        panic!("the owner parameter begins with a name binding");
+    };
+    assert_eq!(name.name, "name");
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(owner_name),
+        ..
+    }) = &name.value
+    else {
+        panic!("the owner parameter's name is text");
+    };
+    assert_eq!(owner_name, "c");
 }
 
 /// The STD-493 ruling on FR-230 "Presence bit" (TC-685): `absent` is an

@@ -28,8 +28,9 @@ evidence, and release admission. This replaces the former
 `Unsupported(StopwatchRequired)` expectation.
 
 Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11 to FR-249-AC-16,
-FR-237-AC-7 to FR-237-AC-9, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
-`queue_growth` cycle case), FR-239-AC-6,
+FR-237-AC-7 to FR-237-AC-12, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
+`queue_growth` cycle case), FSpec FR-364-AC-23, FSpec FR-364-AC-24,
+FR-239-AC-6,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
 
 ## Test Procedure
@@ -84,6 +85,17 @@ a two-job preemption scenario, a mixed-criticality task with distinct
     Rerun with the source operations declared in reverse order.
 14. Analyze `MCEarly` and `MCNone` (FR-249-AC-15).
 15. Parse, build and format FR-249-AC-16's sources.
+16. Write the FR-249-AC-9 refutation's counterexample to JSON, read it back
+    with `read_temporal_counterexample`, rewrite it, and replay the document
+    through `replay_model_trace_document`. Then read and replay each
+    FR-237-AC-10 shape mutation, alone and embedded as `counterexamples[0]`
+    of its FR-331 result.
+17. Replay FR-237-AC-11's alphabet mismatches: the source-spelled activation,
+    the source projection, the inserted task step over `Rpc`, the two typed
+    forms given the other alphabet, and the `Tick` model's synchronized
+    activations with each FSpec FR-364-AC-23 mutation.
+18. Replay each FR-237-AC-12 and FSpec FR-364-AC-24 member tamper through
+    the document form.
 
 Tag executable tests with the criterion IDs in scope, for example
 `#[trace("TC-704", "FR-249-AC-3")]`; a schema-only task-search check is not
@@ -151,3 +163,19 @@ evidence that the runtime provider implements the search semantics.
   modes and the field `hi` unaffected; each malformed source refuses at its
   stated token; the formatted text is `mode MC hi on C::go_hi;`, formatting
   is idempotent, and both sources compile to equal packages.
+- Step 16: the rewritten JSON equals the written JSON, and the document
+  replays `reproduced` with the result EN-6 recorded. The analyze run that
+  produced the refutation replayed it through `replay_model_trace_document`,
+  and a run whose written counterexample fails that reader does not settle
+  `refuted`. Each mutation refuses
+  `malformed_wire` with its FR-237-AC-10 cause and pointer, and, when
+  embedded, with the pointer prefixed `/counterexamples/0/counterexample`.
+  No mutation replays a step.
+- Step 17: each mismatch refuses `invalid_runtime_input`/`invalid-value` at
+  its `/transition/type` pointer, or, for a typed form given the other
+  alphabet, with `ModelTraceRefusal::TraceAlphabet` naming both alphabets.
+  None is `reproduced`. The `Tick` move replays as `activate a#0` then
+  `activate b#0`, and each mutation refuses at its FSpec FR-364-AC-23 pointer.
+- Step 18: each tamper refuses `invalid_runtime_input`/`invalid-value` at its
+  named member, naming the supplied and the recomputed value, and never
+  only as a step that is not enabled.
