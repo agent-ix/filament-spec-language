@@ -112,7 +112,7 @@ fn strict_body_lookup_recovers_called_integer_and_uncalled_boolean_values() {
     }
 }
 
-#[trace("TC-1011", "FR-576-AC-3", "FR-576-AC-4", "FR-576-AC-10")]
+#[trace("TC-1011", "FR-576-AC-3", "FR-576-AC-10")]
 #[test]
 fn a_bodyless_void_operation_has_explicit_absence_beside_a_real_body() {
     let score = query("ConfigVersion", "score", None);
