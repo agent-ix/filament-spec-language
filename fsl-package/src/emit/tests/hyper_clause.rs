@@ -208,6 +208,66 @@ fn a_hyper_clause_has_one_name_row_on_its_hyperproperty_node() {
     admit(&compiled);
 }
 
+/// FSpec FR-322-AC-294: a clock-configured hyperproperty has one temporal
+/// binding for each quantified trace, keyed to the hyperproperty node and
+/// ordered by the quantifier prefix.
+#[trace("TC-233", "FSpec-FR-322-AC-294")]
+#[test]
+fn hyper_temporal_bindings_are_keyed_by_each_quantified_trace() {
+    let declaration = hyper("Timed", "", "", "", READ_A_B);
+    let (text, documents) = world_unit(EVENT, &["V"], &declaration);
+    let graph = assemble_with_models(text.as_bytes(), &packages_of(&documents))
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}"));
+    let [clause] = graph.hyper_clauses() else {
+        panic!("one checked hyper clause");
+    };
+    let occurrence = clause.assembled_occurrence().expect("assembled");
+    let ordinal = occurrence.origin().ordinal();
+    let graph_clauses = graph.hyper_clauses().to_vec();
+    let selection = crate::emit::TemporalClockSelection::new(
+        graph.source().clone(),
+        clause.span(),
+        filament_contract_model::ClockConfiguration::EventPosition {
+            sequence_authority: "test-hyper-events".into(),
+        },
+    );
+    let emission = crate::emit::emit_checked_with_temporal_selections(
+        &CheckedPackage::link(graph),
+        &[selection],
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the package emits");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let hyper_node = hyper_node(&wire);
+    let bindings = wire["temporal_bindings"]
+        .as_array()
+        .expect("temporal binding rows");
+    assert_eq!(bindings.len(), 2, "one row for each quantifier trace");
+    let traces: Vec<_> = bindings
+        .iter()
+        .map(|row| row["trace"].as_str().expect("trace variable"))
+        .collect();
+    assert_eq!(traces, ["a", "b"]);
+    for row in bindings {
+        assert_eq!(row["declaration"], hyper_node["node_id"]);
+        assert_eq!(row["occurrence"]["ordinal"].as_u64(), Some(ordinal));
+        assert_eq!(row["clock_name"], "t");
+        assert_eq!(row["clock"]["kind"], "event_position");
+    }
+    admit(&Compiled {
+        graph_clauses,
+        emission,
+        wire,
+    });
+}
+
 #[trace("TC-1266", "FR-488-AC-1", "FR-488-AC-2", "FR-488-AC-3")]
 #[test]
 fn a_hyper_clause_emits_the_hyperproperty_node_with_its_seven_bindings() {

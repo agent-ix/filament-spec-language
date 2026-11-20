@@ -8875,19 +8875,22 @@ fn temporal_binding_rows(
             })
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         validate_temporal_clock(&source, span, clock_name, clock)?;
+        let declaration_key = occurrence.node();
         let declaration = emitted_node_ids
-            .get(&wrapper)
+            .get(declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let row = filament_contract_model::TemporalBinding {
-            declaration,
-            occurrence: occurrence.origin().ordinal(),
-            clock_name: clock_name.into(),
-            clock: clock.clone(),
-            trace: None,
-        };
-        keyed.rows.push((wrapper.clone(), row.clone()));
-        rows.push(row);
+        for quantifier in hyper.quantifiers() {
+            let row = filament_contract_model::TemporalBinding {
+                declaration: declaration.clone(),
+                occurrence: occurrence.origin().ordinal(),
+                clock_name: clock_name.into(),
+                clock: clock.clone(),
+                trace: Some(quantifier.variable.clone().into()),
+            };
+            keyed.rows.push((declaration_key.clone(), row.clone()));
+            rows.push(row);
+        }
     }
 
     // FSpec FR-464: an `await` control reads a clock, so it gets one binding
