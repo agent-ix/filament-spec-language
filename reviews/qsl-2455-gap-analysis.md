@@ -13,7 +13,7 @@ Independent confined diff review of frozen `4c39036eafa2043d396c4f66dbb58ffb35fb
 
 ## Verdict
 
-**CONDITIONAL** — one medium finding requires a bounded resolver fix and regression.
+**PASS** — FND-001 was fixed in disposition round 1; no open findings remain.
 
 ## Findings
 
@@ -37,3 +37,17 @@ This is the requested confined gap check, not a new whole-repository matrix audi
 - FR-761-AC-2 (spec/functional/FR-761-bind-every-consumer-fact-to-a-public-accessor.md): With a bindings file whose `CF-PR-03` accessors are `["no_such_accessor"]`, the check exits 1 and names `CF-PR-03` and `fsl_package::protocol_view::no_such_accessor`; a crate-private item named as an accessor fails the same way.
 - FR-911-AC-2 (spec/functional/FR-911-call-every-bound-consumer-fact-from-an-outside-crate.md): `cargo test -p facade-contract-consumer` runs and passes, with none ignored, one `cf_<code>_<nn>_*` test for each fact of the pinned inventory; among them the protocol tests read, over one compiled protocol clause, its view's roles and channels, the causal relation, each channel's sending role, receiving role and message type, the anchor of an `await`, the owner and visible expressions of a choice and the attempts maximum of a compensation, each equal to the declared value.
 - FR-911-AC-4 (spec/functional/FR-911-call-every-bound-consumer-fact-from-an-outside-crate.md): The crate's `compile_fail` doctest naming `fsl_package::protocol_view::relation_over` fails to compile with `E0603`; the same doctest naming the public `fsl_package::protocol_view::causal_relation` compiles.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At a4f67aeec08b2955fc92a2b999b30888fc7fb3be, internal resolution follows named and glob private imports while public resolution still uses public paths/reexports only. The new regression asserts extra/aliased/glob_extra on the public Thing and rejects the private alias, private module paths and unrelated hidden-type members. The coder reports the new focused regression passed (1 test, exit 0); no runtime checks repeated. |
+
+Fixed source excerpt:
+
+```rust
+    if let Some(source) = api.reexports.get(path).or_else(|| api.imports.get(path)) {
+        return resolve_internal_path(api, source, visited);
+    }
+```
