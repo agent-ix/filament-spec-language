@@ -1001,9 +1001,15 @@ fn enumerate_digital_deadline(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let clocked_steps = timed
+            .steps(&current.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         let given_actions = actions
             .iter()
-            .filter(|action| discrete_delay(system, &action.identity.operation).is_some())
+            .filter(|action| {
+                discrete_delay(system, &action.identity.operation).is_some()
+                    && digital_action_enabled(system, action, &clocked_steps)
+            })
             .count();
         if given_actions > 1 {
             return Err(ProbabilityDocumentError::Unsupported);
@@ -1029,12 +1035,12 @@ fn enumerate_digital_deadline(
                 charge_work(meter, cancel, 1)?;
             }
         }
-        let clocked_steps = timed
-            .steps(&current.timed)
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
             if let Some(support) = discrete_delay(system, &action.identity.operation) {
+                if !digital_action_enabled(system, &action, &clocked_steps) {
+                    continue;
+                }
                 let (choice, admitted_edges) = digital_discrete_delay_choice(
                     system,
                     timed,
@@ -1824,6 +1830,25 @@ fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rati
             fsl_semantics::check::DelayDistribution::Discrete(values) => Some(values.clone()),
             _ => None,
         })
+}
+
+fn digital_action_enabled(
+    system: &ModelSystem<'_>,
+    action: &fsl_eval::simulation::model::Action,
+    clocked_steps: &[(fsl_eval::simulation::model::GuardedStep, TimedState)],
+) -> bool {
+    action.draws.iter().any(|draw| {
+        draw.successors.iter().any(|(transition, discrete_post)| {
+            clocked_steps.iter().any(|(step, timed_post)| {
+                step.transition() == transition
+                    && system
+                        .state_key(timed_post.discrete())
+                        .ok()
+                        .zip(system.state_key(discrete_post).ok())
+                        .is_some_and(|(left, right)| left.0 == right.0)
+            })
+        })
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
