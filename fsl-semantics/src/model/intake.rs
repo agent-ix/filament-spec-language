@@ -6995,7 +6995,8 @@ fn key_eligibility(records: &[DomainPackageRecord], keys: &ValueTypeRef) -> Opti
                         scalar.domain,
                         ScalarValueDomain::Native(
                             NativeValueType::Decimal | NativeValueType::Rational
-                        ) | ScalarValueDomain::Rational { domain: None, .. }
+                        ) | ScalarValueDomain::Decimal(_)
+                            | ScalarValueDomain::Rational { domain: None, .. }
                     ) {
                         KeyEligibility::Ineligible
                     } else {
@@ -12950,7 +12951,19 @@ mod tests {
         };
         let mut package = vec![
             scalar("Small", ScalarValueDomain::Integer { lower: 0, upper: 9 }),
-            scalar("Price", ScalarValueDomain::Native(NativeValueType::Decimal)),
+            scalar(
+                "Price",
+                ScalarValueDomain::Decimal(
+                    DecimalType::new(
+                        Integer::from(-999_i64),
+                        Integer::from(999_i64),
+                        2,
+                        2,
+                        RoundingMode::Exact,
+                    )
+                    .unwrap(),
+                ),
+            ),
             scalar(
                 "NativeRatio",
                 ScalarValueDomain::Native(NativeValueType::Rational),
@@ -13066,6 +13079,7 @@ mod tests {
             ("PM-16", package_key("Shape")),
             ("PM-32", package_key("Price")),
             ("PM-33", ValueTypeRef::Native(NativeValueType::Rational)),
+            ("PM-34", ValueTypeRef::Native(NativeValueType::Decimal)),
             ("PM-33", package_key("NativeRatio")),
             ("PM-33", package_key("Ratio")),
         ] {
