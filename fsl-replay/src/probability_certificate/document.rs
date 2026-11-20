@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -14,26 +14,26 @@ mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
+    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity,
 };
 pub use mdp::{
-    cyclic_mdp_probability_certificate_document,
+    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document, ProbabilityProofDocument,
+    read_probability_proof_document, write_probability_proof_document,
 };
 mod long_run;
-#[cfg(feature = "test-support")]
 pub use long_run::{
-    check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
-};
-pub use long_run::{
+    LongRunProbabilityComponent, LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
     long_run_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
-    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    write_weighted_long_run_probability_certificate,
+};
+#[cfg(feature = "test-support")]
+pub use long_run::{
+    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity,
 };
 mod timed;
 mod unit;
@@ -266,7 +266,9 @@ pub enum ProbabilityDocumentError {
     #[error("probability certificate arithmetic stopped: {0:?}")]
     Accounting(Box<filament_exact::Incomplete>),
     /// Decimal text proves that an integer exceeds the bit ceiling before parsing it.
-    #[error("exact_prob.max_rational_bits exhausted: {decimal_digits} decimal digits exceed the {bit_bound}-bit ceiling")]
+    #[error(
+        "exact_prob.max_rational_bits exhausted: {decimal_digits} decimal digits exceed the {bit_bound}-bit ceiling"
+    )]
     IntegerText {
         /// Configured numerator/denominator bit ceiling.
         bit_bound: u64,
@@ -846,7 +848,12 @@ fn read_document_profile(
         } else {
             !matches!(
                 wire.objective.profile.as_str(),
-                PROFILE | STATE_PROFILE | REWARD_PROFILE | CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE | TIMED_PROFILE
+                PROFILE
+                    | STATE_PROFILE
+                    | REWARD_PROFILE
+                    | CYCLIC_PROFILE
+                    | CYCLIC_REWARD_PROFILE
+                    | TIMED_PROFILE
             ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
         }
         || !wire.objective.fairness.is_empty() && wire.objective.profile != BOUNDED_FAIR_PROFILE
@@ -874,11 +881,10 @@ fn read_document_profile(
     {
         return Err(ProbabilityDocumentError::Malformed);
     }
-    let timed = wire
-        .objective
-        .timed
-        .map(read_timed_objective)
-        .transpose()?;
+    let timed = wire.objective.timed.map(read_timed_objective).transpose()?;
+    let extended_timed_value_profile = timed
+        .as_ref()
+        .is_some_and(|objective| objective.form == TimedProbabilityForm::ExpectedElapsed);
     let reward = match (wire.objective.reward, wire.objective.unit) {
         (Some((model, name)), Some(unit)) => Some(ProbabilityRewardObjective {
             model: fsl_foundation::node_wire::node_key_from_text(model.get())
@@ -933,7 +939,13 @@ fn read_document_profile(
         poll(cancel)?;
         values.push(ExactProbabilityValue {
             state: decode_key(&row.state, limits)?,
-            value: reward_ratio(row.value, limits.scalar_bits, reward_profile, meter, cancel)?,
+            value: reward_ratio(
+                row.value,
+                limits.scalar_bits,
+                reward_profile || extended_timed_value_profile,
+                meter,
+                cancel,
+            )?,
         });
     }
     ordered(values.iter().map(|row| row.state.clone())).map_err(|error| {
@@ -1619,16 +1631,14 @@ fn check_document_with_control(
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match profile_dispatch(bytes, limits, cancel)? {
-        ProfileDispatch::Timed => {
-            return timed::check(system, claims, item, bytes, limits, cancel)
-        }
+        ProfileDispatch::Timed => return timed::check(system, claims, item, bytes, limits, cancel),
         ProfileDispatch::LongRun => {
-            return long_run::check(system, claims, item, bytes, limits, cancel)
+            return long_run::check(system, claims, item, bytes, limits, cancel);
         }
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
             return mdp::check_with_reward_control(
                 system, claims, item, bytes, limits, cancel, control,
-            )
+            );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
@@ -1707,7 +1717,7 @@ fn check_document_with_control(
     let values = match certificate_values(&graph, &certificate, cancel)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
     for (key, state) in &graph.states {
@@ -1963,7 +1973,7 @@ fn check_document_equalities(
                             ProbabilityObjective::Minimum => previous.min(sum),
                             ProbabilityObjective::Maximum => previous.max(sum),
                             ProbabilityObjective::Workload => {
-                                return Err(ProbabilityDocumentError::Unsupported)
+                                return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },
                     });
