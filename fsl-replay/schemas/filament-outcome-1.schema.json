@@ -20,6 +20,7 @@
     {"if": {"properties": {"operation": {"not": {"enum": ["analyze", "execute"]}}}, "required": ["operation"]}, "then": {"properties": {"items": {"items": {"required": ["result"]}}}}},
     {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "then": {"required": ["aggregate", "registry"]}},
     {"if": {"properties": {"operation": {"const": "execute"}}, "required": ["operation"]}, "then": {"properties": {"registry": {"type": "array"}}}},
+    {"if": {"properties": {"operation": {"const": "execute"}}, "required": ["operation"], "not": {"required": ["registry"]}}, "then": {"properties": {"items": {"maxItems": 0}}}},
     {"if": {"properties": {"operation": {"not": {"enum": ["execute", "analyze"]}}}, "required": ["operation"]}, "then": {"not": {"required": ["registry"]}}},
     {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "else": {"not": {"required": ["aggregate"]}}}
   ],

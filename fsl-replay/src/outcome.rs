@@ -2376,7 +2376,7 @@ impl Serialize for OutcomeDocument {
             document.serialize_field("registry", &[(); 0])?;
             document.serialize_field(
                 "aggregate",
-                &serde_json::json!({"status": "complete", "gaps": []}),
+                &serde_json::json!({"status": "incomplete", "gaps": []}),
             )?;
         }
         document.end()

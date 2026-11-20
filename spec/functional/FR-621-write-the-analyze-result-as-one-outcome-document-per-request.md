@@ -79,9 +79,10 @@ analyze member:
 - `registry`: the backends the request negotiated against (FR-635).
 
 A whole-request refusal, which settles no item, is still an `analyze`
-document: it carries an empty `aggregate` (`status` `complete`, `gaps` `[]`,
-the aggregate over zero items) and an empty `registry` (`[]`), so it
-validates against FR-286's published schema.
+document: it carries an empty `aggregate` (`status` `incomplete`, `gaps` `[]`: the
+request settled nothing, so no item settled `proved` or `measured`) and an
+empty `registry` (`[]`), so it validates against FR-286's published schema.
+Its exit code 20 still comes from category `refusal`.
 
 A `simulation` item carries FR-634's members in place of `record`,
 `certificate`, `counterexample`, `replay` and `axes`.

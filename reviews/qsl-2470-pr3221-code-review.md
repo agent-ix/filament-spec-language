@@ -64,3 +64,23 @@ Fix: assert the AC's named code, member and reason (`refused(..)` plus pointer/m
 ### FND-005
 
 FR-312 is the clause-run request reader and says nothing about `request_bytes`. FR-869-AC-1 (compile) and FR-026 own the request and dependent byte ceilings. FR-661-AC-1/AC-3 are about `build_inventory` content and determinism. Fix: retag with the owning ACs, or drop the tag.
+
+## Dispositions
+
+Round 1, head cde0a4d33eb3222fee12945e73ea77d9dfec6c1e.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The schema condition now exempts `analyze` and `execute` (schema.json:20). FR-286 says `items` is empty on every execute outcome except one carrying FR-963 requirement items, which are written in FR-621 spelling, so no valid execute document carries an item that needs a top-level `result`. run_requirement_items.rs now validates the FR-963-AC-1 execute document against the schema (FR-286-AC-31). The remaining looseness is FND-007. |
+| FND-002 | fixed | `OutcomeDocument::with_empty_analyze_members` is applied in both `AnalyzeRefusal::document` and `RunError::outcome_document`, and the harness skip is removed. The value it writes for `aggregate.status` is FND-006. |
+| FND-003 | fixed | The dead closure is deleted from machine_output.rs. |
+| FND-004 | fixed | export.rs refusals now check the code and the named members, run.rs checks the indeterminate item and its `missing-valuation` cause, monitor.rs compares against the clean stream and requires a summary with `cancelled`, and analyze.rs checks there is no `backend`. Operation `monitor` for a clause-run document is FR-286 "Monitor documents from clause runs"; FR-501-AC-4 is silent on the document. One small leftover is FND-008. |
+| FND-005 | fixed | Retagged to FR-624-AC-6, FR-026-AC-4, FR-100-AC-4 and FR-287. FR-286-AC-19 now asserts `details` null. |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | Every analyze refusal is written with `aggregate.status` `complete`. Under FR-621, `complete` means every required item settled `proved` or `measured`. A request refused after its items were read (an ill-typed program, a snapshot that does not fit, an unknown member beside `items`) has required items that never settled, so `complete` is a false positive to any consumer that gates on the aggregate. The new FR-621 sentence ("the aggregate over zero items") is true only for a request whose items were never read. Fix: write `{"status": "incomplete", "gaps": []}` on refusals and say so in the FR-621 sentence. The document category `refusal` still gives exit 20. | fsl-replay/src/outcome.rs:2379; spec/functional/FR-621-write-the-analyze-result-as-one-outcome-document-per-request.md:81-84 |
+| FND-007 | low | The `execute` exemption also admits a malformed plain execute document (no `registry`) whose items lack `result`. FR-286 says such a document has `items` `[]`. Fix: add `if operation = execute and registry absent then items maxItems 0`. | fsl-replay/schemas/filament-outcome-1.schema.json:20 |
+| FND-008 | low | The override run of `--limit export.output_bytes=1` still asserts only the category and exit, not that the document names `export.output_bytes` as FR-1015-AC-2 requires. | fsl-command/tests/it/cli_contract/export.rs:153 |
