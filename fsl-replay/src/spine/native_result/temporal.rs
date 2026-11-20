@@ -57,6 +57,7 @@ fn undefined_cause(reason: &str) -> Option<TemporalUndefinedCause> {
         Undefined::NoneValue,
         Undefined::NoElement,
         Undefined::SumOutOfDomain,
+        Undefined::MalformedNumber,
     ]
     .into_iter()
     .find(|undefined| crate::spine::kernel_undefined_reason(undefined.clone()) == reason)
