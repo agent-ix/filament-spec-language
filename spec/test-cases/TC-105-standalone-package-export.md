@@ -48,10 +48,10 @@ AC-2, steps 3 to 5 AC-3, step 6 AC-13.
   bytes.
 - Step 4: each refuses with its original stage and code, exit code 20, with
   no package bytes.
-- Step 5: each request refuses naming its fixed setting and ceiling, with no
-  package bytes or option hint.
-- Step 6: the first refuses at intake naming `dependent_bytes` and its fixed
-  maximum, with no package bytes or option hint; the second refuses at intake
-  with `selected files`, category `programs`, requested 65, maximum 64,
+- Step 5: each request settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming its fixed setting and
+  ceiling, with no package bytes or option hint.
+- Step 6: the first settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming `dependent_bytes`
+  and its fixed maximum, with no package bytes or option hint; the second
+  settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, with `selected files`, category `programs`, requested 65, maximum 64,
   before reading a selected source.
 - No call writes a byte to stdout or stderr.

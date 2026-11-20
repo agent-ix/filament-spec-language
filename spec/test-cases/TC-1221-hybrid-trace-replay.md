@@ -18,7 +18,7 @@ Verify static replay, exact replay and the settlement each gives, for a
 trace from a `solver-inconclusive` cause and from a provider's `refuted`
 entry.
 
-Scope: FR-450-AC-1 to FR-450-AC-11, FR-290-AC-19 and FR-269-AC-5.
+Scope: FR-450-AC-1 to FR-450-AC-12, FR-290-AC-19 and FR-269-AC-5.
 
 ## Test Procedure
 
@@ -58,6 +58,7 @@ provider, each returning a scripted entry with a scripted `HybridTrace`.
 13. Over FSpec FR-652-AC-3's `Grow`, submit its point trace as a provider's
     `refuted` entry with the nine-step `validated-witness`, then with that
     witness cut after its step at `[28, 32]`.
+14. Over FR-750-AC-12's `Shuttle` and its point lasso `L`, replay each `on each` claim FR-450-AC-12 lists under `model-time`: the capture `v0: Rational[0, 1; 1, 2] = q.v + 1/2`, out of range exactly for `τ` in `(1/2, 1)`, with provider entries claiming `where.time` `[1/2, 1/2]` and `[3/4, 3/4]`, the `historically` and `once` bodies, and the two-period `not once` body. Then replay FR-450-AC-12 (d)'s `Phase` lasso against `once [0, 1] once [0, 1] holds(h.w = 1)`.
 
 Run each step through both fixture providers.
 
@@ -118,4 +119,5 @@ Tag the tests `#[trace("TC-1221", "FR-450-AC-n")]`.
   `counterexamples` entry;
   `inconclusive`, `ReplayParity(HybridTrace(NotExact))`, with no
   `counterexamples` entry.
+- Step 14: never `NotExact`; the capture claim `Reproduced`, `UndefinedEvaluation`, `outside-capture-range`, `where.position` 0, `where.time` `[1/2, 1/2]`, the `[1/2, 1/2]` entry `refuted` and the `[3/4, 3/4]` entry `NotReproduced` at check 5; `historically` `Reproduced` with kind `Formula` and `once` `NotReproduced` at check 5; the `not once` body `Reproduced` with kind `Formula`; the nested `once` claim decided over the prefix and three periods, `Reproduced` with kind `Formula`, the item `refuted`.
 - Both fixture providers give the same outcomes.

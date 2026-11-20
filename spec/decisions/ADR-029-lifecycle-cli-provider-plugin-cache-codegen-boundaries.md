@@ -295,7 +295,7 @@ and denies `clippy::wildcard_enum_match_arm` (ADR-011 §5):
 | undefined (RU-1; a non-proof evaluation item keeps the label `undefined`) | 10 |
 | refusal | 20 |
 | unsupported | 21 |
-| incomplete (limit, cancellation, deadline, budget) | 22 |
+| incomplete (limit, an intake byte or selected-file limit reached while reading input included; cancellation, deadline, budget) | 22 |
 | inconclusive: a proof or `analyze` item (incomplete under FSpec FR-301) | 22 |
 | pending: a supplied-trace clause pending when the trace ends (completed without violation) | 0 |
 | internal failure (including tool failure) | 30 |

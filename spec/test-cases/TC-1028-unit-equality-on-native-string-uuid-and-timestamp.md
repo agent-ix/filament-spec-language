@@ -88,6 +88,7 @@ fields; TC-1052 covers the literal forms of these types.
    | W3 | `eqs` | position 0 a Timestamp object `{"kind":"timestamp","nanoseconds":"0"}` | `WrongValueKind` at position 0, no call |
    | W4 | `eqs` | position 0 `{"type":"text","value":"abc"}` | `WrongValueKind` at position 0, no call |
    | W5 | the Text-parameter predicate | position 0 a String object | `WrongValueKind` at position 0, no call |
+8. Assemble and compile through S4 FR-091-AC-77's unit of `equal0` to `equal3` over `UUID`, `Timestamp`, `Bytes` and `JsonObject` parameters; check `a = b` over `a: Bytes`, `b: JsonObject`; declare `record Bytes { x: Integer; }` in a unit that also uses `Bytes` as a parameter type.
 
 ## Expected Results
 
@@ -118,3 +119,4 @@ fields; TC-1052 covers the literal forms of these types.
   the stated position, before the call and with no charge, from both sources.
   No String payload is read as a UUID, Timestamp or Text, and no UUID,
   Timestamp or Text object is read as a String.
+- Step 8: no `UnresolvedTypeName`; `equal2`'s parameters are `ValueType::Bytes` and `equal3`'s `ValueType::JsonObject`, with no domain package; the unit compiles through S4, exit 0. The mixed comparison refuses `ill_typed`/`type-mismatch`. The `Bytes` use refuses `ambiguous_declaration`/`ambiguous-name` naming the use, the record's span and the native `Bytes` candidate with no span.
