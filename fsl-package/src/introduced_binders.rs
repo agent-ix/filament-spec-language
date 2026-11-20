@@ -112,14 +112,13 @@ fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<
                 body: value,
             }
         }
-        (
-            Some("filament.op.collection.seq"),
-            [low, high, CheckedTerm::Binding { name, value }],
-        ) => Opening::Seq {
-            bounds: [low, high],
-            name: name.as_ref(),
-            body: value,
-        },
+        (Some("filament.op.collection.seq"), [low, high, CheckedTerm::Binding { name, value }]) => {
+            Opening::Seq {
+                bounds: [low, high],
+                name: name.as_ref(),
+                body: value,
+            }
+        }
         (Some("filament.op.control.case"), [_, ..]) => Opening::Case(arguments),
         _ => Opening::None,
     }

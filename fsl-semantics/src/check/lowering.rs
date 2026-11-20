@@ -1212,9 +1212,7 @@ pub(crate) fn require_admitted(
 ) -> Result<NodeKey, CheckRefusal> {
     match node {
         NodeRef::Admitted(key) => Ok(key),
-        NodeRef::Pending(_) => {
-                    Err(fault(location, KeyFault::UnresolvedDraft))
-        }
+        NodeRef::Pending(_) => Err(fault(location, KeyFault::UnresolvedDraft)),
     }
 }
 

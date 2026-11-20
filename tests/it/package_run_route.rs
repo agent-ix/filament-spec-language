@@ -199,7 +199,11 @@ fn a_file_selection_reads_the_equality_file_beside_it() {
         directory.join("package.json"),
     )
     .unwrap();
-    std::fs::write(directory.join("other-format.json"), r#"{"format":"x/1","applications":[],"facts":[],"source_units":[]}"#).unwrap();
+    std::fs::write(
+        directory.join("other-format.json"),
+        r#"{"format":"x/1","applications":[],"facts":[],"source_units":[]}"#,
+    )
+    .unwrap();
     std::fs::write(directory.join("garbage.json"), "not json").unwrap();
     let models = json!([{"format": "semantic-ir/2.0.0", "source": source("model.json")}]);
     let lower = json!({"clause": "Nothing"});
@@ -216,7 +220,8 @@ fn a_file_selection_reads_the_equality_file_beside_it() {
     names(&value, "/request/package/equality");
     // With the producer's file the package is admitted, and the request
     // reaches the member, which refuses its own missing clause.
-    let (exit, value) = attempt(json!({"file": "package.json", "equality": "handoff/equality.json"}));
+    let (exit, value) =
+        attempt(json!({"file": "package.json", "equality": "handoff/equality.json"}));
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["code"], "missing_declaration", "{value}");
     // `equality` beside `directory`, or not a string.
@@ -236,7 +241,10 @@ fn a_file_selection_reads_the_equality_file_beside_it() {
     names(&value, "package.equality");
     names(&value, "absent.json");
     // A file the equality reader refuses retains its variant.
-    for (file, variant) in [("other-format.json", "Format"), ("garbage.json", "Malformed")] {
+    for (file, variant) in [
+        ("other-format.json", "Format"),
+        ("garbage.json", "Malformed"),
+    ] {
         let (exit, value) = attempt(json!({"file": "package.json", "equality": file}));
         assert_eq!(exit, 20, "{value}");
         assert_eq!(value["code"], "invalid_package", "{value}");

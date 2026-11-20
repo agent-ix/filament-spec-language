@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -1102,11 +1102,7 @@ fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
 
 /// [`unit_both_routes`] with `edit` run over the compiled directory before the
 /// package route reads it.
-fn unit_both_routes_with(
-    unit: &str,
-    package: Value,
-    edit: impl FnOnce(&Path),
-) -> (String, String) {
+fn unit_both_routes_with(unit: &str, package: Value, edit: impl FnOnce(&Path)) -> (String, String) {
     let unit = unit.to_owned();
     let lower = json!({"clause": "Low"});
     let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
@@ -1235,7 +1231,10 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
         assert_eq!(code, 20, "{value}");
         assert_eq!(value["code"], "invalid-request", "{value}");
         assert_eq!(value["stage"], "request", "{value}");
-        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(member),
+            "{value}"
+        );
     }
 }
 
@@ -1999,11 +1998,7 @@ fn case_binders_print_under_their_declared_names_without_a_model_read() {
 /// The `Low` unit with `declarations` before its clause and `leaf` under
 /// `always`.
 fn declaring_low(declarations: &str, leaf: &str) -> String {
-    shape_low(leaf).replacen(
-        "union Shape",
-        &format!("{declarations}\nunion Shape"),
-        1,
-    )
+    shape_low(leaf).replacen("union Shape", &format!("{declarations}\nunion Shape"), 1)
 }
 
 /// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630): the source
@@ -2023,14 +2018,20 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
             format!("ix://{identity}/Small"),
         ),
     ] {
-        let leaf = "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
+        let leaf =
+            "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
                     in count<Small>(x in q: x > 1) >= 1)";
         let unit = declaring_low(declarations, leaf);
         let (code, value) = run(&unit, true, ("tl_lowering", json!({"clause": "Low"})));
         assert_eq!(code, 0, "{value}");
-        let from_source = value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned();
+        let from_source = value["tl_lowering"]["atoms"]["p0"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let expected = format!("count<{printed}>(x in q: x > 1)");
-        assert!(from_source.contains(&expected), "{declarations}: {from_source}");
+        assert!(
+            from_source.contains(&expected),
+            "{declarations}: {from_source}"
+        );
     }
 }
-

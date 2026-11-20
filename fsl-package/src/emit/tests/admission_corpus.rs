@@ -964,13 +964,8 @@ fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2
             .insert_domain_package_document(package_identity(document), document.to_vec())
             .expect("a fresh evidence key");
     }
-    read_checked_package_v2(
-        bytes,
-        library(),
-        V2ReadLimits::fixture(),
-        &evidence,
-    )
-    .map(Staged::into_value)
+    read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
+        .map(Staged::into_value)
 }
 
 /// One emitted package of a fixture and what FSL's I2 read made of it.
@@ -3267,7 +3262,8 @@ fn a_seq_row_with_a_foreign_identity_or_range_body_is_refused() {
     assert!(refused(&|wire| {
         for node in wire["semantic_graph"]["nodes"].as_array_mut().unwrap() {
             if node["semantic_form"] == "integer_range" {
-                node["body"]["members"][0]["value"] = json!({"term": "reference", "target": node["node_id"]});
+                node["body"]["members"][0]["value"] =
+                    json!({"term": "reference", "target": node["node_id"]});
             }
         }
     }));

@@ -220,12 +220,15 @@ fn only_over_a_population_lowers() {
     let [only] = only_nodes.as_slice() else {
         panic!("one collection.only application: {only_nodes:?}");
     };
-    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    let result_type = only
+        .result_type
+        .admitted()
+        .expect("the result type is resolved");
     assert_eq!(
         only.operation.member(),
         Some(&fsl_semantics::value::Member::TypeArgument {
             declaration: result_type.clone(),
-                alias: None,
+            alias: None,
         })
     );
     let [MemberTerm::Leaf(LeafTerm::Reference { target: filtered }), MemberTerm::Binding(Binding {
@@ -246,18 +249,29 @@ fn only_over_a_population_lowers() {
     };
     assert_eq!(filter_binder, "s");
     let all_instances = application_at(population, "filament.op.model.all_instances");
-    let [MemberTerm::Leaf(LeafTerm::Reference { target: population_node })] =
-        all_instances.arguments.as_slice()
+    let [MemberTerm::Leaf(LeafTerm::Reference {
+        target: population_node,
+    })] = all_instances.arguments.as_slice()
     else {
         panic!("all_instances has one population reference");
     };
     let population_node = graph
-        .node(population_node.admitted().expect("the population is resolved").clone())
+        .node(
+            population_node
+                .admitted()
+                .expect("the population is resolved")
+                .clone(),
+        )
         .expect("the population node exists");
     assert_eq!(population_node.semantic_form(), "population");
     application_at(predicate, "filament.op.reference.eq");
     let only_body = graph
-        .node(only_body.admitted().expect("the only body is resolved").clone())
+        .node(
+            only_body
+                .admitted()
+                .expect("the only body is resolved")
+                .clone(),
+        )
         .expect("the only body node exists");
     assert_eq!(only_body.semantic_type(), Some(result_type.clone()));
 }
@@ -283,12 +297,15 @@ fn only_without_where_uses_all_instances_as_its_source() {
     let [only] = only_nodes.as_slice() else {
         panic!("one collection.only application: {only_nodes:?}");
     };
-    let result_type = only.result_type.admitted().expect("the result type is resolved");
+    let result_type = only
+        .result_type
+        .admitted()
+        .expect("the result type is resolved");
     assert_eq!(
         only.operation.member(),
         Some(&fsl_semantics::value::Member::TypeArgument {
             declaration: result_type.clone(),
-                alias: None,
+            alias: None,
         })
     );
     let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
@@ -416,7 +433,10 @@ fn a_row_bound_depending_on_population_size_checks() {
     };
     assert_eq!(count.value(), &PopulationValue::Count);
     assert_eq!(count.admitted_type(2), Some(interval(0, 2)));
-    assert_eq!(refinement.admit_universes(&BTreeMap::from([(slots(), 2)])), Ok(()));
+    assert_eq!(
+        refinement.admit_universes(&BTreeMap::from([(slots(), 2)])),
+        Ok(())
+    );
 }
 
 /// FR-145: population sums admit decimal summands and lower to the decimal
@@ -444,9 +464,8 @@ fn sum_over_a_population_with_a_decimal_body_checks() {
 #[trace("TC-544")]
 #[test]
 fn sum_over_a_population_with_a_boolean_body_refuses_ill_typed() {
-    let (code, cause, at) = only_refusal(
-        "total = sum(s in R::slots where s.ring = self: s.value = 1);",
-    );
+    let (code, cause, at) =
+        only_refusal("total = sum(s in R::slots where s.ring = self: s.value = 1);");
     assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
     assert_eq!(at, "s.value = 1");
 }
