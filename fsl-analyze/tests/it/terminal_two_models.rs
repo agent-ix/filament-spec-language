@@ -10,11 +10,11 @@ use fsl_analyze::analyze::{
     deadlock_model_item, AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision,
     SubjectBinding, TemporalItem,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PackageModelInput, PopulationUniverse,
     TerminalClass,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_route::request::ItemKind;
@@ -376,14 +376,46 @@ fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::Pac
     )
 }
 
+fn bare_terminal_keys(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> fsl_semantics::check::TerminalKeys {
+    let emission = fsl_package::emit_checked(package, EmitLimits::fixture()).expect("emits");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("the strict reader admits the package");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the package witnesses join");
+    fsl_semantics::check::TerminalKeys::of(
+        bare.terminal_declarations()
+            .expect("the bare terminal rows read")
+            .into_iter()
+            .map(|terminal| ((terminal.model, terminal.ordinal), terminal.node)),
+    )
+}
+
 /// FR-411 "Deadlock-freedom verdict join", FR-124: two aliases that select one
-/// package identity each declare a terminal. The source route keys the two
-/// declarations by (identity, ordinal), so neither replaces the other, and a
-/// request written under both is refused `TerminalDeclaration` over a package
-/// that carries only the first. A package holds both: emission writes two
-/// terminal nodes on the one model node and the reader admits them as two
-/// terminal rows, (model, 0) and (model, 1) in terminal node key order
-/// (FSpec FR-476-AC-5/6).
+/// package identity each declare a terminal. Both routes key the declarations
+/// by (identity, ordinal in terminal node key order), so neither replaces the
+/// other when source placement changes.
 #[trace("TC-1142", "FR-411-AC-5")]
 #[trace("TC-519", "FR-124-AC-11")]
 #[test]
@@ -402,15 +434,35 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
     let refused = keys
         .mismatch(&first)
         .expect("the second declaration is missing");
-    assert_eq!(refused.model, "test/counter#1");
-    assert!(refused.requested.is_some());
+    let resolved = fsl_package::resolve_terminals(&both).expect("the source nodes resolve");
+    let missing_second = resolved
+        .iter()
+        .find(|terminal| terminal.name == "Halt")
+        .expect("the second terminal resolves");
+    assert_eq!(refused.requested, Some(missing_second.node.clone()));
+    assert_eq!(
+        refused.model,
+        if missing_second.ordinal == 0 {
+            "test/counter".to_owned()
+        } else {
+            format!("test/counter#{}", missing_second.ordinal)
+        }
+    );
     assert_eq!(refused.recompiled, None);
+    let missing_first = resolved
+        .iter()
+        .find(|terminal| terminal.name == "Done")
+        .expect("the first terminal resolves");
     assert_eq!(
         keys.mismatch(&second)
             .expect("the first declaration is missing")
             .model,
-        "test/counter",
-        "the ordinals count the identity's declarations in alias order"
+        if missing_first.ordinal == 0 {
+            "test/counter".to_owned()
+        } else {
+            format!("test/counter#{}", missing_first.ordinal)
+        },
+        "the ordinals count the identity's declarations in terminal node key order"
     );
     assert_eq!(
         fsl_eval::simulation::model::ModelCheckInput::source(&both).terminal_keys(),
@@ -431,10 +483,41 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
     };
     assert_eq!(first_row.model, second_row.model);
     assert_eq!((first_row.ordinal, second_row.ordinal), (0, 1));
+    assert!(first_row.node < second_row.node);
     assert_ne!(first_row.node, second_row.node);
     assert_eq!(
         fsl_package::read_terminal(&admitted, &second_row.model, 1),
         Ok(second_row.declaration.clone())
     );
     assert_ne!(first_row.declaration, second_row.declaration);
+}
+
+/// FR-124-AC-11: swapping the source placement of two aliases leaves the
+/// source route, package resolver and bare package reader on the same
+/// (identity, terminal node key order) ordinal assignment.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn terminal_ordinals_are_stable_when_source_placements_swap() {
+    let when = "terminal Done using v on M when { self.value = 3 };\n";
+    let any = "terminal Halt using v on N any;\n";
+    let (first, packages) = two_aliases(&format!("{when}{any}"));
+    let (swapped, swapped_packages) = two_aliases(&format!("{any}{when}"));
+
+    let keys = |package: &CheckedPackage, packages: &fsl_semantics::model::intake::PackageInput| {
+        let source = package.graph().terminal_keys();
+        let resolved = fsl_package::resolve_terminals(package)
+            .expect("the source terminal nodes resolve")
+            .into_iter()
+            .map(|terminal| {
+                (
+                    (terminal.package.to_owned(), terminal.ordinal),
+                    terminal.node,
+                )
+            });
+        assert_eq!(source, fsl_semantics::check::TerminalKeys::of(resolved));
+        assert_eq!(source, bare_terminal_keys(package, packages));
+        source
+    };
+
+    assert_eq!(keys(&first, &packages), keys(&swapped, &swapped_packages));
 }
