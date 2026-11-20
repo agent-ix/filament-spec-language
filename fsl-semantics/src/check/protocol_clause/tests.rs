@@ -29,6 +29,7 @@ mod graph;
 mod observe_only;
 mod refusal_corpus;
 mod rules;
+mod source_contracts;
 
 /// S1, S2 and the assembler over `declarations`, against
 /// [`m_actor_model`]'s own `M::Actor::op`: FR-113's checker
