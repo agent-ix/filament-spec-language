@@ -539,3 +539,29 @@ fn result_parameter_without_a_return_type_refuses_before_frame_resolution() {
         "TypeDefinition.operations[0].params[0].name",
     );
 }
+
+#[trace("TC-1307", "FR-512-AC-12")]
+#[test]
+fn two_distinct_modifies_grants_keep_their_declared_order() {
+    let mut op = query("advance", json!([]));
+    op["frame"]["modifies"] = json!([key("versionNumber"), key("parent")]);
+    let selected = admit(&input(vec![op])).expect("two different field grants admit");
+    let effect = selected[0]
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(op) => Some(&op.effect),
+            _ => None,
+        })
+        .expect("operation survives intake");
+    assert_eq!(
+        effect
+            .modifies
+            .iter()
+            .map(|key| key.node.as_str())
+            .collect::<Vec<_>>(),
+        [key("versionNumber"), key("parent")]
+    );
+}
