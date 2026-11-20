@@ -150,8 +150,8 @@ The entry SHALL work in this order:
 3. Compile and run the call through FR-395's `run_with_requirements`, under
    the caller's `limits` and `overrides` ("Caller overrides"), which
    returns the call's outcome, the same as `run` returns for the same inputs,
-   with the items of the call. A refusal before the call settles no item and
-   is the run's outcome.
+   with the items of the call. A refusal, or a compile-stage limit stop
+   (FR-255), before the call settles no item and is the run's outcome.
 4. When the call carries `requirements`, for each item of the call, in
    FR-395's package order: write its named backend and options (FR-960),
    check its options against the named backend's manifest (FR-967): an item

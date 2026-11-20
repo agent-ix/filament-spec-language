@@ -133,8 +133,9 @@ When the S3 typer checks a call `name(arguments)`:
   positions"); an argument already of that type takes none; an argument that
   does not fit is a narrowing whose range obligation, when not proved,
   refuses `undefined_expression`/`unproved-range` at the argument; and a
-  non-integer argument of another type is refused `ill_typed`/`type-mismatch`
-  at the argument. A tuple position therefore takes FSpec FR-149's widening
+  non-integer argument whose type is neither the position's type nor, at a
+  record position, a record conforming to it (Contract IR FR-347) is refused
+  `ill_typed`/`type-mismatch` at the argument. A tuple position therefore takes FSpec FR-149's widening
   exactly as a union payload position does (FR-317).
 - If `name` names a declared type that is not a tuple, or a model operation,
   `Application` SHALL refuse the call as `ill_typed`/`operator-ineligible`.
