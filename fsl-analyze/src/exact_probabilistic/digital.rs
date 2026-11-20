@@ -1745,11 +1745,21 @@ impl<'c> Builder<'_, '_, 'c> {
                 .map(|(_, delay)| *delay)
                 .min()
                 .ok_or_else(|| fault("a-race-has-a-racer"))?;
-            let tied = delays
+            let mut tied = delays
                 .iter()
                 .filter(|(_, delay)| *delay == least)
                 .map(|(identity, _)| identity.clone())
                 .collect::<Vec<_>>();
+            let reached = u64::try_from(trajectory.states.len().saturating_sub(1))
+                .map_err(|_| fault("delay-count"))?;
+            for window in windows
+                .iter()
+                .filter(|window| window.given.is_none() && window.contains(least, reached))
+            {
+                if !tied.contains(&window.identity) {
+                    tied.push(window.identity.clone());
+                }
+            }
             let index = usize::try_from(least).map_err(|_| fault("delay-count"))?;
             let last = trajectory.states.len().saturating_sub(1);
             let start = trajectory
