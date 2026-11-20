@@ -593,12 +593,12 @@ mod tests {
     use ix_trace_rs::trace;
     use serde_json::Value;
 
-    /// The FSpec checked-package V2 proposal directory; the conformance
-    /// tests fail explicitly without an FSpec checkout.
-    fn proposals() -> std::path::PathBuf {
-        crate::checked_v2::tests::fspec_directory()
-            .expect("pinned FSpec fixtures are available")
-            .join("proposals/checked-package-v2")
+    /// The FSpec checked-package V2 proposal directory, materialized from the
+    /// published files; the view lives as long as the returned handle.
+    fn proposals() -> (tempfile::TempDir, std::path::PathBuf) {
+        let view = crate::checked_v2::tests::fspec_directory();
+        let proposals = view.path().join("proposals/checked-package-v2");
+        (view, proposals)
     }
 
     fn read(path: &std::path::Path) -> Value {
@@ -678,7 +678,7 @@ mod tests {
     #[trace("FSpec-FR-322-AC-260", "FSpec-TC-367")]
     #[test]
     fn conformance_the_aggregate_order_vectors_replay() {
-        let directory = proposals();
+        let (_view, directory) = proposals();
         let vectors = read(&directory.join("timed-slot-selector-vectors.json"));
         let cases = vectors["aggregate_order"]["cases"]
             .as_array()
@@ -693,7 +693,7 @@ mod tests {
     #[trace("FSpec-FR-322-AC-295")]
     #[test]
     fn conformance_the_clause_member_key_vectors_replay() {
-        let directory = proposals();
+        let (_view, directory) = proposals();
         let vectors = read(&directory.join("timed-clause-node-vectors.json"));
         let cases = vectors["cases"].as_array().expect("CL cases");
         replay(cases, |case| {
