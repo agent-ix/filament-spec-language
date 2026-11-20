@@ -186,7 +186,7 @@ impl<'a> Graph<'a> {
             .and_then(|id| self.by_id.get(&id).copied())
     }
 
-    fn position(&self, id: &CheckedNodeId) -> Option<usize> {
+    pub(super) fn position(&self, id: &CheckedNodeId) -> Option<usize> {
         serde_json::to_value(id)
             .and_then(|id| serde_json::to_string(&id))
             .ok()
@@ -323,7 +323,10 @@ pub(super) fn run(
         }
         let flows = graph.flows(&closure)?;
         if flows.is_empty() {
-            if clause.construct == "state/state_clause" {
+            if matches!(
+                clause.construct,
+                "state/state_clause" | "temporal/temporal_clause"
+            ) {
                 if clause.bounded {
                     unlowered.get_or_insert_with(|| Unlowered {
                         obligation: name.clone(),

@@ -10,6 +10,9 @@
 //! names it, so the export stops as a mapper failure rather than writing a
 //! text that states less than the clause says.
 
+mod temporal;
+
+use self::temporal::{ClauseLow, ClauseRead, FairLow, FairRead};
 use super::map::{mangle, Graph};
 use super::request::Target;
 use fsl_replay::protocol_analysis::node_text;
@@ -569,6 +572,75 @@ impl Lowerer<'_> {
     }
 }
 
+// ---- Temporal clause reads -------------------------------------------------
+
+/// The declared name of the `value`/`parameter` node at `position`.
+fn parameter_name(graph: &Graph<'_>, position: usize) -> Option<String> {
+    let body = serde_json::to_value(&graph.node(position).body).ok()?;
+    items(&body, "members")
+        .iter()
+        .find(|member| str_of(member, "name") == Some("name"))
+        .and_then(|member| member["value"]["value"].as_str())
+        .map(str::to_owned)
+}
+
+/// The object type the `over` binder at `position` ranges over: its
+/// identity and its node.
+fn context_of(graph: &Graph<'_>, position: usize) -> Lower<(String, usize)> {
+    let fail = |detail: &str| refusal("temporal/temporal_clause", detail);
+    let node = graph.node(position);
+    let ty = graph
+        .position(&node.semantic_type)
+        .ok_or_else(|| fail("the `over` binder has no type node"))?;
+    let body = serde_json::to_value(&graph.node(ty).body)
+        .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+    let target = body["members"]
+        .get(0)
+        .map(|member| &member["target"])
+        .ok_or_else(|| fail("the `over` binder is not typed by an object type"))?;
+    let id = target["path"]
+        .get(2)
+        .and_then(Value::as_str)
+        .ok_or_else(|| fail("the `over` binder is not typed by an object type"))?;
+    let object = graph
+        .position_of(target)
+        .ok_or_else(|| fail("the `over` binder's object type is no package node"))?;
+    Ok((id.to_owned(), object))
+}
+
+/// The fairness constraints of the clause at `position`, in written order.
+fn fairness_of(graph: &Graph<'_>, position: usize) -> Lower<Vec<FairRead>> {
+    let body = serde_json::to_value(&graph.node(position).body)
+        .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+    let mut reads = Vec::new();
+    for member in items(&body["arguments"][4], "members") {
+        let node = graph
+            .position_of(&member["target"])
+            .ok_or_else(|| refusal("temporal/fairness", "a fairness names no package node"))?;
+        let body = serde_json::to_value(&graph.node(node).body)
+            .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+        let fairness = &body["operation"]["member"];
+        let target = &fairness["target"];
+        if str_of(target, "kind") != Some("operation") {
+            return refuse(
+                "temporal/fairness",
+                "a fairness over a target other than a model operation",
+            );
+        }
+        reads.push(FairRead {
+            strong: str_of(fairness, "fairness_kind") == Some("strong"),
+            each: str_of(fairness, "granularity") == Some("each"),
+            declaration: target["declaration"]["path"]
+                .get(2)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            operation: str_of(target, "name").unwrap_or_default().to_owned(),
+        });
+    }
+    Ok(reads)
+}
+
 // ---- Rendering -----------------------------------------------------------
 
 /// One operation's lowered clauses.
@@ -586,6 +658,7 @@ struct Input<'a> {
     show: &'a Show<'a>,
     first: usize,
     clauses: &'a [(String, usize, usize, E)],
+    temporals: &'a [ClauseLow],
 }
 
 struct Show<'a> {
@@ -885,7 +958,19 @@ pub(super) fn lower(
     let clauses = state_clauses(graph)?;
     let mut raw = read_models(models)?;
     let mut contexts: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut reads: Vec<ClauseRead> = Vec::new();
     for (name, position) in wanted {
+        if &*graph.node(*position).node_tag == "temporal" {
+            let read = temporal::read(graph, name, *position).map_err(|mut refusal| {
+                refusal.obligation = Some(name.clone());
+                refusal
+            })?;
+            contexts
+                .entry(read.context.clone())
+                .or_insert_with(|| (read.context_node, name.clone()));
+            reads.push(read);
+            continue;
+        }
         let clause = clauses
             .iter()
             .find(|clause| clause.position == *position)
@@ -979,6 +1064,9 @@ pub(super) fn lower(
     }
     let mut lowered_clauses = Vec::new();
     for (name, position) in wanted {
+        if reads.iter().any(|read| read.position == *position) {
+            continue;
+        }
         let clause = clauses
             .iter()
             .find(|clause| clause.position == *position)
@@ -994,6 +1082,61 @@ pub(super) fn lower(
             .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))?;
         lowered_clauses.push((name.clone(), *position, object, low.clause()));
     }
+    let mut temporals = Vec::new();
+    for read in reads {
+        let attribute = |mut refusal: Refusal| {
+            refusal.obligation = Some(read.name.clone());
+            refusal
+        };
+        let object = objects
+            .iter()
+            .position(|object| object.id == read.context)
+            .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))
+            .map_err(attribute)?;
+        let (mut cur, mut next) = (Vec::new(), Vec::new());
+        for &leaf in &read.atoms {
+            cur.push(lowerer.node(leaf, false).map_err(attribute)?.clause());
+            next.push(lowerer.node(leaf, true).map_err(attribute)?.clause());
+        }
+        let mut fairness = Vec::new();
+        for fair in &read.fairness {
+            let found = objects
+                .iter()
+                .enumerate()
+                .find(|(_, candidate)| candidate.id == fair.declaration)
+                .and_then(|(index, candidate)| {
+                    candidate
+                        .operations
+                        .iter()
+                        .position(|operation| operation.name == fair.operation)
+                        .map(|operation| (index, operation))
+                });
+            let (object, operation) = found
+                .ok_or_else(|| {
+                    refusal(
+                        "temporal/fairness",
+                        "a fairness over an operation outside the exported state",
+                    )
+                })
+                .map_err(attribute)?;
+            fairness.push(FairLow {
+                strong: fair.strong,
+                each: fair.each,
+                object,
+                operation,
+            });
+        }
+        temporals.push(ClauseLow {
+            name: read.name,
+            position: read.position,
+            object,
+            binder: read.binder,
+            tf: read.tf,
+            cur,
+            next,
+            fairness,
+        });
+    }
 
     let show = Show {
         target,
@@ -1008,12 +1151,16 @@ pub(super) fn lower(
         show: &show,
         first,
         clauses: &lowered_clauses,
+        temporals: &temporals,
     };
-    match target {
+    let extra = match target {
         Target::Tla => tla(&input, &mut definitions)?,
-        Target::Lean => lean(&input, &mut definitions)?,
-    }
-    assemble(graph, target, module, &objects, definitions)
+        Target::Lean => {
+            lean(&input, &mut definitions)?;
+            Vec::new()
+        }
+    };
+    assemble(graph, target, module, &objects, &extra, definitions)
 }
 
 // ---- Snapshot ------------------------------------------------------------
@@ -1126,7 +1273,7 @@ fn frame_fields<'a>(object: &'a Object, operation: &Operation) -> Vec<(&'a Field
 
 // ---- TLA+ ----------------------------------------------------------------
 
-fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
+fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Vec<String>> {
     let target = Target::Tla;
     let objects = input.objects;
     let variables: Vec<String> = objects.iter().map(Object::variable).collect();
@@ -1273,7 +1420,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             Some(name),
         ));
     }
-    Ok(())
+    temporal::tla(input, out)
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -1568,7 +1715,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             Some(name),
         ));
     }
-    Ok(())
+    temporal::lean(input, out)
 }
 
 // ---- Assembly ------------------------------------------------------------
@@ -1578,12 +1725,17 @@ fn assemble(
     target: Target,
     module: &str,
     objects: &[Object],
+    extra: &[String],
     definitions: Vec<Definition>,
 ) -> Lower<Lowered> {
     let first = objects.first().map_or(0, |object| object.node);
     let mut text = match target {
         Target::Tla => {
-            let variables: Vec<String> = objects.iter().map(Object::variable).collect();
+            let variables: Vec<String> = objects
+                .iter()
+                .map(Object::variable)
+                .chain(extra.iter().cloned())
+                .collect();
             format!(
                 "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\n{}\nVARIABLES {}\n",
                 comment(graph, first, target)?,

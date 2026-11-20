@@ -389,7 +389,7 @@ fn export(unit: &str, with_model: bool, member: Value) -> (u8, Value) {
 /// `example/counter-third` with `inc` enabled while `value < 5` and adding 1,
 /// the state clause `Bounded` (`value <= 5`) and the initial state
 /// `value = 0`, so its reachable states are the six values 0 to 5.
-const COUNTER_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+pub(crate) const COUNTER_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile m = \"filament.model.complete/v1\";\n\
      model Counter = \"example/counter-third\";\n\

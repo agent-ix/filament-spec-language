@@ -424,9 +424,9 @@ fn compile_and_map(
                     fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
                 ),
             )
-            .map_err(|_| RunCause::ExportMapper {
+            .map_err(|refusal| RunCause::ExportMapper {
                 construct: "checked package".to_owned(),
-                reason: "the package the run compiled is not admitted".to_owned(),
+                reason: admission_reason(&refusal),
             })?;
             let graph = checked.package().graph();
             let clauses: Vec<map::ClauseFact> = graph
@@ -619,4 +619,24 @@ fn assembled(
     export["name_map"] = json!(name_map);
     export["observer"] = Value::Null;
     Ok(Category::Success)
+}
+
+/// The reason an admission refusal of the compiled package states: the
+/// catalogued code, the reader's typed cause, the pointer it names and the
+/// unsupplied domain package identity.
+fn admission_reason(refusal: &fsl_package::PackageAdmissionRefusal) -> String {
+    let mut reason = format!(
+        "the package the run compiled is not admitted: {}",
+        refusal.code
+    );
+    if let Some(cause) = &refusal.cause {
+        reason.push_str(&format!(", cause {cause}"));
+    }
+    if let Some(pointer) = &refusal.pointer {
+        reason.push_str(&format!(" at {pointer}"));
+    }
+    if let Some(identity) = &refusal.identity {
+        reason.push_str(&format!(" for {identity}"));
+    }
+    reason
 }
