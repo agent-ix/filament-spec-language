@@ -14,7 +14,7 @@ use filament_contract_model::{
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{emit_checked, CheckedPackage, EmitLimits, ReadIdentityRows};
 use fsl_semantics::{
-    check::{CheckRefusal, PackageDeclarations},
+    check::{CheckCause, CheckRefusal, PackageDeclarations, ProbabilisticCause},
     model::{
         accounting::ModelNormalizationLimits,
         intake::{admit_unit, package_input, PackageInput},
@@ -171,7 +171,7 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
 #[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2439: an untimed source model's delay refused delay-on-untimed-model not verified yet"]
+#[ignore = "QSL-2463: a delay on an untimed source model is refused by S3 as invalid_timed_model, not invalid_probabilistic_model/delay-on-untimed-model; the expected cause needs an arch ruling"]
 fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
     let Err(refusals) = check(&format!("{TIMED}delay O::step ~ uniform;\n")) else {
         panic!("a delay on an untimed source model checks");
@@ -206,7 +206,7 @@ fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
 #[trace("TC-3012", "FR-569-AC-18")]
 #[trace("FSpec-TC-2033", "FSpec-FR-610-AC-9")]
 #[test]
-#[ignore = "QSL-2439: source operation entries carry their parameters not implemented yet"]
+#[ignore = "QSL-2463: the strict read refuses the source clock place with MalformedClockPlace until the contract-ir #1082 pin lands (PR 3157)"]
 fn a_source_operation_entry_lists_its_parameters() {
     let package = check(
         "object O { d: Clock; n: Integer; \
@@ -232,7 +232,27 @@ const SWITCH: &str = "object Switch { n: Integer; \
     operation choose(k: Int[0, 1]) modifies self.n; operation clear() modifies self.n; }\n\
     object Other { n: Integer; operation poke() modifies self.n; }\n";
 
-#[trace("TC-2062", "FR-185-AC-12")]
+const LINEAGE: &str = "object Base { n: Integer; operation a() modifies self.n; }\n\
+    object Sub extends Base { operation b() modifies self.n; }\n";
+
+/// The one refusal of `body`, as its probabilistic cause.
+fn refused(body: &str) -> ProbabilisticCause {
+    let Err(refusals) = check(body) else {
+        panic!("the unit is refused: {body}");
+    };
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        panic!("a probabilistic cause: {refusal:?}");
+    };
+    (**cause).clone()
+}
+
+/// FR-185 "Workloads": the `on` name of a workload names a source object
+/// type, whose operations the workload weighs under the rules of a selected
+/// model. (No acceptance criterion states the source-model clause.)
+#[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn a_workload_on_a_source_object_type_is_admitted_with_that_types_operations() {
     let package = check(&format!(
@@ -243,35 +263,80 @@ fn a_workload_on_a_source_object_type_is_admitted_with_that_types_operations() {
         panic!("one checked workload");
     };
     assert_eq!(workload.name(), "Input");
-    assert_eq!(workload.weights().len(), 2);
-    assert!(workload.model_key().is_some(), "{workload:?}");
+    let weights: Vec<(&str, String)> = workload
+        .weights()
+        .iter()
+        .map(|(operation, weight)| (operation.name(), weight.to_string()))
+        .collect();
+    assert_eq!(
+        weights,
+        [("choose", "1/1".to_owned()), ("clear", "0/1".to_owned())]
+    );
+    let switch = workload.weights()[0].0.declaring_key().expect("a key");
+    assert_eq!(workload.model_key(), Some(switch));
 }
 
-#[trace("TC-2062", "FR-185-AC-12")]
+#[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn a_workload_on_a_source_object_type_weighs_only_that_types_operations() {
-    let Err(refusals) = check(&format!(
+    let cause = refused(&format!(
         "{SWITCH}workload Input on Switch {{ weight Switch::choose = 1; weight Switch::clear = 1; \
          weight Other::poke = 1; }}\n"
-    )) else {
-        panic!("a weight on another object type is refused");
-    };
-    let [refusal] = &refusals[..] else {
-        panic!("one refusal: {refusals:?}");
-    };
-    assert_eq!(refusal.cause.code().as_str(), "invalid_probabilistic_model");
-
-    let Err(refusals) = check(&format!(
+    ));
+    assert!(
+        matches!(&cause, ProbabilisticCause::UnknownOperation { operation, .. }
+            if operation == "Other::poke"),
+        "{cause:?}"
+    );
+    let cause = refused(&format!(
         "{SWITCH}workload Input on Switch {{ weight Switch::choose = 1; }}\n"
-    )) else {
-        panic!("a workload that omits an operation is refused");
-    };
-    assert_eq!(refusals[0].cause.cause(), Some("incomplete-workload"));
-
-    let Err(refusals) = check(&format!(
+    ));
+    assert!(
+        matches!(&cause, ProbabilisticCause::IncompleteWorkload { operation, .. }
+            if operation == "Switch::clear"),
+        "{cause:?}"
+    );
+    let cause = refused(&format!(
         "{SWITCH}workload Input on Missing {{ weight Switch::choose = 1; }}\n"
-    )) else {
-        panic!("an on-name that is neither an alias nor an object is refused");
-    };
-    assert_eq!(refusals[0].cause.cause(), Some("missing-name"));
+    ));
+    assert!(
+        matches!(&cause, ProbabilisticCause::UnresolvedModel { model, .. } if model == "Missing"),
+        "{cause:?}"
+    );
+}
+
+/// A source object type's operations include those it inherits, as a
+/// selected model's workload weighs an operation of an ancestor type.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_workload_on_a_source_subtype_weighs_and_requires_its_inherited_operations() {
+    for weights in [
+        "weight Sub::b = 1; weight Sub::a = 1;",
+        "weight Sub::b = 1; weight Base::a = 2;",
+    ] {
+        let package = check(&format!("{LINEAGE}workload W on Sub {{ {weights} }}\n"))
+            .unwrap_or_else(|refusals| panic!("{weights}: S3 admits: {refusals:?}"));
+        let [workload] = package.graph().probabilistic_model().workloads() else {
+            panic!("one checked workload");
+        };
+        let mut names: Vec<&str> = workload.weights().iter().map(|(o, _)| o.name()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["a", "b"], "{weights}");
+    }
+    let cause = refused(&format!(
+        "{LINEAGE}workload W on Sub {{ weight Sub::b = 1; }}\n"
+    ));
+    assert!(
+        matches!(&cause, ProbabilisticCause::IncompleteWorkload { operation, .. }
+            if operation == "Base::a"),
+        "{cause:?}"
+    );
+    let cause = refused(&format!(
+        "{LINEAGE}workload W on Base {{ weight Base::a = 1; weight Sub::b = 1; }}\n"
+    ));
+    assert!(
+        matches!(&cause, ProbabilisticCause::UnknownOperation { operation, .. }
+            if operation == "Sub::b"),
+        "{cause:?}"
+    );
 }
