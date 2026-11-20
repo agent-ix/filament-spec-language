@@ -1966,9 +1966,7 @@ fn decimal_schema_diagnostic(
     let Some(position) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
         return false;
     };
-    let Some(member) = segments.next() else {
-        return false;
-    };
+    let member = segments.next();
     let Some(type_value) = document
         .tree
         .get("types")
@@ -1995,6 +1993,12 @@ fn decimal_schema_diagnostic(
     if !(1..=38).contains(&precision) || scale > precision {
         return false;
     }
+    // The validator reports an unadmitted `unit` at the type itself; a
+    // Decimal's unit is the reader's own refusal.
+    let Some(member) = member else {
+        return type_value.get("unit").is_some()
+            && located.message.starts_with("the member unit is not one");
+    };
     match member {
         "scalar" | "unit" | "decimal" => segments.next().is_none(),
         "constraints" => {
