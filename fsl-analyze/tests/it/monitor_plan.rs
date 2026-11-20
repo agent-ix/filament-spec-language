@@ -15,6 +15,8 @@ use ix_trace_rs::trace;
 
 use crate::units::Domain;
 
+mod behavior_boundaries;
+
 pub(crate) const TIME_UNITS: &str = "dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
