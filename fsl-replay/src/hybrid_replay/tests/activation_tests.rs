@@ -4,6 +4,8 @@
 //! activation instant as a second real variable. Every expectation is hand
 //! derived from the point lasso's solution.
 
+use std::cmp::Ordering;
+
 use ix_trace_rs::trace;
 
 use super::*;
@@ -205,6 +207,87 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal Deep using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [2, 9] always [1, 6] eventually [0, 1] holds(h.v >= 4 and h.v <= 4 + 12 * v0) }\n\
+     temporal Cube using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(v0 * v0 * v0 != 4) }\n\
+     temporal CubeHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(v0 * v0 * v0 != 4 or h.v >= 0) }\n\
+     temporal Touch using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [1, 1] holds(h.v * h.v * h.v != 4 + v0 - v0) }\n\
+     temporal TouchHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [1, 1] holds(h.v * h.v * h.v != 4 + v0 - v0 or h.v >= 0) }\n\
+     temporal Meet using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       always [0, 2] holds(v0 * v0 * v0 != 4 or h.v != v0 + 1) }\n\
+     temporal MeetHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       always [0, 2] holds(v0 * v0 * v0 != 4 or h.v != v0 + 3) }\n\
+     temporal Shared using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 - 7) * (v0 * v0 * v0 - 4) != 0 or (v0 - 7) * (h.v - 3) < 0) }\n\
+     temporal Reducible using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 2 and q.v < 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 - 7) * (v0 - 3) != 0 or (v0 - 7) * (h.v - 9) < 0) }\n\
+     temporal Pole using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 10) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / ((v0 - 5) * (v0 - 5) + (h.v - 3) * (h.v - 3)) != 0) }\n\
+     temporal PoleFour using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 10) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / ((v0 - 4) * (v0 - 4) + (h.v - 3) * (h.v - 3)) != 0) }\n\
+     temporal Sqrt using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / (h.v * h.v - 2) != 0 and v0 > 0) }\n\
+     temporal Back using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0 + 1) != 0) }\n\
+     temporal Irrational using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v > 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
+     temporal LeadHolds using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v = 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v - 1 < 0) }\n\
+     temporal LeadFails using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v = 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v + 1 < 0) }\n\
+     temporal LeadClosed using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v >= 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v + 1 > 0) }\n\
+     temporal CubeLeadHolds using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v * q.v = 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v - 1 < 0) }\n\
+     temporal CubeLeadFails using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v * q.v = 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v + 1 < 0) }\n\
+     temporal Lead3 using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v != 1) }\n\
+     temporal Lead3b using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v != 1) }\n\
+     temporal Lead3c using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v != 1) }\n\
+     temporal Vanish using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 5] holds(not ((v0 * v0 * v0 - 4) * (h.v - 3) = 0)) }\n\
+     temporal BigAtoms using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(h.v * 369988485035126972924700782451696644186473100389722973815184405301748249 > 1) and eventually [0, 1] holds(h.v * 1109965455105380918774102347355089932559419301169168921445553215905244747 > 1) and eventually [0, 1] holds(h.v * 3329896365316142756322307042065269797678257903507506764336659647715734241 > 1) and eventually [0, 1] holds(h.v * 9989689095948428268966921126195809393034773710522520293009978943147202723 > 1) and eventually [0, 1] holds(h.v * 29969067287845284806900763378587428179104321131567560879029936829441608169 > 1) }\n\
+     temporal BigMoves using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - v0 - 1) * 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) != 0) }\n\
+     temporal Moves using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
+     temporal MovesOne using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0 - 1) != 0) }\n\
+     temporal Fixed using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - 2) != 0 and v0 > 0) }\n\
      temporal NestedHeld using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v >= 1 / 4 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n";
@@ -285,12 +368,24 @@ fn the_activation_scan_is_charged_to_the_meter() {
     let phase = check(PHASE);
     let phase_trace = phase_lasso();
     let cases = [
-        (&shuttle, "Cap", &lasso, 1215),
-        (&shuttle, "Range", &lasso, 900),
+        (&shuttle, "Cap", &lasso, 2151),
+        (&shuttle, "Range", &lasso, 1554),
         (&shuttle, "Past", &lasso, 45),
         (&shuttle, "Origin", &lasso, 35),
-        (&ramp, "Nested", &ramp_trace, 9224),
+        (&ramp, "Nested", &ramp_trace, 16724),
         (&phase, "Twice", &phase_trace, 70),
+        (&ramp, "Cube", &ramp_trace, 483),
+        (&ramp, "Touch", &ramp_trace, 4653),
+        (&ramp, "Moves", &ramp_trace, 412),
+        (&ramp, "Meet", &ramp_trace, 1169),
+        (&ramp, "Shared", &ramp_trace, 1134),
+        (&ramp, "Pole", &ramp_trace, 4821),
+        (&ramp, "LeadHolds", &ramp_trace, 2321),
+        (&ramp, "CubeLeadHolds", &ramp_trace, 11660),
+        (&ramp, "Lead3", &ramp_trace, 20715),
+        (&ramp, "Sqrt", &ramp_trace, 992),
+        (&ramp, "BigAtoms", &ramp_trace, 13398),
+        (&ramp, "BigMoves", &ramp_trace, 2279),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
@@ -310,6 +405,270 @@ fn the_activation_scan_is_charged_to_the_meter() {
     }
 }
 
+/// The first undefined evaluation a replay of `name` over `trace` reports.
+fn undefined(graph: &Unit, name: &str, trace: &HybridTrace) -> (UndefinedCause, ExactReal) {
+    let Ok(ExactReplay::Reproduced(found)) = exact_replay(graph, claim(graph, name), trace) else {
+        panic!("{name} reproduces");
+    };
+    let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = &found.kind else {
+        panic!("{name}: an undefined evaluation: {:?}", found.kind);
+    };
+    (*cause, at.time.clone())
+}
+
+/// FR-450-AC-12 (irrational critical instant): over `Ramp` the capture
+/// `v0 = tau` makes `v0^3 != 4` false at exactly the activation instant
+/// `tau = 4^(1/3)`, an irrational critical value of the projection (the root
+/// of `tau^3 - 4`). The obligation is false there only, so the claim is
+/// reproduced; with `or h.v >= 0` it is true there too and the claim holds.
+#[trace("TC-1221")]
+#[test]
+fn an_obligation_false_at_an_irrational_activation_instant_is_reproduced() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Cube"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "CubeHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (irrational critical instant, atom depending on `tau`):
+/// at `tau = 4^(1/3)` the atom `h.v != v0 + 1` is false at the irrational
+/// instant `tau + 1 = 1 + 4^(1/3)`, inside the window `[tau, tau + 2]`, and
+/// `v0^3 != 4` is false there too, so `always [0, 2]` of their disjunction
+/// is false at that one activation instant and the claim is reproduced.
+/// With `v0 + 3` the instant `tau + 3` lies outside the window and every
+/// obligation holds.
+#[trace("TC-1221")]
+#[test]
+fn an_atom_depending_on_the_activation_instant_is_read_at_an_irrational_one() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Meet"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "MeetHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (irrational instant read at an irrational instant):
+/// `eventually [1, 1]` reads the atom `h.v^3 != 4` at `tau + 1`, which is the
+/// irrational `4^(1/3)` exactly at `tau = 4^(1/3) - 1`, the root of
+/// `(tau + 1)^3 - 4`, where the obligation alone is false.
+#[trace("TC-1221")]
+#[test]
+fn an_atom_read_at_an_irrational_instant_of_an_irrational_activation_is_decided() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Touch"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "TouchHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (b): the atom `1 / (h.v - v0)` has no value at `t = v0 =
+/// tau`, an instant that moves with the activation instant along the line
+/// `x = tau` over the open cell `(0, 1)` of activation instants: the
+/// earliest instant with no value has infimum 0, not attained. With
+/// `h.v - v0 - 1` the line is `x = tau + 1` and the infimum is 1. With
+/// `h.v - 2` the instant 2 is the same for every `tau`.
+#[trace("TC-1221")]
+#[test]
+fn an_atom_with_no_value_at_a_moving_instant_reports_its_infimum() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        undefined(&graph, "Moves", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(0, 1)))
+    );
+    assert_eq!(
+        undefined(&graph, "MovesOne", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(1, 1)))
+    );
+    assert_eq!(
+        undefined(&graph, "Fixed", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(2, 1)))
+    );
+}
+
+/// FR-450 "Exact replay" has no acceptance criterion for irrational
+/// activation instants or for the infimum of a moving instant with no
+/// value, so these tests carry the test case alone.
+///
+/// An algebraic instant's polynomial is square-free, not irreducible: the
+/// root `4^(1/3)` of `(t - 7)(t^3 - 4)` shares the factor `t - 7` with the
+/// atom `(tau - 7)(x - 3)`, whose resultant with it vanishes. The cells are
+/// cut at `x = 3` all the same: at `tau = 4^(1/3)` the atom reads
+/// `(tau - 7)(tau - 3) > 0` at `x = tau`, so the body is false there and
+/// only there, and the claim is reproduced. The root `3` of
+/// `(t - 7)(t - 3)` is a rational cut read as a root of a reducible
+/// polynomial; the body is false at `tau = 3` alone.
+#[trace("TC-1221")]
+#[test]
+fn a_shared_factor_with_the_instants_polynomial_does_not_hide_a_cut() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Shared"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Reducible"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+}
+
+/// The degenerate eliminations. The guards hold at one activation instant
+/// only, so the reading there decides the claim. At `tau = sqrt 2` the
+/// leading coefficient in `x` of `(tau^2 - 2) x^2 - 1` vanishes and the
+/// atom drops to the constant -1: `< 0` holds at every instant (no
+/// counterexample) and `(tau^2 - 2) x^2 + 1 < 0` is false there, a
+/// counterexample. A closed guard `tau^2 >= 2` adds instants where the sign
+/// is that of `tau^2 - 2` (nonnegative): `+ 1 > 0` always holds. The same
+/// at `tau = 4^(1/3)` with a cubic leading coefficient in `tau` and a cubic
+/// in `x`. `(tau^3 - 4)(x - 3)` vanishes for every `x` at that instant: the
+/// atom is false for every `x` there (`eventually` finds no `x`) and true
+/// elsewhere, so the claim is reproduced.
+#[trace("TC-1221")]
+#[test]
+fn a_vanishing_leading_coefficient_and_a_polynomial_vanishing_everywhere_are_decided() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    for (name, reproduced) in [
+        ("LeadHolds", false),
+        ("LeadFails", true),
+        ("LeadClosed", false),
+        ("CubeLeadHolds", false),
+        ("CubeLeadFails", true),
+        ("Vanish", true),
+    ] {
+        assert_eq!(
+            exact_replay(&graph, claim(&graph, name), &trace),
+            if reproduced {
+                Ok(reproduced_formula(&trace))
+            } else {
+                not_reproduced()
+            },
+            "{name}"
+        );
+    }
+}
+
+/// The work a replay of `name` charges before `bound` is exhausted, from a
+/// thread the test gives up on after a minute: a meter that did not bound
+/// the work would hang here, not pass.
+fn charged_within(name: &'static str, bound: u64) -> (Result<(), HybridReplayRefusal>, u64) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let graph = check(RAMP);
+        let trace = ramp_trace();
+        let mut meter = HybridReplayMeter::new(bound);
+        let found = super::super::exact_replay(&graph, claim(&graph, name), &trace, &mut meter);
+        let _ = sender.send((found.map(|_| ()), meter.consumed()));
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap_or_else(|_| panic!("{name} ran past a minute under a meter of {bound}"))
+}
+
+/// The meter bounds the time an algebraic activation instant takes: a
+/// leading coefficient cubic in `tau` and a quadratic or cubic in `x` took
+/// seconds to minutes before the coefficients were reduced modulo `tau`'s
+/// polynomial and each step charged by the size of its operands. Under a
+/// small bound they are exhausted at once, and the units a claim spends grow
+/// with the degrees it reads.
+#[trace("TC-1221")]
+#[test]
+fn the_meter_bounds_the_work_at_an_algebraic_activation_instant() {
+    for name in ["Lead3", "Lead3b", "Lead3c"] {
+        let (found, consumed) = charged_within(name, 20_000);
+        assert_eq!(
+            found,
+            Err(HybridReplayRefusal::ResourceExhausted {
+                counter: LimitKind::WorkUnits
+            }),
+            "{name}"
+        );
+        assert!(consumed <= 20_000, "{name}");
+    }
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    let (square, cube, linear) = (
+        units(&graph, "LeadHolds", &trace),
+        units(&graph, "CubeLeadHolds", &trace),
+        units(&graph, "Lead3", &trace),
+    );
+    assert!(cube > 4 * square, "{square} {cube}");
+    assert!(linear > 4 * square, "{square} {linear}");
+}
+
+/// An expression with no value only at the first-pass sample of an open
+/// cell is placed once the cell is cut: `1 / ((tau - 5)^2 + (x - 3)^2)` has
+/// no value at `(5, 3)` alone, and `(0, 10)` is sampled at 5. The record is
+/// the point `(5, 3)`, reported at 3; the same shape at `tau = 4` is
+/// reported at 3 as well.
+#[trace("TC-1221")]
+#[test]
+fn an_expression_with_no_value_at_the_first_sample_is_placed_after_the_cell_is_cut() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    for name in ["Pole", "PoleFour"] {
+        assert_eq!(
+            undefined(&graph, name, &trace),
+            (UndefinedCause::DivisionByZero, ExactReal::Rational(q(3, 1))),
+            "{name}"
+        );
+    }
+}
+
+/// An irrational instant with no value that is the same for every `tau` is
+/// kept as it is: `1 / (x^2 - 2)` has no value at `sqrt 2`, attained.
+#[trace("TC-1221")]
+#[test]
+fn an_irrational_instant_with_no_value_for_every_activation_instant_is_reported() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    let (cause, time) = undefined(&graph, "Sqrt", &trace);
+    assert_eq!(cause, UndefinedCause::DivisionByZero);
+    assert!(matches!(time, ExactReal::Root(_)));
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(-2, 1), q(0, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+}
+
+/// The infimum of `x = tau + c` with a negative `c`: `1 / (x - tau + 1)` has
+/// no value at `x = tau - 1`, `tau` in `(1, 2)`, infimum 0. With an
+/// irrational start of the cell, `tau^2 > 2`, the atom `1 / (x - tau)` has
+/// infimum `sqrt 2`.
+#[trace("TC-1221")]
+#[test]
+fn the_infimum_of_a_moving_instant_shifts_a_negative_offset_and_an_irrational_start() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        undefined(&graph, "Back", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(0, 1)))
+    );
+    let (cause, time) = undefined(&graph, "Irrational", &trace);
+    assert_eq!(cause, UndefinedCause::DivisionByZero);
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(-2, 1), q(0, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+}
+
 /// FR-450-AC-12 (budget): three nested windows over a tau-dependent atom.
 /// The atom `4 <= v <= 4 + 12 tau` holds on `[4, 4 + 12 tau]` of a ramp that
 /// ends at time 40, so `eventually [0, 1]` holds at `[3, 4 + 12 tau]`,
@@ -327,7 +686,7 @@ fn three_nested_windows_are_decided_within_a_moderate_meter() {
         end: Some(before(n(40), &[n(40), n(0)])),
         ..ramp_trace()
     };
-    let mut meter = HybridReplayMeter::new(400_000);
+    let mut meter = HybridReplayMeter::new(1_000_000);
     assert_eq!(
         super::super::exact_replay(&graph, claim(&graph, "Deep"), &trace, &mut meter),
         Ok(reproduced_formula(&trace))

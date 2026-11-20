@@ -387,14 +387,14 @@ impl UndefinedCause {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
     /// An `on each` claim under `model-time` whose obligations read the
-    /// activation position's state, where the decisive instant is not
-    /// isolated. It is raised when (1) an activation instant that is
-    /// irrational and a critical value of the obligations is left unread and
-    /// no earlier expression with no value decides the result, or (2) a
-    /// claim atom (any expression with no value other than the guard or a
-    /// capture) has no value in an open cell of activation instants, whether
-    /// or not its instant moves with the activation instant. Remaining work:
-    /// QSL-2690.
+    /// activation position's state, where a claim atom has no value over an
+    /// open cell of activation instants at an instant that moves with the
+    /// activation instant along a curve other than `x = tau + c` (`c`
+    /// rational): the infimum of the instant over the cell is a limit of a
+    /// root curve. It is the only remaining trigger. An instant with no value
+    /// that is the same for every activation instant of the cell, rational or
+    /// not, and one that moves along `x = tau + c` (rational or irrational
+    /// cell start), are decided. Remaining work: QSL-2706.
     #[error("the decisive activation instant of an `on each` claim is not isolated")]
     ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
@@ -458,13 +458,24 @@ impl HybridReplayMeter {
         }
     }
 
+    /// The words of operand a step works on that one work unit pays for.
+    const WORDS_PER_UNIT: u64 = 16;
+
     /// The number of admitted work units.
     pub const fn consumed(&self) -> u64 {
         self.consumed
     }
 
     fn charge(&mut self) -> Result<(), HybridReplayRefusal> {
-        match self.consumed.checked_add(1) {
+        self.charge_by(1)
+    }
+
+    /// Charge one step that works on `weight` words of operand (one per
+    /// coefficient and per 64 bits of the largest), before it is taken: a
+    /// unit per [`Self::WORDS_PER_UNIT`] words, at least one.
+    fn charge_by(&mut self, weight: u64) -> Result<(), HybridReplayRefusal> {
+        let units = weight.div_ceil(Self::WORDS_PER_UNIT).max(1);
+        match self.consumed.checked_add(units) {
             Some(next) if next <= self.work_units => {
                 self.consumed = next;
                 Ok(())
@@ -516,10 +527,10 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2690 for `ActivationInfimum`, QSL-2639 for
+        // TEMPORARY (QSL-2706 for `ActivationInfimum`, QSL-2639 for
         // `CoupledReset`): both are gaps FR-750 deletes, because exact
-        // replay decides those claims (an irrational critical activation
-        // instant; quantifier elimination over several coupled free
+        // replay decides those claims (the infimum of a curved instant with
+        // no value; quantifier elimination over several coupled free
         // variables). Until then they also settle `NotExact`, the only
         // honest answer short of a verdict.
         Err(HybridReplayRefusal::Exact(

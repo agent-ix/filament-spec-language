@@ -12,7 +12,7 @@ use fsl_semantics::check::{
     HybridFormula, HybridInterval, LogicOp,
 };
 
-use super::eval::{cells, cells_of, eval, Bi, Constant, Env, Ev, Evaluate};
+use super::eval::{cells, cells_of, eval, Bi, Cell, Constant, Env, Ev, Evaluate};
 use super::expand::{result_kind, Exp, Expander, ResultKind};
 use super::flow::Flow;
 use super::interval::Tri;
@@ -987,20 +987,34 @@ impl Claim<'_> {
         activation: &[Poly],
         records: &mut Records,
     ) -> Result<Signal, HybridReplayRefusal> {
-        let mut atoms: Vec<Signal> = vec![Vec::with_capacity(segments.len()); self.atoms.len()];
-        for segment in segments {
+        self.formula_signal_over(timeline, segments, records, &mut |segment| {
             let env = Env {
                 variables: &segment.values,
                 captures,
                 activation,
             };
-            let cells = cells(
+            cells(
                 &self.atoms,
                 &env,
                 &segment.span.low,
                 &segment.span.high,
                 segment.span.high_closed,
-            )?;
+            )
+        })
+    }
+
+    /// The formula's signal over the claim's positions, the cells of each
+    /// segment over which every atom takes one value given by `cells_of`.
+    fn formula_signal_over(
+        &self,
+        timeline: &Timeline,
+        segments: &[ClaimSegment],
+        records: &mut Records,
+        provider: &mut dyn FnMut(&ClaimSegment) -> Result<Vec<Cell>, HybridReplayRefusal>,
+    ) -> Result<Signal, HybridReplayRefusal> {
+        let mut atoms: Vec<Signal> = vec![Vec::with_capacity(segments.len()); self.atoms.len()];
+        for segment in segments {
+            let cells = provider(segment)?;
             for signal in &mut atoms {
                 signal.push(Vec::with_capacity(cells.len()));
             }
@@ -1268,7 +1282,7 @@ impl Enabled<'_> {
                 activation: &before,
             };
             let (satisfied, read) = section.exists(body, &env)?;
-            decisions.extend(projection(&read, &mut || section.charge())?);
+            decisions.extend(projection(&read, &mut |work| section.charge_by(work))?);
             if !satisfied {
                 return Ok(false);
             }

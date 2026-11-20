@@ -4,6 +4,8 @@
 //! the enabledness it decides in a replayed lasso. Every expectation is an
 //! exact rational or algebraic value.
 
+use std::cmp::Ordering;
+
 use filament_exact::Rational;
 use fsl_semantics::check::{ArithmeticOp, CompareOp};
 use ix_trace_rs::trace;
@@ -14,7 +16,7 @@ use crate::hybrid_replay::expand::{Exp, TermLocus};
 use crate::hybrid_replay::poly::Poly;
 use crate::hybrid_replay::poly2::{projection, Poly2};
 use crate::hybrid_replay::real::ExactReal;
-use crate::hybrid_replay::section::Section;
+use crate::hybrid_replay::section::{Sample, Section};
 
 fn num(value: i64) -> Exp {
     Exp::Number(n(value))
@@ -152,7 +154,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
         Poly::zero(),
         Poly::constant(n(1)),
     ]);
-    let projected = projection(&[square], &mut || Ok(())).expect("unmetered");
+    let projected = projection(&[square], &mut |_| Ok(())).expect("unmetered");
     assert!(!projected.is_empty());
     for poly in &projected {
         assert_eq!(poly.roots_in(&n(-100), &n(100)).len(), 1, "{poly:?}");
@@ -171,7 +173,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
 fn the_projection_of_two_lines_has_their_crossing() {
     let moving = Poly2::new(vec![Poly::new(vec![n(0), n(-1)]), Poly::constant(n(1))]);
     let fixed = Poly2::new(vec![Poly::constant(n(-1)), Poly::constant(n(1))]);
-    let projected = projection(&[moving, fixed], &mut || Ok(())).expect("unmetered");
+    let projected = projection(&[moving, fixed], &mut |_| Ok(())).expect("unmetered");
     let roots_of = |poly: &Poly| poly.roots_in(&n(-100), &n(100));
     // The resultant is the one projected polynomial that vanishes at the
     // crossing and nowhere else; the coefficient `-t` adds the root 0, where
@@ -251,7 +253,7 @@ fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() 
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn quantifier_elimination_charges_every_step_before_it_is_taken() {
-    const ELIMINATION_UNITS: u64 = 39;
+    const ELIMINATION_UNITS: u64 = 86;
     let body = compare(
         CompareOp::Eq,
         times(Exp::Variable(0), Exp::Variable(0)),
@@ -279,7 +281,7 @@ fn a_tiny_meter_is_exhausted_inside_a_projection() {
         Poly::constant(n(1)),
     ]);
     let mut meter = HybridReplayMeter::new(0);
-    let mut charge = || meter.charge();
+    let mut charge = |work| meter.charge_by(work);
     assert_eq!(
         projection(&[square], &mut charge),
         Err(HybridReplayRefusal::ResourceExhausted {
@@ -430,4 +432,48 @@ fn shuttle_fairness_over_a_nondeterministic_reset_is_decided_exactly() {
         exact_replay(&never, claim(&never, "Named"), &lasso),
         Ok(reproduced_formula(&lasso))
     );
+}
+
+/// The units `work` spends on a section at `at`.
+fn spent_on<T>(at: &ExactReal, work: impl FnOnce(&Section<'_, '_>) -> T) -> (u64, T) {
+    let mut meter = HybridReplayMeter::new(u64::MAX);
+    let answer = work(&Section::new(at, &mut meter));
+    (meter.consumed(), answer)
+}
+
+/// `x^2 - 1`: roots at the first two radii tried, so the search for a
+/// root-free enclosing interval steps past them (`nonroot_from`) and the
+/// isolation splits the two roots (`nonroot_between`).
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn root_isolation_charges_each_search_step_before_it_is_taken() {
+    let square = Poly2::new(vec![
+        Poly::constant(n(-1)),
+        Poly::zero(),
+        Poly::constant(n(1)),
+    ]);
+    let (spent, roots) = spent_on(&rational(n(0)), |section| section.roots(&square));
+    assert_eq!(roots.expect("unmetered").len(), 2);
+    assert_eq!(spent, 44);
+}
+
+/// A sign at a rational sample is charged by the size of the polynomial:
+/// a polynomial of 20 coefficients of 16 words each costs 20 units.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn a_sign_at_a_rational_sample_is_charged_by_the_polynomial_size() {
+    let huge = n(10)
+        .pow(&filament_exact::Integer::from(300_i64))
+        .expect("a power");
+    let big = Poly2::new(vec![
+        Poly::new(vec![huge.clone(); 5]),
+        Poly::new(vec![huge.clone(); 5]),
+        Poly::new(vec![huge.clone(); 5]),
+        Poly::new(vec![huge; 5]),
+    ]);
+    let (spent, sign) = spent_on(&rational(n(0)), |section| {
+        section.sign_of(&big, &Sample::Rational(n(2)))
+    });
+    assert_eq!(sign, Ordering::Greater);
+    assert_eq!(spent, 20);
 }
