@@ -43,8 +43,8 @@ reading the caller did not ask for.
 
 ## Inputs
 
-A `native-run/1` request (FR-026, FR-312) carrying a program unit and the
-`tl_lowering` member; for cross-evaluation, a trace or a model snapshot.
+A `native-run/1` request (FR-026, FR-312) carrying a program unit, or a selected checked package
+(FR-1039, "The lowering input" below), and the `tl_lowering` member; for cross-evaluation, a trace or a model snapshot.
 
 ## Outputs
 
@@ -119,6 +119,61 @@ The run result document's `tl_lowering` record, or a request refusal.
   `mltl.infinite-trace/v1` named for a false-extension past clause or a
   finite-trace correspondence named for an infinite-trace past clause, SHALL
   report `profile`.
+
+### The lowering input
+
+The lowering record is a function of four pieces of the named clause and of
+the request's `correspondence`, and of nothing else: the clause's **declared
+name**, its **temporal profile**, its **formula graph** (each temporal
+operator with its direction and interval, each Boolean connective and
+constant, and each leaf: a `holds` operand or a window aggregate atom) and the
+**atom text** of each leaf ("Atom text"). The classification reads the
+profile, the operator directions and the interval closures; `formula` reads
+the graph; `atoms` reads the atom texts; `clause` is the name. Each route
+builds these four pieces and hands them to the one lowering, so the lowering
+holds no route-specific step:
+
+| Piece | Source route | Package route (FR-1039) |
+| --- | --- | --- |
+| declared name | the declared name of the checked temporal clause `tl_lowering.clause` names | the `name` of the `temporal_clause_names` row equal to `tl_lowering.clause` (FSpec FR-322 "Temporal clause names") |
+| temporal profile | the checked clause's profile | the `temporal_profile` law of the `filament.op.temporal.clause` application that is the body of that row's `declaration` node, which equals the lock's `profile_selections` row of that role (FSpec FR-370) |
+| formula graph | the checked clause's formula | the `formula_graph()` entries of FR-515's temporal subject view over that node, read through FR-940's `AnalysisView` package form: each `filament.op.temporal.*` application with its operator identity and `temporal_interval` member, each connective and constant, and each leaf (the node's sixth argument, `formula`, FSpec FR-370) |
+| atom texts | printed from each leaf's checked expression | printed from each leaf's term read through its reader projection (FR-940 "Package forms of the source-checked evaluators"), by the same printer |
+
+For one unit and one request, the source route and the package route over
+that unit's checked package SHALL produce byte-equal lowering records:
+the same members in the same order, the same `disposition`, `correspondence`,
+`classified`, `dimensions`, `formula`, `atoms`, `classification` and
+`cross_evaluation`, and the same exit code. Two clauses with one structure
+share one `temporal_clause` node with one row each; a request naming either
+lowers that node, and the record's `clause` is the name the request gave.
+
+A package the strict reader admits always holds the profile, the formula
+graph and the name rows of every temporal clause, because the reader's
+FSpec FR-370 "Profile check" and FSpec FR-322 "Temporal clause names" run at
+admission; a package with a defect in any of them refuses the whole request
+at stage `request` with the reader's code and locus (FR-1039 "A package that
+cannot run"), exit 20, and writes no lowering record. Over an admitted
+package:
+
+- A `tl_lowering.clause` that equals no `temporal_clause_names` row's `name`
+  (the member absent included, a package with no temporal clause) SHALL
+  refuse `missing_declaration`/`missing-name` naming `tl_lowering.clause` and
+  the name, exit 20, as the source route refuses a name that names no
+  temporal clause. A name that only a `claim_names` row carries (a state
+  clause, a refinement, a hyper clause or another claim) names no temporal
+  clause and refuses the same way, with the code, cause and exit the source
+  route gives for that name.
+- A leaf the printer refuses on the source route is refused the same way on
+  the package route, with no record.
+- `cross_evaluate` reads states of the package's model world, as a `clause`
+  run does, so it needs the handoff's identity and equality rows: over a
+  `{file}` or `{file, equality}` selection a request carrying it SHALL refuse
+  `invalid-request` at stage `request` with `details` `{"member":
+  "tl_lowering.cross_evaluate", "requires": "directory"}`, exit 20, and over a
+  `{directory}` selection it SHALL evaluate the trace or the snapshot's
+  behaviours from the package and return the source route's
+  `cross_evaluation`, byte-equal.
 
 ### Cross-evaluation
 
@@ -408,7 +463,8 @@ function, a type, a population, a model declaration) prints as its
 **declaration key**, the alias-free identity text the checked package
 records for it, because a source alias is no part of a package (FSpec
 FR-322 node ids are alias-independent) and the package route has no alias
-to print:
+to print (a type argument the source wrote as a type alias is the one
+exception, "Type arguments" below):
 
 - a declaration of a selected domain package: the `node` of its
   `ModelOwner`, `ix://<package identity>/<path>` (FSpec FR-322 "Model-owned
@@ -447,18 +503,27 @@ A population form prints ` where q` exactly when its checked form holds a
 source writes no type argument on a population form and must write one on a
 collection form (FR-091), so only the checked node holds the type for every
 form. The checker SHALL record the result type on the checked node of each of
-these forms (on the package route, the application's `result_type`, FSpec FR-322; a
-population form also carries it as `type_argument`), and the printer SHALL read it from the
-checked node on both routes. The printer never re-derives it from the
-operands, the binder bodies or the source text. A re-derived type could
-differ from the checked one: `count<Small>` with `type Small = Int[0, 4]` is
-checked at `Small`, and a type rebuilt from the collection's bound would be
-the structural `Int[0, 4]`. Every other form prints no type argument.
+these forms (on the package route, the node the application's `type_argument`
+member names, which equals its `result_type`, FSpec FR-322), and the printer
+SHALL read it from the checked node on both routes. The printer never
+re-derives it from the operands, the binder bodies or the source text. A
+re-derived type could differ from the checked one: `count<Small>` with
+`type Small = Int[0, 4]` is checked at `Small`, and a type rebuilt from the
+collection's bound would be the structural `Int[0, 4]`. Every other form
+prints no type argument.
 
 The argument prints as the declaration key of a named type, or as the type's
 canonical spelling (`Int[0, 9]`, `Sequence<Integer>[0, 4]`, FR-003) for a
-structural type. A declaration key touches its neighbours as a qualified name
-does. The atom text is therefore a label that repeats the expression's
+structural type. A type argument the source wrote as a type alias is named
+by the alias: it prints as the alias's declaration key (`ix://I/Small` for
+the unit's own `type Small`; for a chain `Small = Tiny`, the alias the source
+wrote). The source route reads the alias from the name the checker retains on
+the checked node; a package holds no alias node, so the package route reads
+it from the `alias` member of the application's `type_argument` member, the
+alias's original declaration key, and prints its `node` (FSpec FR-322 "Named
+type arguments"). An application whose member carries no `alias` prints its
+`declaration` node as above. The alias is a label only. It is the key the producer wrote for the alias the source named, and it is not evidence that the alias is declared or that it resolves to `declaration`: the reader checks its shape, its owner, its spelling and, for a domain-package alias, its resolution, but nothing else. The package checks and evaluates the application from `declaration` alone, so an admitted alias changes the atom text and nothing else. A declaration key touches its neighbours as a
+qualified name does. The atom text is therefore a label that repeats the expression's
 structure and the package's identities exactly; it is not source that the
 parser reads back with the unit's aliases.
 
@@ -521,8 +586,9 @@ field order; a reference literal as `Q#"key"`.
 | FR-931-AC-13 | Over the `Low` unit with a source union `union Shape { Circle(Integer), Rect(Integer, Integer), Empty }` declared by the unit (its `SourceOwner` identity `I`), the leaf written `holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })` has the atom text `holds(case ix://I/Shape::Rect(c.versionNumber, 2) { Circle(r): r <= 2; Rect(w, h): w + h <= 4; Empty: true; })`, arms in member declaration order and binders under their declared names; the leaf `holds(let k = c.versionNumber in case Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })` prints `holds(let k = c.versionNumber in case ix://I/Shape::Rect(k, 1) { Circle(r): r <= k; Rect(_, h): case ix://I/Shape::Circle(h) { Circle(x): x + k <= 4; Rect(a, b): false; Empty: true; }; Empty: true; })`, with `_` printed as an ordinary binder; the first leaf with `w` renamed to `width` throughout prints `Rect(width, h): width + h <= 4`, so the atom texts differ; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
 | FR-931-AC-14 | Over FR-931-AC-13's unit, with `A` = `float64(bits: 0x3ff0000000000000)` and `Z` = `float64(bits: 0x0000000000000000)`: the leaf `holds(-A < Z)` (one checker `let`) has the atom text `holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))`, and `holds(Z > -A)` gives the same text; `holds(-A > -Z)` (two checker `let`s) prints `holds(-float64(bits: 0x3ff0000000000000) > -float64(bits: 0x0000000000000000))` as written and `holds(-Z < -A)` prints `holds(-float64(bits: 0x0000000000000000) < -float64(bits: 0x3ff0000000000000))`, two different texts; no atom text contains `let` or `#ieee_operand`; the author-written `holds(let ieee_operand_0 = -A in ieee_operand_0 < Z)` prints `holds(let ieee_operand_0 = -float64(bits: 0x3ff0000000000000) in ieee_operand_0 < float64(bits: 0x0000000000000000))`; and each unit's checked package selected as `package` (FR-1039) with the source removed gives byte-equal `atoms`. | Test (TC-3039) |
 | FR-931-AC-15 | The FR-931-AC-1 request `{"clause": "Low"}`, prepared through `prepare_run`, is `PreparedRun::TlLowering`; executed through `execute_tl_lowering` with its request unchanged it returns the record `run` returns for the same request, byte-equal, exit 0. With the `s1.nodes` bound of `clause_request_mut().limits` set to 1 through `SettingLimits::set_bound`, `execute_tl_lowering` settles the typed limit outcome naming `s1.nodes` with configured value 1, category `incomplete`, exit 22, and writes no lowering record; with that bound set back to 50000 the record equals the unchanged one. Setting the bound changes no other member of the request: its selection, its other stage limits, its observation limits and its accounting limits are equal before and after. | Test (TC-3065) |
-| FR-931-AC-16 | Over a variant of the `Low` unit whose `c` also has a field `xs: Sequence<Int[0, 9]>[0, 4]` and which declares `type Small = Int[0, 4]` (its `SourceOwner` identity `I`), each request returns `supported` with an `atoms` entry, exit 0, never the no-printer refusal, and the leaves print: `holds(count<Small>(x in c.xs: x>1) >= 1)` as `holds(count<ix://I/Small>(x in c.xs: x > 1) >= 1)`; `holds(count<Int[0, 4]>(x in c.xs: x > 1) >= 1)` as itself, a text different from the `Small` one; `holds(sum<Int[0, 36]>(x in c.xs: x) <= 9)` as itself; `holds(fold<Integer>(acc, x in c.xs: acc+x, identity: 0) <= 9)` as `holds(fold<Integer>(acc, x in c.xs: acc + x, identity: 0) <= 9)`; and `holds(reduce<Integer>(acc, x in c.xs: acc+x) <= 9)` as `holds(reduce<Integer>(acc, x in c.xs: acc + x) <= 9)`. The same requests over the unit's checked package selected as `package` (FR-1039), with the source removed, give byte-equal `atoms`. | Test (TC-2601) |
+| FR-931-AC-16 | Over a variant of the `Low` unit whose `c` also has a field `xs: Sequence<Int[0, 9]>[0, 4]` and which declares `type Small = Int[0, 4]` (its `SourceOwner` identity `I`), each request returns `supported` with an `atoms` entry, exit 0, never the no-printer refusal, and the leaves print: `holds(count<Small>(x in c.xs: x>1) >= 1)` as `holds(count<ix://I/Small>(x in c.xs: x > 1) >= 1)`; `holds(count<Int[0, 4]>(x in c.xs: x > 1) >= 1)` as itself, a text different from the `Small` one; `holds(sum<Int[0, 36]>(x in c.xs: x) <= 9)` as itself; `holds(fold<Integer>(acc, x in c.xs: acc+x, identity: 0) <= 9)` as `holds(fold<Integer>(acc, x in c.xs: acc + x, identity: 0) <= 9)`; and `holds(reduce<Integer>(acc, x in c.xs: acc+x) <= 9)` as `holds(reduce<Integer>(acc, x in c.xs: acc + x) <= 9)`. The same requests over the unit's checked package selected as `package` (FR-1039), with the source removed, give byte-equal `atoms`: in that package the `count<Small>` application's `type_argument` member carries `alias` `{"package": "I", "node": "ix://I/Small"}` beside the `Int[0, 4]` node and the `count<Int[0, 4]>` application's carries no `alias` (FSpec FR-322 "Named type arguments", FSpec FR-322-AC-491), and the package route prints `count<ix://I/Small>` from that `alias`. With `type Small = Tiny; type Tiny = Int[0, 4];` both routes print `count<ix://I/Small>`. A copy of the package with the `alias` member removed prints `count<Int[0, 4]>` on the package route and settles every request with the same `disposition`, `formula` and `classification`. | Test (TC-2601) |
 | FR-931-AC-17 | Over FR-931-AC-12's unit, whose model gives `versionNumber` the type `Int[0, 3]`, each request returns `supported` with an `atoms` entry, exit 0, never the no-printer refusal, and the leaves print: `holds(only(x in Config::P where x.versionNumber = 0: x.versionNumber) = 0)` as `holds(only<Int[0, 3]>(x in ix://example/config-version/P where x.versionNumber = 0: x.versionNumber) = 0)`; `holds(only(x in Config::P: x.versionNumber) = 0)` as `holds(only<Int[0, 3]>(x in ix://example/config-version/P: x.versionNumber) = 0)`, with no `where`; and `holds(count(x in Config::P where x.versionNumber = 0) >= 1)` as `holds(count<T>(x in ix://example/config-version/P where x.versionNumber = 0) >= 1)`, with `T` the FR-003 spelling of the result type the checked `count` node records, whatever its bound. The same unit with the alias renamed to `K` throughout gives byte-equal `atoms`, and so does each unit's checked package selected as `package` (FR-1039) with the source removed. | Test (TC-2601) |
+| FR-931-AC-18 | Route-neutral lowering input. Each of FR-931-AC-1's two requests, FR-931-AC-2's three `Low` requests and its past-only clause's default, and FR-931-AC-9's requests without `cross_evaluate` (clause `C`, its `mltl.origin-complete-history/v1` request and the two `dimensions` `["infinite-trace"]` clauses), sent over the unit's checked package selected as `package` `{"file": P, "equality": E}` (FR-1039, `E` its FR-517 handoff's `equality.json`) with the source removed, returns the record the source route returns, byte-equal, with the same exit code (0 or 21). A unit declaring `Low` and a second clause `Low2` of the same body (one `temporal_clause` node, two `temporal_clause_names` rows) gives the record of `Low` with `clause` `Low2` for `{"clause": "Low2"}` on both routes. `{"clause": "Missing"}` and, for a unit that also declares `invariant Inv using v on Config::ConfigVersion { self.versionNumber <= 3 }`, `{"clause": "Inv"}` and, for a unit that also declares FR-940-AC-16's hyper clause `Equal`, `{"clause": "Equal"}` each refuse `missing_declaration`/`missing-name` naming `tl_lowering.clause` and the name, exit 20, on both routes. FR-931-AC-9's lasso request with `cross_evaluate` over `{"file": P, "equality": E}` refuses `invalid-request` at stage `request` with `details` `{"member": "tl_lowering.cross_evaluate", "requires": "directory"}`, exit 20, and over the unit's FR-517 handoff `{"directory": D}` returns the source route's record, `cross_evaluation` included, byte-equal, exit 0. | Test (TC-2601) |
 
 ## Dependencies
 
@@ -537,4 +603,8 @@ field order; a reference literal as `Q#"key"`.
   binder names and levels in the checked package).
 - FR-091 (the type arguments the source writes), FSpec FR-322 (the
   `type_argument` and `result_type` of a checked application, "Population
-  value").
+  value", "Named type arguments").
+- FR-1039 (the package route), FR-515 (the temporal subject view), FR-940
+  (the reader projection the package route reads), FSpec FR-370 (the temporal
+  clause body: profile law and formula argument) and FSpec FR-322 "Temporal
+  clause names" (the lowering input on the package route).
