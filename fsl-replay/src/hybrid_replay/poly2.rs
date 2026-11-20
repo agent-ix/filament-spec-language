@@ -113,6 +113,15 @@ impl Poly2 {
         Poly::new(self.0.iter().map(|c| c.eval(t)).collect())
     }
 
+    /// `self` with `x + shift` for `x`: the polynomial whose roots in `x`
+    /// are `self`'s roots moved down by `shift`.
+    pub(crate) fn shifted(&self, shift: &Rational) -> Self {
+        let step = Self::new(vec![Poly::constant(shift.clone()), Poly::constant(one())]);
+        self.0.iter().rev().fold(Self::zero(), |acc, coefficient| {
+            acc.mul(&step).add(&Self::constant(coefficient.clone()))
+        })
+    }
+
     /// The derivative in `x`.
     pub(crate) fn derivative(&self) -> Self {
         Self::new(

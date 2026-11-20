@@ -431,6 +431,16 @@ fn hybrid_replay_request(
     unit: &str,
     counterexample: fsl_replay::HybridCounterexample,
 ) -> fsl_replay::ReplayRequestWire {
+    hybrid_replay_request_for(unit, "TooSlow", counterexample)
+}
+
+/// The replay request of the claim `claim` of `unit` carrying
+/// `counterexample`.
+fn hybrid_replay_request_for(
+    unit: &str,
+    claim: &str,
+    counterexample: fsl_replay::HybridCounterexample,
+) -> fsl_replay::ReplayRequestWire {
     let source = SourceIdentity::new("agent-ix", "hybrid-replay");
     let compiled = fsl_replay::compile_package(
         fsl_replay::CompileUnit {
@@ -455,8 +465,7 @@ fn hybrid_replay_request(
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
             fsl_replay::QualifiedName::new(vec![
-                filament_exact::Identifier::new("TooSlow")
-                    .expect("the claim name is an identifier"),
+                filament_exact::Identifier::new(claim).expect("the claim name is an identifier"),
             ])
             .expect("the claim name is qualified"),
         ),
@@ -465,7 +474,7 @@ fn hybrid_replay_request(
         backend: "hybrid-fixture".to_owned(),
         state_environment: fsl_replay::StateEnvironment::new(Vec::new()),
         accounting_limits: ScalarLimits {
-            work_units: 1_000,
+            work_units: 100_000,
             ..crate::counter::UNLIMITED
         },
         stage_limits: std::collections::BTreeMap::new(),
@@ -1120,6 +1129,13 @@ fn a_plan_validation_item_carries_rational_objects() {
 /// the claims `Whole` (`fair Moving;`) and `Named` (`fair Moving::Stopped;`),
 /// each over `eventually [0, *] holds(h.v > 1)`.
 fn shuttle(reset: &str) -> String {
+    shuttle_with(reset, true)
+}
+
+/// `Shuttle` with the claims of [`shuttle`] (`standard`), or with the one
+/// claim `Zrange` alone: capture `tau + 3/2` of type `[0, 2]` is out of range
+/// for `tau` in `(1/2, 1)`.
+fn shuttle_with(reset: &str, standard: bool) -> String {
     let claim = |name: &str, fairness: &str| {
         format!(
             "temporal {name} using p over (h: Shuttle) clock \"model-time\" \
@@ -1136,15 +1152,33 @@ fn shuttle(reset: &str) -> String {
              transition to Stopped when {{ v >= 0 }} reset {{ {reset} }};\n\
            mode Stopped invariant {{ v >= 1 and v <= 2 }} flow {{ v' = 0; }}\n\
          }}\n{}{}",
-        claim("Whole", "Moving"),
-        claim("Named", "Moving::Stopped"),
-    ) + "temporal Capture using p over (h: Shuttle) clock \"model-time\" \
+        if standard {
+            claim("Whole", "Moving")
+        } else {
+            String::new()
+        },
+        if standard {
+            claim("Named", "Moving::Stopped")
+        } else {
+            String::new()
+        },
+    ) + if standard {
+        SHUTTLE_CAPTURES
+    } else {
+        SHUTTLE_RANGE
+    }
+}
+
+const SHUTTLE_RANGE: &str = "temporal Zrange using p over (h: Shuttle) clock \"model-time\" \
+         on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 2; 1, 2] = q.v + 3 / 2; \
+         eventually [0, 1] holds(h.v + 3 / 2 >= v0) }\n";
+
+const SHUTTLE_CAPTURES: &str = "temporal Capture using p over (h: Shuttle) clock \"model-time\" \
          on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 2; 1, 2] = q.v; \
          eventually [0, 1] holds(h.v >= v0 + 1 / 2) }\n\
          temporal CaptureHeld using p over (h: Shuttle) clock \"model-time\" \
          on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 2; 1, 2] = q.v; \
-         eventually [0, 1] holds(h.v >= v0) }\n"
-}
+         eventually [0, 1] holds(h.v >= v0) }\n";
 
 /// The point lasso `L` of `Shuttle` as a provider's `refuted` entry: from
 /// `(Moving, v = 0)` at time 0 by transition 0 (`before` `(time 1, v = 1)`)
@@ -1211,9 +1245,12 @@ fn exact_replay_decides_nondeterministic_reset_fairness_claims() {
 /// FR-750-AC-12 (exact-replay half, activation state): over `Shuttle` and
 /// its point lasso `L`, the capture claim whose obligation at `tau` needs
 /// `h.v >= tau + 1/2` within `[tau, tau + 1]` is false for `tau` in
-/// `(1/2, 1)`: it reproduces with kind `formula` and the item settles
-/// `refuted`; with body `h.v >= v0`, true for every `tau`, the replay is
-/// `NotReproduced` at check 5 and the item settles `inconclusive`.
+/// `(1/2, 1)`: it reproduces with kind `formula`, the item settles
+/// `refuted` with one counterexample and the replay row is
+/// `reproduced-with-evaluated-witness`; with body `h.v >= v0`, true for
+/// every `tau`, the replay is `NotReproduced` at check 5 and the item
+/// settles `inconclusive`. (The checker requires a range on a capture's
+/// `Rational` type, so the fixture writes `Rational[0, 2; 1, 2]`.)
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
 fn exact_replay_decides_activation_state_claims() {
@@ -1231,6 +1268,8 @@ fn exact_replay_decides_activation_state_claims() {
     let refuted = run("hybrid-750-12-capture", "Capture");
     assert_eq!(refuted["record"]["result"], "refuted", "{refuted}");
     assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
+    assert_eq!(refuted["counterexample"]["kind"], "formula", "{refuted}");
+    assert!(refuted["counterexample"].is_object(), "{refuted}");
     let held = run("hybrid-750-12-capture-held", "CaptureHeld");
     assert_eq!(held["record"]["result"], "inconclusive", "{held}");
     assert_eq!(held["record"]["cause"]["kind"], "replay-parity", "{held}");
@@ -1238,6 +1277,160 @@ fn exact_replay_decides_activation_state_claims() {
         held["record"]["cause"]["parity"]["reason"], "hybrid-trace",
         "{held}"
     );
+    // The replay request path writes `reproduced-with-evaluated-witness`.
+    let counterexample = fsl_replay::HybridCounterexample {
+        kind: fsl_replay::HybridCounterexampleKind::Formula,
+        trace: shuttle_lasso_trace(),
+    };
+    let result = fsl_replay::replay(
+        hybrid_replay_request_for(&shuttle("v >= 0"), "Capture", counterexample),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect("the hybrid counterexample replays");
+    let wire: Value = serde_json::from_str(
+        &result
+            .to_function_json()
+            .expect("the hybrid result serializes"),
+    )
+    .expect("the result row is JSON");
+    assert_eq!(wire["settlement"], "reproduced-with-evaluated-witness");
+}
+
+/// `Shuttle`'s point lasso `L` as a trace.
+fn shuttle_lasso_trace() -> fsl_replay::HybridTrace {
+    use fsl_replay::{ExactInterval, HybridTrace, TraceBefore, TraceJump, TraceState};
+    let point = |value| ExactInterval::point(exact(value));
+    let state = |time, v| TraceState {
+        mode: ModeIndex::new(0),
+        time: point(time),
+        enclosure: vec![point(v)],
+    };
+    HybridTrace {
+        start: state(0, 0),
+        jumps: vec![TraceJump {
+            transition: 0,
+            before: Some(TraceBefore {
+                time: point(1),
+                enclosure: vec![point(1)],
+            }),
+            state: state(1, 0),
+        }],
+        delta: None,
+        loop_to: Some(0),
+        end: None,
+    }
+}
+
+/// FR-450-AC-12 (a), provider half: over `Shuttle` and `L`, a provider's
+/// `refuted` entry of kind `undefined-evaluation` for the capture
+/// `tau + 1/2` of type `[0, 1]` (out of range on `(1/2, 1)`) with
+/// `where.time` `[1/2, 1/2]`, the reproduced infimum, settles `refuted`;
+/// with `where.time` `[3/4, 3/4]`, which does not hold the instant, the
+/// replay is `NotReproduced` at check 5 and the item settles `inconclusive`.
+#[test]
+#[trace("TC-1221", "FR-450-AC-12")]
+fn a_provider_entry_is_settled_by_the_reproduced_infimum() {
+    let run = |name: &str, time: &'static str| {
+        let (fixture, _) = answering("hybrid-fixture", move |request| {
+            let claim_index = request
+                .graph
+                .hybrid_claims()
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, request.claim))
+                .expect("the request claim belongs to its graph");
+            let ExactReplay::Reproduced(found) = fsl_replay::exact_replay(
+                request.graph,
+                request.claim,
+                &shuttle_lasso_trace(),
+                &mut HybridReplayMeter::new(1_000_000),
+            )
+            .expect("the point lasso replays exactly") else {
+                panic!("the capture is out of range for some activation instant");
+            };
+            let fsl_replay::HybridCounterexampleKind::UndefinedEvaluation { at, .. } = &found.kind
+            else {
+                panic!("the exact replay finds an undefined evaluation");
+            };
+            let locus =
+                fsl_replay::hybrid_locus_wire(request.graph, request.wire, claim_index, &at.locus)
+                    .expect("the capture has an emitted locus");
+            let mut wire = found.to_wire(request.model, &|_| locus.clone());
+            wire["kind"]["where"]["time"] = interval(time, time);
+            let entry = json!({"request_index": 0, "result": "refuted", "counterexample": 0,
+                "counterexamples": [wire]});
+            let counterexamples = entry["counterexamples"]
+                .as_array()
+                .expect("the entry has a counterexample array");
+            HybridAnswer::read_entry(
+                &entry,
+                counterexamples,
+                request.graph,
+                request.claim,
+                request.wire,
+            )
+            .unwrap_or_else(|refusal| panic!("the counterexample reads back: {refusal}"))
+        });
+        first_item(
+            name,
+            &shuttle_with("v >= 0", false),
+            named("Zrange", "hybrid-fixture"),
+            json!({}),
+            vec![fixture],
+        )
+        .1
+    };
+    let at_infimum = run("hybrid-450-12-infimum", "1/2");
+    assert_eq!(at_infimum["record"]["result"], "refuted", "{at_infimum}");
+    let elsewhere = run("hybrid-450-12-elsewhere", "3/4");
+    assert_eq!(elsewhere["record"]["result"], "inconclusive", "{elsewhere}");
+    assert_eq!(
+        elsewhere["record"]["cause"]["kind"], "replay-parity",
+        "{elsewhere}"
+    );
+}
+
+/// FR-450-AC-12 (d), provider half: over `Phase` and its point lasso
+/// (`loop_to` 1), a provider's `refuted` trace for `on each (q: Phase)
+/// { once [0, 1] once [0, 1] holds(h.w = 1) }` reproduces with kind
+/// `formula` (past reach 2, three periods decided) and settles `refuted`.
+#[test]
+#[trace("TC-1221", "FR-450-AC-12")]
+fn a_past_reach_of_two_periods_settles_refuted() {
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Phase using p {\n\
+           initial { mode Warm when { x = 0 and w = 1 }; }\n\
+           mode Warm invariant { x >= 0 and x <= 1 } flow { x' = 1; w' = 0; }\n\
+             transition to Cold when { x = 1 } reset { x = 0 and w = 0 };\n\
+           mode Cold invariant { x >= 0 and x <= 1 } flow { x' = 1; w' = 0; }\n\
+             transition to Cold when { x = 1 } reset { x = 0 and w = 0 };\n\
+         }\n\
+         temporal Twice using p over (h: Phase) clock \"model-time\" \
+           on each (q: Phase) { once [0, 1] once [0, 1] holds(h.w = 1) }\n";
+    let state = |mode: &str, time: &str, w: &str| {
+        json!({"mode": mode, "time": interval(time, time),
+            "enclosure": {"x": interval("0", "0"), "w": interval(w, w)}})
+    };
+    let before = |time: &str, w: &str| {
+        json!({"time": interval(time, time),
+            "enclosure": {"x": interval("1", "1"), "w": interval(w, w)}})
+    };
+    let entry = refuted_entry(json!({"start": state("Warm", "0", "1"),
+        "jumps": [
+            {"transition": 0, "before": before("1", "1"), "state": state("Cold", "1", "0")},
+            {"transition": 0, "before": before("2", "0"), "state": state("Cold", "2", "0")}],
+        "loop": 1}));
+    let (fixture, _) = answering("hybrid-fixture", entry_answer(entry));
+    let item = first_item(
+        "hybrid-450-12-phase",
+        unit,
+        named("Twice", "hybrid-fixture"),
+        json!({}),
+        vec![fixture],
+    )
+    .1;
+    assert_eq!(item["record"]["result"], "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FR-750-AC-12 (replay-request half): the same refusals on FR-098's replay

@@ -30,7 +30,11 @@ const SHUTTLE_CLAIMS: &str = "temporal Cap using p over (h: Shuttle) clock \"mod
      temporal Once using p over (h: Shuttle) clock \"model-time\" \
        on each (q: Shuttle) when (q.v > 0) { once holds(h.v = 0) }\n\
      temporal Past using p over (h: Shuttle) clock \"model-time\" \
-       on each (q: Shuttle) when (q.v > 0 and q.v <= 1 / 2) { not once holds(h.v > 3 / 4) }\n";
+       on each (q: Shuttle) when (q.v > 0 and q.v <= 1 / 2) { not once holds(h.v > 3 / 4) }\n\
+     temporal Origin using p over (h: Shuttle) clock \"model-time\" \
+       on origin { capture v0: Rational[0, 2; 1, 2] = h.v; eventually [0, 1] holds(h.v >= v0 + 2) }\n\
+     temporal OriginHeld using p over (h: Shuttle) clock \"model-time\" \
+       on origin { capture v0: Rational[0, 2; 1, 2] = h.v; eventually [0, 1] holds(h.v >= v0 + 1) }\n";
 
 /// `Shuttle`'s point lasso: from `(Moving, v = 0)` at time 0 by transition 0
 /// (`before` `(time 1, v = 1)`) to `(Moving, v = 0)` at time 1, `loop_to` 0.
@@ -181,24 +185,124 @@ fn a_past_reach_of_two_periods_decides_three() {
     );
 }
 
-/// The activation scan is charged to the caller's meter: a bound below
-/// what it needs is exhausted, never a panic or an answer.
-#[trace("TC-1221", "FR-450-AC-7")]
+/// `Ramp`: `v` rises from 0 at rate 1, never jumps, and the finite trace
+/// ends at time 10. The obligation activated at `tau` in `(0, 1)` captures
+/// `v0 = tau`; its atom `2 <= v <= 2 + 4 v0` holds on `[2, 2 + 4 tau]`, an
+/// interval of length `4 tau`, so `always [0, 1]` holds on `[2, 1 + 4 tau]`,
+/// nonempty exactly when `tau >= 1/4`, and `eventually [0, 5]` over it holds
+/// at `tau` exactly then. The truth changes where two root curves of the
+/// atom, `2 + 4 tau` and `2`, are the window width 1 apart: `tau = 1/4`.
+const RAMP: &str = "hybrid Ramp using p {\n\
+       initial { mode Run when { v = 0 and w = 0 }; }\n\
+       mode Run invariant { v >= 0 } flow { v' = 1; w' = 0; }\n\
+     }\n\
+     temporal Nested using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n\
+     temporal NestedLow using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1 / 8) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n\
+     temporal NestedHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v >= 1 / 4 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n";
+
+fn ramp_trace() -> HybridTrace {
+    HybridTrace {
+        start: state(0, n(0), &[n(0), n(0)]),
+        jumps: Vec::new(),
+        delta: None,
+        loop_to: None,
+        end: Some(before(n(10), &[n(10), n(0)])),
+    }
+}
+
+/// FR-450-AC-12 (nested windows): the obligations are false exactly for
+/// `tau` in `(0, 1/4)`, where `always [0, 1]` fits no region, so the claim
+/// is reproduced although the one rational sample of `(0, 1)` between the
+/// projection's other roots, 1/2, holds. With the guard `q.v < 1/8` every
+/// activation instant is false; with `q.v >= 1/4` every one holds (at
+/// `tau = 1/4` the atom's region is `[2, 3]`, exactly the window's width).
+#[trace("TC-1221", "FR-450-AC-12")]
 #[test]
-fn the_activation_scan_is_charged_to_the_meter() {
+fn nested_windows_over_tau_dependent_atoms_cut_where_two_roots_are_a_width_apart() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Nested"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "NestedLow"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "NestedHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// An `on origin` capture is read at the first position, not as a function
+/// of the dwell's time: over `Shuttle`'s moving dwell `v0 = 0`, so the claim
+/// needing `v >= 2` is reproduced and the one needing `v >= 1`, reached at
+/// the end of the dwell, is not.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn an_origin_capture_over_a_moving_dwell_is_read_at_the_first_position() {
     let graph = shuttle();
     let trace = shuttle_lasso();
-    let claim = claim(&graph, "Cap");
-    let mut spent = HybridReplayMeter::new(u64::MAX);
-    super::super::exact_replay(&graph, claim, &trace, &mut spent).expect("unmetered");
-    assert!(spent.consumed() > 100, "{}", spent.consumed());
-    for bound in [spent.consumed() - 1, spent.consumed() / 2, 30] {
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Origin"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "OriginHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// The work units one exact replay spends.
+fn units(graph: &Unit, name: &str, trace: &HybridTrace) -> u64 {
+    let mut meter = HybridReplayMeter::new(u64::MAX);
+    super::super::exact_replay(graph, claim(graph, name), trace, &mut meter).expect("unmetered");
+    meter.consumed()
+}
+
+/// The activation scan is charged to the caller's meter before each step:
+/// the exact units each claim spends are pinned (each charge site of the
+/// scan contributes to at least one of them, so a deleted charge changes a
+/// count), and a bound one below a claim's units is exhausted, never a
+/// panic or an answer.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn the_activation_scan_is_charged_to_the_meter() {
+    let shuttle = shuttle();
+    let lasso = shuttle_lasso();
+    let ramp = check(RAMP);
+    let ramp_trace = ramp_trace();
+    let phase = check(PHASE);
+    let phase_trace = phase_lasso();
+    let cases = [
+        (&shuttle, "Cap", &lasso, 2062),
+        (&shuttle, "Range", &lasso, 1614),
+        (&shuttle, "Past", &lasso, 45),
+        (&shuttle, "Origin", &lasso, 35),
+        (&ramp, "Nested", &ramp_trace, 96789),
+        (&phase, "Twice", &phase_trace, 70),
+    ];
+    for (graph, name, trace, expected) in cases {
+        let spent = units(graph, name, trace);
+        assert_eq!(spent, expected, "{name}");
         assert_eq!(
-            super::super::exact_replay(&graph, claim, &trace, &mut HybridReplayMeter::new(bound)),
+            super::super::exact_replay(
+                graph,
+                claim(graph, name),
+                trace,
+                &mut HybridReplayMeter::new(spent - 1)
+            ),
             Err(HybridReplayRefusal::ResourceExhausted {
                 counter: LimitKind::WorkUnits
             }),
-            "{bound}"
+            "{name}"
         );
     }
 }

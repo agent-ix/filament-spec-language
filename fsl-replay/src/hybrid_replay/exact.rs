@@ -852,7 +852,20 @@ impl Claim<'_> {
                 let Some(first) = segments.first() else {
                     return Ok(Tri::Unknown);
                 };
-                let Some(captures) = self.captures(first, &[], records)? else {
+                // The captures read the state at the first position, not
+                // the dwell's solution.
+                let here = match first.span.low.as_rational() {
+                    Some(at) => ClaimSegment {
+                        values: first
+                            .values
+                            .iter()
+                            .map(|p| Poly::constant(p.eval(at)))
+                            .collect(),
+                        ..first.clone()
+                    },
+                    None => first.clone(),
+                };
+                let Some(captures) = self.captures(&here, &[], records)? else {
                     return Ok(Tri::Unknown);
                 };
                 let signal = self.formula_signal(&timeline, segments, &captures, &[], records)?;

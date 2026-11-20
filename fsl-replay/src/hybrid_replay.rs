@@ -388,9 +388,13 @@ impl UndefinedCause {
 pub enum ExactGap {
     /// An `on each` claim under `model-time` whose obligations read the
     /// activation position's state, where the decisive instant is not
-    /// isolated: an activation instant that is irrational and a critical
-    /// value of the obligations, or an atom with no value at an instant that
-    /// moves with the activation instant. Remaining work: QSL-2529.
+    /// isolated. It is raised when (1) an activation instant that is
+    /// irrational and a critical value of the obligations is left unread and
+    /// no earlier expression with no value decides the result, or (2) a
+    /// claim atom (any expression with no value other than the guard or a
+    /// capture) has no value in an open cell of activation instants, whether
+    /// or not its instant moves with the activation instant. Remaining work:
+    /// QSL-2690.
     #[error("the decisive activation instant of an `on each` claim is not isolated")]
     ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
@@ -512,7 +516,7 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2529 for `ActivationInfimum`, QSL-2639 for
+        // TEMPORARY (QSL-2690 for `ActivationInfimum`, QSL-2639 for
         // `CoupledReset`): both are gaps FR-750 deletes, because exact
         // replay decides those claims (an irrational critical activation
         // instant; quantifier elimination over several coupled free

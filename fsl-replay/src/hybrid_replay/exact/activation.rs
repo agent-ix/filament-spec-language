@@ -13,11 +13,19 @@
 //! a cell is evaluated, the polynomials the evaluation read are projected,
 //! and the roots found cut the dwell until a pass finds none.
 //!
-//! Work accounting: the meter is charged before every sample of `tau`, every
-//! re-evaluation of a segment's atoms at a sample, every cell of an atom read
-//! bivariately, every capture read, and (in
-//! [`super::super::poly2::projection`]) every evaluation point of a
-//! subresultant interpolation.
+//! Nested windows cut a second kind of critical value: where two root curves
+//! of atoms are a window width apart, a region of positions a universal window
+//! fits in appears or vanishes. Every polynomial the evaluation reads is also
+//! read shifted by each difference of the window offsets, so the projection
+//! holds their resultants.
+//!
+//! Work accounting: the meter is charged before every pass of the fixpoint,
+//! every sample of `tau`, every re-evaluation of a segment's atoms at a
+//! sample, every cell of an atom read bivariately, every capture read, every
+//! root isolation of a projected polynomial, every period of the past-reach
+//! ceiling, and (in [`super::super::poly2::projection`]) every evaluation
+//! point of a subresultant interpolation. Arithmetic on one polynomial and
+//! the sorting of cuts are not charged.
 
 use std::cmp::Ordering;
 
@@ -229,6 +237,12 @@ struct Decider<'a, 'c> {
     captures: Vec<Exp>,
     /// Each atom with its captures replaced by their expressions.
     atoms: Vec<Exp>,
+    /// The nonzero differences of the window offsets: the distances at
+    /// which two root curves of atoms, read through nested windows, change
+    /// the truth of an obligation (a region of positions that a universal
+    /// window fits in appears or vanishes where two roots are a window
+    /// width apart).
+    shifts: Vec<Rational>,
     /// `x - tau - c` for each window offset `c`, and `x - s` for each end
     /// `s` of a segment: where an atom's change of truth can meet the
     /// instant `tau` reads, or a dwell's end.
@@ -257,7 +271,17 @@ impl<'a, 'c> Decider<'a, 'c> {
             })
             .collect();
         let line = |constant: Poly| Poly2::new(vec![constant, Poly::constant(one())]);
-        let mut lines: Vec<Poly2> = offsets(&claim.formula)
+        let window_offsets = offsets(&claim.formula);
+        let mut shifts: Vec<Rational> = Vec::new();
+        for a in &window_offsets {
+            for b in &window_offsets {
+                let difference = a.sub(b);
+                if difference != zero() && !shifts.contains(&difference) {
+                    shifts.push(difference);
+                }
+            }
+        }
+        let mut lines: Vec<Poly2> = window_offsets
             .into_iter()
             .map(|c| line(Poly::new(vec![c.neg(), one().neg()])))
             .collect();
@@ -277,6 +301,7 @@ impl<'a, 'c> Decider<'a, 'c> {
             timeline,
             captures,
             atoms,
+            shifts,
             lines,
         }
     }
@@ -370,6 +395,16 @@ impl<'a, 'c> Decider<'a, 'c> {
                 set.push(poly);
             }
         }
+        let moved: Vec<Poly2> = set
+            .iter()
+            .filter(|poly| poly.degree().is_some_and(|degree| degree > 0))
+            .flat_map(|poly| self.shifts.iter().map(|shift| poly.shifted(shift)))
+            .collect();
+        for poly in moved {
+            if !set.contains(&poly) {
+                set.push(poly);
+            }
+        }
         projection(&set, &mut || meter.charge())
     }
 
@@ -401,21 +436,24 @@ impl<'a, 'c> Decider<'a, 'c> {
             time: None,
         };
         let mut records = Records::default();
-        let captures = self.claim.captures(&here, &state, &mut records)?;
+        // The guard precedes the captures and cannot read them: a capture
+        // is evaluated only where the guard does not fail.
+        let guard = match &self.claim.guard {
+            None => Tri::True,
+            Some(guard) => self.claim.point_truth(
+                guard,
+                &here,
+                &[],
+                &state,
+                &mut records,
+                ExpressionSite::Activation,
+            )?,
+        };
         let mut value = Tri::True;
-        if let Some(captures) = &captures {
-            let guard = match &self.claim.guard {
-                None => Tri::True,
-                Some(guard) => self.claim.point_truth(
-                    guard,
-                    &here,
-                    captures,
-                    &state,
-                    &mut records,
-                    ExpressionSite::Activation,
-                )?,
-            };
-            if guard != Tri::False {
+        let mut captures = None;
+        if guard != Tri::False {
+            captures = self.claim.captures(&here, &state, &mut records)?;
+            if let Some(captures) = &captures {
                 for _ in self.segments {
                     meter.charge()?;
                 }
@@ -452,6 +490,7 @@ impl<'a, 'c> Decider<'a, 'c> {
         let mut done: Vec<(Cell, Outcome)> = Vec::new();
         let (floor, ceiling) = (floor_bound(&span.low), ceiling_bound(&span.high));
         loop {
+            meter.charge()?;
             let mut results = Vec::new();
             let mut grew = false;
             for cell in partition(span, cuts.clone()) {
@@ -473,6 +512,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                         meter.charge()?;
                         let (outcome, bounds) = self.at(j, segment, &tau, meter)?;
                         for poly in bounds {
+                            meter.charge()?;
                             for root in poly.roots_in(&floor, &ceiling) {
                                 if root > span.low && root < span.high && !cuts.contains(&root) {
                                     cuts.push(root);
