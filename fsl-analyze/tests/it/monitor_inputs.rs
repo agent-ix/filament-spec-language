@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use filament_exact::{Cancel, CancelCause, FieldValue, Value, ValueType};
+use filament_exact::{Cancel, CancelCause, FieldValue, Integer, Rational, Value, ValueType};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::monitor::{
     monitor, MonitorClause, MonitorLimits, MonitorOutcome, MonitorRecord, MonitorRefusal,
@@ -72,6 +72,12 @@ fn until_unit() -> String {
         + "temporal Until using t over (c: M::Counter) clock \"model-steps\" on origin { holds(c.value > 0) until[0,1] holds(c.value > 1) }\n"
 }
 
+fn timed_unit() -> String {
+    header("filament.temporal.timed/v1")
+        + "dimension Time;\nunit ms : Time = rational(1, 1);\n"
+        + "temporal Ack using t over (r: Reading) clock \"plant\" on origin { always (holds(r.level > 0) implies eventually[0, 2] holds(r.level = 0)) }\n"
+}
+
 fn identity() -> SourceIdentity {
     SourceIdentity::new("agent-ix", "monitor-inputs")
 }
@@ -110,6 +116,9 @@ fn selections(parsed: &fsl_cst::ParsedSource) -> Vec<TemporalClockSelection> {
                         timestamp_unit: "ms".into(),
                     }
                 }
+                "filament.temporal.timed/v1" => ClockConfiguration::Timed {
+                    unit: "ms".into(),
+                },
                 _ => return None,
             };
             Some(TemporalClockSelection::new(
@@ -843,6 +852,69 @@ fn a_timestamped_trace_is_authenticated_and_reads_indeterminate() {
         .expect("the request completes");
     assert_eq!(only(&pending).verdict, MonitorVerdict::Pending);
     assert_eq!(only(&pending).report().disposition.exit_code(), 0);
+}
+
+/// FR-283/FR-642: timed samples authenticate against the selected `timed`
+/// clock row, preserve exact stamps, and use `through` to close a bounded
+/// future window.
+#[trace("TC-765", "FR-283-AC-15")]
+#[test]
+fn timed_trace_uses_its_authenticated_clock_and_through_boundary() {
+    let world = world();
+    let timed = compile(&world.documents, timed_unit());
+    let integer = |value| Rational::from_integer(Integer::from(value));
+    let sample = |level| {
+        spine::sample_position(&format!(r#"{{"level":{{"integer":"{level}"}}}}"#))
+    };
+    let pending = TraceInput::Timed {
+        prefix: vec![spine::TimedObservation {
+            document: sample(1),
+            stamp: integer(0_i64),
+        }],
+        repeat: Vec::new(),
+        period: None,
+        through: None,
+        binding: None,
+    };
+    let outcome = world
+        .run(
+            &timed,
+            vec![record_clause("Ack")],
+            MonitorTrace::Typed(&pending),
+            &timed.sources,
+            &timed.selections,
+            &limits(1 << 20),
+        )
+        .expect("the timed prefix evaluates");
+    assert_eq!(only(&outcome).verdict, MonitorVerdict::Pending);
+
+    let complete = TraceInput::Timed {
+        prefix: vec![
+            spine::TimedObservation {
+                document: sample(1),
+                stamp: integer(0_i64),
+            },
+            spine::TimedObservation {
+                document: sample(0),
+                stamp: integer(3_i64),
+            },
+        ],
+        repeat: Vec::new(),
+        period: None,
+        through: Some(integer(3_i64)),
+        binding: None,
+    };
+    let outcome = world
+        .run(
+            &timed,
+            vec![record_clause("Ack")],
+            MonitorTrace::Typed(&complete),
+            &timed.sources,
+            &timed.selections,
+            &limits(1 << 20),
+        )
+        .expect("the complete timed window evaluates");
+    assert_eq!(only(&outcome).verdict, MonitorVerdict::Violated);
 }
 
 /// FR-283-AC-15: a binding that asserts another clock refuses the whole

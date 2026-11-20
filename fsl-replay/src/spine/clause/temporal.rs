@@ -79,8 +79,9 @@ pub enum TraceInput {
         period: Option<Rational>,
         /// The finite recording's completeness boundary.
         through: Option<Rational>,
-        /// The time binding asserted by the trace.
-        binding: TraceBinding,
+        /// The time binding asserted by an in-process caller; request-file
+        /// traces instead take the binding from their authenticated clock row.
+        binding: Option<TraceBinding>,
     },
     /// A lasso: `prefix`, then `repeat` forever. Its last position re-enters
     /// the first position of `repeat`.
@@ -299,7 +300,7 @@ impl TraceInput {
 pub const DEFAULT_MODEL_MAX_CANDIDATES: u64 = 1_000_000;
 
 /// The authority label of a position that carries a record sample.
-pub(crate) const SAMPLE_AUTHORITY: &str = "record-sample";
+pub const SAMPLE_AUTHORITY: &str = "record-sample";
 
 /// FR-641: a record sample as one position of a
 /// [`ClauseRunSelection::SampledTemporal`](super::ClauseRunSelection)
@@ -1132,10 +1133,16 @@ fn authenticate_trace(
             site.kind_mismatch(trace.kind()),
         ))));
     }
+    let derived_timed_binding = match trace {
+        TraceInput::Timed { binding: None, .. } => authentication.and_then(|authentication| {
+            clause_trace_binding(site.package, clause.name(), authentication)
+        }),
+        _ => None,
+    };
     let binding = match trace {
         TraceInput::Progressed { binding, .. } => Some(binding),
         TraceInput::Timestamped { window, .. } => window.binding.as_ref(),
-        TraceInput::Timed { binding, .. } => Some(binding),
+        TraceInput::Timed { binding, .. } => binding.as_ref().or(derived_timed_binding.as_ref()),
         TraceInput::Finite(_) | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {
             return Ok(None);
         }
@@ -1688,6 +1695,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             }
         }
         TraceInput::Finite(_)
+        | TraceInput::Timed { .. }
         | TraceInput::Timestamped { .. }
         | TraceInput::Lasso { .. }
         | TraceInput::Model { .. } => None,
@@ -2891,6 +2899,11 @@ pub(super) fn observation_slot(trace: &TraceInput, at: usize) -> Option<usize> {
             let offset = (at - prefix.len()).checked_rem(repeat.len())?;
             Some(prefix.len() + offset)
         }
+        TraceInput::Timed { prefix, repeat, .. } if at >= prefix.len() && !repeat.is_empty() => {
+            let offset = (at - prefix.len()).checked_rem(repeat.len())?;
+            Some(prefix.len() + offset)
+        }
+        TraceInput::Timed { .. } => Some(at),
         TraceInput::Lasso { .. }
         | TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
@@ -3495,6 +3508,7 @@ pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
         | TemporalRefusal::TraceCarriesNoStamps { .. }
         | TemporalRefusal::NegativeStamp { .. }
         | TemporalRefusal::DecreasingStamp { .. }
+        | TemporalRefusal::ThroughBeforeLastStamp
         | TemporalRefusal::NonPositiveLoopDelay
         | TemporalRefusal::LoopReentersBeforeLastStamp => {
             TemporalTraceRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(

@@ -1156,7 +1156,9 @@ impl<'a> ClauseState<'a> {
                         },
                     ));
                 }
-                TraceInput::Lasso { .. } | TraceInput::Model { .. } => {}
+                TraceInput::Timed { .. }
+                | TraceInput::Lasso { .. }
+                | TraceInput::Model { .. } => {}
             }
             *held = Some(shape);
         }
@@ -1967,7 +1969,10 @@ fn truncate_listing(cell: &mut RefCell<Option<TraceInput>>, len: usize) {
             list.truncate(len);
         }
         Some(TraceInput::Timestamped { observations, .. }) => observations.truncate(len),
-        Some(TraceInput::Lasso { .. } | TraceInput::Model { .. }) | None => {}
+        Some(
+            TraceInput::Timed { .. } | TraceInput::Lasso { .. } | TraceInput::Model { .. },
+        )
+        | None => {}
     }
 }
 

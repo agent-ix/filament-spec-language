@@ -262,7 +262,7 @@ pub use clause::{
     TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
     TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
     TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey,
+    TimestampedOrderKey, SAMPLE_AUTHORITY,
     TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
     ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest,
     CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,

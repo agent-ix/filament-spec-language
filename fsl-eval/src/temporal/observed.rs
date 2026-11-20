@@ -25,7 +25,7 @@ use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, 
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
-    TemporalRefusal, TemporalTrace, UndefinedCause,
+    TemporalRefusal, TemporalTrace, UndefinedCause, UndefinedEvaluation,
 };
 use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
@@ -266,13 +266,15 @@ pub fn evaluate_observed_timed(
                     }
                 }
             }
-            letters.select_activation(at).map_err(|stop| match stop {
-                LetterStop::Fault(fault) => TemporalRefusal::Fault(fault),
-                _ => TemporalRefusal::Fault(InternalFault::new(
-                    "temporal.timed",
-                    "timed-activation-selects-captures",
-                )),
-            })?;
+            if clause.clause().captures().len() != 0 {
+                letters.select_activation(at).map_err(|stop| match stop {
+                    LetterStop::Fault(fault) => TemporalRefusal::Fault(fault),
+                    _ => TemporalRefusal::Fault(InternalFault::new(
+                        "temporal.timed",
+                        "timed-activation-selects-captures",
+                    )),
+                })?;
+            }
             match super::evaluate_timed_at(clause.clause(), &trace, at, &mut letters, meter)? {
                 TemporalOutcome::Holds => {}
                 TemporalOutcome::Pending => pending = true,

@@ -703,6 +703,11 @@ impl Runs<'_> {
             let named = node.named_populations();
             for (position, document) in input.documents().enumerate() {
                 self.cancelled()?;
+                if matches!(input, TraceInput::Timed { .. })
+                    && document.authority == fsl_replay::spine::SAMPLE_AUTHORITY
+                {
+                    continue;
+                }
                 let admitted = admit_trace_snapshot(
                     graph.model_inputs(),
                     graph.scope().types(),
@@ -764,12 +769,20 @@ impl Runs<'_> {
         authentication: Option<&PackageAuthentication>,
     ) -> Result<ClauseRunReport, Failure> {
         self.cancelled()?;
-        self.subject_check(clause, false)?;
-        let Some(over) = clause.over.as_ref() else {
-            return Err(StageFailure::Fault(InternalFault::new(
-                "monitor",
-                "model-subject-clause-has-an-over",
-            )));
+        let timed_samples = matches!(input, TraceInput::Timed { .. })
+            && input
+                .documents()
+                .all(|document| document.authority == fsl_replay::spine::SAMPLE_AUTHORITY);
+        self.subject_check(clause, timed_samples)?;
+        let over = if timed_samples {
+            None
+        } else {
+            Some(clause.over.as_ref().ok_or_else(|| {
+                StageFailure::Fault(InternalFault::new(
+                    "monitor",
+                    "model-subject-clause-has-an-over",
+                ))
+            })?)
         };
         let report = (self.evaluator)(&PackageTemporalRequest {
             package: self.package,
@@ -780,7 +793,7 @@ impl Runs<'_> {
             accounting: self.limits.accounting,
             name: &clause.name,
             trace: input,
-            over: Some(over),
+            over,
             ledger: None,
             sources: self.request.sources,
             authentication: authentication.map(PackageAuthentication::temporal),

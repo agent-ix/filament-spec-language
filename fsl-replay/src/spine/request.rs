@@ -1319,6 +1319,33 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> ClauseReques
     }
 }
 
+fn exact_rational(text: &str, member: &str) -> Result<Rational, ClauseRequestReadError> {
+    let integer = |part: &str| -> Result<Integer, ClauseRequestReadError> {
+        let value = part
+            .parse::<Integer>()
+            .map_err(|_| invalid(member, "expected a canonical rational"))?;
+        if value.to_string() != part {
+            return Err(invalid(member, "expected a canonical rational"));
+        }
+        Ok(value)
+    };
+    if let Some((numerator, denominator)) = text.split_once('/') {
+        if denominator.contains('/') {
+            return Err(invalid(member, "expected a canonical rational"));
+        }
+        let numerator = integer(numerator)?;
+        let denominator = integer(denominator)?;
+        let value = Rational::new(numerator.clone(), denominator.clone())
+            .map_err(|_| invalid(member, "expected a canonical rational"))?;
+        if value.numerator() != &numerator || value.denominator() != &denominator {
+            return Err(invalid(member, "expected a reduced rational"));
+        }
+        Ok(value)
+    } else {
+        Ok(Rational::from_integer(integer(text)?))
+    }
+}
+
 fn named<'a>(
     observations: &'a BTreeMap<String, SuppliedObservation>,
     key: &str,
@@ -1713,11 +1740,37 @@ fn selection(
                     terminal_stutter: parts.terminal_stutter,
                     max_candidates: parts.max_candidates,
                 },
-                TemporalTraceParts::Timed(_) => {
-                    return Err(invalid(
-                        "trace.timed",
-                        "a timed trace is read but not yet run: the timed clock kind is not built",
-                    ))
+                TemporalTraceParts::Timed(parts) => {
+                    let timed_positions = |parts: &[(TemporalPosition, String)], member: &str| {
+                        parts
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (part, stamp))| {
+                                Ok(TimedObservation {
+                                    document: position(part)?,
+                                    stamp: exact_rational(
+                                        stamp,
+                                        &format!("{member}[{index}].stamp"),
+                                    )?,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, ClauseRequestReadError>>()
+                    };
+                    TraceInput::Timed {
+                        prefix: timed_positions(&parts.prefix, "trace.timed.prefix")?,
+                        repeat: timed_positions(&parts.repeat, "trace.timed.loop")?,
+                        period: parts
+                            .period
+                            .as_deref()
+                            .map(|period| exact_rational(period, "trace.timed.period"))
+                            .transpose()?,
+                        through: parts
+                            .through
+                            .as_deref()
+                            .map(|through| exact_rational(through, "trace.timed.through"))
+                            .transpose()?,
+                        binding: None,
+                    }
                 }
                 TemporalTraceParts::Timestamped(parts) => {
                     let observations = parts
