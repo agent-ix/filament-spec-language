@@ -29,8 +29,7 @@ use std::collections::BTreeMap;
 use filament_exact::{Integer, NodeKey, Origin, PathSegment, Rational, Role};
 use fsl_forms::{
     ArrivalForm, CriticalityForm, ModeSwitchForm, PolicyForm, ReleaseForm, ResponseForm,
-    SchedulableForm,
-    SignedQuantityForm, TaskForm, TasksetForm,
+    SchedulableForm, SignedQuantityForm, TaskForm, TasksetForm,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;

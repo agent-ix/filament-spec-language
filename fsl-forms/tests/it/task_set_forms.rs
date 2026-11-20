@@ -226,9 +226,15 @@ fn s2_builds_a_mode_switch_declaration_as_written_beside_hybrid_modes() {
         panic!("two mode switches around a hybrid declaration: {forms:?}");
     };
     assert_eq!(first.task_set.name, "MC");
-    assert_eq!(&text[first.task_set.span.start..first.task_set.span.end], "MC");
+    assert_eq!(
+        &text[first.task_set.span.start..first.task_set.span.end],
+        "MC"
+    );
     assert_eq!(first.operation.name, "C::go_hi");
-    assert_eq!(&text[first.span.start..first.span.end], "mode MC hi on C::go_hi;");
+    assert_eq!(
+        &text[first.span.start..first.span.end],
+        "mode MC hi on C::go_hi;"
+    );
     assert_eq!(hybrid.modes.len(), 1);
     // S2 resolves no name: an undeclared task set and operation still build.
     assert_eq!(second.task_set.name, "Other");

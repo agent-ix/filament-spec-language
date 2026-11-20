@@ -18,8 +18,8 @@ use fsl_cst::{CstNode, CstToken, LosslessCst, Production, TokenKind};
 use super::dispatch::{Construct, FormsRefusal};
 use super::syntax::{
     ArrivalForm, CriticalityForm, DeclarationForm, DeclaredName, ModeSwitchForm, PolicyForm,
-    PriorityForm,
-    ReleaseForm, ResponseForm, SchedulableForm, SignedQuantityForm, TaskForm, TasksetForm,
+    PriorityForm, ReleaseForm, ResponseForm, SchedulableForm, SignedQuantityForm, TaskForm,
+    TasksetForm,
 };
 use super::value::{
     integer, items, name_form, nodes_of, only, production_node, quantity_form, text, tokens_of,

@@ -1233,7 +1233,8 @@ fn mode_switch_declarations_stay_ordered_and_distinct_beside_hybrid_modes() {
     let first = "mode Tasks hi on Plant::raise;";
     let second = "mode Other hi on Plant::Valve::open;";
     let rest = "mode Rest invariant { x >= 0 } flow { x' = 0; }";
-    let hybrid = format!("hybrid Motion using v {{ initial {{ mode Rest when {{ x = 0 }}; }} {rest} }}");
+    let hybrid =
+        format!("hybrid Motion using v {{ initial {{ mode Rest when {{ x = 0 }}; }} {rest} }}");
     let record = "record Gauge { hi: Integer; }";
     let source = unit(&format!("{first}\n{hybrid}\n{second}\n{record}\n"));
     let parsed = accepted(&source);
@@ -1277,7 +1278,11 @@ fn incomplete_mode_switches_refuse_at_the_missing_member() {
     let parsed = parse(&source);
     assert!(!parsed.is_admissible(), "{source}");
     let diagnostic = parsed.diagnostics().first().expect("located refusal");
-    assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{diagnostic:?}");
+    assert_eq!(
+        diagnostic.code,
+        CompleteCode::InvalidSyntax,
+        "{diagnostic:?}"
+    );
     assert_eq!(
         diagnostic.byte_span(),
         Some(Span {

@@ -222,8 +222,8 @@ pub use probabilistic::{
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
 pub use task_set::{
-    Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release, ScheduleClaim,
-    SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
+    Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release,
+    ScheduleClaim, SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub mod stratum;
@@ -5152,14 +5152,10 @@ impl PackageDeclarations {
                 &probabilistic_input,
                 &mut checked_task_sets,
             ));
-            refusals.extend(
-                causes
-                .into_iter()
-                .map(|cause| CheckRefusal {
-                    location: root(Origin::Expression),
-                    cause: CheckCause::Temporal(Box::new(cause)),
-                }),
-            );
+            refusals.extend(causes.into_iter().map(|cause| CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::Temporal(Box::new(cause)),
+            }));
         }
         // FR-165: each state-graph claim, checked through the `StateGraph`
         // family's contract once every function signature is known, against
