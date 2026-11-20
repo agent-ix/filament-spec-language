@@ -4,7 +4,7 @@
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
 use super::{AdmissionRecordExt, admission_record};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
     CollectionKind, FieldValue, Integer, ObjectId, ObjectReference, UniverseId, Value,
@@ -2582,28 +2582,18 @@ fn form_collection_value(
     let refuse =
         |cause: &'static str| admission_record(Code::InvalidRuntimeInput, cause).at(path.to_vec());
     if kind.is_unique() {
-        let mut meter = filament_exact::Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS);
-        for later in 0..elements.len() {
-            for earlier in 0..later {
-                match filament_exact::member_equal(&elements[later], &elements[earlier], &mut meter)
-                {
-                    filament_exact::Outcome::Completed(true) => {
-                        let mut at = path.to_vec();
-                        at.push(PathStep::Index(later));
-                        return Err(
-                            admission_record(Code::InvalidRuntimeInput, "duplicate-member")
-                                .with("earlier-index", earlier.to_string())
-                                .at(at),
-                        );
-                    }
-                    filament_exact::Outcome::Completed(false) => {}
-                    filament_exact::Outcome::Undefined(_)
-                    | filament_exact::Outcome::Refused(_)
-                    | filament_exact::Outcome::Incomplete(_) => {
-                        return Err(refuse("invalid-value"));
-                    }
-                }
+        match duplicate_member_indices(&elements) {
+            Ok(Some((earlier, later))) => {
+                let mut at = path.to_vec();
+                at.push(PathStep::Index(later));
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "duplicate-member")
+                        .with("earlier-index", earlier.to_string())
+                        .at(at),
+                );
             }
+            Ok(None) => {}
+            Err(()) => return Err(refuse("invalid-value")),
         }
     }
     match kind {
@@ -2617,6 +2607,49 @@ fn form_collection_value(
                 .ok_or_else(|| refuse("invalid-value"))
         }
     }
+}
+
+/// Find the first duplicate in input order. Float membership uses its exact
+/// width and bit pattern as a hash key; other value families keep the shared
+/// kernel's membership relation.
+fn duplicate_member_indices(elements: &[Value]) -> Result<Option<(usize, usize)>, ()> {
+    if elements
+        .iter()
+        .all(|value| matches!(value, Value::Float(_)))
+    {
+        let mut first_indices = HashMap::with_capacity(elements.len());
+        for (index, value) in elements.iter().enumerate() {
+            let Value::Float(float) = value else {
+                return Err(());
+            };
+            let width = match float.width() {
+                filament_exact::IeeeWidth::Binary32 => 32,
+                filament_exact::IeeeWidth::Binary64 => 64,
+            };
+            let key = (width, float.bits());
+            if let Some(earlier) = first_indices.get(&key) {
+                return Ok(Some((*earlier, index)));
+            }
+            first_indices.insert(key, index);
+        }
+        return Ok(None);
+    }
+
+    let mut meter = filament_exact::Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS);
+    for later in 0..elements.len() {
+        for earlier in 0..later {
+            match filament_exact::member_equal(&elements[later], &elements[earlier], &mut meter) {
+                filament_exact::Outcome::Completed(true) => {
+                    return Ok(Some((earlier, later)));
+                }
+                filament_exact::Outcome::Completed(false) => {}
+                filament_exact::Outcome::Undefined(_)
+                | filament_exact::Outcome::Refused(_)
+                | filament_exact::Outcome::Incomplete(_) => return Err(()),
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The declaration key of each selected record value type by its IR node
