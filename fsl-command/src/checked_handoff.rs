@@ -554,6 +554,10 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
 /// value retains the admitted package and the checked in-process package for
 /// callers that need them.
 pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
+    let _ = std::fs::read_dir(directory).map_err(|source| Error::Read {
+        path: directory.display().to_string(),
+        source,
+    })?;
     let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
     let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
     let artifact_identity = selection.source_ref().ok();

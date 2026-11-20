@@ -1978,18 +1978,27 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
 /// Inspect a checked-package handoff and return the command's successful
 /// `inspect` outcome. A refusal retains the handoff reader's typed error.
 pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
+    inspect_handoff_with_operand(directory, &directory.to_string_lossy())
+}
+
+/// Inspect a checked-package handoff while retaining the caller's exact
+/// directory operand for refusal loci.
+pub fn inspect_handoff_with_operand(
+    directory: &Path,
+    operand: &str,
+) -> fsl_replay::OutcomeDocument {
     use filament_semantic_value::catalog::Category;
     use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
     match crate::checked_handoff::verify(directory) {
         Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
         Err(error) => {
-            let locus = error
-                .package_locus()
-                .map(|(identity, pointer)| OutcomeLocus::Artifact {
-                    identity: identity.clone(),
-                    pointer: pointer.to_owned(),
-                });
+            let (member, pointer) = inspect_handoff_position(directory, &error);
+            let locus = Some(OutcomeLocus::Input {
+                operand: operand.to_owned(),
+                member,
+                pointer,
+            });
             OutcomeDocument::new(Operation::Inspect, None, Category::Refusal).with_diagnostics(
                 vec![OutcomeDiagnostic::new(
                     None,
@@ -1999,6 +2008,40 @@ pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
                 )],
             )
         }
+    }
+}
+
+fn inspect_handoff_position(
+    directory: &Path,
+    error: &crate::checked_handoff::Error,
+) -> (Option<String>, Option<String>) {
+    use crate::checked_handoff::{Error, SelectionReadError};
+
+    match error {
+        Error::Package { pointer, .. } => (
+            Some("checked-package.json".to_owned()),
+            (!pointer.is_empty()).then(|| pointer.clone()),
+        ),
+        Error::Read { path, .. } => {
+            let path = Path::new(path);
+            if path == directory {
+                return (None, None);
+            }
+            let member = path
+                .strip_prefix(directory)
+                .ok()
+                .map(|member| member.to_string_lossy().replace('\\', "/"));
+            (member, None)
+        }
+        Error::Label { label } => (Some(label.clone()), None),
+        Error::Sidecar(SelectionReadError::Format(_)) => {
+            (Some("selection.json".to_owned()), Some("/format".to_owned()))
+        }
+        Error::Sidecar(SelectionReadError::Malformed(_)) => {
+            (Some("selection.json".to_owned()), None)
+        }
+        Error::SelectionMismatch(_) => (Some("selection.json".to_owned()), None),
+        _ => (None, None),
     }
 }
 
