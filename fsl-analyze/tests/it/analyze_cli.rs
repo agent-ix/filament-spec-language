@@ -602,6 +602,8 @@ fn a_plain_request_reply_protocol_proves_and_replays_a_deadlock_control() {
             );
             assert_eq!(item["replay"]["reproduced"], true, "{item}");
             assert_eq!(run.exit, 10);
+        } else if name == "bounded" {
+            assert_eq!(run.exit, 22, "{}", run.document());
         } else {
             assert_eq!(run.exit, 0, "{}", run.document());
         }
