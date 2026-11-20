@@ -50,11 +50,7 @@ pub fn evaluate_bare_expression(
         meter,
         &[],
     )
-    .run_frame(
-        ReaderNode::root(expression),
-        expression.frame_slots(),
-        frame,
-    )
+    .run_frame(ReaderNode::root(expression), frame)
 }
 
 /// A selection or projection refusal as the call reports it (FR-533
