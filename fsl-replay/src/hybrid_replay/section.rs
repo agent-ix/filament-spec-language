@@ -10,20 +10,32 @@
 //! `t`, and zero is decided by [`ExactReal::sign_of`].
 //!
 //! Work accounting (FR-450 "Exact replay": each work step is charged before
-//! it is taken, with no fixed cap). The meter is charged before every
-//! pseudo-remainder step of a Sturm or Sturm-Tarski sequence, every start of
-//! such a sequence, every candidate tried when a rational that is not a root
-//! is searched for, every step of the search for a root-free enclosing
-//! interval, every isolation split, every refinement of a root's interval,
-//! every comparison of two roots, every sample of the free variable, and (in
-//! [`super::poly2::projection`]) every evaluation point of a subresultant
-//! interpolation. Exhaustion is returned as the refusal, never a panic.
-//! Coefficients are not reduced between remainder steps (the sequences are
-//! pseudo-remainder sequences, so coefficient growth is bounded only by the
-//! per-step charge), and root isolation separates the distinct roots of
+//! it is taken, with no fixed cap, so the meter bounds the run time). A step
+//! is charged by the size of its operands: one word per coefficient and per
+//! 64 bits of the largest part of each, 16 words to a work unit and at least
+//! one unit ([`super::HybridReplayMeter`]). The meter is charged before every
+//! pseudo-remainder step of a Sturm or Sturm-Tarski sequence (by the sizes of
+//! the remainder and the divisor), every start of such a sequence, every
+//! candidate tried when a rational that is not a root is searched for, every
+//! step of the search for a root-free enclosing interval, every isolation
+//! split, every refinement of a root's interval, every comparison of two
+//! roots, every sample of the free variable, every reduction of a coefficient
+//! modulo `u`'s polynomial, and (in [`super::poly2::projection`]) every
+//! evaluation point of a subresultant interpolation. Every sign of a
+//! polynomial in `t` at an irrational `u` is charged by [`ExactReal::sign_with`]:
+//! the gcd with `u`'s polynomial, the square-free part, the Sturm sequence
+//! (built once) and each bisection of `u`'s interval, the last by the sizes of
+//! the sequence and the polynomial and by the degree times the size of the
+//! interval's ends, which gain a bit a bisection. Exhaustion is returned as
+//! the refusal, never a panic.
+//!
+//! Coefficients in `t` are reduced modulo `u`'s polynomial after every step,
+//! which does not change their sign at `u` and keeps their degree below its
+//! own, and each polynomial in `x` is scaled by a positive rational so that
+//! its leading part is 1, which does not change its signs at `u` and keeps
+//! the sequences small. Root isolation separates the distinct roots of
 //! `p(u, .)` by counting them with a Sturm-Tarski query, not by a squarefree
-//! reduction. Individual arithmetic operations on one coefficient are not
-//! charged.
+//! reduction.
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -89,6 +101,10 @@ impl Sample {
 /// The line `t = u` over which polynomials in `x` are read.
 pub(crate) struct Section<'u, 'm> {
     u: &'u ExactReal,
+    /// The polynomial `u` is a root of: coefficients in `t` are reduced
+    /// modulo it, which leaves their value at `u` unchanged and keeps their
+    /// degree below its own.
+    modulus: Option<Poly>,
     meter: RefCell<&'m mut HybridReplayMeter>,
     /// The exhaustion a probe met where it cannot return one.
     failure: RefCell<Option<HybridReplayRefusal>>,
@@ -98,6 +114,10 @@ impl<'u, 'm> Section<'u, 'm> {
     pub(crate) fn new(u: &'u ExactReal, meter: &'m mut HybridReplayMeter) -> Self {
         Self {
             u,
+            modulus: match u {
+                ExactReal::Rational(_) => None,
+                ExactReal::Root(root) => Some(Poly::new(root.coefficients().to_vec())),
+            },
             meter: RefCell::new(meter),
             failure: RefCell::new(None),
         }
@@ -119,36 +139,94 @@ impl<'u, 'm> Section<'u, 'm> {
         self.meter.borrow_mut().charge()
     }
 
-    /// `p` without the leading coefficients that vanish at `u`.
-    fn trimmed(&self, p: &Poly2) -> Poly2 {
-        let mut coefficients = p.coefficients().to_vec();
-        while coefficients
-            .last()
-            .is_some_and(|c| self.u.sign_of(c) == Ordering::Equal)
-        {
-            coefficients.pop();
-        }
-        Poly2::new(coefficients)
+    /// Charge a step that works on `weight` words of operand, one per
+    /// coefficient and per 64 bits of the largest, to the meter.
+    pub(crate) fn charge_by(&self, weight: u64) -> Result<(), HybridReplayRefusal> {
+        self.meter.borrow_mut().charge_by(weight)
     }
 
-    fn lead_sign(&self, p: &Poly2) -> Ordering {
-        p.coefficients()
+    /// `p` reduced modulo `u`'s polynomial: the same value at `u`.
+    fn reduce(&self, p: &Poly) -> Result<Poly, HybridReplayRefusal> {
+        match &self.modulus {
+            Some(modulus) if p.degree() >= modulus.degree() => {
+                self.charge_by(p.size().saturating_mul(modulus.size()))?;
+                Ok(p.rem(modulus))
+            }
+            _ => Ok(p.clone()),
+        }
+    }
+
+    /// The sign at `u` of the polynomial `p` in `t`; the work is charged
+    /// before it is done, down to each bisection of `u`'s interval.
+    fn sign_u(&self, p: &Poly) -> Result<Ordering, HybridReplayRefusal> {
+        let p = self.reduce(p)?;
+        self.u.sign_with(&p, &mut |weight| self.charge_by(weight))
+    }
+
+    /// `p` with every coefficient reduced modulo `u`'s polynomial, without
+    /// the leading coefficients that vanish at `u`, and scaled by a positive
+    /// rational so that its leading coefficient's leading part is 1 (a
+    /// positive multiple has the same sign at `u`, and the sequences built
+    /// from it stay small).
+    fn trimmed(&self, p: &Poly2) -> Result<Poly2, HybridReplayRefusal> {
+        let mut coefficients = Vec::with_capacity(p.coefficients().len());
+        for c in p.coefficients() {
+            coefficients.push(self.reduce(c)?);
+        }
+        while let Some(last) = coefficients.last() {
+            if self.sign_u(last)? != Ordering::Equal {
+                break;
+            }
+            coefficients.pop();
+        }
+        let top = coefficients
             .last()
-            .map_or(Ordering::Equal, |c| self.u.sign_of(c))
+            .and_then(|c| c.coefficients().last())
+            .cloned();
+        if let Some(top) = top {
+            let magnitude = if top.numerator().is_negative() {
+                top.neg()
+            } else {
+                top
+            };
+            if magnitude != one() {
+                self.charge_by(
+                    coefficients
+                        .iter()
+                        .map(Poly::size)
+                        .fold(0, u64::saturating_add),
+                )?;
+                let inverse = one()
+                    .div(&magnitude)
+                    .unwrap_or_else(|| unreachable!("a leading part is nonzero"));
+                coefficients = coefficients.iter().map(|c| c.scale(&inverse)).collect();
+            }
+        }
+        Ok(Poly2::new(coefficients))
+    }
+
+    fn lead_sign(&self, p: &Poly2) -> Result<Ordering, HybridReplayRefusal> {
+        match p.coefficients().last() {
+            Some(c) => self.sign_u(c),
+            None => Ok(Ordering::Equal),
+        }
     }
 
     /// The sign of the trimmed `p` at `bound`.
-    fn sign_at(&self, p: &Poly2, bound: &Bound) -> Ordering {
+    fn sign_at(&self, p: &Poly2, bound: &Bound) -> Result<Ordering, HybridReplayRefusal> {
         match bound {
-            Bound::At(x) => self.u.sign_of(&p.at_x(x)),
+            Bound::At(x) => {
+                self.charge_by(p.size())?;
+                self.sign_u(&p.at_x(x))
+            }
             Bound::Above => self.lead_sign(p),
             Bound::Below => {
-                let lead = self.lead_sign(p);
-                if p.degree().unwrap_or(0).is_multiple_of(2) {
+                let lead = self.lead_sign(p)?;
+                Ok(if p.degree().unwrap_or(0).is_multiple_of(2) {
                     lead
                 } else {
                     lead.reverse()
-                }
+                })
             }
         }
     }
@@ -158,16 +236,23 @@ impl<'u, 'm> Section<'u, 'm> {
         let (Some(degree), Some(lead)) = (b.degree(), b.coefficients().last()) else {
             unreachable!("a divisor is nonzero")
         };
-        let lead_sign = self.u.sign_of(lead);
-        let mut remainder = self.trimmed(a);
+        let lead_sign = self.sign_u(lead)?;
+        let mut remainder = self.trimmed(a)?;
         let mut steps = 0_usize;
         while let Some(top) = remainder.degree().filter(|top| *top >= degree) {
             let factor = remainder.coefficients()[top].clone();
             let mut shifted = vec![Poly::zero(); top - degree];
             shifted.extend(b.coefficients().iter().cloned());
             let subtrahend = Poly2::new(shifted).scale(&factor);
-            self.charge()?;
-            remainder = self.trimmed(&remainder.scale(lead).sub(&subtrahend));
+            // The step multiplies the remainder by the divisor's lead and
+            // subtracts the divisor scaled by the remainder's lead.
+            self.charge_by(
+                remainder
+                    .size()
+                    .saturating_mul(lead.size())
+                    .saturating_add(subtrahend.size()),
+            )?;
+            remainder = self.trimmed(&remainder.scale(lead).sub(&subtrahend))?;
             steps += 1;
         }
         Ok(if lead_sign == Ordering::Less && steps % 2 == 1 {
@@ -179,9 +264,9 @@ impl<'u, 'm> Section<'u, 'm> {
 
     /// The Sturm-Tarski sequence of `p` and `q`.
     fn sequence(&self, p: &Poly2, q: &Poly2) -> Result<Vec<Poly2>, HybridReplayRefusal> {
-        self.charge()?;
-        let p = self.trimmed(p);
-        let second = self.trimmed(&p.derivative().mul(q));
+        self.charge_by(p.size().saturating_mul(q.size()))?;
+        let p = self.trimmed(p)?;
+        let second = self.trimmed(&p.derivative().mul(q))?;
         let mut sequence = vec![p];
         if second.is_zero() {
             return Ok(sequence);
@@ -197,13 +282,15 @@ impl<'u, 'm> Section<'u, 'm> {
         }
     }
 
-    fn variations(&self, sequence: &[Poly2], at: &Bound) -> i64 {
-        let signs: Vec<Ordering> = sequence
-            .iter()
-            .map(|p| self.sign_at(p, at))
-            .filter(|sign| *sign != Ordering::Equal)
-            .collect();
-        i64::try_from(signs.windows(2).filter(|w| w[0] != w[1]).count()).unwrap_or(i64::MAX)
+    fn variations(&self, sequence: &[Poly2], at: &Bound) -> Result<i64, HybridReplayRefusal> {
+        let mut signs: Vec<Ordering> = Vec::new();
+        for p in sequence {
+            let sign = self.sign_at(p, at)?;
+            if sign != Ordering::Equal {
+                signs.push(sign);
+            }
+        }
+        Ok(i64::try_from(signs.windows(2).filter(|w| w[0] != w[1]).count()).unwrap_or(i64::MAX))
     }
 
     /// The sum of the signs of `q` over the distinct real roots of `p(u, .)`
@@ -216,7 +303,7 @@ impl<'u, 'm> Section<'u, 'm> {
         to: &Bound,
     ) -> Result<i64, HybridReplayRefusal> {
         let sequence = self.sequence(p, q)?;
-        Ok(self.variations(&sequence, from) - self.variations(&sequence, to))
+        Ok(self.variations(&sequence, from)? - self.variations(&sequence, to)?)
     }
 
     fn count(&self, p: &Poly2, from: &Bound, to: &Bound) -> Result<i64, HybridReplayRefusal> {
@@ -238,8 +325,8 @@ impl<'u, 'm> Section<'u, 'm> {
                     .div(&Rational::from_integer(denominator.into()))
                     .unwrap_or_else(|| unreachable!("a denominator is nonzero"));
                 let candidate = low.add(&width.mul(&fraction));
-                self.charge()?;
-                if self.u.sign_of(&p.at_x(&candidate)) != Ordering::Equal {
+                self.charge_by(p.size())?;
+                if self.sign_u(&p.at_x(&candidate))? != Ordering::Equal {
                     return Ok(candidate);
                 }
             }
@@ -256,9 +343,9 @@ impl<'u, 'm> Section<'u, 'm> {
         step: &Rational,
     ) -> Result<Rational, HybridReplayRefusal> {
         let mut x = start;
-        self.charge()?;
-        while self.u.sign_of(&p.at_x(&x)) == Ordering::Equal {
-            self.charge()?;
+        self.charge_by(p.size())?;
+        while self.sign_u(&p.at_x(&x))? == Ordering::Equal {
+            self.charge_by(p.size())?;
             x = x.add(step);
         }
         Ok(x)
@@ -267,7 +354,7 @@ impl<'u, 'm> Section<'u, 'm> {
     /// The distinct real roots in `x` of `p(u, .)`, ascending. A polynomial
     /// that vanishes at `u` for every `x` has none.
     pub(crate) fn roots(&self, p: &Poly2) -> Result<Vec<Root2>, HybridReplayRefusal> {
-        let p = self.trimmed(p);
+        let p = self.trimmed(p)?;
         if p.degree().unwrap_or(0) == 0 {
             return Ok(Vec::new());
         }
@@ -466,7 +553,14 @@ struct XPoint<'a, 'u, 'm> {
 impl Probe<Bi> for XPoint<'_, '_, '_> {
     fn sign(&self, poly: &Poly2) -> Ordering {
         match self.at {
-            Sample::Rational(x) => self.section.u.sign_of(&poly.at_x(x)),
+            Sample::Rational(x) => self
+                .section
+                .charge_by(poly.size())
+                .and_then(|()| self.section.sign_u(&poly.at_x(x)))
+                .unwrap_or_else(|refusal| {
+                    *self.section.failure.borrow_mut() = Some(refusal);
+                    Ordering::Equal
+                }),
             Sample::Root(root) => self
                 .section
                 .sign_at_root(poly, root)

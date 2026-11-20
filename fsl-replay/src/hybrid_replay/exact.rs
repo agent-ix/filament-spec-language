@@ -1282,7 +1282,7 @@ impl Enabled<'_> {
                 activation: &before,
             };
             let (satisfied, read) = section.exists(body, &env)?;
-            decisions.extend(projection(&read, &mut || section.charge())?);
+            decisions.extend(projection(&read, &mut |work| section.charge_by(work))?);
             if !satisfied {
                 return Ok(false);
             }

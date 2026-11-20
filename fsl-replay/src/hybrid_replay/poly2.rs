@@ -55,6 +55,16 @@ impl Poly2 {
         self.0.len().checked_sub(1)
     }
 
+    /// The words of the largest coefficient part: one per 64 bits.
+    fn words(&self) -> u64 {
+        self.0.iter().map(Poly::words).max().unwrap_or(1)
+    }
+
+    /// The work of one arithmetic step on this polynomial.
+    pub(crate) fn size(&self) -> u64 {
+        self.0.iter().map(Poly::size).fold(0, u64::saturating_add)
+    }
+
     pub(crate) fn coefficients(&self) -> &[Poly] {
         &self.0
     }
@@ -202,6 +212,19 @@ impl RatFunc2 {
     }
 }
 
+/// The work of the determinant of a `size` square matrix whose entries have
+/// parts of `words` words: `size^3` entry operations on parts that grow to
+/// `size * words` words, and the same again to interpolate `points` values.
+fn determinant_work(size: usize, words: u64, points: usize) -> u64 {
+    let size = u64::try_from(size).unwrap_or(u64::MAX);
+    let points = u64::try_from(points).unwrap_or(u64::MAX);
+    let grown = size.saturating_mul(words);
+    size.saturating_mul(size)
+        .saturating_mul(size)
+        .saturating_mul(grown)
+        .saturating_add(points.saturating_mul(grown))
+}
+
 /// The determinant of a square rational matrix, by Gaussian elimination.
 fn determinant(mut rows: Vec<Vec<Rational>>) -> Rational {
     let size = rows.len();
@@ -265,7 +288,7 @@ fn principal_subresultant(
     a: &Poly2,
     b: &Poly2,
     order: usize,
-    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+    charge: &mut dyn FnMut(u64) -> Result<(), HybridReplayRefusal>,
 ) -> Result<Poly, HybridReplayRefusal> {
     let (Some(m), Some(n)) = (a.degree(), b.degree()) else {
         return Ok(Poly::zero());
@@ -273,8 +296,9 @@ fn principal_subresultant(
     let size = m + n - 2 * order;
     let bound = (n - order) * a.parameter_degree() + (m - order) * b.parameter_degree();
     let mut values: Vec<Rational> = Vec::with_capacity(bound + 1);
+    let words = a.words().max(b.words());
     for point in 0..=bound {
-        charge()?;
+        charge(determinant_work(size, words, bound + 1))?;
         let t = Rational::from_integer(point.into());
         let (at_a, at_b) = (a.at_t(&t), b.at_t(&t));
         let mut rows = Vec::with_capacity(size);
@@ -308,7 +332,7 @@ fn principal_subresultant(
 pub(crate) fn eliminate(
     f: &Poly,
     p: &Poly2,
-    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+    charge: &mut dyn FnMut(u64) -> Result<(), HybridReplayRefusal>,
 ) -> Result<Poly, HybridReplayRefusal> {
     let (Some(n), Some(dx)) = (f.degree(), p.degree()) else {
         return Ok(Poly::zero());
@@ -322,8 +346,9 @@ pub(crate) fn eliminate(
     }
     let size = m + n;
     let mut values: Vec<Rational> = Vec::with_capacity(n * dx + 1);
+    let words = f.words().max(p.words());
     for point in 0..=n * dx {
-        charge()?;
+        charge(determinant_work(size, words, n * dx + 1))?;
         let at = p.at_x(&Rational::from_integer(point.into()));
         let mut rows = Vec::with_capacity(size);
         for (shifts, polynomial) in [(m, f), (n, &at)] {
@@ -352,7 +377,7 @@ pub(crate) fn eliminate(
 /// and their order, are constant.
 pub(crate) fn projection(
     set: &[Poly2],
-    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+    charge: &mut dyn FnMut(u64) -> Result<(), HybridReplayRefusal>,
 ) -> Result<Vec<Poly>, HybridReplayRefusal> {
     let mut projected: Vec<Poly> = Vec::new();
     let mut keep = |poly: Poly| {

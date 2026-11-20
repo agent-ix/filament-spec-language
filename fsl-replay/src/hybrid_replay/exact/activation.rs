@@ -27,14 +27,16 @@
 //! every sample of `tau`, every re-evaluation of a segment's atoms at a
 //! sample, every cell of an atom read bivariately, every capture read, every
 //! root isolation of a projected polynomial, every period of the past-reach
-//! ceiling, at an algebraic activation instant every capture read, every
-//! evaluation of the atoms at an instant and every evaluation point of a
-//! resultant with `tau`'s polynomial ([`super::super::poly2::eliminate`]),
-//! and (in [`super::super::poly2::projection`] and
-//! [`super::super::section::Section`]) every evaluation point of a
-//! subresultant interpolation and every step of a Sturm-Tarski sequence. Arithmetic on one polynomial and
-//! the sorting of cuts are not charged.
-
+//! ceiling, and at an algebraic activation instant every capture read and
+//! every evaluation of the atoms at an instant. A step that does arithmetic
+//! on polynomials is charged by the size of its operands (one word per
+//! coefficient and per 64 bits of its largest part, 16 words to the unit,
+//! each step at least one): the resultant with `tau`'s polynomial
+//! ([`super::super::poly2::eliminate`]) and the subresultants of
+//! [`super::super::poly2::projection`] by the determinant of each evaluation
+//! point and the interpolation, and every sign at `tau` (see
+//! [`super::super::section::Section`]) down to each bisection of `tau`'s
+//! isolating interval. The sorting of cuts is not charged.
 use std::cmp::Ordering;
 
 use filament_exact::Rational;
@@ -138,7 +140,7 @@ impl Evaluate for Atoms<'_, '_, '_> {
                 None => {
                     let section = self.section;
                     let eliminated = if decision.degree().is_some_and(|degree| degree > 0) {
-                        section.charge()?;
+                        section.charge_by(decision.size().saturating_mul(self.minimal.size()))?;
                         // `tau`'s polynomial is square-free, not irreducible:
                         // a factor it shares with every coefficient of the
                         // decision makes the resultant vanish. If `tau` is a
@@ -151,15 +153,21 @@ impl Evaluate for Atoms<'_, '_, '_> {
                             .fold(Poly::zero(), |common, c| common.gcd(c));
                         let shared = self.minimal.gcd(&content);
                         if shared.degree().is_some_and(|degree| degree > 0) {
-                            if self.tau.sign_of(&shared) == Ordering::Equal {
+                            if self
+                                .tau
+                                .sign_with(&shared, &mut |work| section.charge_by(work))?
+                                == Ordering::Equal
+                            {
                                 Poly::zero()
                             } else {
-                                eliminate(&self.minimal.exact_div(&shared), &decision, &mut || {
-                                    section.charge()
-                                })?
+                                eliminate(
+                                    &self.minimal.exact_div(&shared),
+                                    &decision,
+                                    &mut |work| section.charge_by(work),
+                                )?
                             }
                         } else {
-                            eliminate(self.minimal, &decision, &mut || section.charge())?
+                            eliminate(self.minimal, &decision, &mut |work| section.charge_by(work))?
                         }
                     } else {
                         Poly::zero()
@@ -488,12 +496,17 @@ impl<'a, 'c> Decider<'a, 'c> {
                     activation: &activation,
                 };
                 for cell in found {
-                    meter.charge()?;
                     let t = if cell.point {
                         cell.low.clone()
                     } else {
                         cell.low.between(&cell.high).into()
                     };
+                    // Each atom's polynomials are signed at `t`, the work of
+                    // which grows with its size.
+                    meter.charge_by(
+                        t.size()
+                            .saturating_mul(u64::try_from(self.atoms.len()).unwrap_or(u64::MAX)),
+                    )?;
                     let at = Instant { tau, t: &t };
                     for atom in &self.atoms {
                         eval_in::<Bi, _>(atom, &env, &at, &mut read)?;
@@ -501,7 +514,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                 }
             }
         }
-        self.project(read, &mut || meter.charge())
+        self.project(read, &mut |work| meter.charge_by(work))
     }
 
     /// The projection onto `tau` of `read` and the lines, with the shifted
@@ -509,7 +522,7 @@ impl<'a, 'c> Decider<'a, 'c> {
     fn project(
         &self,
         read: Vec<Poly2>,
-        charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+        charge: &mut dyn FnMut(u64) -> Result<(), HybridReplayRefusal>,
     ) -> Result<(Vec<Poly>, Vec<Poly2>), HybridReplayRefusal> {
         let mut set = self.lines.clone();
         let mut fresh: Vec<Poly2> = Vec::new();
@@ -776,7 +789,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                 value = guard.not().or(Timeline::value(&signal, j, tau));
             }
         }
-        let (bounds, held) = self.project(read, &mut || section.charge())?;
+        let (bounds, held) = self.project(read, &mut |work| section.charge_by(work))?;
         Ok((
             Outcome {
                 value,
@@ -829,7 +842,7 @@ impl<'a, 'c> Decider<'a, 'c> {
             return Ok(Some(record));
         }
         for poly in read {
-            meter.charge()?;
+            meter.charge_by(poly.size().saturating_mul(time.size()))?;
             if (Instant { tau, t: &time }).sign(poly) != Ordering::Equal {
                 continue;
             }
@@ -842,15 +855,19 @@ impl<'a, 'c> Decider<'a, 'c> {
                 .filter_map(|c| c.degree())
                 .max()
                 .map_or(0, |degree| degree + 1);
-            let stationary = (0..width).all(|power| {
+            let mut stationary = true;
+            for power in 0..width {
                 let part = Poly::new(
                     poly.coefficients()
                         .iter()
                         .map(|c| c.coefficients().get(power).cloned().unwrap_or_else(zero))
                         .collect(),
                 );
-                time.sign_of(&part) == Ordering::Equal
-            });
+                if time.sign_with(&part, &mut |work| meter.charge_by(work))? != Ordering::Equal {
+                    stationary = false;
+                    break;
+                }
+            }
             if stationary {
                 return Ok(Some(record));
             }

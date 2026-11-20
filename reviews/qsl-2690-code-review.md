@@ -36,3 +36,22 @@ Gates: `-p fsl-replay --lib hybrid` 77 + probe pass; `hybrid_requests::` 11 pass
 | FND-003 | medium | The `ExactGap::ActivationInfimum` doc and the PR body's "Not done" list only "a curve other than `x = tau + c`". `over` also raises the gap whenever the no-value instant is irrational, including a stationary one: `1 / (h.v^2 - 2) != 0 and v0 > 0` returns `NotExact`, although its decisive instant `sqrt 2` is the same for every `tau` and attained. With FND-002 added, the public doc and the PR body understate what remains | fsl-replay/src/hybrid_replay.rs:389-396, fsl-replay/src/hybrid_replay/exact/activation.rs:793-795 |
 | FND-004 | medium | The four new tests claim FR-450-AC-12, whose text covers only `Shuttle` cases (a)-(d). Irrational activation instants and moving no-value infima are FR-450 "Exact replay" statement text (:245-251, :286-294) with no acceptance criterion | fsl-replay/src/hybrid_replay/tests/activation_tests.rs:361,383,402,423 |
 | FND-005 | low | `over` evaluates every read polynomial at `(tau, time)` and composes `p(t, t + c)`, with `O(deg^2)` polynomial products per polynomial, with no charge. `eliminate` charges once per point for an `(m + n)`-square determinant | fsl-replay/src/hybrid_replay/exact/activation.rs:800-829, fsl-replay/src/hybrid_replay/poly2.rs:324-346 |
+
+## New findings (disposition pass 1)
+
+Head 8030b2498762d35b2eda41f72356bcbef4101a64 (main merged at 6a751ea206; fix commit 8030b24987).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | high | The meter does not bound wall time once an obligation is evaluated at an algebraic activation instant, a path this PR makes reachable. `Lead3b` (guard `q.v > 1 and q.v < 2`, `always [0, 5] holds((v0^3 - 4) * h.v * h.v != 1)`) decides in 4,434 units but takes 75.7 s, about 17 ms per unit; `Lead3` (`(v0^3 - 4) * h.v != 1`) takes 122 ms for 2,700 units. `Lead3c` (`... * h.v * h.v * h.v != 1`) under a 5,000-unit meter neither finishes nor exhausts in 300 s. Each unit's cost grows without a bound: the work inside a charged step (pseudo-remainder coefficients over `Q[t]` not reduced modulo `tau`'s polynomial, uncharged `ExactReal` bisection and sign loops, Sylvester determinants) is not charged. The coder's degree-3 `Lead` test, which "did not finish", is this defect | fsl-replay/src/hybrid_replay/exact/activation.rs:118-180, fsl-replay/src/hybrid_replay/section.rs:155-200, fsl-replay/src/hybrid_replay/real.rs:100-120 |
+| FND-007 | low | The `Lead` test does not exercise what its doc claims. `(tau^2 - 2) * x != 1` over `always [0, 5]` is false at many rational `tau` (at `tau = 3/2`, `x = 4` is in `[3/2, 13/2]`), so `Reproduced` does not depend on the reading at `tau = sqrt 2`, and the doc's "reproduced exactly there" is wrong. Behaviour there is correct: the reviewer's discriminating probes `(v0^2 - 2) x^2 - 1 < 0` and `(v0^2 - 2) x^2 + 1 < 0` at `q.v^2 = 2` give `NotReproduced` and `Reproduced` | fsl-replay/src/hybrid_replay/tests/activation_tests.rs:500-516 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 8030b24987 divides out of `tau`'s polynomial the gcd of the decision's coefficients with it, or skips when `tau` is a root of that factor. Cofactor and content are coprime, so the resultant is nonzero unless `p(tau, .)` vanishes identically. Repro `Red`/`Shared` is now `Reproduced`. Adversarial probes all match hand derivation: a scaled factor (`2 v0 - 14`), a partially shared coefficient, two shared factors, a squared factor, mixed content and a rational cut as a reducible `Root` |
+| FND-002 | fixed | `over` runs only on the pass with no new cuts. `Isolated` (pole at the first sample, `tau = 5`) now reports 3 |
+| FND-003 | fixed | The stationary test now uses `poly(t, time) == 0` for every power of `t`, so it works for an irrational `time`: `1 / (h.v^2 - 2)` reports `sqrt 2`. The doc names the one remaining trigger and QSL-2706, which exists (Specced). The PR body is accurate |
+| FND-004 | fixed | The new tests carry bare `#[trace("TC-1221")]` with a note that FR-450 "Exact replay" has no AC for this behaviour |
+| FND-005 | fixed | A charge per polynomial in `over` and per decision elimination. The reviewer deleted each new charge (per-decision, per-polynomial in `over`, cofactor `eliminate` closure), and each deletion failed the metering test |

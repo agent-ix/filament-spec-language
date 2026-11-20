@@ -82,6 +82,29 @@ impl Poly {
         }
     }
 
+    /// The work of one arithmetic step on this polynomial: one unit per
+    /// coefficient plus one per 64 bits of its largest part.
+    pub(crate) fn size(&self) -> u64 {
+        self.0
+            .iter()
+            .map(|c| 1 + c.max_part_bits() / 64)
+            .fold(0, u64::saturating_add)
+    }
+
+    /// The words of the largest coefficient part: one per 64 bits.
+    pub(crate) fn words(&self) -> u64 {
+        self.0
+            .iter()
+            .map(|c| 1 + c.max_part_bits() / 64)
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// The remainder by a nonzero divisor.
+    pub(super) fn rem(&self, divisor: &Self) -> Self {
+        self.div_rem(divisor).1
+    }
+
     fn lead(&self) -> Option<&Rational> {
         self.0.last()
     }
@@ -247,6 +270,25 @@ impl Poly {
     /// `self` with the factor `t - root` removed, `root` being a root.
     fn without_root(&self, root: &Rational) -> Self {
         self.exact_div(&Self::new(vec![root.neg(), one()]))
+    }
+
+    /// The Sturm sequence of a square-free `self`.
+    pub(super) fn sturm(&self) -> Vec<Self> {
+        self.sturm_sequence()
+    }
+
+    /// The number of distinct real roots of a square-free `self` in the
+    /// open interval `(a, b)`, `a < b`, from its Sturm sequence `sequence`.
+    /// A root at `a` is not counted by the variations (its sign is that
+    /// just above it); one at `b` is, so it is taken off.
+    pub(super) fn roots_between_by(&self, sequence: &[Self], a: &Rational, b: &Rational) -> usize {
+        let counted =
+            Self::sign_changes(sequence, a).saturating_sub(Self::sign_changes(sequence, b));
+        if self.eval(b).is_zero() {
+            counted.saturating_sub(1)
+        } else {
+            counted
+        }
     }
 
     fn sturm_sequence(&self) -> Vec<Self> {

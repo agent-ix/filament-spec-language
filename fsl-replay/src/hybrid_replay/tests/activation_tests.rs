@@ -246,9 +246,30 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal Irrational using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v * q.v > 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
        eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
-     temporal Lead using p over (h: Ramp) clock \"model-time\" \
+     temporal LeadHolds using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v = 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v - 1 < 0) }\n\
+     temporal LeadFails using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v = 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v + 1 < 0) }\n\
+     temporal LeadClosed using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v >= 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v * h.v + 1 > 0) }\n\
+     temporal CubeLeadHolds using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v * q.v = 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v - 1 < 0) }\n\
+     temporal CubeLeadFails using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v * q.v = 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v + 1 < 0) }\n\
+     temporal Lead3 using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
-       always [0, 5] holds((v0 * v0 - 2) * h.v != 1) }\n\
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v != 1) }\n\
+     temporal Lead3b using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v != 1) }\n\
+     temporal Lead3c using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 * v0 - 4) * h.v * h.v * h.v != 1) }\n\
      temporal Vanish using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
        eventually [0, 5] holds(not ((v0 * v0 * v0 - 4) * (h.v - 3) = 0)) }\n\
@@ -341,18 +362,22 @@ fn the_activation_scan_is_charged_to_the_meter() {
     let phase = check(PHASE);
     let phase_trace = phase_lasso();
     let cases = [
-        (&shuttle, "Cap", &lasso, 1215),
-        (&shuttle, "Range", &lasso, 900),
+        (&shuttle, "Cap", &lasso, 2151),
+        (&shuttle, "Range", &lasso, 1554),
         (&shuttle, "Past", &lasso, 45),
         (&shuttle, "Origin", &lasso, 35),
-        (&ramp, "Nested", &ramp_trace, 9224),
+        (&ramp, "Nested", &ramp_trace, 16724),
         (&phase, "Twice", &phase_trace, 70),
-        (&ramp, "Cube", &ramp_trace, 305),
-        (&ramp, "Touch", &ramp_trace, 685),
-        (&ramp, "Moves", &ramp_trace, 285),
-        (&ramp, "Meet", &ramp_trace, 588),
-        (&ramp, "Shared", &ramp_trace, 638),
-        (&ramp, "Pole", &ramp_trace, 795),
+        (&ramp, "Cube", &ramp_trace, 483),
+        (&ramp, "Touch", &ramp_trace, 4653),
+        (&ramp, "Moves", &ramp_trace, 412),
+        (&ramp, "Meet", &ramp_trace, 1169),
+        (&ramp, "Shared", &ramp_trace, 1134),
+        (&ramp, "Pole", &ramp_trace, 4821),
+        (&ramp, "LeadHolds", &ramp_trace, 2321),
+        (&ramp, "CubeLeadHolds", &ramp_trace, 11660),
+        (&ramp, "Lead3", &ramp_trace, 20715),
+        (&ramp, "Sqrt", &ramp_trace, 992),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
@@ -496,24 +521,88 @@ fn a_shared_factor_with_the_instants_polynomial_does_not_hide_a_cut() {
     );
 }
 
-/// The degenerate eliminations: the leading coefficient of `(tau^2 - 2) x - 1`
-/// in `x` vanishes at `tau = sqrt 2`, where it drops to a nonzero constant, and
-/// `(tau^3 - 4)(x - 3)` vanishes for every `x`. In the second the
-/// atom is false for every `x` at that one instant (`eventually` finds no
-/// `x`), true elsewhere. Both claims are reproduced exactly there.
+/// The degenerate eliminations. The guards hold at one activation instant
+/// only, so the reading there decides the claim. At `tau = sqrt 2` the
+/// leading coefficient in `x` of `(tau^2 - 2) x^2 - 1` vanishes and the
+/// atom drops to the constant -1: `< 0` holds at every instant (no
+/// counterexample) and `(tau^2 - 2) x^2 + 1 < 0` is false there, a
+/// counterexample. A closed guard `tau^2 >= 2` adds instants where the sign
+/// is that of `tau^2 - 2` (nonnegative): `+ 1 > 0` always holds. The same
+/// at `tau = 4^(1/3)` with a cubic leading coefficient in `tau` and a cubic
+/// in `x`. `(tau^3 - 4)(x - 3)` vanishes for every `x` at that instant: the
+/// atom is false for every `x` there (`eventually` finds no `x`) and true
+/// elsewhere, so the claim is reproduced.
 #[trace("TC-1221")]
 #[test]
 fn a_vanishing_leading_coefficient_and_a_polynomial_vanishing_everywhere_are_decided() {
     let graph = check(RAMP);
     let trace = ramp_trace();
-    assert_eq!(
-        exact_replay(&graph, claim(&graph, "Lead"), &trace),
-        Ok(reproduced_formula(&trace))
+    for (name, reproduced) in [
+        ("LeadHolds", false),
+        ("LeadFails", true),
+        ("LeadClosed", false),
+        ("CubeLeadHolds", false),
+        ("CubeLeadFails", true),
+        ("Vanish", true),
+    ] {
+        assert_eq!(
+            exact_replay(&graph, claim(&graph, name), &trace),
+            if reproduced {
+                Ok(reproduced_formula(&trace))
+            } else {
+                not_reproduced()
+            },
+            "{name}"
+        );
+    }
+}
+
+/// The work a replay of `name` charges before `bound` is exhausted, from a
+/// thread the test gives up on after a minute: a meter that did not bound
+/// the work would hang here, not pass.
+fn charged_within(name: &'static str, bound: u64) -> (Result<(), HybridReplayRefusal>, u64) {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let graph = check(RAMP);
+        let trace = ramp_trace();
+        let mut meter = HybridReplayMeter::new(bound);
+        let found = super::super::exact_replay(&graph, claim(&graph, name), &trace, &mut meter);
+        let _ = sender.send((found.map(|_| ()), meter.consumed()));
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap_or_else(|_| panic!("{name} ran past a minute under a meter of {bound}"))
+}
+
+/// The meter bounds the time an algebraic activation instant takes: a
+/// leading coefficient cubic in `tau` and a quadratic or cubic in `x` took
+/// seconds to minutes before the coefficients were reduced modulo `tau`'s
+/// polynomial and each step charged by the size of its operands. Under a
+/// small bound they are exhausted at once, and the units a claim spends grow
+/// with the degrees it reads.
+#[trace("TC-1221")]
+#[test]
+fn the_meter_bounds_the_work_at_an_algebraic_activation_instant() {
+    for name in ["Lead3", "Lead3b", "Lead3c"] {
+        let (found, consumed) = charged_within(name, 20_000);
+        assert_eq!(
+            found,
+            Err(HybridReplayRefusal::ResourceExhausted {
+                counter: LimitKind::WorkUnits
+            }),
+            "{name}"
+        );
+        assert!(consumed <= 20_000, "{name}");
+    }
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    let (square, cube, linear) = (
+        units(&graph, "LeadHolds", &trace),
+        units(&graph, "CubeLeadHolds", &trace),
+        units(&graph, "Lead3", &trace),
     );
-    assert_eq!(
-        exact_replay(&graph, claim(&graph, "Vanish"), &trace),
-        Ok(reproduced_formula(&trace))
-    );
+    assert!(cube > 4 * square, "{square} {cube}");
+    assert!(linear > 4 * square, "{square} {linear}");
 }
 
 /// An expression with no value only at the first-pass sample of an open
@@ -589,7 +678,7 @@ fn three_nested_windows_are_decided_within_a_moderate_meter() {
         end: Some(before(n(40), &[n(40), n(0)])),
         ..ramp_trace()
     };
-    let mut meter = HybridReplayMeter::new(400_000);
+    let mut meter = HybridReplayMeter::new(1_000_000);
     assert_eq!(
         super::super::exact_replay(&graph, claim(&graph, "Deep"), &trace, &mut meter),
         Ok(reproduced_formula(&trace))

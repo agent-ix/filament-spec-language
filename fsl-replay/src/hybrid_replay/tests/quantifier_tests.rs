@@ -152,7 +152,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
         Poly::zero(),
         Poly::constant(n(1)),
     ]);
-    let projected = projection(&[square], &mut || Ok(())).expect("unmetered");
+    let projected = projection(&[square], &mut |_| Ok(())).expect("unmetered");
     assert!(!projected.is_empty());
     for poly in &projected {
         assert_eq!(poly.roots_in(&n(-100), &n(100)).len(), 1, "{poly:?}");
@@ -171,7 +171,7 @@ fn the_projection_of_a_square_has_its_discriminant_root() {
 fn the_projection_of_two_lines_has_their_crossing() {
     let moving = Poly2::new(vec![Poly::new(vec![n(0), n(-1)]), Poly::constant(n(1))]);
     let fixed = Poly2::new(vec![Poly::constant(n(-1)), Poly::constant(n(1))]);
-    let projected = projection(&[moving, fixed], &mut || Ok(())).expect("unmetered");
+    let projected = projection(&[moving, fixed], &mut |_| Ok(())).expect("unmetered");
     let roots_of = |poly: &Poly| poly.roots_in(&n(-100), &n(100));
     // The resultant is the one projected polynomial that vanishes at the
     // crossing and nowhere else; the coefficient `-t` adds the root 0, where
@@ -251,7 +251,7 @@ fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() 
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn quantifier_elimination_charges_every_step_before_it_is_taken() {
-    const ELIMINATION_UNITS: u64 = 39;
+    const ELIMINATION_UNITS: u64 = 86;
     let body = compare(
         CompareOp::Eq,
         times(Exp::Variable(0), Exp::Variable(0)),
@@ -279,7 +279,7 @@ fn a_tiny_meter_is_exhausted_inside_a_projection() {
         Poly::constant(n(1)),
     ]);
     let mut meter = HybridReplayMeter::new(0);
-    let mut charge = || meter.charge();
+    let mut charge = |work| meter.charge_by(work);
     assert_eq!(
         projection(&[square], &mut charge),
         Err(HybridReplayRefusal::ResourceExhausted {

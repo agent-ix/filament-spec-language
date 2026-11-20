@@ -458,13 +458,24 @@ impl HybridReplayMeter {
         }
     }
 
+    /// The words of operand a step works on that one work unit pays for.
+    const WORDS_PER_UNIT: u64 = 16;
+
     /// The number of admitted work units.
     pub const fn consumed(&self) -> u64 {
         self.consumed
     }
 
     fn charge(&mut self) -> Result<(), HybridReplayRefusal> {
-        match self.consumed.checked_add(1) {
+        self.charge_by(1)
+    }
+
+    /// Charge one step that works on `weight` words of operand (one per
+    /// coefficient and per 64 bits of the largest), before it is taken: a
+    /// unit per [`Self::WORDS_PER_UNIT`] words, at least one.
+    fn charge_by(&mut self, weight: u64) -> Result<(), HybridReplayRefusal> {
+        let units = weight.div_ceil(Self::WORDS_PER_UNIT).max(1);
+        match self.consumed.checked_add(units) {
             Some(next) if next <= self.work_units => {
                 self.consumed = next;
                 Ok(())

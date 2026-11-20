@@ -21,3 +21,10 @@ PARTIAL, tracked. FR-450 :280-282 still holds the temporary `ActivationInfimum` 
 | --- | --- | --- | --- |
 | FND-001 | medium | No test covers the degenerate elimination paths at an algebraic instant: a `tau` polynomial with a factor shared by a read polynomial (resultant identically zero), a read polynomial vanishing identically at `tau`, or a rational cut reaching `at_algebraic` as a `Root`. The first is wrong (code-review FND-001) | fsl-replay/src/hybrid_replay/tests/activation_tests.rs:355-439 |
 | FND-002 | low | The moving-infimum test pins only `c = 0` and `c = 1` over a rational cell start. No test covers a negative `c` or an irrational cell start, where `cell.0.shifted` acts on a `Root` and gives `sqrt 2 + 1`; the reviewer's probes of both pass | fsl-replay/src/hybrid_replay/tests/activation_tests.rs:415-439 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 8030b24987 adds `Shared` (the reviewer's repro), `Reducible` (rational cut 3 as a root of `(t - 7)(t - 3)`), `Vanish` (`(tau^3 - 4)(x - 3)` vanishing for every `x`) and `Lead`. `Lead` is weak (code-review FND-007), but the paths behave correctly under the reviewer's probes |
+| FND-002 | fixed | `Back` (`c = -1`, infimum 0) and `Irrational` (cell start `sqrt 2`, infimum `sqrt 2`) were added; both match hand derivation |
