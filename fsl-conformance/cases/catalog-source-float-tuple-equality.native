@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F = Float64[nearest-even]; tuple T(F,F);
+function equal using v(a: T,b: T): Boolean pure { a=b }

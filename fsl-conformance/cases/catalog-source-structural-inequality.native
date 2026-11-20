@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record R { n: Int[0,9]; }
+function ne using v(a: R,b: R): Boolean pure { a!=b }
