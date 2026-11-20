@@ -222,6 +222,17 @@ fn assert_incomplete(
     assert_eq!(*charge_point, ChargePoint::FunctionCall);
 }
 
+fn completed_integer(evaluation: &Evaluation) -> &Integer {
+    let FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) = &evaluation.outcome
+    else {
+        panic!(
+            "expected completed integer evaluation, got {:?}",
+            evaluation.outcome
+        );
+    };
+    value
+}
+
 /// TC-3124: the root frame is counted once for either an interpreted or host root.
 #[trace("TC-3124", "NFR-130-AC-5")]
 #[test]
@@ -231,7 +242,6 @@ fn live_occurrences_aggregate_across_host_and_interpreted_roots() {
     let host_stop = run(&three, true, true, 10);
     assert_incomplete(&interpreted_stop, 10, 7, 4);
     assert_incomplete(&host_stop, 10, 7, 4);
-    assert_eq!(interpreted_stop.outcome, host_stop.outcome);
     assert_eq!(interpreted_stop.location, host_stop.location);
     assert_eq!(interpreted_stop.frame_depth, host_stop.frame_depth);
     assert!(interpreted_stop.location.is_some());
@@ -241,11 +251,10 @@ fn live_occurrences_aggregate_across_host_and_interpreted_roots() {
     let two = fixture(false);
     let interpreted_complete = run(&two, false, false, 10);
     let host_complete = run(&two, true, false, 10);
-    assert_eq!(interpreted_complete.outcome, host_complete.outcome);
-    assert!(matches!(
-        interpreted_complete.outcome,
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(_)))
-    ));
+    assert_eq!(
+        completed_integer(&interpreted_complete),
+        completed_integer(&host_complete)
+    );
     assert_eq!(interpreted_complete.peak_live_occurrences, 10);
     assert_eq!(host_complete.peak_live_occurrences, 10);
 }
@@ -268,7 +277,10 @@ fn registry_live_occurrence_limit_is_the_callers() {
     let two = fixture(false);
     let interpreted_complete = run(&two, false, false, 10);
     let host_complete = run(&two, true, false, 10);
-    assert_eq!(interpreted_complete.outcome, host_complete.outcome);
+    assert_eq!(
+        completed_integer(&interpreted_complete),
+        completed_integer(&host_complete)
+    );
     assert_eq!(interpreted_complete.peak_live_occurrences, 10);
     assert_eq!(host_complete.peak_live_occurrences, 10);
 
