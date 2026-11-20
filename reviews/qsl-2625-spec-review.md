@@ -21,3 +21,10 @@ Ticket: QSL-2625 (also QSL-2648, QSL-2652). Review of the sentence added to FR-2
 ## Verdict
 
 One medium. The rest of the edit matches the lead ruling.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |

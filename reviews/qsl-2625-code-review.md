@@ -27,3 +27,24 @@ Ticket: QSL-2625 (also QSL-2648, QSL-2652). Rust code review of the body_locatio
 ## Verdict
 
 Blocking on FND-001 and FND-002. Pins are clean: one rev per first-party crate, contract-ir 308116a0 and filament-specification 1c70322b are the main tips, verification-contracts cd0c8ef6 is transitive through contract-ir's own pin, no new patch section and no .cargo directory. Charge is applied before each path is built. QSL-2652 #1082 adaptations cover every construction site. merge-tree against origin/main 38dbd6b7 is clean.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | Body row `name` is rewritten to the source identity, while FR-322 says it is the name the producer's checker gave and the source route reports the checker's name; for a source-model clause function the two routes' locations can differ | fsl-package/src/emit.rs:4166-4178 |
+| FND-010 | medium | `#ieee_operand` level == slot is exercised end to end only in function bodies; in a protocol slot or temporal clause (Context::Root, first slot = request binders) it is checked only by walk-level unit tests, and a mismatch faults | fsl-package/src/reader_protocol_projection.rs:2952-2967 |
+| FND-011 | low | Two touched functions with string compares are unmarked: `is_deref_application` and `node_value_type` | fsl-package/src/emit/protocol_locations.rs:543 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+| FND-008 | fixed | - |

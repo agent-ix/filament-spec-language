@@ -27,3 +27,23 @@ Ticket: QSL-2625 (also QSL-2648, QSL-2652). Planless. Plan completion: not asses
 ## Verdict
 
 Blocking on FND-001. AC-36, AC-37, AC-38 have tests (two un-ignored, three added). FR-094-AC-17 test is guarded by a non-zero declaration count.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | low | Boolean and enum random-parameter tests retagged FR-740-AC-1, which states the `Service` fixture (d and outcome on Server::attempt); neither test checks it | fsl-package/src/emit/tests/probabilistic.rs:761 |
+| FND-010 | low | AC-39 test does not assert that the rows' `function` is a node with a `clause` binding `precondition` | tests/it/dispatch_emission.rs:719-753 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |
+| FND-008 | fixed | - |
