@@ -14,6 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use fsl_semantics::check::{
     AccessOrdering, CaptureOwner, ChannelDelivery, ChannelOverflow, CheckedActivation, CheckedBody,
@@ -91,6 +92,12 @@ pub(super) struct Record<'a> {
     pub(super) constraint: Option<&'a CheckedBody>,
     pub(super) slot: usize,
     pub(super) record_type: ValueType,
+}
+
+/// One checked `related by` premise of an event step (FR-731).
+pub(super) struct Related<'a> {
+    pub(super) relationship: DeclarationKey,
+    pub(super) ends: [&'a CheckedBody; 2],
 }
 
 /// One `send` or `receive` (ADR-027 ST-3, ST-4): its record, its channel
@@ -285,6 +292,8 @@ pub(super) struct Program<'a> {
     pub(super) fences: BTreeMap<ProtocolNodeId, AccessOrdering>,
     /// Each `effect`, domain `event` and `commit` node's record.
     pub(super) events: BTreeMap<ProtocolNodeId, Record<'a>>,
+    /// Each event step's relationship premises, in source order.
+    pub(super) related: BTreeMap<ProtocolNodeId, Vec<Related<'a>>>,
     pub(super) messages: BTreeMap<ProtocolNodeId, Message<'a>>,
     pub(super) channels: Vec<Channel<'a>>,
     pub(super) finish: Finish<'a>,
@@ -768,6 +777,17 @@ impl<'a> Program<'a> {
                 _ => {}
             }
         }
+        let mut related = BTreeMap::<ProtocolNodeId, Vec<Related<'a>>>::new();
+        for clause in &protocol.slots.related {
+            let relationship = protocol
+                .relationships
+                .get(clause.relationship)
+                .ok_or_else(|| ProtocolRefusal::fault("a-related-clause-has-a-relationship"))?;
+            related.entry(clause.node).or_default().push(Related {
+                relationship: relationship.key.clone(),
+                ends: [&clause.ends[0], &clause.ends[1]],
+            });
+        }
 
         let mut channels = Vec::with_capacity(protocol.channels.len());
         for channel in &protocol.channels {
@@ -888,6 +908,7 @@ impl<'a> Program<'a> {
                 .map(|fence| (fence.node, fence.ordering))
                 .collect(),
             events,
+            related,
             messages,
             channels,
             finish,

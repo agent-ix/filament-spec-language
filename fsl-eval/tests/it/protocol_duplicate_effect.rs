@@ -61,6 +61,8 @@ protocol Purchase using P over (view: M::Node) on origin {
 
 fn fixture(
     source: &str,
+    include_second: bool,
+    related: bool,
 ) -> (
     CheckedPackage,
     fsl_semantics::model::intake::PackageInput,
@@ -76,7 +78,21 @@ fn fixture(
     .expect("source read");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let unit = fsl_forms::build_unit(&parsed).expect("unit forms built");
-    let domain_bytes = serde_json::to_vec(&tc1070::document()).expect("domain serializes");
+    let mut domain = tc1070::document();
+    domain["types"]
+        .as_array_mut()
+        .expect("domain types")
+        .push(tc1070::model::declaration(
+            "Link",
+            "record",
+            json!({
+                "fields": [
+                    tc1070::model::field("Link", "source", &tc1070::model::id("Node")),
+                    tc1070::model::field("Link", "target", &tc1070::model::id("Node")),
+                ]
+            }),
+        ));
+    let domain_bytes = serde_json::to_vec(&domain).expect("domain serializes");
     let packages = package_input([domain_bytes.as_slice()]).expect("domain package admitted");
     let models = admit_unit(
         &unit.selections().models,
@@ -105,7 +121,7 @@ fn fixture(
         authority: "test".to_owned(),
         identity: "qsl-2208-start".to_owned(),
     };
-    let snapshot = serde_json::to_vec(&json!({
+    let mut document = json!({
         "format": "filament.state.snapshot/v1",
         "identity": {"authority": "test", "identity": "qsl-2208-start"},
         "observation": "current",
@@ -120,15 +136,50 @@ fn fixture(
                 "fields": {"total": {"integer": "5"}}
             }]
         }]
-    }))
-    .expect("snapshot serializes");
+    });
+    if include_second {
+        document["populations"][0]["objects"]
+            .as_array_mut()
+            .expect("population objects")
+            .push(json!({
+                "key": "node-2",
+                "type": tc1070::model::id("Node"),
+                "fields": {"total": {"integer": "6"}}
+            }));
+    }
+    if related {
+        document["relationships"] = json!([{
+            "relationship": tc1070::model::id("relationship/owns"),
+            "complete": true,
+            "instances": [{
+                "source": {"population": tc1070::model::id("nodes"), "key": "node-2"},
+                "target": {"population": tc1070::model::id("nodes"), "key": "node-1"}
+            }]
+        }]);
+    }
+    let snapshot = serde_json::to_vec(&document).expect("snapshot serializes");
     let source_ref = document_reference(&snapshot).expect("snapshot has identity");
     let snapshots = BTreeMap::from([(source_ref, snapshot)]);
     (package, packages, snapshots, identity)
 }
 
 fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
-    let (package, packages, snapshots, initial) = fixture(source);
+    reachable_with_nodes(source, false, false)
+}
+
+fn reachable_with_relation(
+    source: &str,
+    include_second: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    reachable_with_nodes(source, include_second, true)
+}
+
+fn reachable_with_nodes(
+    source: &str,
+    include_second: bool,
+    related: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    let (package, packages, snapshots, initial) = fixture(source, include_second, related);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
         node: tc1070::model::id("nodes"),
@@ -142,7 +193,11 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
         initial: vec![initial],
         universes: vec![PopulationUniverse {
             population: population.clone(),
-            keys: vec!["node-1".to_owned()],
+            keys: if include_second {
+                vec!["node-1".to_owned(), "node-2".to_owned()]
+            } else {
+                vec!["node-1".to_owned()]
+            },
         }],
         observation: ObservationLimits::default(),
         expansion: ExpansionLimits {
@@ -246,6 +301,136 @@ fn duplicate_then_effect(
         }
     }
     None
+}
+
+fn bound_reference_ids(
+    graph: &fsl_eval::simulation::protocol::Reachable<Sc>,
+    kind: StepKind,
+) -> std::collections::BTreeSet<String> {
+    graph
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == kind)
+        .filter_map(|(transition, _)| {
+            fn first_reference(value: &filament_exact::Value) -> Option<String> {
+                match value {
+                    filament_exact::Value::Reference(reference) => {
+                        Some(reference.object().as_str().to_owned())
+                    }
+                    filament_exact::Value::Composite(composite) => composite
+                        .slots()
+                        .iter()
+                        .find_map(|slot| match slot {
+                            filament_exact::FieldValue::Present(value) => first_reference(value),
+                            filament_exact::FieldValue::Absent
+                            | filament_exact::FieldValue::Null => None,
+                        }),
+                    _ => None,
+                }
+            }
+            transition.binder_record().and_then(first_reference)
+        })
+        .collect()
+}
+
+#[test]
+#[trace("FR-731-AC-1")]
+fn a_related_by_clause_limits_protocol_event_bindings_to_its_relationship_instance() {
+    let source = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Purchase using P over (view: M::Node) on origin {
+  role Buyer on M::Node;
+  role Seller on M::Node;
+  relationship Owns = M::owns;
+  run sequence Main {
+    event Paid by Buyer as (paid: M::Node) related by Owns (paid, view) { true };
+  }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+    let graph = reachable_with_relation(source, true);
+    let paid = bound_reference_ids(&graph, StepKind::Event);
+    assert_eq!(paid, ["node-2".to_owned()].into_iter().collect());
+
+    let uncorrelated_source = source.replace(" related by Owns (paid, view)", "");
+    let graph = reachable_with_nodes(&uncorrelated_source, true, false);
+    let paid = bound_reference_ids(&graph, StepKind::Event);
+    assert_eq!(
+        paid,
+        ["node-1".to_owned(), "node-2".to_owned()]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[test]
+#[trace("TC-2023", "FR-731-AC-1")]
+fn related_by_filters_send_and_receive_candidates() {
+    let source = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Purchase using P over (view: M::Node) on origin {
+  role Buyer on M::Node;
+  role Seller on M::Node;
+  relationship Owns = M::owns;
+  channel Pay from Buyer to Seller carries M::Link
+      ordering unordered delivery at-least-once capacity 2 overflow block;
+  run sequence Main {
+    send Sent via Pay as (sent: M::Link) { true };
+    receive Got via Pay of Main::Sent as (got: M::Link) { true };
+  }
+  finish Closed as (closed: M::Flag) { true };
+}
+"#;
+    let correlated_send = source.replace(
+        "as (sent: M::Link) { true }",
+        "as (sent: M::Link) related by Owns (sent.source, view) { true }",
+    );
+    let sends = reachable_with_relation(&correlated_send, true);
+    assert_eq!(
+        bound_reference_ids(&sends, StepKind::Send),
+        ["node-2".to_owned()].into_iter().collect()
+    );
+
+    let correlated_receive = source.replace(
+        "as (got: M::Link) { true }",
+        "as (got: M::Link) related by Owns (got.source, view) { true }",
+    );
+    let receives = reachable_with_relation(&correlated_receive, true);
+    assert_eq!(
+        bound_reference_ids(&receives, StepKind::Send),
+        ["node-1".to_owned(), "node-2".to_owned()]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(
+        bound_reference_ids(&receives, StepKind::Receive),
+        ["node-2".to_owned()].into_iter().collect()
+    );
+}
+
+#[test]
+#[trace("FR-731-AC-1")]
+fn a_related_by_clause_limits_protocol_effect_bindings_to_its_relationship_instance() {
+    let source = SOURCE
+        .replace(
+            "  channel Charge from Buyer",
+            "  relationship Owns = M::owns;\n  channel Charge from Buyer",
+        )
+        .replace(
+            "effect Paid of Main::Pay as (applied: M::Receipt) { true }",
+            "effect Paid of Main::Pay as (applied: M::Link) \
+             related by Owns (applied.source, view) { true }",
+        );
+    let graph = reachable_with_relation(&source, true);
+    assert_eq!(
+        bound_reference_ids(&graph, StepKind::Event),
+        ["node-2".to_owned()].into_iter().collect()
+    );
 }
 
 #[test]
