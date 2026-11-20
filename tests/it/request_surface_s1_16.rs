@@ -118,7 +118,6 @@ fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
 /// FR-752-AC-1: a state clause false at every state is refuted by a
 /// 1-minimal counterexample of zero invocations, replayed natively.
 #[test]
-#[trace("TC-2102", "FR-752-AC-1")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-6")]
 fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     let unit = format!(
@@ -146,8 +145,6 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
 /// FR-752-AC-2: a false initial state remains a replayable 1-minimal
 /// counterexample for a fixed set of seeds.
 #[test]
-#[trace("TC-2102", "FR-752-AC-2")]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-5")]
 fn false_initial_state_remains_one_minimal_across_seeds() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
@@ -962,6 +959,20 @@ fn model_based_test_request_rules() {
         format!("{VALUE_HEADER}predicate Square using v (x: Integer): Boolean {{ x * x >= 0 }}\n");
     let mbt = |member: Value| run(&unit, false, ("model_based_test", member)).1;
     let base = json!({"clause": "Square", "seed": 7, "max_cases": 20});
+
+    for bits in [0, 65] {
+        let (code, refusal) = run(
+            &unit,
+            false,
+            (
+                "model_based_test",
+                json!({"clause": "Square", "seed": 7, "max_cases": 20, "max_value_bits": bits}),
+            ),
+        );
+        assert_eq!(code, 20, "{refusal}");
+        assert_eq!(refusal["code"], "invalid_runtime_input", "{refusal}");
+        assert_eq!(refusal["cause"], "invalid-value", "{refusal}");
+    }
     refusal_names(&mbt(base.clone()), "max_value_bits");
     let mut bounded = base.clone();
     bounded["max_value_bits"] = json!(8);
@@ -1011,7 +1022,7 @@ fn model_based_test_request_rules() {
 
     let bounded_unit =
         format!("{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n");
-    let (_, bounded_value) = run(
+    let (bounded_code, bounded_value) = run(
         &bounded_unit,
         false,
         (
@@ -1024,7 +1035,9 @@ fn model_based_test_request_rules() {
             }),
         ),
     );
-    refusal_names(&bounded_value, "max_value_bits");
+    assert_eq!(bounded_code, 20, "{bounded_value}");
+    assert_eq!(bounded_value["code"], "invalid_runtime_input", "{bounded_value}");
+    assert_eq!(bounded_value["cause"], "unknown-member", "{bounded_value}");
 
     let (code, conflict) = run_with_members(
         &unit,

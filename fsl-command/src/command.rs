@@ -775,6 +775,14 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-752: a typed model-based-test request refusal with its catalog cause.
+    #[error("invalid model_based_test request member {path}: {cause}")]
+    ModelBasedTestRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The FR-805 cause retained by the evaluator.
+        cause: &'static str,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -1104,7 +1112,9 @@ impl RunCause {
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
-            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
+            Self::ExportRequest { .. }
+            | Self::PlanRequest { .. }
+            | Self::ModelBasedTestRequest { .. } => Code::InvalidRuntimeInput,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }

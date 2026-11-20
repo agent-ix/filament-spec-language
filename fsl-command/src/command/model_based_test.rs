@@ -74,11 +74,10 @@ pub(super) fn decode(value: &Value) -> Result<Request> {
         .map(|value| {
             let bits = value
                 .as_u64()
-                .filter(|bits| (1..=64).contains(bits))
-                .ok_or_else(|| invalid("max_value_bits", "must be between 1 and 64"))?;
+                .ok_or_else(|| invalid("max_value_bits", "expected an 8-bit unsigned integer"))?;
             u8::try_from(bits)
                 .map(Some)
-                .map_err(|_| invalid("max_value_bits", "must be between 1 and 64"))
+                .map_err(|_| invalid("max_value_bits", "does not fit an 8-bit unsigned integer"))
         })
         .transpose()?
         .flatten();
@@ -133,7 +132,10 @@ fn route_error(error: impl std::fmt::Debug) -> RunCause {
 }
 
 fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestRefusal) -> RunCause {
-    invalid(error.member, error.cause)
+    RunCause::ModelBasedTestRequest {
+        path: format!("/model_based_test/{}", error.member),
+        cause: error.cause,
+    }
 }
 
 fn evidence_name(evidence: fsl_eval::simulation::model::ModelBasedTestEvidence) -> &'static str {
@@ -437,17 +439,6 @@ pub(super) fn prepare(
             return Err(invalid(
                 &selection.clause,
                 "value clause must return Boolean",
-            ));
-        }
-        if selection.max_value_bits.is_some()
-            && callable
-                .parameters
-                .iter()
-                .any(|(_, value_type)| matches!(value_type, filament_exact::ValueType::Int(_)))
-        {
-            return Err(invalid(
-                "max_value_bits",
-                "not valid for a bounded integer parameter",
             ));
         }
         if callable
