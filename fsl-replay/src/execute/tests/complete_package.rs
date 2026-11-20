@@ -174,7 +174,10 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
             protocol_results,
             pointer: None,
         },
-        None => ReplayRefusal::Recompile { refusal, pointer: None },
+        None => ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        },
     };
     let located = locate_refinement_internals(&request, ordinary);
     assert_eq!(located.code(), code);

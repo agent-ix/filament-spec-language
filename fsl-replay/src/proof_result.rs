@@ -29,10 +29,10 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_eval::simulation::{Permutation, SymmetryClass};
 use fsl_eval::temporal::TemporalOutcome;
+use fsl_foundation::diagnostic::Code;
 use fsl_foundation::BackendId;
 use fsl_foundation::ReductionKind;
 use fsl_foundation::RequestIndex;
-use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
@@ -43,7 +43,7 @@ mod plugin;
 mod plugin_read;
 mod plugin_replay;
 mod tool_failure;
-pub use plugin::{FslOnlyCause, PluginResultRefusal, ValueFault, read_plugin_cause_kind};
+pub use plugin::{read_plugin_cause_kind, FslOnlyCause, PluginResultRefusal, ValueFault};
 pub(crate) use plugin_read::{child, first_undefined, name_order};
 pub use plugin_read::{
     read_first_party_solver_basis, read_plugin_assignments, read_plugin_basis,
@@ -485,6 +485,15 @@ pub enum IncompleteCause {
         /// The value the run used for it.
         value: u64,
     },
+    /// FSpec FR-331: a bounded task-automaton search stopped at a choice it
+    /// cannot resolve (continuous demand or jitter, or a full job queue).
+    /// Wire cause `bounded-search-incomplete` with reason
+    /// `unresolved-dynamics`; it always accompanies `task_search` evidence.
+    UnresolvedDynamics,
+    /// FSpec FR-331: a closed task-product search with no accepted FR-418
+    /// certificate. Wire cause `bounded-search-incomplete` with reason
+    /// `certificate-unchecked`; it carries no `task_search` evidence.
+    CertificateUnchecked,
     /// FR-203: dyadic refinement exhausted its precision while the initial
     /// value still straddled the claim threshold.
     PrecisionBudget {
@@ -503,6 +512,7 @@ impl IncompleteCause {
             Self::Cancelled { .. } => "cancelled",
             Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
+            Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
     }
 }
@@ -2044,10 +2054,7 @@ impl TerminalRecord {
             backend: Some(backend),
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
-            diagnostic: Some(CatalogCode::new(
-                "unsupported_construct",
-                "expression-form",
-            )),
+            diagnostic: Some(CatalogCode::new("unsupported_construct", "expression-form")),
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
@@ -3135,14 +3142,12 @@ mod tests {
             vec![region],
             crate::spine::default_accounting(0),
         ));
-        source(vec![
-            TerminalRecord::new(
-                RequestIndex::new(0),
-                BackendId::new("kani-backend-1"),
-                &replay,
-            )
-            .unwrap(),
-        ])
+        source(vec![TerminalRecord::new(
+            RequestIndex::new(0),
+            BackendId::new("kani-backend-1"),
+            &replay,
+        )
+        .unwrap()])
     }
 
     /// FR-069-AC-4 (TC-178): retained replay source identity bytes count at
@@ -3222,14 +3227,12 @@ mod tests {
             Vec::new(),
             crate::spine::default_accounting(0),
         ));
-        let provider = source(vec![
-            TerminalRecord::new(
-                RequestIndex::new(0),
-                BackendId::new("kani-backend-1"),
-                &replay,
-            )
-            .unwrap(),
-        ]);
+        let provider = source(vec![TerminalRecord::new(
+            RequestIndex::new(0),
+            BackendId::new("kani-backend-1"),
+            &replay,
+        )
+        .unwrap()]);
         assert!(matches!(
             read_backend_provider_envelope(&provider, ReplayLimits::default()),
             Err(ProofResultRefusal::BoundExceeded(_))
@@ -3255,14 +3258,12 @@ mod tests {
                 charge_point: filament_exact::ChargePoint::TextInputBytes,
             }),
         );
-        let provider = source(vec![
-            TerminalRecord::new(
-                RequestIndex::new(0),
-                BackendId::new("kani-backend-1"),
-                &replay,
-            )
-            .unwrap(),
-        ]);
+        let provider = source(vec![TerminalRecord::new(
+            RequestIndex::new(0),
+            BackendId::new("kani-backend-1"),
+            &replay,
+        )
+        .unwrap()]);
         let base = provider.backend_identity.len()
             + std::mem::size_of::<RequestIndex>()
             + std::mem::size_of::<TerminalValue>()
@@ -3279,14 +3280,12 @@ mod tests {
         let mut huge_limit = replay.limit().unwrap().clone();
         huge_limit.next_charge = filament_exact::Integer::power_of_ten(DEFAULT_INPUT_BYTES as u64);
         let huge_replay = replay.with_limit(huge_limit);
-        let huge_source = source(vec![
-            TerminalRecord::new(
-                RequestIndex::new(0),
-                BackendId::new("kani-backend-1"),
-                &huge_replay,
-            )
-            .unwrap(),
-        ]);
+        let huge_source = source(vec![TerminalRecord::new(
+            RequestIndex::new(0),
+            BackendId::new("kani-backend-1"),
+            &huge_replay,
+        )
+        .unwrap()]);
         assert!(matches!(
             read_backend_provider_envelope(&huge_source, ReplayLimits::default()),
             Err(ProofResultRefusal::BoundExceeded(_))
@@ -3304,14 +3303,12 @@ mod tests {
         use fsl_foundation::witness::{RuntimeValuePath, ValuePathStep, ValuePathSubject};
 
         fn replay_source(replay: ReplayResult) -> BackendProviderSource {
-            source(vec![
-                TerminalRecord::new(
-                    RequestIndex::new(0),
-                    BackendId::new("kani-backend-1"),
-                    &replay,
-                )
-                .unwrap(),
-            ])
+            source(vec![TerminalRecord::new(
+                RequestIndex::new(0),
+                BackendId::new("kani-backend-1"),
+                &replay,
+            )
+            .unwrap()])
         }
 
         fn witness_source(record: crate::SeparatingWitnessRecord) -> BackendProviderSource {

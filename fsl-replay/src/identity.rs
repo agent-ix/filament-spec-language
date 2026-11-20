@@ -240,5 +240,4 @@ mod tests {
         assert_eq!(name.to_string(), "a.b");
         assert_eq!(name.segments().len(), 2);
     }
-
 }

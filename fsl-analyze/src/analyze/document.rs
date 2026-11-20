@@ -646,7 +646,6 @@ impl TemporalLimitsSelection {
     /// Whether a limit no explicit-state EN-1 run reads is set.
     fn sets_other_engine_limits(&self) -> bool {
         [
-            self.max_task_product_work,
             self.max_live_instances,
             self.max_solver_steps,
             self.max_solver_time,
@@ -946,6 +945,15 @@ impl ItemSelection {
                     || temporal
                         .limits
                         .is_some_and(|limits| limits.sets_other_engine_limits())
+                    // EN-6's task-product search reads `max_task_product_work`
+                    // for a schedulability item; no other item does.
+                    || (self
+                        .kind
+                        .as_deref()
+                        .is_some_and(|kind| kind != Capability::Schedulability.to_wire())
+                        && temporal
+                            .limits
+                            .is_some_and(|limits| limits.max_task_product_work.is_some()))
             })
     }
 }
@@ -1434,6 +1442,7 @@ fn resolve_call_item(
         options: ItemOptions {
             required: true,
             max_cases: None,
+            max_task_product_work: None,
             trace: None,
             recording: None,
             population: None,
@@ -1828,6 +1837,9 @@ fn resolve_one(
         options: ItemOptions {
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
+            max_task_product_work: temporal
+                .limits
+                .and_then(|limits| limits.max_task_product_work),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
             recording: selection
                 .recording
@@ -2002,6 +2014,7 @@ fn resolve_derived(
     claim.item.options = ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: None,
+        max_task_product_work: None,
         trace: None,
         recording: None,
         population: None,
@@ -2065,6 +2078,14 @@ fn resolve_schedule_claim(
             || registry.candidates(Capability::Schedulability, named.as_ref()),
             |record| record.candidates().clone(),
         );
+    let candidates = crate::tie_rule::resolve_tie(
+        package,
+        &claim,
+        Capability::Schedulability,
+        named.as_ref(),
+        false,
+        candidates,
+    );
     Some(ResolvedItem::Claim(Box::new(ResolvedClaim {
         item: ClaimItem {
             request_index: index,
@@ -2076,6 +2097,11 @@ fn resolve_schedule_claim(
             options: ItemOptions {
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
+                max_task_product_work: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.limits)
+                    .and_then(|limits| limits.max_task_product_work),
                 trace: None,
                 recording: None,
                 population: selection.population.clone(),
@@ -2219,6 +2245,7 @@ fn resolve_protocol_freedom(
             options: ItemOptions {
                 required: selection.required.unwrap_or(true),
                 max_cases: None,
+                max_task_product_work: None,
                 trace: None,
                 recording: None,
                 population: selection.population.clone(),
@@ -2701,6 +2728,7 @@ fn derived_claim(
             options: ItemOptions {
                 required: true,
                 max_cases: None,
+                max_task_product_work: None,
                 trace: None,
                 recording: None,
                 population: None,
@@ -2954,6 +2982,13 @@ impl ClaimItem {
                 }),
             );
             item.insert("temporal".to_owned(), Value::Object(member));
+        } else if self.kind == Capability::Schedulability {
+            if let Some(max_work) = self.options.max_task_product_work {
+                item.insert(
+                    "temporal".to_owned(),
+                    json!({"limits": {"max_task_product_work": max_work.get()}}),
+                );
+            }
         }
         Ok(Value::Object(item))
     }
@@ -3588,7 +3623,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::Contract(_)
         | super::Counterexample::StateGraph(_)
         | super::Counterexample::GlobalConformance(_)
-        | super::Counterexample::Hybrid(_) => json!({"state_clause": qualified}),
+        | super::Counterexample::Hybrid(_)
+        | super::Counterexample::TaskProduct(_) => json!({"state_clause": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
 }
@@ -3650,6 +3686,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
+    let task_search_identity = identity.clone();
     if let (Some(recorded), Some(identity)) = (
         detail
             .as_ref()
@@ -3781,6 +3818,17 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         {
             disagreement.insert("counterexample".to_owned(), found.clone());
         }
+    }
+    // FSpec FR-331: a bounded task search's frontier evidence rides on its
+    // incomplete result, bound to the item's certificate identity.
+    if let (Some(Value::Object(mut evidence)), Some(identity)) = (
+        detail
+            .as_ref()
+            .and_then(|detail| detail.task_search.clone()),
+        task_search_identity,
+    ) {
+        evidence.insert("identity".to_owned(), identity);
+        record.insert("task_search".to_owned(), Value::Object(evidence));
     }
     // FR-621: `settled_by`, and `backend` exactly when a result settled
     // the record.

@@ -154,7 +154,7 @@ fn assert_clause_holds(result: Result<ModelTraceReplayResult, ReplayRefusal>) {
 fn zero_counted_lasso() -> (Case, TemporalCounterexample<ProtocolTransition>) {
     let case = fork_join("eventually[1,1] holds(k.v = 1)");
     let payload = refutation(&case, &CellV(is_one));
-    let lasso = payload.lasso.expect("a lasso");
+    let lasso = payload.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     let kinds: Vec<StepKind> = payload
         .prefix
@@ -357,7 +357,7 @@ fn a_bounded_clause_refuses_a_lasso_that_is_not_zero_counted() {
 fn replaying_a_counted_protocol_lasso_under_a_bounded_clause_gives_no_value() {
     let infinite = counted_loop(true);
     let payload = refutation(&infinite, &CellV(is_one));
-    let lasso = payload.lasso.expect("a lasso");
+    let lasso = payload.lasso.as_ref().expect("a lasso");
     assert_eq!(
         payload.prefix[lasso.entry..]
             .iter()
@@ -405,7 +405,7 @@ fn replaying_a_counted_protocol_lasso_refuses_an_unfair_scheduler_loop() {
     };
     let infinite = case(true, "scheduling adversarial;");
     let payload = refutation(&infinite, &CellV(is_one));
-    let lasso = payload.lasso.expect("a lasso");
+    let lasso = payload.lasso.as_ref().expect("a lasso");
     assert_eq!(
         payload.prefix[lasso.entry..]
             .iter()
@@ -477,7 +477,7 @@ fn assert_unfair_with_default_fairness(
 fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
     let adversarial = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
     let payload = echo_lasso(&adversarial);
-    let lasso = payload.lasso.expect("a lasso");
+    let lasso = payload.lasso.as_ref().expect("a lasso");
     let entry = &payload.prefix[lasso.entry - 1].post_state;
     let concrete_last = &payload.prefix.last().expect("loop post-state").post_state;
     assert_ne!(
@@ -589,6 +589,7 @@ fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
         lasso: Some(Lasso {
             entry: 1,
             terminal_stutter: false,
+            terminal_stutter_delay: None,
         }),
         blocked: Vec::new(),
         refinement: None,

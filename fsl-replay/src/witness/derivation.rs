@@ -523,7 +523,11 @@ pub(crate) fn decisive_stop<'e>(
                     Connective::And | Connective::Implies => !left_value,
                     Connective::Or => left_value,
                 };
-                if stopped_on_left { left } else { right }
+                if stopped_on_left {
+                    left
+                } else {
+                    right
+                }
             }
             NodeKind::Query {
                 visit: Visit::Forall | Visit::Exists,

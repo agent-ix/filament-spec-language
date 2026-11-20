@@ -121,7 +121,10 @@ fn strong_each_holds_where_weak_each_and_strong_whole_are_refuted() {
         panic!("expected a violation, got {outcome:?}");
     };
     assert_eq!(owners(&weak, counterexample), [0, 2, 0]);
-    assert_eq!(counterexample.lasso.map(|lasso| lasso.entry), Some(0));
+    assert_eq!(
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+        Some(0)
+    );
 
     let whole = mutex(STRONG_WHOLE);
     let outcome = decided(&whole, is_one);
@@ -158,7 +161,7 @@ fn a_refined_remainder_passes_and_gives_the_lasso() {
     };
     assert_eq!(owners(&fixture, counterexample), [0, 2, 3, 2]);
     assert_eq!(
-        counterexample.lasso.map(|lasso| lasso.entry),
+        counterexample.lasso.as_ref().map(|lasso| lasso.entry),
         Some(1),
         "the stem is the one acquisition"
     );
@@ -347,7 +350,10 @@ fn a_loop_that_enables_nothing_starved_and_a_stutter_loop_are_fair() {
         "always eventually holds(c.value = 0)",
     );
     let payload = found(&stutter, is_zero);
-    assert!(payload.lasso.is_some_and(|lasso| lasso.terminal_stutter));
+    assert!(payload
+        .lasso
+        .as_ref()
+        .is_some_and(|lasso| lasso.terminal_stutter));
     let result = replay_with(&stutter, payload, is_zero).expect("reproduces");
     assert!(matches!(
         result.settlement,

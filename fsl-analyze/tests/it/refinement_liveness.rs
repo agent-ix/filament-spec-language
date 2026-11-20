@@ -130,6 +130,7 @@ fn the_compare_and_set_counter_holds_and_its_divergence_is_a_peek_loop() {
     assert_eq!(
         counterexample
             .lasso
+            .as_ref()
             .map(|lasso| (lasso.entry, lasso.terminal_stutter)),
         Some((0, false))
     );
@@ -360,7 +361,7 @@ fn an_each_constraint_is_a_class_for_each_identity_and_a_whole_one_for_the_opera
         Some(RefinementFailure::AbstractUnfair { .. })
     ));
     assert_eq!(
-        counterexample.prefix.len() - counterexample.lasso.expect("a lasso").entry,
+        counterexample.prefix.len() - counterexample.lasso.as_ref().expect("a lasso").entry,
         1
     );
 }

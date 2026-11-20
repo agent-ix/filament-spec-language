@@ -163,6 +163,7 @@ pub struct Requirements {
     property_form: Option<PropertyForm>,
     timed: bool,
     invariant_clause: bool,
+    task_product: bool,
 }
 
 impl Requirements {
@@ -179,6 +180,7 @@ impl Requirements {
             property_form: None,
             timed: false,
             invariant_clause: false,
+            task_product: false,
         }
     }
 
@@ -212,6 +214,20 @@ impl Requirements {
     /// ([`Self::of_invariant_clause`]).
     pub fn invariant_clause(&self) -> bool {
         self.invariant_clause
+    }
+
+    /// Mark a schedulability claim whose checked task set has at least one
+    /// resolved `release` binding (FSL FR-246, FR-249).
+    #[must_use]
+    pub fn for_task_product(mut self) -> Self {
+        self.task_product = self.kind == Capability::Schedulability;
+        self
+    }
+
+    /// Whether this schedulability item requires a backend that reads task
+    /// automaton products.
+    pub fn task_product(&self) -> bool {
+        self.task_product
     }
 
     /// The requirements with the property form the record is routed and

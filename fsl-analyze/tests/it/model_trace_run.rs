@@ -39,7 +39,7 @@ fn at_most_one(value: i64) -> Option<bool> {
 
 /// The model-arm behaviour `payload` as a run's `TraceInput::Model`.
 fn model_trace(fixture: &Fixture, payload: &TemporalCounterexample) -> TraceInput {
-    let (steps, terminal_stutter, entry) = match payload.lasso {
+    let (steps, terminal_stutter, entry) = match payload.lasso.as_ref() {
         Some(lasso) => (payload.prefix.clone(), lasso.terminal_stutter, lasso.entry),
         None => (payload.prefix.clone(), false, payload.prefix.len()),
     };
@@ -119,7 +119,7 @@ fn stuttering() -> (Fixture, TemporalCounterexample) {
     let payload = found(&liveness, is_zero);
     assert_eq!(payload.prefix.len(), 3, "{payload:?}");
     assert!(
-        matches!(payload.lasso, Some(lasso) if lasso.terminal_stutter && lasso.entry == 3),
+        matches!(payload.lasso.as_ref(), Some(lasso) if lasso.terminal_stutter && lasso.entry == 3),
         "{payload:?}"
     );
     let fixture = counter(document(false), "", "always holds(c.value <= 1)");

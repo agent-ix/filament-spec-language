@@ -76,6 +76,59 @@ pub struct ResultEntry {
     pub diagnostic: Option<Value>,
     /// The limit an `incomplete` entry's `limit-reached` cause names.
     pub limit_reached: Option<LimitFacts>,
+    /// FR-331's replayable bounded task-search frontier, present only on an
+    /// incomplete task-automaton result.
+    pub task_search: Option<TaskSearchEvidence>,
+}
+
+/// FR-331's typed bounded task-search evidence member.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSearchEvidence {
+    /// The checked item identity the frontier is bound to.
+    pub identity: Value,
+    /// The reachable product nodes listed by the producer.
+    pub nodes: Vec<TaskSearchNode>,
+    /// The exact product transitions listed by the producer.
+    pub edges: Vec<TaskSearchEdge>,
+    /// Every still-open expansion at the stop.
+    pub frontier: Vec<TaskSearchFrontier>,
+    /// The effective limit cause, when a configured limit stopped expansion.
+    pub limit: Option<LimitFacts>,
+}
+
+/// One concrete task-product state in task-search evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSearchNode {
+    /// Complete product state key.
+    pub state_key: String,
+    /// The length of the listed path from an initial node to this node.
+    pub depth: u64,
+    /// Canonical DBM zone as the FR-418 matrix wire value.
+    pub zone: Value,
+    /// Whether all successors of this node were enumerated.
+    pub expanded: bool,
+}
+
+/// One legal source or derived scheduler transition in task-search evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSearchEdge {
+    /// Source node index.
+    pub node: u64,
+    /// Existing FR-181 transition wire arm.
+    pub transition: Value,
+    /// Target node index.
+    pub target: u64,
+}
+
+/// Why one reachable task-search node remains in the frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskSearchFrontier {
+    /// The reachable unexpanded node.
+    pub node: u64,
+    /// The FR-331 stop reason.
+    pub reason: String,
+    /// Successor dimensions whose enumeration remains open.
+    pub open: Vec<String>,
 }
 
 impl ResultEntry {
@@ -416,9 +469,10 @@ fn read_entry(entry: &Value, origin: EntryOrigin) -> Result<ResultEntry, Defect>
                 read_count(value, &pointer)?;
             }
             "diagnostic" => rest.diagnostic = Some(read_diagnostic(value, &pointer)?),
-            "certificate" | "cross_check" | "evidence" | "task_search" | "verdict" => {
+            "certificate" | "cross_check" | "evidence" | "verdict" => {
                 return Err(Defect::unsupported(pointer, name));
             }
+            "task_search" => rest.task_search = Some(read_task_search(value)?),
             // `basis`, `cause`, `certification` and `result` are read above.
             _ => {}
         }
@@ -555,6 +609,7 @@ struct Rest {
     kind: Option<ClaimKind>,
     request_index: Option<u64>,
     diagnostic: Option<Diagnostic>,
+    task_search: Option<TaskSearchEvidence>,
 }
 
 struct Diagnostic {
@@ -566,7 +621,7 @@ struct Diagnostic {
 enum CauseValue {
     Inconclusive(InconclusiveCause),
     Unsupported(UnavailabilityCause),
-    Incomplete(IncompleteCause, Option<LimitFacts>),
+    Incomplete(IncompleteCause, Option<LimitFacts>, bool),
     Declined(ProofRefusalCause),
     /// `refuted`'s optional cause, `failed`'s `tool-failure`: nothing the
     /// planner keeps.
@@ -646,6 +701,14 @@ const DECLINED: Table = &[
 const REFUTED: Table = &[("undefined-evaluation", &["cause", "where"], &[])];
 
 const FAILED: Table = &[("tool-failure", &["defect"], &["limit", "value"])];
+
+const TASK_SEARCH: Table = &[(
+    "task-search-frontier",
+    &["identity", "nodes", "edges", "frontier"],
+    &["limit"],
+)];
+
+const TASK_SEARCH_LIMIT: Table = &[("limit-reached", &["limit", "value", "setting"], &[])];
 
 /// The ordered check of a typed `cause` object: its kind, `type` member
 /// (absence, kind, spelling), then its required and undefined payload
@@ -780,9 +843,14 @@ fn read_incomplete(value: &Value) -> Result<CauseValue, Defect> {
                     value,
                     setting,
                 }),
+                false,
             ))
         }
-        "timed-out" => Ok(CauseValue::Incomplete(IncompleteCause::TimedOut, None)),
+        "timed-out" => Ok(CauseValue::Incomplete(
+            IncompleteCause::TimedOut,
+            None,
+            false,
+        )),
         "cancelled" => {
             let source = member_of(members, "source", "/cause")?;
             let source = match source.as_str() {
@@ -794,10 +862,389 @@ fn read_incomplete(value: &Value) -> Result<CauseValue, Defect> {
             Ok(CauseValue::Incomplete(
                 IncompleteCause::Cancelled { source },
                 None,
+                false,
             ))
+        }
+        "bounded-search-incomplete" => {
+            let reason = read_text(member_of(members, "reason", "/cause")?, "/cause/reason")?;
+            match reason.as_str() {
+                "unresolved-dynamics" => Ok(CauseValue::Incomplete(
+                    IncompleteCause::UnresolvedDynamics,
+                    None,
+                    true,
+                )),
+                // A closed search has nothing open, so no `task_search`.
+                "certificate-unchecked" => Ok(CauseValue::Incomplete(
+                    IncompleteCause::CertificateUnchecked,
+                    None,
+                    false,
+                )),
+                _ => Err(Defect::invalid("/cause/reason".to_owned())),
+            }
         }
         other => Err(Defect::unsupported("/cause/type".to_owned(), other)),
     }
+}
+
+fn read_task_search(value: &Value) -> Result<TaskSearchEvidence, Defect> {
+    let (members, _) = typed_object(value, "task_search", TASK_SEARCH)?;
+    let identity = member_of(members, "identity", "/task_search")?;
+    let identity_members = identity
+        .as_object()
+        .ok_or_else(|| Defect::wrong_kind("/task_search/identity".to_owned()))?;
+    check_task_members(
+        identity_members,
+        &["node_id", "model", "ordinal"],
+        "/task_search/identity",
+    )?;
+    fsl_foundation::node_wire::node_key_from_json(
+        identity
+            .get("node_id")
+            .ok_or_else(|| Defect::missing("/task_search/identity/node_id".to_owned()))?,
+    )
+    .map_err(|_| Defect::invalid("/task_search/identity/node_id".to_owned()))?;
+    for required in ["node_id", "model", "ordinal"] {
+        let path = format!("/task_search/identity/{required}");
+        if !identity.get(required).is_some() {
+            return Err(Defect::missing(path));
+        }
+    }
+    let model = identity
+        .get("model")
+        .ok_or_else(|| Defect::missing("/task_search/identity/model".to_owned()))?;
+    read_text(model, "/task_search/identity/model")?;
+    let ordinal = identity
+        .get("ordinal")
+        .ok_or_else(|| Defect::missing("/task_search/identity/ordinal".to_owned()))?;
+    read_count(ordinal, "/task_search/identity/ordinal")?;
+
+    let raw_nodes = member_of(members, "nodes", "/task_search")?
+        .as_array()
+        .ok_or_else(|| Defect::wrong_kind("/task_search/nodes".to_owned()))?;
+    if raw_nodes.is_empty() {
+        return Err(Defect::invalid("/task_search/nodes".to_owned()));
+    }
+    let mut nodes = Vec::with_capacity(raw_nodes.len());
+    for (index, raw) in raw_nodes.iter().enumerate() {
+        let base = format!("/task_search/nodes/{index}");
+        let object = raw
+            .as_object()
+            .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
+        check_task_members(object, &["state", "depth", "zone", "expanded"], &base)?;
+        let state = object
+            .get("state")
+            .ok_or_else(|| Defect::missing(format!("{base}/state")))?;
+        let state_base = format!("{base}/state");
+        let state_object = state
+            .as_object()
+            .ok_or_else(|| Defect::wrong_kind(state_base.clone()))?;
+        check_task_members(state_object, &["key"], &state_base)?;
+        let state_key = state
+            .get("key")
+            .ok_or_else(|| Defect::missing(format!("{base}/state/key")))?;
+        let state_key = read_text(state_key, &format!("{base}/state/key"))?;
+        if !is_base64url(&state_key) {
+            return Err(Defect::invalid(format!("{base}/state/key")));
+        }
+        let depth = object
+            .get("depth")
+            .ok_or_else(|| Defect::missing(format!("{base}/depth")))?;
+        let depth = read_count(depth, &format!("{base}/depth"))?;
+        let zone = object
+            .get("zone")
+            .ok_or_else(|| Defect::missing(format!("{base}/zone")))?;
+        read_task_zone(zone, &format!("{base}/zone"))?;
+        let expanded = object
+            .get("expanded")
+            .ok_or_else(|| Defect::missing(format!("{base}/expanded")))?;
+        let expanded = expanded
+            .as_bool()
+            .ok_or_else(|| Defect::wrong_kind(format!("{base}/expanded")))?;
+        nodes.push(TaskSearchNode {
+            state_key,
+            depth,
+            zone: zone.clone(),
+            expanded,
+        });
+    }
+
+    let raw_edges = member_of(members, "edges", "/task_search")?
+        .as_array()
+        .ok_or_else(|| Defect::wrong_kind("/task_search/edges".to_owned()))?;
+    let mut edges = Vec::with_capacity(raw_edges.len());
+    for (index, raw) in raw_edges.iter().enumerate() {
+        let base = format!("/task_search/edges/{index}");
+        let object = raw
+            .as_object()
+            .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
+        check_task_members(object, &["node", "transition", "target"], &base)?;
+        let node = read_count(
+            object
+                .get("node")
+                .ok_or_else(|| Defect::missing(format!("{base}/node")))?,
+            &format!("{base}/node"),
+        )?;
+        let target = read_count(
+            object
+                .get("target")
+                .ok_or_else(|| Defect::missing(format!("{base}/target")))?,
+            &format!("{base}/target"),
+        )?;
+        let transition = object
+            .get("transition")
+            .ok_or_else(|| Defect::missing(format!("{base}/transition")))?;
+        let transition_kind = transition
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Defect::wrong_kind(format!("{base}/transition/type")))?;
+        if !matches!(
+            transition_kind,
+            "transition" | "task-transition" | "terminal-stutter"
+        ) {
+            return Err(Defect::invalid(format!("{base}/transition/type")));
+        }
+        edges.push(TaskSearchEdge {
+            node,
+            transition: transition.clone(),
+            target,
+        });
+    }
+
+    let raw_frontier = member_of(members, "frontier", "/task_search")?
+        .as_array()
+        .ok_or_else(|| Defect::wrong_kind("/task_search/frontier".to_owned()))?;
+    if raw_frontier.is_empty() {
+        return Err(Defect::invalid("/task_search/frontier".to_owned()));
+    }
+    let mut frontier = Vec::with_capacity(raw_frontier.len());
+    for (index, raw) in raw_frontier.iter().enumerate() {
+        let base = format!("/task_search/frontier/{index}");
+        let object = raw
+            .as_object()
+            .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
+        check_task_members(object, &["node", "reason", "open"], &base)?;
+        let node = read_count(
+            object
+                .get("node")
+                .ok_or_else(|| Defect::missing(format!("{base}/node")))?,
+            &format!("{base}/node"),
+        )?;
+        let reason = read_text(
+            object
+                .get("reason")
+                .ok_or_else(|| Defect::missing(format!("{base}/reason")))?,
+            &format!("{base}/reason"),
+        )?;
+        if !matches!(
+            reason.as_str(),
+            "state-limit"
+                | "transition-limit"
+                | "clock-limit"
+                | "depth-limit"
+                | "work-limit"
+                | "unresolved-choice"
+        ) {
+            return Err(Defect::invalid(format!("{base}/reason")));
+        }
+        let raw_open = object
+            .get("open")
+            .ok_or_else(|| Defect::missing(format!("{base}/open")))?
+            .as_array()
+            .ok_or_else(|| Defect::wrong_kind(format!("{base}/open")))?;
+        let mut open = Vec::with_capacity(raw_open.len());
+        for (open_index, dimension) in raw_open.iter().enumerate() {
+            let dimension = read_text(dimension, &format!("{base}/open/{open_index}"))?;
+            if !matches!(
+                dimension.as_str(),
+                "successors" | "delay" | "demand" | "budget-change" | "queue"
+            ) {
+                return Err(Defect::invalid(format!("{base}/open/{open_index}")));
+            }
+            open.push(dimension);
+        }
+        if open.is_empty() {
+            return Err(Defect::invalid(format!("{base}/open")));
+        }
+        frontier.push(TaskSearchFrontier { node, reason, open });
+    }
+
+    // One state key may appear at several clock valuations and path lengths; a
+    // node is its key, zone, path length and whether it was expanded.
+    let mut node_keys = std::collections::BTreeSet::new();
+    if nodes.iter().any(|node| {
+        !node_keys.insert((
+            node.state_key.as_str(),
+            node.zone.to_string(),
+            node.depth,
+            node.expanded,
+        ))
+    }) {
+        return Err(Defect::invalid("/task_search/nodes".to_owned()));
+    }
+    for (index, edge) in edges.iter().enumerate() {
+        let base = format!("/task_search/edges/{index}");
+        let source =
+            usize::try_from(edge.node).map_err(|_| Defect::invalid(format!("{base}/node")))?;
+        let target =
+            usize::try_from(edge.target).map_err(|_| Defect::invalid(format!("{base}/target")))?;
+        let source_node = nodes
+            .get(source)
+            .ok_or_else(|| Defect::invalid(format!("{base}/node")))?;
+        let target_node = nodes
+            .get(target)
+            .ok_or_else(|| Defect::invalid(format!("{base}/target")))?;
+        if !source_node.expanded
+            || source_node.depth.checked_add(1) != Some(target_node.depth)
+            || edges[..index].iter().any(|previous| {
+                previous.node == edge.node
+                    && previous.target == edge.target
+                    && previous.transition == edge.transition
+            })
+        {
+            return Err(Defect::invalid(base));
+        }
+    }
+    for row in &frontier {
+        let index = usize::try_from(row.node)
+            .map_err(|_| Defect::invalid("/task_search/frontier/node".to_owned()))?;
+        if nodes.get(index).is_none_or(|node| node.expanded)
+            || frontier
+                .iter()
+                .filter(|candidate| candidate.node == row.node)
+                .count()
+                != 1
+        {
+            return Err(Defect::invalid("/task_search/frontier/node".to_owned()));
+        }
+    }
+    if edges.iter().any(|edge| {
+        nodes
+            .get(usize::try_from(edge.node).unwrap_or(usize::MAX))
+            .is_none_or(|node| !node.expanded)
+            || nodes
+                .get(usize::try_from(edge.target).unwrap_or(usize::MAX))
+                .is_none_or(|target| {
+                    target.depth
+                        != nodes[usize::try_from(edge.node).unwrap_or(usize::MAX)]
+                            .depth
+                            .saturating_add(1)
+                })
+    }) {
+        return Err(Defect::invalid("/task_search/edges".to_owned()));
+    }
+    let mut reachable = vec![false; nodes.len()];
+    for (index, node) in nodes.iter().enumerate() {
+        if node.depth == 0 {
+            reachable[index] = true;
+        }
+    }
+    loop {
+        let mut changed = false;
+        for edge in &edges {
+            let source = usize::try_from(edge.node)
+                .map_err(|_| Defect::invalid("/task_search/edges/node".to_owned()))?;
+            let target = usize::try_from(edge.target)
+                .map_err(|_| Defect::invalid("/task_search/edges/target".to_owned()))?;
+            if reachable[source] && !reachable[target] {
+                reachable[target] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if reachable.iter().any(|reachable| !reachable) {
+        return Err(Defect::invalid("/task_search/nodes".to_owned()));
+    }
+    let limit = members
+        .get("limit")
+        .map(|raw| {
+            let (limit_members, _) = typed_object(raw, "limit", TASK_SEARCH_LIMIT)?;
+            Ok::<_, Defect>(LimitFacts {
+                limit: read_text(
+                    member_of(limit_members, "limit", "/task_search/limit")?,
+                    "/task_search/limit/limit",
+                )?,
+                value: read_count(
+                    member_of(limit_members, "value", "/task_search/limit")?,
+                    "/task_search/limit/value",
+                )?,
+                setting: read_text(
+                    member_of(limit_members, "setting", "/task_search/limit")?,
+                    "/task_search/limit/setting",
+                )?,
+            })
+        })
+        .transpose()?;
+    Ok(TaskSearchEvidence {
+        identity: identity.clone(),
+        nodes,
+        edges,
+        frontier,
+        limit,
+    })
+}
+
+fn check_task_members(
+    members: &Map<String, Value>,
+    allowed: &[&str],
+    pointer: &str,
+) -> Result<(), Defect> {
+    let mut unknown: Vec<&str> = members
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !allowed.contains(name))
+        .collect();
+    unknown.sort_by(|left, right| name_order(left, right));
+    if let Some(name) = unknown.first() {
+        return Err(Defect::unknown(child(pointer, name)));
+    }
+    let mut missing: Vec<&str> = allowed
+        .iter()
+        .copied()
+        .filter(|name| !members.contains_key(*name))
+        .collect();
+    missing.sort_by(|left, right| name_order(left, right));
+    if let Some(name) = missing.first() {
+        return Err(Defect::missing(child(pointer, name)));
+    }
+    Ok(())
+}
+
+fn read_task_zone(value: &Value, pointer: &str) -> Result<(), Defect> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| Defect::wrong_kind(pointer.to_owned()))?;
+    if rows.is_empty() {
+        return Err(Defect::invalid(pointer.to_owned()));
+    }
+    for (row_index, row) in rows.iter().enumerate() {
+        let cells = row
+            .as_array()
+            .ok_or_else(|| Defect::wrong_kind(format!("{pointer}/{row_index}")))?;
+        if cells.len() != rows.len() {
+            return Err(Defect::invalid(format!("{pointer}/{row_index}")));
+        }
+        for (cell_index, cell) in cells.iter().enumerate() {
+            let base = format!("{pointer}/{row_index}/{cell_index}");
+            let object = cell
+                .as_object()
+                .ok_or_else(|| Defect::wrong_kind(base.clone()))?;
+            check_task_members(object, &["bound", "strict"], &base)?;
+            let bound = object
+                .get("bound")
+                .ok_or_else(|| Defect::missing(format!("{base}/bound")))?;
+            read_text(bound, &format!("{base}/bound"))?;
+            let strict = object
+                .get("strict")
+                .ok_or_else(|| Defect::missing(format!("{base}/strict")))?;
+            if !strict.is_boolean() {
+                return Err(Defect::wrong_kind(format!("{base}/strict")));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_text(value: &Value, pointer: &str) -> Result<String, Defect> {
@@ -913,7 +1360,22 @@ fn assemble(
             }
             EntryOrigin::FirstParty => TerminalRecord::inconclusive(index, backend.clone(), cause),
         },
-        (ResultValue::Incomplete, Main::Cause(CauseValue::Incomplete(cause, facts))) => {
+        (
+            ResultValue::Incomplete,
+            Main::Cause(CauseValue::Incomplete(cause, facts, unresolved)),
+        ) => {
+            let task_search = rest.task_search.as_ref();
+            if task_search.is_some_and(|evidence| {
+                rest.kind != Some(ClaimKind::Schedulability) || evidence.limit != facts
+            }) || (unresolved && task_search.is_none())
+                || (unresolved && facts.is_some())
+                || (task_search.is_some() && facts.is_none() && !unresolved)
+                || (rest.kind == Some(ClaimKind::Schedulability)
+                    && (facts.is_some() || unresolved)
+                    && task_search.is_none())
+            {
+                return Err(Defect::invalid("/task_search".to_owned()));
+            }
             limit_reached = facts;
             TerminalRecord::incomplete(index, backend.clone(), cause)
         }
@@ -970,5 +1432,15 @@ fn assemble(
         certification,
         diagnostic: diagnostic_wire,
         limit_reached,
+        task_search: rest.task_search,
     })
+}
+
+/// Whether `text` is FSpec FR-331's `Base64Url`: RFC 4648 section 5, no
+/// padding, zero unused trailing bits (the strict decoder refuses the rest).
+fn is_base64url(text: &str) -> bool {
+    use base64::Engine;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(text)
+        .is_ok()
 }

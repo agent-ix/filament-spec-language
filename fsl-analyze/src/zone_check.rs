@@ -25,24 +25,30 @@ mod scale;
 mod search;
 mod settle;
 mod state_graph;
+mod task_product;
 mod time_lock;
 
 pub use certificate::certificate_item;
 pub use refine::{
-    check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome,
-    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
-    TimedSafetyOutcome,
+    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome, TimedRefinementRefusal,
+    TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
+    check_timed_refinement,
 };
 pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
-pub use scale::{scale_constants, ScaledConstants};
+pub use scale::{ScaledConstants, scale_constants};
 pub use search::{
-    canonical_symbolic_state, check_timed_model, concretise_timed_state_graph_path,
-    explore_timed_state_graph, TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode,
-    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
-    ZoneCheckRequest, ZoneReduction, ZoneStats, ZoneStop, ZoneUndecided,
+    TimedStateGraph, TimedStateGraphEdge, TimedStateGraphNode, ZoneCheckItem, ZoneCheckLimit,
+    ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneReduction,
+    ZoneStats, ZoneStop, ZoneUndecided, canonical_symbolic_state, check_timed_model,
+    concretise_timed_state_graph_path, explore_timed_state_graph,
 };
-pub use state_graph::{decide_timed_state_graph, TimedStateGraphDecision};
 pub use settle::{
-    settle_timed_refinement, settle_zone_check, ZoneCheckRecord, ZoneItem, ZONE_CERTIFIED,
+    ZONE_CERTIFIED, ZoneCheckRecord, ZoneItem, settle_timed_refinement, settle_zone_check,
+};
+pub use state_graph::{TimedStateGraphDecision, decide_timed_state_graph};
+pub use task_product::{
+    TaskProductSearchFrontier, TaskProductSearchLimits, TaskProductSearchOutcome,
+    TaskProductSearchRefusal, TaskProductSearchRefutation, TaskProductSearchStop,
+    check_task_product, check_task_product_with_cancel,
 };

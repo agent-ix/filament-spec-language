@@ -47,6 +47,8 @@ mod refinement_item;
 pub(crate) mod request;
 pub(crate) use request::dependency_packages;
 mod schedule_item;
+mod task_product_item;
+pub use task_product_item::TaskProductReport;
 pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
@@ -740,6 +742,9 @@ pub struct ItemDetail {
     /// The FR-286 spelling of the provider's complete counterexample in a
     /// `hybrid-trace` disagreement (FR-450 "Settlement").
     pub hybrid_disagreement: Option<serde_json::Value>,
+    /// A bounded task-product stop's FSpec FR-331 `task_search` frontier
+    /// evidence, without its `identity`.
+    pub task_search: Option<serde_json::Value>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -777,6 +782,10 @@ impl ItemDetail {
             finite_replay: record.finite_replay.clone(),
             hybrid_certificate: record.hybrid_certificate.clone(),
             hybrid_disagreement: record.hybrid_disagreement.clone(),
+            task_search: record
+                .task_product
+                .as_deref()
+                .and_then(|report| report.task_search.clone()),
         }
     }
 }
@@ -866,6 +875,8 @@ pub enum Counterexample {
     ScheduleMiss(Box<serde_json::Value>),
     /// A hybrid provider's trace, reproduced by exact replay (FR-450).
     Hybrid(Box<fsl_replay::HybridCounterexample>),
+    /// A task-product model trace accepted by FR-237 and spelled by FR-364.
+    TaskProduct(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -1512,6 +1523,8 @@ pub(crate) enum EngineReport {
     /// EN-7's outcome, settled by FR-248's map once its evidence was
     /// recomputed.
     ClosedForm(Box<schedule_item::ClosedFormReport>),
+    /// EN-6's bounded search over an FR-249 task-derived timed subject.
+    TaskProduct(Box<task_product_item::TaskProductReport>),
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
     /// The protocol analysis engine's replay of a supplied finite trace.
@@ -1882,6 +1895,10 @@ pub struct AnalyzeRecord {
     /// The FR-286 spelling of the provider's complete counterexample in a
     /// `hybrid-trace` disagreement (FR-450 "Settlement").
     pub hybrid_disagreement: Option<serde_json::Value>,
+    /// FR-249's task-product search outcome, retained for FR-621 settlement.
+    pub task_product: Option<Box<TaskProductReport>>,
+    /// FR-364 task-product model trace, already replayed by the rebuilt plan.
+    pub(crate) task_product_counterexample: Option<Box<serde_json::Value>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1926,6 +1943,8 @@ impl AnalyzeRecord {
             hybrid_counterexample: None,
             hybrid_certificate: None,
             hybrid_disagreement: None,
+            task_product: None,
+            task_product_counterexample: None,
             state_graph: None,
         }
     }
@@ -1996,6 +2015,13 @@ impl AnalyzeRecord {
         if let Some(found) = &self.hybrid_counterexample {
             return Some(found.wire.clone());
         }
+        if let Some(found) = &self.task_product_counterexample {
+            return Some(Ok(serde_json::json!({
+                "request_index": self.request_index.get(),
+                "backend": self.terminal().and_then(|terminal| terminal.backend()).map(BackendId::as_str),
+                "counterexample": (**found).clone(),
+            })));
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -2046,6 +2072,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.hybrid_counterexample.take() {
             return Some(Counterexample::Hybrid(found.found));
+        }
+        if let Some(found) = self.task_product_counterexample.take() {
+            return Some(Counterexample::TaskProduct(found));
         }
         self.probabilistic_counterexample
             .take()
@@ -2162,7 +2191,8 @@ impl Counterexample {
             | Self::StateGraph(_)
             | Self::GlobalConformance(_)
             | Self::ScheduleMiss(_)
-            | Self::Hybrid(_) => None,
+            | Self::Hybrid(_)
+            | Self::TaskProduct(_) => None,
         }
     }
 }
@@ -2785,6 +2815,68 @@ fn settle(
                 hybrid_certificate: certificate,
                 hybrid_disagreement: disagreement,
                 ..AnalyzeRecord::of(index, settlement)
+            }
+        }
+        EngineReport::TaskProduct(report) => {
+            let settlement = if report.counterexample.is_some() {
+                TerminalRecord::of_model_settlement(
+                    index,
+                    backend.clone(),
+                    TerminalValue::Refuted,
+                    report.temporal_counterexample.as_deref(),
+                )
+                .unwrap_or_else(|_| TerminalRecord::failed(index, backend.clone()))
+            } else {
+                // FSpec FR-235 V-7, FR-331: a work-budget stop is `limit-reached`
+                // for `max_task_product_work`; an open choice with its frontier
+                // evidence is `unresolved-dynamics`; a closed search with no
+                // accepted FR-418 certificate is `certificate-unchecked`. A stop
+                // that fits none of them is an engine fault, never a limit.
+                let cause = match &report.outcome {
+                    crate::zone_check::TaskProductSearchOutcome::Stopped {
+                        cause: crate::zone_check::TaskProductSearchStop::WorkLimit(value),
+                        ..
+                    } => Some(fsl_replay::IncompleteCause::LimitReached {
+                        limit: fsl_replay::ModelCheckLimit::TaskProductWork,
+                        value: *value,
+                    }),
+                    // FSpec FR-331: unresolved dynamics with its frontier
+                    // evidence is `bounded-search-incomplete`.
+                    crate::zone_check::TaskProductSearchOutcome::Stopped {
+                        cause:
+                            crate::zone_check::TaskProductSearchStop::UnresolvedChoice
+                            | crate::zone_check::TaskProductSearchStop::QueueOverflow,
+                        ..
+                    } if report.task_search.is_some() => {
+                        Some(fsl_replay::IncompleteCause::UnresolvedDynamics)
+                    }
+                    crate::zone_check::TaskProductSearchOutcome::Stopped {
+                        cause: crate::zone_check::TaskProductSearchStop::RegionClosureRequired,
+                        ..
+                    } => Some(fsl_replay::IncompleteCause::CertificateUnchecked),
+                    crate::zone_check::TaskProductSearchOutcome::Stopped {
+                        cause: crate::zone_check::TaskProductSearchStop::Cancelled(source),
+                        ..
+                    } => Some(fsl_replay::IncompleteCause::Cancelled { source: *source }),
+                    // Missing evidence, or a refutation whose counterexample did
+                    // not reproduce.
+                    crate::zone_check::TaskProductSearchOutcome::Stopped {
+                        cause:
+                            crate::zone_check::TaskProductSearchStop::UnresolvedChoice
+                            | crate::zone_check::TaskProductSearchStop::QueueOverflow,
+                        ..
+                    }
+                    | crate::zone_check::TaskProductSearchOutcome::Refuted(_) => None,
+                };
+                cause.map_or_else(
+                    || TerminalRecord::failed(index, backend.clone()),
+                    |cause| TerminalRecord::incomplete(index, backend.clone(), cause),
+                )
+            };
+            AnalyzeRecord {
+                task_product_counterexample: report.counterexample.clone().map(Box::new),
+                task_product: Some(report),
+                ..AnalyzeRecord::of(index, terminal(settlement))
             }
         }
         EngineReport::StateGraph(graph) => {

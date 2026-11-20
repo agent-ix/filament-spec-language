@@ -228,6 +228,7 @@ fn a_counterexample_that_breaks_time_is_refused() {
             Some(Lasso {
                 entry: 1,
                 terminal_stutter: false,
+                terminal_stutter_delay: None,
             }),
         )
     };
@@ -932,6 +933,7 @@ fn idle_tail(world: &World) -> TemporalCounterexample {
         Some(Lasso {
             entry: 0,
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         }),
     )
 }
@@ -1011,6 +1013,7 @@ fn fairness_is_judged_on_the_recorded_successor() {
             Some(Lasso {
                 entry: 1,
                 terminal_stutter: true,
+                terminal_stutter_delay: None,
             }),
         );
         outcomes.push((retries, replay(&world, &counterexample)));
@@ -1058,6 +1061,7 @@ fn a_timed_loop_is_weakly_fair_and_strongly_unfair() {
             Some(Lasso {
                 entry: 0,
                 terminal_stutter: false,
+                terminal_stutter_delay: None,
             }),
         )
     };
@@ -1095,6 +1099,7 @@ fn a_loop_closes_with_a_free_running_clock() {
             Some(Lasso {
                 entry,
                 terminal_stutter: false,
+                terminal_stutter_delay: None,
             }),
         )
     };
@@ -1130,6 +1135,7 @@ fn malformed_timed_counterexamples_are_refused() {
         lasso: Some(Lasso {
             entry: 1,
             terminal_stutter: true,
+            terminal_stutter_delay: None,
         }),
         ..time_lock(&locked)
     };

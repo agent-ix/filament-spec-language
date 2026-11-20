@@ -8119,8 +8119,16 @@ impl PackageDeclarations {
                 }]
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
+            let mut claim_requirements = claim.requirements();
+            if checked_task_sets
+                .releases()
+                .iter()
+                .any(|release| release.task_set() == claim.task_set)
+            {
+                claim_requirements = claim_requirements.for_task_product();
+            }
             let record =
-                claims::RequirementRecord::model_claim(claim.requirements(), claims::wire(boolean));
+                claims::RequirementRecord::model_claim(claim_requirements, claims::wire(boolean));
             match requirements.entry(occurrence) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(record);

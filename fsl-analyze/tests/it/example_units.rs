@@ -214,7 +214,7 @@ fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
     let world = config(false, WHOLE);
     let outcome = decide(&world);
     let counterexample = violated(&outcome);
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     assert_eq!(counterexample.len(), 3);
     let looping = receiver(&counterexample.prefix[0]);
@@ -254,7 +254,7 @@ fn over_the_shipped_unit_each_needs_both_updates_in_the_loop() {
     let world = config(true, EACH);
     let outcome = decide(&world);
     let counterexample = violated(&outcome);
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     let receivers: Vec<char> = counterexample.prefix.iter().map(receiver).collect();
     assert_eq!(receivers, ['a', 'b']);
@@ -290,7 +290,7 @@ fn the_horizon_and_every_limit_stop_the_example_run_naming_what_stopped_it() {
     let found = Ok(with(Some(3), defaults, &live));
     let counterexample = violated(&found);
     assert_eq!(counterexample.len(), 3);
-    assert_eq!(counterexample.lasso.map(|lasso| lasso.entry), Some(0));
+    assert_eq!(counterexample.lasso.as_ref().map(|lasso| lasso.entry), Some(0));
 
     let stopped = |outcome: ModelCheckOutcome| match outcome {
         ModelCheckOutcome::Stopped { cause, limit, .. } => (cause, limit),
@@ -411,7 +411,7 @@ fn a_restless_system_has_a_lasso_that_never_recovers_for_three_positions() {
         &Cancel::new(),
     );
     let counterexample = violated(&outcome);
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert!(!lasso.terminal_stutter);
     let states = positions(&world, counterexample);
     let healthy: Vec<bool> = states
@@ -536,7 +536,7 @@ fn the_shortest_lasso_across_bindings_wins_not_the_first_binding() {
     let counterexample = violated(&outcome);
     assert_eq!(bound(counterexample), "b");
     assert_eq!(counterexample.len(), 3);
-    let lasso = counterexample.lasso.expect("a lasso");
+    let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     assert!(counterexample
         .prefix

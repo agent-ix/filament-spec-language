@@ -299,6 +299,7 @@ pub struct RequestItem {
     occurrence: OccurrenceKey,
     kind: Capability,
     hybrid_dynamics: bool,
+    task_product: bool,
     extent: ExtentClassification,
     domains: Vec<ProofBound>,
     unsupported: Option<UnsupportedItem>,
@@ -407,11 +408,17 @@ impl RequestItem {
     /// The FR-331 `requirements` member. Empty for an ordinary item and
     /// exactly `hybrid-dynamics` for a checked hybrid claim.
     pub fn requirements(&self) -> &'static [&'static str] {
-        if self.hybrid_dynamics {
-            &["hybrid-dynamics"]
-        } else {
-            &[]
+        match (self.hybrid_dynamics, self.task_product) {
+            (true, true) => &["hybrid-dynamics", "task-product"],
+            (true, false) => &["hybrid-dynamics"],
+            (false, true) => &["task-product"],
+            (false, false) => &[],
         }
+    }
+
+    /// Whether the requirement item has checked task release bindings.
+    pub fn task_product(&self) -> bool {
+        self.task_product
     }
 
     /// The FR-331 extent classification.
@@ -627,6 +634,7 @@ impl RequestWriter {
             occurrence: claim,
             kind: Capability::TemporalSatisfaction,
             hybrid_dynamics: false,
+            task_product: false,
             extent: ExtentClassification::Unbounded {
                 finite_bound_available: false,
             },
@@ -656,6 +664,7 @@ impl RequestWriter {
             occurrence: declared.occurrence,
             kind: declared.kind,
             hybrid_dynamics: false,
+            task_product: false,
             extent: match declared.extent {
                 ExtentClass::Bounded => ExtentClassification::Bounded,
                 ExtentClass::Unbounded => ExtentClassification::Unbounded {
@@ -684,6 +693,7 @@ impl RequestWriter {
             occurrence: written.occurrence,
             kind: requirements.kind(),
             hybrid_dynamics: requirements.hybrid_dynamics(),
+            task_product: requirements.task_product(),
             extent: written.extent,
             domains: written.domains,
             unsupported: requirements.unsupported().cloned(),
@@ -789,6 +799,7 @@ pub struct RequirementItem {
     occurrence: OccurrenceKey,
     kind: Capability,
     hybrid_dynamics: bool,
+    task_product: bool,
     extent: ExtentClassification,
     unbounded: Vec<(DomainKey, DomainKind)>,
     proof_bounds: Vec<ProofBound>,
@@ -832,6 +843,7 @@ impl RequirementItem {
             occurrence,
             kind: Capability::ValueValidity,
             hybrid_dynamics: false,
+            task_product: false,
             extent: ExtentClassification::of(extent),
             unbounded,
             proof_bounds: Vec::new(),
@@ -885,6 +897,12 @@ impl RequirementItem {
     /// none.
     pub fn options(&self) -> &BTreeMap<String, String> {
         &self.options
+    }
+
+    /// Whether this requirement item is backed by at least one checked task
+    /// release and therefore needs a task-product-capable backend.
+    pub fn task_product(&self) -> bool {
+        self.task_product
     }
 
     /// The reduction this item settles V-8 `unsupported-requested-capability`
@@ -1188,6 +1206,7 @@ pub fn items_with_reductions(
             proof_bounds: Vec::new(),
             subject_proof_bounds: Vec::new(),
             model_subject: requirements.model_subject(),
+            task_product: requirements.task_product(),
             result_bound: record.result_bound().node(),
             conversion_context: record.conversion_context().cloned(),
             path_condition: record.path_condition().to_vec(),
@@ -1301,6 +1320,11 @@ fn candidates_of(
         registry.restrict_to_untimed_refinement(outcome)
     } else {
         registry.restrict_to_timed(outcome, requirements.timed())
+    };
+    let outcome = if requirements.kind() == Capability::Schedulability {
+        registry.restrict_to_task_product(outcome, requirements.task_product())
+    } else {
+        outcome
     };
     match outcome {
         // An unknown named backend stays `UnknownBackend` (FR-075-AC-3).
