@@ -8978,35 +8978,19 @@ fn temporal_binding_rows(
 
     let mut rows = Vec::new();
     let mut keyed = TemporalBindingRows::default();
-    let mut names = Vec::new();
-    for site in graph.hybrid_claim_sites() {
-        let declaration = emitted_node_ids
-            .get(&site.identity)
-            .cloned()
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        names.push(filament_contract_model::TemporalClauseName {
-            declaration_region: declaration_region(
-                source_map,
-                &declaration,
-                &claim_occurrence(site.claim.ordinal()),
-                site.span,
-            )?,
-            declaration,
-            occurrence: site.claim.ordinal(),
-            name: site.name.as_str().into(),
-        });
-    }
+    let mut keyed_names = Vec::new();
     let mut refs = Vec::new();
     let mut missing = Vec::new();
     for (position, temporal) in graph.temporal_clauses().iter().enumerate() {
         let clause = temporal.clause();
         let profile = clause.profile();
+        let declaration_key = temporal.identity();
         let declaration = emitted_node_ids
-            .get(&temporal.identity())
+            .get(&declaration_key)
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         keyed.declarations.push((
-            temporal.identity(),
+            declaration_key.clone(),
             temporal.claim().ordinal(),
             declaration.clone(),
         ));
@@ -9015,17 +8999,20 @@ fn temporal_binding_rows(
             occurrence: temporal.claim().ordinal(),
             clause: position,
         });
-        names.push(filament_contract_model::TemporalClauseName {
-            declaration_region: declaration_region(
-                source_map,
-                &declaration,
-                &claim_occurrence(temporal.claim().ordinal()),
-                clause.span(),
-            )?,
-            declaration,
-            occurrence: temporal.claim().ordinal(),
-            name: clause.name().into(),
-        });
+        keyed_names.push((
+            declaration_key,
+            filament_contract_model::TemporalClauseName {
+                declaration_region: declaration_region(
+                    source_map,
+                    &declaration,
+                    &claim_occurrence(temporal.claim().ordinal()),
+                    clause.span(),
+                )?,
+                declaration,
+                occurrence: temporal.claim().ordinal(),
+                name: clause.name().into(),
+            },
+        ));
         // A timed clause over a record trace subject binds its clock role
         // through a `timed` configuration (FR-640, FR-933); over a model it
         // binds `model-time` and writes no row.
@@ -9303,15 +9290,18 @@ fn temporal_binding_rows(
             span,
         });
     }
-    rows.sort_by(|left, right| {
-        (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
+    keyed.rows.sort_by(|(left_key, left), (right_key, right)| {
+        (left_key, left.occurrence).cmp(&(right_key, right.occurrence))
     });
-    names.sort_by(|left, right| {
-        (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
-    });
+    rows.clear();
+    rows.extend(keyed.rows.iter().map(|(_, row)| row.clone()));
     refs.sort_by(|left, right| {
         (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
     });
+    keyed_names.sort_by(|(left_key, left), (right_key, right)| {
+        (left_key, left.occurrence).cmp(&(right_key, right.occurrence))
+    });
+    let names = keyed_names.into_iter().map(|(_, row)| row).collect();
     Ok(WrittenTemporalRows {
         bindings: rows,
         names,
