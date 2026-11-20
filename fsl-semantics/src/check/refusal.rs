@@ -1383,10 +1383,6 @@ pub enum UnwrittenTimedMember {
     /// A quantified timed-clause form the current producer does not write,
     /// such as an unbounded clock family or an unsupported element-data read.
     QuantifiedClause,
-    /// A clock-reading clause bound to an execution point: a timed clause
-    /// needs a point-qualified operation anchor, while this producer writes
-    /// only the point-free operation anchor (FSpec FR-342-AC-11).
-    PointQualifiedClause,
     /// A guard part, time invariant or `urgent when` predicate that reads
     /// the presences of a clock collection's elements (`forall(e in self.q:
     /// present(e))`), whose quantified presence form this producer does not
@@ -1402,9 +1398,6 @@ impl UnwrittenTimedMember {
     pub const fn description(self) -> &'static str {
         match self {
             Self::QuantifiedClause => "a quantified timed clause is not written by this producer",
-            Self::PointQualifiedClause => {
-                "a clock-reading clause bound to an execution point is not written by this producer"
-            }
             Self::ElementPresence => {
                 "a predicate reading a clock collection's element presences is not written by this producer"
             }

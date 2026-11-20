@@ -1037,75 +1037,6 @@ fn a_mixed_quantified_invariant_bound_refuses_before_partial_emission() {
     assert!(unit[span.start..span.end].starts_with(source));
 }
 
-/// FR-230-AC-50, FSpec FR-342-AC-11: a clock-reading clause bound to an
-/// execution point refuses `not-yet-implemented` at the clause and is never
-/// written with a point-qualified anchor.
-#[trace("TC-685", "FR-230-AC-50", "FSpec-FR-342-AC-11")]
-#[test]
-fn a_point_qualified_clock_clause_refuses_at_the_clause() {
-    use filament_contract_model::{AnchorName, ExecutionPoint};
-    let document = document(false);
-    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let unit = clocked_unit(
-        "pre Late using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms }\n",
-    );
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
-        "program.native",
-        unit.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 admits the unit");
-    let raw = parsed.source().reference().clone();
-    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = fsl_semantics::model::intake::admit_unit(
-        &built.selections().models,
-        &packages,
-        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-    )
-    .expect("intake admits the package");
-    let point = ExecutionPoint::Pre {
-        operation: AnchorName::new("attemptUpdate").unwrap().into(),
-    };
-    let refusals = PackageDeclarations::assemble_with_execution_points_and_cancel(
-        raw,
-        "pkg".to_owned(),
-        built,
-        models,
-        Vec::new(),
-        Default::default(),
-        fsl_semantics::check::AssemblyRun {
-            cancel: &filament_exact::Cancel::new(),
-            execution_points: BTreeMap::from([("Late".to_owned(), point)]),
-        },
-    )
-    .expect("the unit assembles")
-    .check(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-    )
-    .expect_err("a point-qualified clock clause is not written yet");
-    let found = refusals.iter().find_map(|refusal| match &refusal.cause {
-        fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
-            fsl_semantics::check::TemporalCause::TimedModelNotEmitted { member, span, .. } => {
-                Some((*member, &unit[span.start..span.end]))
-            }
-            _ => None,
-        },
-        _ => None,
-    });
-    let Some((member, text)) = found else {
-        panic!("{refusals:?}");
-    };
-    assert_eq!(
-        member,
-        fsl_semantics::check::UnwrittenTimedMember::PointQualifiedClause
-    );
-    assert!(member.description().contains("execution point"));
-    assert!(text.starts_with("pre Late"), "{text}");
-}
-
 /// [`vector_document`] whose `attemptUpdate` frame names `ts`.
 fn timer_document() -> Vec<u8> {
     let mut document: Value = serde_json::from_slice(&vector_document()).expect("JSON");
@@ -1535,7 +1466,6 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
 #[trace("FSpec-TC-1721", "FSpec-FR-342-AC-13")]
 #[trace("FSpec-TC-1722", "FSpec-FR-322-AC-454")]
 #[test]
-#[ignore = "QSL-2144: blocked on filament-contract-model (filament-contract-ir) admitting the FR-322-AC-454 point_anchor binding on clock_guard and clock_reset"]
 fn a_point_bound_clock_clause_names_its_point_anchor() {
     use filament_contract_model::{AnchorName, ExecutionPoint};
     let document = document(false);
@@ -1598,6 +1528,9 @@ fn a_point_bound_clock_clause_names_its_point_anchor() {
         !operation["body"].to_string().contains("execution_point"),
         "{operation}"
     );
+    // The point-bound guard reads back through I2 (FSpec FR-342-AC-13).
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the point-bound guard reads back: {failure}"));
 }
 
 /// Reads `bytes`, an emitted package over `document`, through I2.

@@ -5757,6 +5757,7 @@ fn write_clauses(
             metadata,
             operation: node_id(ids, &guard.operation),
             parts,
+            point_anchor: guard.point_anchor.as_ref().map(|key| node_id(ids, key)),
         });
     }
     for invariant in &clauses.invariants {
@@ -5818,10 +5819,14 @@ fn write_clauses(
             },
         };
         let operation = node_id(ids, &reset.operation);
+        let point_anchor = reset.point_anchor.as_ref().map(|key| node_id(ids, key));
         let value = quantity_spelling(&reset.value);
         let region = span_region(reset.span);
         if let Some(held) = model.resets.iter_mut().find(|held| {
-            held.operation == operation && held.target == target && held.value == value
+            held.operation == operation
+                && held.point_anchor == point_anchor
+                && held.target == target
+                && held.value == value
         }) {
             occur(&mut held.metadata, region, regions, false);
             continue;
@@ -5834,6 +5839,7 @@ fn write_clauses(
             target,
             value,
             value_type: unit.clone(),
+            point_anchor,
         });
     }
     Ok(())
