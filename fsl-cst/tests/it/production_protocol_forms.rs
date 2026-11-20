@@ -771,7 +771,7 @@ fn near_miss_repetitions_refuse_missing_bounds_arms_proof_order_and_body_delimit
             ),
             "variant { 2 }",
             7,
-            "expected `invariant` or `while`",
+            "expected `while`",
         ),
         (
             NEAR_REPEAT.replace("sequence Step {}", "sequence Step"),
@@ -815,7 +815,7 @@ fn near_miss_awaits_refuse_missing_match_bounds_then_keyword_and_timeout_body() 
             NEAR_AWAIT.replace("within [0, 2]", "within [0, ]"),
             "] match",
             1,
-            "expected unsigned 64-bit integer",
+            "expected `*` or `decimal` or `rational` or decimal literal or unsigned integer",
         ),
         (
             NEAR_AWAIT.replace("then sequence Continue", "otherwise sequence Continue"),
