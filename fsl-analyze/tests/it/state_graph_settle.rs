@@ -657,7 +657,7 @@ fn a_reduced_holds_outcome_settles_uncertified_with_its_reductions() {
     assert_eq!(wire["request_index"], 3);
     assert_eq!(wire["method"], EXPLICIT_STATE);
     assert_eq!(wire["max_depth"], serde_json::Value::Null);
-    assert_eq!(wire["seed"], record.seed);
+    assert_eq!(wire["seed"], record.seed.to_string());
     assert_eq!(wire["witness_samples"], record.witness_samples);
     for (limit, value) in record.limits {
         assert_eq!(wire["limits"][limit.as_str()], value);

@@ -42,10 +42,10 @@ use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::state::ModelState;
 
+use super::BROKEN;
 use super::encode::declaration_text;
 use super::state_predicate::PredicateReading;
 use super::walk::{expand_enabled, stop};
-use super::BROKEN;
 use super::{ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::Permutation;
@@ -56,9 +56,9 @@ mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;
 pub use race::{
-    replay_timed_sample, sample_timed, sample_timed_race, TimedRace, TimedRaceDraw, TimedRaceStep,
-    TimedRaceStop, TimedSample, TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop,
-    TimedSchedulerChoice,
+    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, replay_timed_sample, sample_timed,
+    sample_timed_race,
 };
 
 /// One clock of the subject: a clock field of one object of its universe.
@@ -981,10 +981,13 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .filter(|place| place.slots.is_empty())
             .filter_map(|place| {
                 let field = self.model.clock(place.clock)?;
-                let (name, case) = match field.path() {
-                    [PlaceStep::Field(name)] if field.presence_bit() => (name, None),
-                    [PlaceStep::Field(name), PlaceStep::Union(case)] => (name, Some(case.clone())),
-                    _ => return None,
+                let (name, case) = if field.presence_bit() {
+                    match field.path() {
+                        [PlaceStep::Field(name)] => (name.clone(), None),
+                        _ => return None,
+                    }
+                } else {
+                    place_presence_key(field.path())?
                 };
                 Some((
                     (place.object.clone(), name.clone(), case),
@@ -2607,6 +2610,29 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     pub fn tick_period(&self) -> Option<&Rational> {
         self.tick.as_ref().map(|(_, period)| period)
     }
+}
+
+/// The field/case map key for a guarded clock place: direct cases retain their
+/// case name, while deeper paths use an opaque suffix derived from the checked
+/// path steps. This mirrors `fsl-semantics`'s PlacePresence identity.
+fn place_presence_key(path: &[PlaceStep]) -> Option<(String, Option<String>)> {
+    let [PlaceStep::Field(field), suffix @ ..] = path else {
+        return None;
+    };
+    if suffix.is_empty() {
+        return Some((field.clone(), None));
+    }
+    if suffix.iter().any(|step| matches!(step, PlaceStep::Slot(_)))
+        || !suffix
+            .iter()
+            .any(|step| matches!(step, PlaceStep::Union(_)))
+    {
+        return None;
+    }
+    if let [PlaceStep::Union(case)] = suffix {
+        return Some((field.clone(), Some(case.clone())));
+    }
+    Some((field.clone(), Some(format!("@clock-path:{suffix:?}"))))
 }
 
 /// One position of a timed behaviour (FR-231 "Behaviours, positions and

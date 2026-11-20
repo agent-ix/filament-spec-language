@@ -11,8 +11,8 @@ protocol Recovery using p over (job: Factory::Job) on origin {
     by Worker on Factory::MachiningStation::release using t clock "timer" {
     activate first (trigger: Trigger) when { trigger.fire } {}
     within [0, 2];
-    attempts 1 of Completion;
-    retry (older: Completion, newer: Completion) { true };
+    attempts 1 of Factory::WorkOrder;
+    retry (older: Factory::WorkOrder, newer: Factory::WorkOrder) { true };
     commit Main::Done;
     recover (recovery: Completion) { recovery.ok };
   }

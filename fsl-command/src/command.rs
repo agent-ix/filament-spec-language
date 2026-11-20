@@ -19,13 +19,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -593,6 +593,9 @@ pub struct FunctionRunInput {
     pub packages: fsl_semantics::model::intake::PackageInput,
     /// Explicit library dependencies.
     pub dependencies: fsl_replay::spine::DependencyInput,
+    /// Caller-supplied `div` and `rem` law for the source program, when one was
+    /// present in the request (FR-767).
+    pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// Function, arguments, accounting and supplied-phase limits.
     pub call: fsl_replay::spine::Call,
 }
@@ -610,6 +613,7 @@ impl PreparedFunctionRun {
             source: data.source.source().clone(),
             packages: data.packages,
             dependencies: data.dependencies,
+            integer_division: data.integer_division,
             call: data.call,
         }
     }

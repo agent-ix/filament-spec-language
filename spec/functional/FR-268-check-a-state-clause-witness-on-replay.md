@@ -35,6 +35,10 @@ the search that found the element.
 - A `WitnessEnvelope<StateClauseCounterexample>` (FR-070, FR-122) whose
   payload gains `witness: Option<SeparatingWitnessRecord>` (FR-265's
   record), present exactly when the producing run's basis was decisive.
+  This is a producer obligation; a producer outside FSL obtains the record
+  from FR-269's public derivation entry. Replay tolerates one breach of
+  it, a payload that omits a comparison record (FR-269 "Replay tolerates an
+  absent comparison record"); the obligation otherwise stands.
   The envelope itself is unchanged (FR-070-AC-5).
 - FR-098's request, byte provision and limits.
 
@@ -61,9 +65,16 @@ the search that found the element.
     passes, then the executor SHALL settle the agreement:
     `reproduced-with-evaluated-witness` on the `Witness` arm,
     `reproduced-without-witness` on the `Input` arm.
-  - If the two records differ or only one is present, then the executor SHALL
-    settle `inconclusive` with `DisagreementCause::Witness` carrying the
-    payload's record and the re-derived one, each as given or absent.
+  - If the payload carries no record and the re-derived record is a
+    comparison record, then the executor SHALL run the separation check
+    below on the re-derived record and, when it passes, SHALL settle the
+    agreement holding the re-derived record, as FR-269 "Replay tolerates an
+    absent comparison record" decides. If the check fails, the
+    `Witness` cause holds `given` absent and `derived` the re-derived record.
+  - Otherwise, if the two records differ or only one is present, then the
+    executor SHALL settle `inconclusive` with `DisagreementCause::Witness`
+    carrying the payload's record and the re-derived one, each as given or
+    absent.
 - The executor SHALL run the separation check over the admitted
   observation, charged to the request's evaluation meter, in these steps:
   1. resolve the record's deciding quantifier in the recompiled package and

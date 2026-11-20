@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type F32 = Float32[nearest-even];
+type F64 = Float64[nearest-even];
+function neg32 using v(a: F32): F32 pure { -a }
+function neg64 using v(a: F64): F64 pure { -a }

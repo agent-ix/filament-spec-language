@@ -1,0 +1,9 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Link = "test/link";
+random Link::Msg::send_a(lost) ~ { true: 3, false: 1 };
+workload Input on Link {
+  weight Link::Msg::send_a = 1;
+  weight Link::Msg::unknown = 0;
+}
+reward effort on Link::Msg::send_a = 2;

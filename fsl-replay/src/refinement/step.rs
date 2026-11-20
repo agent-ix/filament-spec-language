@@ -1109,6 +1109,7 @@ pub(crate) fn protocol_class(
         .map(str::to_owned);
     Some(match transition.kind() {
         StepKind::Attempt
+        | StepKind::Recommend
         | StepKind::Event
         | StepKind::Send
         | StepKind::Receive

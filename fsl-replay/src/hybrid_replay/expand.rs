@@ -174,6 +174,52 @@ impl Exp {
         false
     }
 
+    /// Whether `self` reads the variable `variable`.
+    pub(crate) fn reads_variable(&self, variable: usize) -> bool {
+        self.any_node(|node| matches!(node, Self::Variable(i) if *i == variable))
+    }
+
+    /// `self` with each variable read replaced by `replace`'s expression,
+    /// where it gives one.
+    pub(crate) fn map_variables(&self, replace: &impl Fn(usize) -> Option<Self>) -> Self {
+        let map = |e: &Self| Box::new(e.map_variables(replace));
+        match self {
+            Self::Variable(i) => replace(*i).unwrap_or_else(|| self.clone()),
+            Self::Activation(_)
+            | Self::Capture(_)
+            | Self::Parameter(_)
+            | Self::Number(_)
+            | Self::Boolean(_) => self.clone(),
+            Self::Negate(a) => Self::Negate(map(a)),
+            Self::Not(a) => Self::Not(map(a)),
+            Self::Arithmetic(op, a, b, locus) => {
+                Self::Arithmetic(*op, map(a), map(b), locus.clone())
+            }
+            Self::Compare(op, a, b) => Self::Compare(*op, map(a), map(b)),
+            Self::Logic(op, a, b) => Self::Logic(*op, map(a), map(b)),
+            Self::Conditional(a, b, c) => Self::Conditional(map(a), map(b), map(c)),
+            Self::Ranged {
+                value,
+                range,
+                role,
+                locus,
+            } => Self::Ranged {
+                value: map(value),
+                range: range.clone(),
+                role: *role,
+                locus: locus.clone(),
+            },
+            Self::Recursive(call) => Self::Recursive(RecursiveCall {
+                arguments: call
+                    .arguments
+                    .iter()
+                    .map(|argument| argument.map_variables(replace))
+                    .collect(),
+                ..call.clone()
+            }),
+        }
+    }
+
     /// `self` with every activation variable read as the current variable.
     pub(crate) fn activation_as_current(&self) -> Self {
         let map = |e: &Self| Box::new(e.activation_as_current());

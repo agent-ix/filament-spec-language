@@ -1120,3 +1120,40 @@ impl DomainPackage {
         self.originals.get(key)
     }
 }
+
+/// The data slot of each authored tuple position; a Clock has no data slot.
+pub(crate) fn tuple_data_projection(
+    records: &[DomainPackageRecord],
+    owner: &DeclarationKey,
+) -> Vec<Option<usize>> {
+    let by_key: BTreeMap<_, _> = records
+        .iter()
+        .map(|record| (record.key(), record))
+        .collect();
+    let mut positions: Vec<_> = records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::TuplePosition(position) if &position.owner == owner => {
+                Some(position)
+            }
+            _ => None,
+        })
+        .collect();
+    positions.sort_by_key(|position| position.ordinal);
+    let mut data = 0;
+    positions
+        .into_iter()
+        .map(|position| {
+            if matches!(
+                unaliased(&position.value_type, |key| by_key.get(key).copied()),
+                Some((ValueTypeRef::Clock, 0))
+            ) {
+                None
+            } else {
+                let slot = data;
+                data += 1;
+                Some(slot)
+            }
+        })
+        .collect()
+}

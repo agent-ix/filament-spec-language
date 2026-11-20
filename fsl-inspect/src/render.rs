@@ -483,6 +483,14 @@ fn outcome_text(
             }
             return Ok(());
         }
+        if kind == "exported" {
+            if let Some(export) = result.get("export") {
+                for line in export_result_lines(export)? {
+                    writer.unit(|| line)?;
+                }
+                return Ok(());
+            }
+        }
         let mut members = result
             .as_object()
             .cloned()
@@ -496,6 +504,44 @@ fn outcome_text(
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+/// Text lines for an export result (FR-865-AC-7): the target, the bytes
+/// written and the output path, or for an incomplete export the bytes
+/// written and the limit reached.
+fn export_result_lines(export: &serde_json::Value) -> Result<Vec<String>, Failure> {
+    let text = |value: Option<&serde_json::Value>| {
+        value.and_then(serde_json::Value::as_str).map(str::to_owned)
+    };
+    let written = export
+        .get("output")
+        .and_then(|output| output.get("bytes_written"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if export.get("status").and_then(serde_json::Value::as_str) == Some("incomplete") {
+        let setting = text(export.get("cause").and_then(|cause| cause.get("setting")))
+            .ok_or_else(|| fault("an incomplete export names no setting"))?;
+        let bound = export
+            .get("cause")
+            .and_then(|cause| cause.get("value"))
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| fault("an incomplete export names no bound"))?;
+        return Ok(vec![
+            format!("bytes written: {written}\n"),
+            format!("limit reached: {setting} {bound}\n"),
+        ]);
+    }
+    let family = text(export.get("target_family"))
+        .ok_or_else(|| fault("an export names no target family"))?;
+    let profile = text(export.get("mapping_profile_id"))
+        .ok_or_else(|| fault("an export names no profile"))?;
+    let path = text(export.get("output").and_then(|output| output.get("path")))
+        .unwrap_or_else(|| "none".to_owned());
+    Ok(vec![
+        format!("target: {family} {profile}\n"),
+        format!("bytes written: {written}\n"),
+        format!("output: {path}\n"),
+    ])
 }
 
 /// Text lines for the replay rows, with the typed document shape checked
@@ -1345,7 +1391,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     const EXPECTED_JSON: &[&str] = &[
-        r#"refusal: {"format":"filament.inspect-view/v1","view":{"kind":"outcome","data":{"document":{"format":"filament-outcome/1","operation":"analyze","last_stage":null,"category":"refusal","items":[],"diagnostics":[{"cause":null,"code":"ill_typed","locus":{"kind":"region","source":{"authority":"tests","identity":"ref-inv"},"start":4,"end":5},"message":"bad value"}],"artifacts":[],"result":null},"loci":[{"locus":{"kind":"region","source":{"authority":"tests","identity":"ref-inv"},"start":4,"end":5},"regions":[{"source_authority":"tests","source_identity":"ref-inv","start":4,"end":5}]}]}}}"#,
+        r#"refusal: {"format":"filament.inspect-view/v1","view":{"kind":"outcome","data":{"document":{"format":"filament-outcome/1","operation":"analyze","last_stage":null,"category":"refusal","items":[],"diagnostics":[{"cause":null,"code":"ill_typed","locus":{"kind":"region","source":{"authority":"tests","identity":"ref-inv"},"start":4,"end":5},"message":"bad value","details":null}],"artifacts":[],"result":null},"loci":[{"locus":{"kind":"region","source":{"authority":"tests","identity":"ref-inv"},"start":4,"end":5},"regions":[{"source_authority":"tests","source_identity":"ref-inv","start":4,"end":5}]}]}}}"#,
         r#"proved: {"format":"filament.inspect-view/v1","view":{"kind":"outcome","data":{"document":{"format":"filament-outcome/1","operation":"prove","last_stage":null,"category":"success","items":[{"request_index":0,"result":"proved","cause":null,"basis":{"type":"inductive","depth":0},"certification":"trusted","category":"success"},{"request_index":1,"result":"proved","cause":null,"basis":{"type":"bounded-proof","checks":1},"certification":"certified","category":"success"},{"request_index":2,"result":"proved","cause":null,"basis":{"type":"exhaustive"},"certification":"uncertified","category":"success"},{"request_index":3,"result":"failed","cause":null,"category":"internal-failure"}],"diagnostics":[],"artifacts":[],"result":null},"loci":[]}}}"#,
         r#"counterexample: {"format":"filament.inspect-view/v1","view":{"kind":"counterexample","data":{"function":"check","assignments":[{"parameter":"p","declaration_order":0,"identity":"fixture:[\"x\",]:0","value_text":"{\"type\":\"boolean\",\"value\":true}"}],"certification":"trusted"}}}"#,
         r#"lasso: {"format":"filament.inspect-view/v1","view":{"kind":"trace","data":{"shape":{"kind":"lasso","prefix":2,"loop_len":2},"positions":[{"position":0,"authority":"tests","identity":"s0"},{"position":1,"authority":"tests","identity":"s1"},{"position":2,"authority":"tests","identity":"s2"},{"position":3,"authority":"tests","identity":"s3"}],"loop_start":2,"deciding_position":1}}}"#,
@@ -1608,11 +1654,11 @@ mod tests {
         let sources = RenderSources::from_sources([first, second]);
         assert_eq!(
             text_of(&refusal_over(&region_a, 1, "m"), &sources),
-            "a.fsl:1:1: ill_typed: m\n"
+            "analyze: refusal (exit 20)\na.fsl:1:1: ill_typed: m\n"
         );
         assert_eq!(
             text_of(&refusal_over(&region_b, 1, "m"), &sources),
-            "b.fsl:1:1: ill_typed: m\n"
+            "analyze: refusal (exit 20)\nb.fsl:1:1: ill_typed: m\n"
         );
 
         let under_a = source_under("ref-same", "a.fsl", "same\n");
@@ -1621,7 +1667,7 @@ mod tests {
         let sources = RenderSources::from_sources([under_a, under_b]);
         assert_eq!(
             text_of(&refusal_over(&region, 1, "m"), &sources),
-            "a.fsl:1:1: ill_typed: m\n"
+            "analyze: refusal (exit 20)\na.fsl:1:1: ill_typed: m\n"
         );
     }
 
@@ -2082,7 +2128,7 @@ mod tests {
         .expect("an aligned outcome view renders");
         assert_eq!(
             rendered.value().as_str(),
-            "src/inv.fsl:2:2: ill_typed: bad\n"
+            "analyze: refusal (exit 20)\nsrc/inv.fsl:2:2: ill_typed: bad\n"
         );
 
         let misaligned: V<'_> = View::Outcome(OutcomeView {
@@ -2104,10 +2150,22 @@ mod tests {
     #[test]
     fn proved_item_text_shows_its_certification_beside_the_verdict_even_with_diagnostics() {
         let text = text_of(&proved_document(), &RenderSources::from_sources([]));
-        assert!(text.contains("Item 0: proved trusted\n"), "{text}");
-        assert!(text.contains("Item 1: proved certified\n"), "{text}");
-        assert!(text.contains("Item 2: proved uncertified\n"), "{text}");
-        assert!(text.contains("Item 3: failed\n"), "{text}");
+        assert!(
+            text.contains("item 0: proved (success) trusted\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("item 1: proved (success) certified\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("item 2: proved (success) uncertified\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("item 3: failed (internal-failure)\n"),
+            "{text}"
+        );
 
         let with_diagnostic =
             proved_document().with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
@@ -2117,8 +2175,14 @@ mod tests {
                 "bad",
             )]);
         let text = text_of(&with_diagnostic, &RenderSources::from_sources([]));
-        assert!(text.starts_with("<no-source>: ill_typed: bad\n"), "{text}");
-        assert!(text.contains("Item 0: proved trusted\n"), "{text}");
+        assert!(
+            text.starts_with("prove: success (exit 0)\n<no-source>: ill_typed: bad\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("item 0: proved (success) trusted\n"),
+            "{text}"
+        );
     }
 
     #[trace("TC-783", "FR-298-AC-8")]
@@ -2391,12 +2455,9 @@ mod tests {
         let limits = RenderLimits::default();
         let cancel = Cancel::new();
         let render = |result| {
-            let document = OutcomeDocument::new(
-                Operation::Replay,
-                Some(OutcomeStage::S8),
-                Category::Success,
-            )
-            .with_raw_result_for_test(result);
+            let document =
+                OutcomeDocument::new(Operation::Replay, Some(OutcomeStage::S8), Category::Success)
+                    .with_raw_result_for_test(result);
             render_outcome(
                 &document,
                 RenderForm::Text,

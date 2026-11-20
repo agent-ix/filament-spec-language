@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type R = Rational[1,9;1,9];
+function negate using v(a: R): Rational[-9,-1;1,9] pure { -a }

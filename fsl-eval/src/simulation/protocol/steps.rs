@@ -739,6 +739,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     self.receive(state, step.ordinal, step.path, step.node, after, gathered)?;
                 }
             }
+            ControlStep::Event if self.program.recommendations.contains_key(&step.node) => {
+                self.recommend(state, step, after, gathered)?;
+            }
             ControlStep::Event => self.event(
                 state,
                 step.ordinal,
@@ -1452,6 +1455,83 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             name: &attempt.operation,
             receiver: attempt.receiver.clone(),
         })
+    }
+
+    /// FR-206: emit each checked call as a typed recommendation while
+    /// keeping the model component untouched.
+    fn recommend(
+        &self,
+        state: &ProtocolState<M>,
+        step: ThreadStep<'_>,
+        after: Cursor,
+        gathered: &mut Gathered<M>,
+    ) -> Result<(), ExpansionStop> {
+        let recommendation = self
+            .program
+            .recommendations
+            .get(&step.node)
+            .ok_or_else(|| ProtocolRefusal::fault("a-recommend-node-has-a-call"))?;
+        let operation = OperationRef {
+            declaring: recommendation.declaring.clone(),
+            name: &recommendation.operation,
+            receiver: recommendation.receiver.clone(),
+        };
+        let select = |clause| recommendation.contracts.contains(&clause);
+        let observed = self.memory.observe(&state.memory, step.path, &state.model);
+        let applications =
+            self.model
+                .apply_operation(&observed, &operation, &select, &mut gathered.budget)?;
+        gathered
+            .findings
+            .extend(applications.findings.iter().cloned());
+        let text = self.program.text(step.node)?.to_owned();
+        let instance = Self::instance(state, step.ordinal)?;
+        for application in applications.successors {
+            let admitted = match (recommendation.binds, application.result.as_ref()) {
+                (Some(slot), Some(result)) => self.admits(
+                    Reader {
+                        instance,
+                        path: step.path,
+                        node: step.node,
+                    },
+                    recommendation.constraint,
+                    slot,
+                    result,
+                    &state.model,
+                    &mut gathered.findings,
+                )?,
+                _ => true,
+            };
+            if !admitted {
+                continue;
+            }
+            let mut next = state.clone();
+            if self.place(
+                &mut next,
+                step.ordinal,
+                step.path,
+                after,
+                &mut gathered.findings,
+            )? {
+                self.normalize(&mut next, step.ordinal)?;
+                gathered.successors.push((
+                    ProtocolTransition::recommended(
+                        step.path.clone(),
+                        text.clone(),
+                        recommendation.role.clone(),
+                        recommendation.operation.clone(),
+                        reference_enc(&application.receiver),
+                        application
+                            .arguments
+                            .iter()
+                            .map(|value| value_enc(value, self.model.typing()))
+                            .collect(),
+                    ),
+                    next,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// ST-1: one step per FR-120 application of `node`'s operation (every

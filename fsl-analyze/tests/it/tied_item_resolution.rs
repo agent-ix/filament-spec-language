@@ -97,7 +97,6 @@ fn an_unnamed_tied_item_reaches_negotiation_with_one_candidate() {
 /// so the unnamed item settles `ambiguous-backend` naming all three.
 #[trace("TC-2702", "FR-962-AC-3")]
 #[test]
-#[ignore = "QSL-2564: Engine::external refuses a provider not advertising (value-validity, unbounded); FR-968 registers an operation-contract provider"]
 fn an_undecided_tie_settles_ambiguous_backend() {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
@@ -181,7 +180,6 @@ fn advertising(
 /// naming its `BackendId`, and a refused provider is never called.
 #[trace("TC-2725", "FR-968-AC-1")]
 #[test]
-#[ignore = "QSL-2564: Engine::external still requires (value-validity, unbounded) of every provider and names no refusal reason"]
 fn a_provider_registers_for_the_kinds_it_advertises() {
     use fsl_route::Mode;
     use fsl_semantics::check::Capability::{
@@ -347,7 +345,7 @@ fn contract_provider(
 /// `operation-contract` request item.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[test]
-#[ignore = "QSL-2564: Engine::external refuses an operation-contract provider and sends no operation-contract item to a provider; QSL-2580: analyze settles a named `post` clause unknown-claim"]
+#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim"]
 fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     use fsl_analyze::provider::ProviderVerdict;
     let ws = Workspace::new("post-item-with-provider");

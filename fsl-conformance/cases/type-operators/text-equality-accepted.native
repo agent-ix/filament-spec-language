@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Label = Text[0,8;nfc];
+function equalText using v(a: Label,b: Label): Boolean pure { a=b }
+function equalString using v(a: String,b: String): Boolean pure { a=b }

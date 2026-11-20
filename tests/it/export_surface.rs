@@ -20,30 +20,6 @@ fn counter_member(floor: Option<&str>) -> Value {
     member
 }
 
-/// FSpec FR-811 "Decision" and FR-817 Exits: an invariant the target can
-/// state, which this build does not lower, stops the export as a mapper
-/// failure: internal-failure, exit 30, no package and no file, under every
-/// floor.
-#[test]
-fn an_unlowered_invariant_is_a_mapper_failure() {
-    for floor in [None, Some("any"), Some("preserved")] {
-        let directory = tempfile::tempdir().unwrap();
-        let path = counter_request(directory.path(), counter_member(floor));
-        let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-            .expect_err("a mapper failure");
-        assert_eq!(error.category().exit_code(), 30, "{floor:?}");
-        let value = error.value().unwrap();
-        names(&value, "runtime_invariant");
-        names(&value, "Bounded");
-        assert!(value.get("export").is_none(), "{value}");
-        assert!(!directory.path().join("counter.tla").exists());
-        // The program reached S4 before the mapper ran (FR-286).
-        let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
-        assert_eq!(document["last_stage"], "S4", "{document}");
-        assert_eq!(value["stage"], "emit", "{value}");
-    }
-}
-
 /// The floor is decided before the mapper meets a representable obligation:
 /// a refused record fails the default floor, exit 21, ahead of the failure.
 #[test]

@@ -18,6 +18,8 @@ use super::interval::{IValue, Interval, IntervalEvaluator};
 use super::poly::Poly;
 use super::*;
 
+mod quantifier_tests;
+
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      profile p = \"filament.temporal.infinite-trace/v1\";\n\

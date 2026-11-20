@@ -7,6 +7,7 @@
 //! floor is decided and writes no package.
 
 use super::super::{Result, RunCause};
+use super::lower;
 use super::request::{EffectiveLimits, Request, Target};
 use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
@@ -24,6 +25,68 @@ pub(super) struct ClauseFact {
     pub(super) obligation: Option<NodeKey>,
     /// The `node_tag`/`semantic_form` of an obligation's clause node.
     pub(super) construct: &'static str,
+    /// Whether a `bound` declaration bounds a population the clause ranges
+    /// over (FSpec FR-812 "State and actions").
+    pub(super) bounded: bool,
+}
+
+/// Resolve export obligations from the admitted V2 package's name rows.
+/// No source program is read or compiled on this route.
+pub(super) fn package_clauses(package: &CheckedPackageV2) -> Result<Vec<ClauseFact>> {
+    let nodes = &package.resolved_graph().nodes;
+    let wire = WireGraph::new(nodes.iter().map(|node| &node.node_id))
+        .map_err(|_| internal("the package's node identities do not rebuild"))?;
+    let mut clauses = Vec::new();
+    // `None` means the admitted optional carrier was absent. Strict V2
+    // admission rejects a claim-bearing node whose required name row is
+    // missing, so it denotes a package with no declarations in that table.
+    for row in package.claim_names().unwrap_or_default() {
+        let node = nodes
+            .iter()
+            .find(|node| node.node_id == row.declaration)
+            .ok_or_else(|| internal("a claim name has no package node"))?;
+        let key = wire
+            .key(&row.declaration)
+            .map_err(|_| internal("a claim name has no structural key"))?
+            .clone();
+        let kind = package.node_kind(&row.declaration);
+        let (obligation, construct) = match kind {
+            Some(filament_contract_model::CheckedNodeKind::State(
+                filament_contract_model::StateForm::StateClause,
+            )) => {
+                let body = serde_json::to_value(&node.body)
+                    .map_err(|_| internal("a state clause does not serialize"))?;
+                let invariant = body
+                    .pointer("/operation/member/clause")
+                    .and_then(Value::as_str)
+                    == Some("invariant");
+                (invariant.then_some(key), "state/state_clause")
+            }
+            Some(filament_contract_model::CheckedNodeKind::Claim(
+                filament_contract_model::ClaimForm::Hyperproperty,
+            )) => (Some(key), "temporal/temporal_clause"),
+            _ => (None, "claim"),
+        };
+        clauses.push(ClauseFact {
+            name: row.name.to_string(),
+            obligation,
+            construct,
+            bounded: false,
+        });
+    }
+    for row in package.temporal_clause_names().unwrap_or_default() {
+        let key = wire
+            .key(&row.declaration)
+            .map_err(|_| internal("a temporal claim name has no structural key"))?
+            .clone();
+        clauses.push(ClauseFact {
+            name: row.name.to_string(),
+            obligation: Some(key),
+            construct: "temporal/temporal_clause",
+            bounded: false,
+        });
+    }
+    Ok(clauses)
 }
 
 /// FSpec FR-814's injective mangling of one authored name under `prefix`:
@@ -82,14 +145,14 @@ impl Meter<'_> {
 }
 
 /// The package as the classification reads it.
-struct Graph<'a> {
-    package: &'a CheckedPackageV2,
+pub(super) struct Graph<'a> {
+    pub(super) package: &'a CheckedPackageV2,
     by_key: BTreeMap<NodeKey, usize>,
     by_id: BTreeMap<String, usize>,
 }
 
 impl<'a> Graph<'a> {
-    fn new(package: &'a CheckedPackageV2) -> Result<Self> {
+    pub(super) fn new(package: &'a CheckedPackageV2) -> Result<Self> {
         let nodes = &package.resolved_graph().nodes;
         let wire = WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| internal("the package's node identities do not rebuild"))?;
@@ -112,8 +175,15 @@ impl<'a> Graph<'a> {
         })
     }
 
-    fn node(&self, position: usize) -> &filament_contract_model::CheckedSemanticNodeV2 {
+    pub(super) fn node(&self, position: usize) -> &filament_contract_model::CheckedSemanticNodeV2 {
         &self.package.resolved_graph().nodes[position]
+    }
+
+    /// The position of the node a serialized node id names.
+    pub(super) fn position_of(&self, id: &Value) -> Option<usize> {
+        serde_json::to_string(id)
+            .ok()
+            .and_then(|id| self.by_id.get(&id).copied())
     }
 
     fn position(&self, id: &CheckedNodeId) -> Option<usize> {
@@ -124,7 +194,7 @@ impl<'a> Graph<'a> {
     }
 
     /// The nodes reachable from `root` through dependencies, root included.
-    fn closure(&self, root: usize) -> BTreeSet<usize> {
+    pub(super) fn closure(&self, root: usize) -> BTreeSet<usize> {
         let mut seen = BTreeSet::new();
         let mut pending = vec![root];
         while let Some(position) = pending.pop() {
@@ -209,6 +279,8 @@ pub(super) fn run(
     package: &CheckedPackageV2,
     identity: &str,
     clauses: &[ClauseFact],
+    models: &[Vec<u8>],
+    initial: Option<&Value>,
     request: &Request,
     effective: &EffectiveLimits,
 ) -> Result<Mapped> {
@@ -221,6 +293,7 @@ pub(super) fn run(
     let mut charged = BTreeSet::new();
     let mut records = Vec::with_capacity(request.obligations.len());
     let mut unlowered = None;
+    let mut lowerable: Vec<(String, usize, usize)> = Vec::new();
     for name in &request.obligations {
         let Some((clause, key)) = clauses
             .iter()
@@ -250,10 +323,31 @@ pub(super) fn run(
         }
         let flows = graph.flows(&closure)?;
         if flows.is_empty() {
-            unlowered.get_or_insert_with(|| Unlowered {
-                obligation: name.clone(),
-                construct: clause.construct.to_owned(),
-            });
+            if clause.construct == "state/state_clause" {
+                if clause.bounded {
+                    unlowered.get_or_insert_with(|| Unlowered {
+                        obligation: name.clone(),
+                        construct: "model/bound".to_owned(),
+                        detail: "a `bound` declaration bounds the population, and this build does not lower population bounds"
+                            .to_owned(),
+                    });
+                } else {
+                    lowerable.push((name.clone(), root, records.len()));
+                }
+                records.push(Record {
+                    obligation: name.clone(),
+                    disposition: Disposition::Preserved,
+                    conditions: Vec::new(),
+                    causes: Vec::new(),
+                    regions: Vec::new(),
+                });
+            } else {
+                unlowered.get_or_insert_with(|| Unlowered {
+                    obligation: name.clone(),
+                    construct: clause.construct.to_owned(),
+                    detail: String::new(),
+                });
+            }
             continue;
         }
         records.push(Record {
@@ -268,14 +362,47 @@ pub(super) fn run(
         });
     }
     let module = module_name(identity);
-    let text = match request.target {
-        Target::Tla => format!("---- MODULE {module} ----\n====\n"),
-        Target::Lean => format!("namespace {module}\nend {module}\n"),
+    let mut lowered = None;
+    if let Some((first, _, _)) = lowerable.first() {
+        let wanted: Vec<(String, usize)> = lowerable
+            .iter()
+            .map(|(name, root, _)| (name.clone(), *root))
+            .collect();
+        match lower::lower(&graph, models, initial, request.target, &module, &wanted) {
+            Ok(done) => {
+                for (name, _, index) in &lowerable {
+                    if let Some(record) = records.get_mut(*index) {
+                        record.regions = done.regions.get(name).cloned().unwrap_or_default();
+                    }
+                }
+                lowered = Some(done);
+            }
+            Err(refusal) => {
+                unlowered.get_or_insert_with(|| Unlowered {
+                    obligation: refusal.obligation.unwrap_or_else(|| first.clone()),
+                    construct: refusal.construct,
+                    detail: refusal.detail,
+                });
+            }
+        }
+    }
+    let (text, name_map, regions_written) = match lowered {
+        Some(done) => (done.text, done.name_map, done.definitions as u64),
+        None => (
+            match request.target {
+                Target::Tla => format!("---- MODULE {module} ----\n====\n"),
+                Target::Lean => format!("namespace {module}\nend {module}\n"),
+            },
+            Vec::new(),
+            0,
+        ),
     };
     Ok(Mapped::Assembled {
         text,
-        name_map: Vec::new(),
+        name_map,
         records,
         unlowered,
+        work: meter.work,
+        regions_written,
     })
 }

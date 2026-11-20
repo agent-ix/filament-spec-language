@@ -603,6 +603,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     built.write(self.binder(node, path)?);
                 }
             }
+            StepKind::Recommend => {
+                self.binders_read(&mut built, path, node, Read::Enabling)?;
+            }
             StepKind::Event | StepKind::Send | StepKind::Receive => {
                 self.binders_read(&mut built, path, node, Read::Enabling)?;
                 // An effect is enabled by its attempt's binder (ST-2).
@@ -623,6 +626,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .get(&node)
                         .map(|message| &message.record.record_type),
                     StepKind::Receive
+                    | StepKind::Recommend
                     | StepKind::Attempt
                     | StepKind::Duplicate
                     | StepKind::Lose
@@ -997,6 +1001,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 built.write(registration);
             }
             StepKind::Attempt
+            | StepKind::Recommend
             | StepKind::Event
             | StepKind::Send
             | StepKind::Receive
@@ -1188,6 +1193,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .transpose()?;
         let matches = match step.kind() {
             StepKind::Attempt => kind == Some(ControlStep::Attempt),
+            StepKind::Recommend => kind == Some(ControlStep::Event),
             StepKind::Event => kind == Some(ControlStep::Event),
             StepKind::Send => kind == Some(ControlStep::Send),
             StepKind::Receive => kind == Some(ControlStep::Receive),

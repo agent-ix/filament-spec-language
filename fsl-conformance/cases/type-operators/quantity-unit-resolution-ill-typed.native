@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Length;
+unit m : Length = rational(1,1);
+function bad using v(a: Quantity<missing>): Boolean pure { true }

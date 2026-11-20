@@ -1,0 +1,6 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model M = "test/counter-step";
+post Advances using v on M::Counter::inc { (pre(self.value) < 3 and self.value = pre(self.value) + 1) or (pre(self.value) = 3 and self.value = 0) }
+hyper CanStayZero using inf over behaviours (c: M::Counter) exists trace a of M { always holds(c.value @ a = 0) }

@@ -1,0 +1,19 @@
+{
+  "format": "native-run/1",
+  "request": {
+    "models": [],
+    "program": {
+      "source": {
+        "file": "map-literal-key-guard.native",
+        "authority": "agent-ix",
+        "identity": "test:corpus:map-literal-key-guard",
+        "document": "map-literal-key-guard",
+        "formal_revision": 1
+      }
+    },
+    "call": {
+      "function": "f",
+      "arguments": [{"parameter":"m", "value":{"map":[{"key":{"integer":"1"},"value":{"integer":"8"}}]}}]
+    }
+  }
+}

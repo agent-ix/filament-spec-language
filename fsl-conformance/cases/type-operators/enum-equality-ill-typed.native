@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+enum E { A,B }
+enum Other { A,B }
+function bad using v(a: E,b: Other): Boolean pure { a=b }

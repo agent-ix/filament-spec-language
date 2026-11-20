@@ -11,7 +11,7 @@
 //! Reuses FR-100's outcome mapping ([`super::call::convert_outcome`]) by
 //! reference, rather than restating it.
 
-use filament_checked::node::{Connective, NodeKind};
+use filament_checked::node::{CheckedLiteral, Connective, NodeKind};
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
@@ -482,6 +482,20 @@ pub struct OperationContractViolation {
 pub struct TemporalValuation {
     /// The checked clause.
     pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// The checked Boolean condition of each `holds` atom, keyed by the
+    /// formula node whose valuation the clause report carries. These views
+    /// let command adapters render a package-independent canonical label.
+    pub checked_conditions: Vec<(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )>,
+    /// Alias-free declaration spellings referenced by the checked conditions.
+    /// Structural package keys never provide surface labels by themselves.
+    pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
+    /// Alias-free identities of local functions called by checked conditions.
+    pub canonical_functions: BTreeMap<usize, String>,
+    /// Declared field order of record constructors in checked conditions.
+    pub canonical_record_fields: BTreeMap<filament_exact::NodeKey, Vec<String>>,
     /// The valuation over the supplied trace; `None` when the trace is an
     /// empty finite trace, which asks for the clause alone, or a lasso beside a
     /// profile that does not read one.
@@ -490,6 +504,211 @@ pub struct TemporalValuation {
     /// behaviour) closed trace of the model subject a snapshot builds;
     /// `None` for a supplied trace.
     pub behaviours: Option<crate::BehaviourValuations>,
+}
+
+impl TemporalValuation {
+    /// Retain the checked conditions for one temporal clause alongside its
+    /// valuation. The formula arena's node order is the source/package
+    /// formula order, so the resulting keys are stable across both routes.
+    pub(crate) fn from_node(
+        node: &fsl_semantics::check::TemporalClauseNode,
+        graph: &CheckedGraph,
+        positions: Option<crate::spine_eval_api::SpineEvalObservedValuation>,
+        behaviours: Option<crate::BehaviourValuations>,
+    ) -> Self {
+        let clause = node.clause();
+        let mut checked_conditions = Vec::new();
+        for index in 0..clause.formula().nodes().len() {
+            let Some(atom) = clause.formula().node_id(index) else {
+                continue;
+            };
+            if !matches!(
+                clause.formula().nodes().get(index),
+                Some(fsl_semantics::check::FormulaNode::Holds { .. })
+            ) {
+                continue;
+            }
+            if let Some((condition, _)) = node.condition(atom) {
+                checked_conditions.push((atom, condition.body().clone()));
+            }
+        }
+        let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
+        let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
+        let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
+        Self {
+            clause: clause.clone(),
+            checked_conditions,
+            canonical_declarations,
+            canonical_functions,
+            canonical_record_fields,
+            positions,
+            behaviours,
+        }
+    }
+}
+
+fn canonical_condition_record_fields(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, Vec<String>> {
+    let mut records = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(composite) = graph.scope().types().composite(declaration.clone()) {
+                    if let filament_semantic_value::declaration::CompositeShape::Record(fields) =
+                        composite.shape()
+                    {
+                        records.insert(
+                            declaration.clone(),
+                            fields.iter().map(|field| field.name().to_owned()).collect(),
+                        );
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    records
+}
+
+fn canonical_condition_functions(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<usize, String> {
+    let mut functions = BTreeMap::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::Call { function, .. } = node.kind() {
+                if let Some(identity) = graph.function_identity_at(*function) {
+                    if let Some(identity) = source_function_identity(&identity) {
+                        functions.insert(*function, identity);
+                    }
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    functions
+}
+
+fn canonical_condition_declarations(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<filament_exact::NodeKey, String> {
+    let mut declarations = BTreeMap::new();
+    for (key, declaration) in graph.semantic_graph().source_enum_declarations() {
+        declarations.insert(
+            key.clone(),
+            format!(
+                "ix://{}/{}",
+                declaration.owner.identity(),
+                declaration
+                    .qualified_declaration
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join("/")
+            ),
+        );
+    }
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let NodeKind::ImportedCall { callee, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(callee) {
+                    declarations.insert(callee.clone(), identity);
+                }
+            }
+            if let NodeKind::Record { declaration, .. } = node.kind() {
+                if let Some(identity) = source_function_identity(declaration) {
+                    declarations.insert(declaration.clone(), identity);
+                }
+            }
+            let key = match node.kind() {
+                NodeKind::Literal(CheckedLiteral(filament_exact::Value::Enum(member))) => {
+                    Some(member.variant().owner().clone())
+                }
+                NodeKind::Field { field, .. } => Some(field.declaration()),
+                _ => None,
+            };
+            if let Some(key) = key {
+                if let Some(declaration) = graph.resolve_declaration(key.clone()) {
+                    declarations.insert(
+                        key,
+                        format!("ix://{}/{}", declaration.package, declaration.node),
+                    );
+                }
+            }
+            let mut children = Vec::new();
+            let _ = node.kind().map_ref(
+                |child| {
+                    children.push(*child);
+                    ()
+                },
+                Clone::clone,
+            );
+            pending.extend(children.into_iter().map(|child| node.at(child)));
+        }
+    }
+    declarations
+}
+
+/// The source declaration identity carried by a checked function key. Its
+/// package is the source owner's identity, and its text path is the
+/// alias-free qualified declaration name.
+fn source_function_identity(key: &filament_exact::NodeKey) -> Option<String> {
+    let path = key
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text.to_owned()),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
 impl ClauseDisposition {

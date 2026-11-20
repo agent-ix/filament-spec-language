@@ -339,6 +339,7 @@ fn undefined(world: &World, state: &ModelState, row: usize) -> (UndefinedReason,
     "TC-544",
     "FR-139-AC-4",
     "FR-139-AC-7",
+    "FR-998-AC-2",
     "FSpec-TC-311",
     "FSpec-FR-376-AC-3"
 )]
@@ -362,6 +363,25 @@ fn only_is_undefined_for_no_object_and_for_several() {
         );
         assert_eq!(undefined(&world, &state, GHOST).1[0], "found=0");
     }
+}
+
+/// FR-998-AC-2: when no population object matches the `only` condition, the
+/// result is undefined with the catalogued `only-not-one` reason.
+#[trace("TC-544", "FR-998-AC-2", "FSpec-FR-376-AC-3")]
+#[test]
+fn only_over_a_population_with_no_matches_is_undefined() {
+    let world = World::new();
+    let state = world.state(0, 0, [1, 1]);
+    assert_eq!(
+        undefined(&world, &state, GHOST),
+        (
+            UndefinedReason::OnlyNotOne,
+            vec![
+                "found=0".to_owned(),
+                format!("population={}", key(RING, "slots").node)
+            ]
+        )
+    );
 }
 
 /// FR-139 (`sum`, metering): `sum(s in R::slots where s.ring = self:
@@ -427,7 +447,7 @@ fn shifted_sum_rows() -> String {
 /// refuses `ill_typed`/`type-mismatch`, at S3 and at the row, for the bound
 /// includes 0 whatever the universe size. At a state where no slot satisfies
 /// the condition it evaluates to 0.
-#[trace("TC-544")]
+#[trace("TC-544", "FR-139-AC-6")]
 #[test]
 fn a_sum_with_a_positive_summand_includes_zero_in_its_bound() {
     let wide = World::of(checked_over(

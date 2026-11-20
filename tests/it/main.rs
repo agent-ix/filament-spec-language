@@ -32,9 +32,12 @@ mod command_harness;
 mod compile_command;
 mod no_binary;
 mod parse_operation;
-mod source_corpus;
+#[cfg(feature = "checked-handoff")]
+mod probability_source_routes;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
+mod refinement_source_routes;
+mod source_corpus;
 
 #[cfg(feature = "checked-handoff")]
 mod selected_object_closure;
@@ -73,6 +76,7 @@ mod evaluate_reads_no_display_strings;
 mod evidence_ledger_file;
 mod exact_decimals;
 mod export_rulings;
+mod export_state_lowering;
 mod export_surface;
 mod extension_forms;
 mod extension_s1_parse;

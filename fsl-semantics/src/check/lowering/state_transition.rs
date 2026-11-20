@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{EffectiveId, Identifier, NodeKey, ValueType};
 
 use super::state::OperationBinding;
+use super::NodeRef;
 use super::{fault, refuse, LoweredClause, Lowering};
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{
@@ -53,7 +54,7 @@ pub(crate) struct TransitionClause<'a> {
 /// check to it (FR-105: counted by node id, not by declaration).
 struct ClauseSet<'a> {
     /// Ascending by (least clause name, node).
-    nodes: Vec<(NodeKey, Vec<&'a TransitionClause<'a>>)>,
+    nodes: Vec<(NodeRef, Vec<&'a TransitionClause<'a>>)>,
 }
 
 impl<'a> ClauseSet<'a> {
@@ -61,7 +62,7 @@ impl<'a> ClauseSet<'a> {
     where
         'a: 'c,
     {
-        let mut by_node: BTreeMap<NodeKey, Vec<&'a TransitionClause<'a>>> = BTreeMap::new();
+        let mut by_node: BTreeMap<NodeRef, Vec<&'a TransitionClause<'a>>> = BTreeMap::new();
         for clause in clauses {
             by_node
                 .entry(clause.lowered.key.clone())
@@ -84,7 +85,7 @@ impl<'a> ClauseSet<'a> {
         Self { nodes }
     }
 
-    fn keys(&self) -> Vec<NodeKey> {
+    fn keys(&self) -> Vec<NodeRef> {
         self.nodes.iter().map(|(key, _)| key.clone()).collect()
     }
 
@@ -106,7 +107,7 @@ impl<'a> ClauseSet<'a> {
 #[derive(Default)]
 struct Built {
     /// Each derived `state_clause`, by its kind and contributing nodes.
-    clauses: BTreeMap<(StateClauseKind, Vec<NodeKey>), NodeKey>,
+    clauses: BTreeMap<(StateClauseKind, Vec<NodeRef>), NodeKey>,
     /// Each `and` of two conditions.
     conjunctions: BTreeMap<(NodeKey, NodeKey), NodeKey>,
 }
@@ -261,7 +262,12 @@ impl Lowering<'_> {
             };
             let mut visited = BTreeSet::new();
             if let Some(found) = self.subject_read(
-                clause.lowered.condition.clone(),
+                clause
+                    .lowered
+                    .condition
+                    .admitted()
+                    .cloned()
+                    .ok_or_else(|| fault(clause.location, KeyFault::UnresolvedDraft))?,
                 self_parameter.clone(),
                 object.clone(),
                 field,
@@ -380,7 +386,10 @@ impl Lowering<'_> {
     ) -> Result<NodeKey, CheckRefusal> {
         let keys = set.keys();
         if let [only] = keys.as_slice() {
-            return Ok(only.clone());
+            return only
+                .admitted()
+                .cloned()
+                .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft));
         }
         if let Some(existing) = built.clauses.get(&(kind, keys.clone())) {
             return Ok(existing.clone());
@@ -396,10 +405,20 @@ impl Lowering<'_> {
             ));
         };
         let lead = first[0];
-        let mut condition = lead.lowered.condition.clone();
+        let mut condition = lead
+            .lowered
+            .condition
+            .admitted()
+            .cloned()
+            .ok_or_else(|| fault(lead.location, KeyFault::UnresolvedDraft))?;
         for (_, clauses) in members {
             let next = clauses[0];
-            let right = next.lowered.condition.clone();
+            let right = next
+                .lowered
+                .condition
+                .admitted()
+                .cloned()
+                .ok_or_else(|| fault(next.location, KeyFault::UnresolvedDraft))?;
             condition = match built.conjunctions.get(&(condition.clone(), right.clone())) {
                 Some(existing) => existing.clone(),
                 None => {

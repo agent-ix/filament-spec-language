@@ -324,14 +324,20 @@ impl ProtocolInput<'_> {
         })
     }
 
-    /// Whether the `run` tree holds an `attempt`, whose node names the
-    /// state clauses and operation anchors written after the functions.
+    /// Whether the `run` tree holds an `attempt` or `recommend`, whose node
+    /// names state clauses and operation anchors written after functions.
     fn has_attempt(&self) -> bool {
         self.checked
             .controls
             .controls
             .iter()
-            .any(|control| control.kind == ProtocolNodeKind::Attempt)
+            .any(|control| {
+                control.kind == ProtocolNodeKind::Attempt
+                    || (control.kind == ProtocolNodeKind::Event
+                        && self.form.attempts.iter().any(|attempt| {
+                            attempt.declaration == control.node.0 && attempt.recommendation
+                        }))
+            })
     }
 
     /// The checked `finish` constraint and its slot names.
@@ -604,7 +610,11 @@ impl Lowering<'_> {
             if placeholder.is_none() {
                 let placeholder = self.placeholder();
                 self.set_protocol_key(index, ProtocolKey::Keyed(placeholder));
+                if !self.unsettled_protocols.contains(&index) {
+                    self.unsettled_protocols.push(index);
+                }
             }
+            self.deferred_mixed_settlement = true;
             return Ok(Vec::new());
         }
         let Some(requirements) = self.required_temporal_keys(protocol, &location)? else {
@@ -1266,6 +1276,12 @@ impl Lowering<'_> {
             ];
             if let Some(port) = selected_port {
                 bindings.push(MemberTerm::binding("model_member", port));
+            }
+            if role.observe_only {
+                bindings.push(MemberTerm::bound(
+                    "boundary",
+                    self.text_literal("observe-only", &location)?,
+                ));
             }
             let key = self.protocol_member(
                 &location,

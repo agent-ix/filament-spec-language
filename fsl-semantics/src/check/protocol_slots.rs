@@ -42,15 +42,15 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{diagnostic::Locus, Span};
+use fsl_foundation::{Span, diagnostic::Locus};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::protocol_clause::{
-    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
+    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
 };
-use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
+use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     SlotKind,
@@ -417,7 +417,10 @@ impl Checker<'_, '_> {
                 .unwrap_or_default(),
         };
         // A role's `until` is typed over `C0` and the role's binder alone,
-        // so every name it binds is readable there.
+        // so every name it binds is readable there. A send constraint may
+        // also name the model's populations; barred slots need the same
+        // resolution so `model_state_reads` can report their required S3
+        // refusal at the operation.
         let role_bound: Option<Vec<(String, ValueType)>> = match slot.owner {
             SlotOwner::Role(role) => Some(
                 self.bound
@@ -515,7 +518,28 @@ impl Checker<'_, '_> {
         };
         // A role's `until` reads model state as a state clause does, so its
         // population positions name the unit's populations (FR-208, FR-391).
-        let named = role_bound.is_some().then(|| {
+        // FR-883 permits population reads in event, send and finish
+        // constraints, as well as `terminal when`; barred slots resolve the
+        // names too, so their S3 refusal can point at the actual read.
+        let names_model_populations = slot.bars_model_state
+            || match slot.owner {
+                SlotOwner::Clause => slot.kind == SlotKind::Terminal,
+                SlotOwner::Node(node) => {
+                    self.protocol
+                        .declarations
+                        .get(node)
+                        .is_some_and(|declaration| {
+                            matches!(
+                                declaration.kind,
+                                ProtocolNodeKind::Event
+                                    | ProtocolNodeKind::Send
+                                    | ProtocolNodeKind::Finish
+                            )
+                        })
+                }
+                SlotOwner::Role(_) => false,
+            };
+        let named = (role_bound.is_some() || names_model_populations).then(|| {
             NamedScope::of(
                 self.declarations.models,
                 self.declarations.scope,
@@ -666,6 +690,10 @@ impl Checker<'_, '_> {
                             .find(|channel| channel.name.name == via.name)?;
                         Eligibility::Role(channel.to.name.clone())
                     }
+                    ProtocolNodeKind::Event
+                        if self.protocol.attempts.iter().any(|attempt| {
+                            attempt.declaration == node && attempt.recommendation
+                        }) => Eligibility::Never,
                     ProtocolNodeKind::Attempt | ProtocolNodeKind::Event => {
                         Eligibility::Role(declaration.role.as_ref()?.name.clone())
                     }
@@ -1146,9 +1174,17 @@ pub(crate) fn check(
             // FR-218 "Attempts": any declared type is admitted; a read gets
             // the result only when the type is the operation's result type.
             if let Some(attempt) = attempts.iter().find(|attempt| attempt.declaration == index) {
-                let result = attempt.operation.declaration.result();
-                if result != Some(&pushed.value_type) {
-                    pushed.unreadable = Some(result.cloned());
+                if protocol
+                    .attempts
+                    .iter()
+                    .any(|form| form.declaration == index && form.recommendation)
+                {
+                    pushed.unreadable = Some(None);
+                } else {
+                    let result = attempt.operation.declaration.result();
+                    if result != Some(&pushed.value_type) {
+                        pushed.unreadable = Some(result.cloned());
+                    }
                 }
             }
         }

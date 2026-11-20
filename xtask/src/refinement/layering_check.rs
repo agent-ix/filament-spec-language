@@ -221,6 +221,24 @@ mod tests {
 
     use super::*;
 
+    /// FR-345-AC-15: the real layering gate is part of the aggregate CI checks.
+    #[trace("FR-345-AC-15")]
+    #[test]
+    fn make_ci_runs_refinement_layering() {
+        let makefile = include_str!("../../../Makefile");
+        let checks = makefile
+            .lines()
+            .find_map(|line| line.strip_prefix("CI_CHECKS :="))
+            .expect("the Makefile declares CI_CHECKS");
+
+        assert!(
+            checks
+                .split_whitespace()
+                .any(|check| check == "refinement-layering"),
+            "CI_CHECKS must include refinement-layering"
+        );
+    }
+
     /// The expected report, with the layer results of `layers`.
     fn report(layers: &[HeaderLayer]) -> Value {
         let mut results = vec![

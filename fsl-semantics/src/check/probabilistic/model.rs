@@ -218,9 +218,12 @@ pub struct Reward {
     /// names, which is keyed by the expression's content, or the text of a
     /// literal body, which has no node. Set with [`Self::function`].
     expression_operand: Option<filament_exact::PathSegment>,
+    /// The node of the object type that declares the operation: a `model`
+    /// node, or a source object type's own node. Set with [`Self::function`].
+    declaring_node: Option<NodeKey>,
     /// The mode the function is checked under. A declared clause function
     /// that is not an operation `body` is checked `Linked` (FR-952), which
-    /// the reader's owner join requires of a `precondition` function.
+    /// the reader's owner join requires of a `reward` function (FR-094, FR-770).
     function_mode: Option<filament_semantic_value::checking::CheckMode>,
 }
 
@@ -250,10 +253,24 @@ impl Reward {
         self.expression_operand.as_ref()
     }
 
+    /// The node of the object type that declares the reward's operation,
+    /// once lowered.
+    pub fn declaring_node(&self) -> Option<&NodeKey> {
+        self.declaring_node.as_ref()
+    }
+
     /// Record the function node the expression lowered to and the operand
     /// that names its content.
-    pub(crate) fn set_function(&mut self, lowered: Option<(NodeKey, filament_exact::PathSegment)>) {
-        let (function, operand) = lowered.unzip();
+    pub(crate) fn set_function(&mut self, lowered: Option<crate::check::lowering::LoweredReward>) {
+        let (declaring, function, operand) = match lowered {
+            Some(lowered) => (
+                Some(lowered.declaring),
+                Some(lowered.function),
+                Some(lowered.operand),
+            ),
+            None => (None, None, None),
+        };
+        self.declaring_node = declaring;
         self.function_mode = function
             .as_ref()
             .map(|_| filament_semantic_value::checking::CheckMode::Linked);
@@ -1240,6 +1257,7 @@ impl Pass<'_, '_> {
                     slot_names,
                     function: None,
                     expression_operand: None,
+                    declaring_node: None,
                     function_mode: None,
                 });
             }

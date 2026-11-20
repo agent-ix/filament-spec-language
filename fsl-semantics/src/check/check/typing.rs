@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -287,7 +287,7 @@ enum Frame<'e, 'r> {
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
-    PlacePresence(&'e str, Option<&'e str>, Location),
+    PlacePresence(String, Option<String>, Location),
     /// `ref(r.f[s]...)` of a clock place: the path below the owner `r`, then
     /// each selector as typed; admits the typed owner and selectors in turn
     /// (FR-230 "Clock references", "Selection").
@@ -2860,7 +2860,8 @@ impl<'a> Typer<'a> {
                 };
                 let position = position
                     .to_u64()
-                    .and_then(|position| usize::try_from(position).ok());
+                    .and_then(|position| usize::try_from(position).ok())
+                    .and_then(|position| self.scope.tuple_data_position(declaration, position));
                 let Some(position) = position.filter(|position| positions.get(*position).is_some())
                 else {
                     return Err(CheckRefusal::ill_typed(
@@ -3015,7 +3016,7 @@ impl<'a> Typer<'a> {
                 self.next_selector(frame, frames)
             }
             Frame::PlacePresence(field, case, location) => self
-                .place_presence(typed, field, case, &location)
+                .place_presence(typed, &field, case.as_deref(), &location)
                 .map(Step::Typed),
             Frame::Reaches(frame) => {
                 let ReachesFrame {
@@ -4340,26 +4341,28 @@ impl<'a> Typer<'a> {
                     (None, _) => (source, body),
                 };
                 if form == PopulationForm::Sum {
-                    if !is_integer(&body.value_type) {
+                    if !summand_of_family(&body.value_type, &body.value_type) {
                         return Err(refuse(
                             &body.location,
-                            CheckCause::PopulationFormNotChecked {
-                                what: "a sum over a value that is not an integer",
-                            },
+                            CheckCause::IllTyped(IllTypedCause::TypeMismatch),
                         ));
                     }
-                    let value_type = match (named, maximum, self.static_range(&body)) {
-                        (true, Some(maximum), Some((low, high))) => {
-                            let count = Integer::from(maximum);
-                            let product_low = count.mul(&low);
-                            let product_high = count.mul(&high);
-                            int_type(
-                                product_low.min(Integer::zero()),
-                                product_high.max(Integer::zero()),
-                                location,
-                            )?
+                    let value_type = if is_integer(&body.value_type) {
+                        match (named, maximum, self.static_range(&body)) {
+                            (true, Some(maximum), Some((low, high))) => {
+                                let count = Integer::from(maximum);
+                                let product_low = count.mul(&low);
+                                let product_high = count.mul(&high);
+                                int_type(
+                                    product_low.min(Integer::zero()),
+                                    product_high.max(Integer::zero()),
+                                    location,
+                                )?
+                            }
+                            _ => ValueType::Integer,
                         }
-                        _ => ValueType::Integer,
+                    } else {
+                        body.value_type.clone()
                     };
                     Ok(query(self, Visit::Sum, source, body, value_type))
                 } else {

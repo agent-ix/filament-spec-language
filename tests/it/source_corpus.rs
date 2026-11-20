@@ -64,7 +64,7 @@ fn corpus_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
 }
 
-fn run_directory(directory: &Path) -> Result<String, String> {
+pub(super) fn run_directory(directory: &Path) -> Result<String, String> {
     let entries = std::fs::read_dir(directory)
         .map_err(|error| format!("{}: cannot read corpus area: {error}", directory.display()))?;
     let mut programs = BTreeSet::new();
@@ -996,10 +996,18 @@ fn assert_values_corpus_counts() {
     }
 }
 
-#[trace("FR-093-AC-59", "FR-680-AC-1")]
+#[trace("FR-093-AC-59", "FR-680-AC-1", "FR-680-AC-8", "TC-3063")]
 #[test]
 fn corpus_collections() {
     let directory = corpus_root().join("collections");
+    let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    println!("{report}");
+}
+
+#[test]
+#[trace("FR-650-AC-1", "FR-650-AC-3", "FR-650-AC-11")]
+fn corpus_collection_call_values() {
+    let directory = corpus_root().join("collections/calls");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
     println!("{report}");
 }
@@ -1700,3 +1708,6 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
     .unwrap();
     assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
 }
+
+#[path = "source_corpus_collection_contexts.rs"]
+mod collection_contexts;
