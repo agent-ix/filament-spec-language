@@ -414,6 +414,11 @@ fn standard() -> Fixtures {
 #[test]
 fn conformance_fspec_finite_window_source_windows() {
     let fixtures = standard();
+    if std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some() {
+        fixtures
+            .require_complete()
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
     let mut errors = Vec::new();
     for case in &fixtures.windows {
         // The fixture's row and prose locate the independent expectation;
@@ -436,11 +441,7 @@ fn conformance_fspec_finite_window_source_windows() {
         "conformance: {} finite-window source windows matched",
         fixtures.windows.len()
     );
-    if std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some() {
-        fixtures
-            .require_complete()
-            .unwrap_or_else(|error| panic!("{error}"));
-    } else if let Err(error) = fixtures.require_complete() {
+    if let Err(error) = fixtures.require_complete() {
         println!("qualification: {error}");
     }
 }
