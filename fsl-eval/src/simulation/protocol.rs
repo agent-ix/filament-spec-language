@@ -2454,6 +2454,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 }
             }),
         })
+    }
+
     /// Evaluate a package control constraint from admitted binder identities.
     /// A package expression receives the state values by node identity and
     /// never crosses through a synthetic `CheckedBody`.
