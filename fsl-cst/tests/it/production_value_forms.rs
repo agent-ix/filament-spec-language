@@ -837,7 +837,6 @@ fn missing_guarantee_initial_and_second_component_refuse_at_the_member_boundary(
 
 #[test]
 #[trace("FSpec-FR-339-AC-1")]
-#[ignore = "QSL-2620: qualified empty calls are refused before primary construction"]
 fn qualified_zero_argument_calls_keep_target_and_empty_arguments() {
     let source = expression("Store::construct()");
     let parsed = accepted(&source);
@@ -847,6 +846,73 @@ fn qualified_zero_argument_calls_keep_target_and_empty_arguments() {
         ["Store::construct"]
     );
     assert!(children(&source, &parsed, primary, Production::Expression).is_empty());
+    assert!(parsed
+        .cst()
+        .nodes()
+        .iter()
+        .all(|node| node.production() != Production::EnumValue));
+    // A deeper qualified name and an empty call nested as an argument keep
+    // the same shape.
+    let source = expression("Pair(Store::Row::make(), 2)");
+    let parsed = accepted(&source);
+    let inner = one(&source, &parsed, Production::Primary, "Store::Row::make()");
+    assert_eq!(
+        children(&source, &parsed, inner, Production::QualifiedName),
+        ["Store::Row::make"]
+    );
+    assert!(children(&source, &parsed, inner, Production::Expression).is_empty());
+    let tuple = one(
+        &source,
+        &parsed,
+        Production::TupleValue,
+        "Pair(Store::Row::make(), 2)",
+    );
+    assert_eq!(
+        children(&source, &parsed, tuple, Production::Expression),
+        ["Store::Row::make()", "2"]
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn bare_empty_calls_and_qualified_argument_calls_keep_their_alternatives() {
+    // The unqualified empty call stays the identifier-call alternative.
+    let source = expression("construct()");
+    let parsed = accepted(&source);
+    let primary = one(&source, &parsed, Production::Primary, "construct()");
+    assert!(children(&source, &parsed, primary, Production::QualifiedName).is_empty());
+    assert!(children(&source, &parsed, primary, Production::Expression).is_empty());
+    // A nonempty qualified call stays a `TupleValue` with its arguments in
+    // source order.
+    let value = "Store::construct(3, a.b, Store::Kind::open)";
+    let source = expression(value);
+    let parsed = accepted(&source);
+    let tuple = one(&source, &parsed, Production::TupleValue, value);
+    assert_eq!(
+        children(&source, &parsed, tuple, Production::QualifiedName),
+        ["Store::construct"]
+    );
+    assert_eq!(
+        children(&source, &parsed, tuple, Production::Expression),
+        ["3", "a.b", "Store::Kind::open"]
+    );
+    // A qualified name with no call is still an enum value.
+    let source = expression("Store::Kind::open");
+    let parsed = accepted(&source);
+    one(&source, &parsed, Production::EnumValue, "Store::Kind::open");
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-4")]
+fn qualified_calls_with_a_trailing_comma_or_missing_argument_refuse_at_the_token() {
+    for (value, marker) in [
+        ("Store::construct(1,)", ")"),
+        ("Store::construct(,)", ","),
+        ("Store::construct(1,,2)", ",2"),
+        ("Store::construct(1 2)", "2)"),
+    ] {
+        refused(&expression(value), marker, 1);
+    }
 }
 
 #[test]
@@ -1125,7 +1191,6 @@ fn incomplete_aggregates_and_unwrapped_boolean_thresholds_refuse_locally() {
 
 #[test]
 #[trace("FSpec-FR-339-AC-1")]
-#[ignore = "QSL-2626: mode-switch declarations are not admitted at S1"]
 fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
     let declaration = "mode Tasks hi on Plant::raise;";
     let source = unit(declaration);
@@ -1150,6 +1215,77 @@ fn mixed_criticality_switch_keeps_taskset_and_trigger_operation_source() {
         .map(|token| &source[token.span().start..token.span().end])
         .collect::<Vec<_>>();
     assert_eq!(words, ["Tasks", "Plant", "raise"]);
+    let switch = one(
+        &source,
+        &parsed,
+        Production::ModeSwitchDeclaration,
+        declaration,
+    );
+    assert_eq!(
+        children(&source, &parsed, switch, Production::QualifiedName),
+        ["Plant::raise"]
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-1", "FR-249-AC-16")]
+fn mode_switch_declarations_stay_ordered_and_distinct_beside_hybrid_modes() {
+    let first = "mode Tasks hi on Plant::raise;";
+    let second = "mode Other hi on Plant::Valve::open;";
+    let rest = "mode Rest invariant { x >= 0 } flow { x' = 0; }";
+    let hybrid = format!("hybrid Motion using v {{ initial {{ mode Rest when {{ x = 0 }}; }} {rest} }}");
+    let record = "record Gauge { hi: Integer; }";
+    let source = unit(&format!("{first}\n{hybrid}\n{second}\n{record}\n"));
+    let parsed = accepted(&source);
+    let switches = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .filter(|node| node.production() == Production::ModeSwitchDeclaration)
+        .map(|node| spelling(&source, node))
+        .collect::<Vec<_>>();
+    assert_eq!(switches, [first, second]);
+    let hybrid_node = one(&source, &parsed, Production::HybridDeclaration, &hybrid);
+    assert_eq!(
+        children(&source, &parsed, hybrid_node, Production::HybridMode),
+        [rest]
+    );
+    one(
+        &source,
+        &parsed,
+        Production::InitialEntry,
+        "mode Rest when { x = 0 };",
+    );
+    // `hi` stays an identifier outside the declaration: a field named `hi`.
+    one(&source, &parsed, Production::Field, "hi: Integer;");
+}
+
+#[test]
+#[trace("FSpec-FR-339-AC-4", "FR-249-AC-16")]
+fn incomplete_mode_switches_refuse_at_the_missing_member() {
+    for (declaration, marker, width) in [
+        ("mode Tasks lo on Plant::raise;", "lo", 2),
+        ("mode hi on Plant::raise;", "on", 2),
+        ("mode Tasks on Plant::raise;", "on", 2),
+        ("mode Tasks hi Plant::raise;", "Plant", 5),
+        ("mode Tasks hi on;", ";", 1),
+        ("mode Tasks.h hi on Plant::raise;", ".", 1),
+    ] {
+        refused(&unit(declaration), marker, width);
+    }
+    let source = unit("mode Tasks hi on Plant::raise");
+    let parsed = parse(&source);
+    assert!(!parsed.is_admissible(), "{source}");
+    let diagnostic = parsed.diagnostics().first().expect("located refusal");
+    assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{diagnostic:?}");
+    assert_eq!(
+        diagnostic.byte_span(),
+        Some(Span {
+            start: source.len(),
+            end: source.len()
+        }),
+        "{diagnostic:?}"
+    );
 }
 
 #[test]

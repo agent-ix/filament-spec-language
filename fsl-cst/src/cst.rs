@@ -187,6 +187,8 @@ productions! {
     ResponseDeclaration,
     #[doc = "`release <identifier> . <identifier> on <qualified-name> ;`: each step of an operation releases one job of a task of a task set (FSpec FR-419)."]
     ReleaseDeclaration,
+    #[doc = "`mode <identifier> hi on <qualified-name> ;`: a step of an operation switches the task product of a task set to `HI` mode (FSpec FR-419 \"Criticality mode\")."]
+    ModeSwitchDeclaration,
     TemporalExpression, TemporalImplication, TemporalDisjunction,
     TemporalConjunction, TemporalRelation, TemporalUnary, TemporalPrimary,
     AggregateAtom, AggregateTerm, AggregateKind, PastWindow,

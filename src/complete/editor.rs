@@ -386,6 +386,7 @@ fn is_symbol(production: Production) -> bool {
             | Production::SchedulableDeclaration
             | Production::ResponseDeclaration
             | Production::ReleaseDeclaration
+            | Production::ModeSwitchDeclaration
             | Production::ProbabilisticClause
             | Production::StateGraphClaim
             | Production::ProtocolClause

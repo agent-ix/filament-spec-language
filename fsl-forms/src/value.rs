@@ -1463,6 +1463,7 @@ impl<'c> Mapping<'c> {
             | Production::SchedulableDeclaration
             | Production::ResponseDeclaration
             | Production::ReleaseDeclaration
+            | Production::ModeSwitchDeclaration
             | Production::TemporalExpression
             | Production::TemporalImplication
             | Production::TemporalDisjunction
@@ -1928,6 +1929,13 @@ impl<'c> Mapping<'c> {
         let mut operands = nodes_of(items, Production::Expression);
         operands.extend(nodes_of(items, Production::HyperExpression));
         match items.first() {
+            // `Q::f()`: the empty call of a qualified name.
+            Some(Item::Node(child))
+                if child.production() == Production::QualifiedName && has_token(items, b"(") =>
+            {
+                let name = name_form(self.cst, child)?;
+                self.with_children(Shape::Call(name), &task, operands)
+            }
             Some(Item::Node(child)) => self.primary_node(task, child),
             Some(Item::Token(token)) if token.spelling() == b"Text" => self.with_children(
                 Shape::Call(NameForm::new("Text", token.span())),
@@ -2257,6 +2265,7 @@ impl<'c> Mapping<'c> {
             | Production::SchedulableDeclaration
             | Production::ResponseDeclaration
             | Production::ReleaseDeclaration
+            | Production::ModeSwitchDeclaration
             | Production::TemporalExpression
             | Production::TemporalImplication
             | Production::TemporalDisjunction

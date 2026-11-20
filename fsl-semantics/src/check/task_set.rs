@@ -28,7 +28,8 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Integer, NodeKey, Origin, PathSegment, Rational, Role};
 use fsl_forms::{
-    ArrivalForm, CriticalityForm, PolicyForm, ReleaseForm, ResponseForm, SchedulableForm,
+    ArrivalForm, CriticalityForm, ModeSwitchForm, PolicyForm, ReleaseForm, ResponseForm,
+    SchedulableForm,
     SignedQuantityForm, TaskForm, TasksetForm,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -42,6 +43,10 @@ mod release;
 pub(super) use release::check_releases;
 pub use release::Release;
 
+mod mode_switch;
+pub(super) use mode_switch::check_mode_switches;
+pub use mode_switch::ModeSwitch;
+
 /// One source declaration of the task-set family, kept in source order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskSetDeclaration {
@@ -53,6 +58,8 @@ pub enum TaskSetDeclaration {
     Response(Box<ResponseForm>),
     /// `release S.t on M::o;` (FSL FR-249).
     Release(Box<ReleaseForm>),
+    /// `mode S hi on M::o;` (FSL FR-249).
+    ModeSwitch(Box<ModeSwitchForm>),
 }
 
 impl TaskSetDeclaration {
@@ -64,6 +71,7 @@ impl TaskSetDeclaration {
             Self::Schedulable(_) => TimedConstruct::Schedulable,
             Self::Response(_) => TimedConstruct::Response,
             Self::Release(_) => TimedConstruct::Release,
+            Self::ModeSwitch(_) => TimedConstruct::ModeSwitch,
         }
     }
 
@@ -74,6 +82,7 @@ impl TaskSetDeclaration {
             Self::Schedulable(form) => form.span,
             Self::Response(form) => form.span,
             Self::Release(form) => form.span,
+            Self::ModeSwitch(form) => form.span,
         }
     }
 
@@ -84,6 +93,7 @@ impl TaskSetDeclaration {
             Self::Schedulable(form) => form.name.name.clone(),
             Self::Response(form) => form.name.name.clone(),
             Self::Release(form) => form.operation.name.clone(),
+            Self::ModeSwitch(form) => form.operation.name.clone(),
         }
     }
 }
@@ -307,9 +317,10 @@ pub struct CheckedTaskSets {
     task_sets: Vec<TaskSet>,
     claims: Vec<CheckedScheduleClaim>,
     releases: Vec<Release>,
+    mode_switches: Vec<ModeSwitch>,
 }
 
-fsl_foundation::debug_with_struct!(CheckedTaskSets, "CheckedTaskSets" { task_sets: with, claims: plain, releases: plain });
+fsl_foundation::debug_with_struct!(CheckedTaskSets, "CheckedTaskSets" { task_sets: with, claims: plain, releases: plain, mode_switches: plain });
 
 impl CheckedTaskSets {
     /// Every checked task set, in source order.
@@ -325,6 +336,12 @@ impl CheckedTaskSets {
     /// Every checked `release` declaration, in source order (FSL FR-249).
     pub fn releases(&self) -> &[Release] {
         &self.releases
+    }
+
+    /// Every checked `mode S hi on M::o;` declaration, in source order (FSL
+    /// FR-249). A mode switch does not make a claim release-backed.
+    pub fn mode_switches(&self) -> &[ModeSwitch] {
+        &self.mode_switches
     }
 
     /// The tasks the operation `operation` releases, in source order: empty
@@ -987,7 +1004,8 @@ pub(super) fn check(
                 TaskSetDeclaration::Taskset(_)
                 | TaskSetDeclaration::Schedulable(_)
                 | TaskSetDeclaration::Response(_)
-                | TaskSetDeclaration::Release(_) => continue,
+                | TaskSetDeclaration::Release(_)
+                | TaskSetDeclaration::ModeSwitch(_) => continue,
             };
             let (mut checked, mut defects) = check_claim(claim, &info, units, rational_bits);
             findings.append(&mut defects);
@@ -1007,7 +1025,9 @@ pub(super) fn check(
         let (claim, set) = match declaration {
             TaskSetDeclaration::Schedulable(claim) => (&claim.name.name, &claim.task_set),
             TaskSetDeclaration::Response(claim) => (&claim.name.name, &claim.task_set),
-            TaskSetDeclaration::Taskset(_) | TaskSetDeclaration::Release(_) => continue,
+            TaskSetDeclaration::Taskset(_)
+            | TaskSetDeclaration::Release(_)
+            | TaskSetDeclaration::ModeSwitch(_) => continue,
         };
         if !first_of.contains_key(set.name.as_str()) {
             findings.push(Finding::Cause(TemporalCause::MissingTaskSet {
