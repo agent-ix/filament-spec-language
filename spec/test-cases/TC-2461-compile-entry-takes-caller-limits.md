@@ -19,7 +19,7 @@ Verify `compile_outcome_with_limits_and_overrides`. Scope: FR-869-AC-1, FR-869-A
 
 ## Expected Results
 
-- Step 1: the refusals name the limit, its maximum and `--request-bytes` or `--dependent-bytes`; the raised ceilings compile.
+- Step 1: each over-limit request settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming the limit, its maximum and `--request-bytes` or `--dependent-bytes`; the raised ceilings compile.
 - Step 2: `stage_limit_exceeded` naming `s1.nodes`, then success; the emit refusal names `emit.output_bytes`.
 
 Test: `tests/it/verb_limits.rs`.

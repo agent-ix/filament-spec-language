@@ -130,6 +130,38 @@ pub struct DeclaredEdition {
     pub span: Span,
 }
 
+/// The language a source's header declares, and the span of its quoted
+/// literal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeclaredLanguage {
+    /// The decoded language literal, exactly as written.
+    pub language: String,
+    /// The quoted literal's half-open byte span.
+    pub span: Span,
+}
+
+/// The language `text`'s header declares: the literal of `language "<label>"`,
+/// read from the first two significant tokens and nothing after them. `None`
+/// when the source does not open with a `language` keyword and a literal.
+#[ix_trace_rs::string_edge]
+pub fn declared_language(text: &str) -> Option<DeclaredLanguage> {
+    let mut tokens = Kind::lexer(text)
+        .spanned()
+        .filter(|(kind, _)| kind != &Ok(Kind::Comment));
+    let (Some((Ok(Kind::Language), _)), Some((Ok(Kind::Text(language)), range))) =
+        (tokens.next(), tokens.next())
+    else {
+        return None;
+    };
+    Some(DeclaredLanguage {
+        language,
+        span: Span {
+            start: range.start,
+            end: range.end,
+        },
+    })
+}
+
 /// The edition `text`'s header declares: the literal of
 /// `language "ix:native" edition "<edition>"`, read from the first four
 /// significant tokens and nothing after them. `None` when the source does

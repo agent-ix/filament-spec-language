@@ -2121,10 +2121,10 @@ fn read_clause_run_request_bytes(
             observation_override,
         );
     } else {
-        require_complete_edition(source.source())?;
+        require_native_header(source.source())?;
     }
     #[cfg(not(feature = "quire-extraction"))]
-    require_complete_edition(source.source())?;
+    require_native_header(source.source())?;
     clause::read(&mut intake, &request, clause, source, observation_override)
 }
 
@@ -2415,7 +2415,7 @@ fn compile_outcome_inner(
         let mut sources = Vec::with_capacity(request.program.sources.len());
         for (index, selection) in request.program.sources.iter().enumerate() {
             let source = intake.source(selection, &format!("program.sources[{index}].source"))?;
-            require_complete_edition(source.source())?;
+            require_native_header(source.source())?;
             sources.push(source);
         }
         let mut outcome = complete(
@@ -2629,9 +2629,25 @@ fn is_domain_package(model: &wire::Model) -> bool {
     model.format == DOMAIN_PACKAGE_PROFILE
 }
 
-/// Refuse an edition the spine does not admit at the declared token.
+/// Refuse a header language or edition the spine does not admit, at the declared literal.
 #[ix_trace_rs::string_edge]
-fn require_complete_edition(source: &Source) -> Result<()> {
+fn require_native_header(source: &Source) -> Result<()> {
+    if let Some(declared) = fsl_cst::declared_language(source.text()) {
+        if declared.language != "ix:native" {
+            return Err(RunCause::Native(fsl_foundation::diagnostic::error(
+                source,
+                Code::UnknownLanguage,
+                fsl_foundation::Phase::Source,
+                declared.span.start,
+                declared.span.end,
+                format!(
+                    "{} declares language {:?}; this command reads \"ix:native\"",
+                    source.path(),
+                    declared.language
+                ),
+            )));
+        }
+    }
     if let Some(declared) = fsl_cst::declared_edition(source.text()) {
         if declared.edition != fsl_cst::EDITION {
             return Err(RunCause::Native(fsl_foundation::diagnostic::error(
@@ -3449,7 +3465,7 @@ fn prepare_run_bytes_with_sources(
         // The program source is read exactly once; its declared edition decides
         // the runner before any model or library source is read (FR-100).
         let source = intake.source(&program.source, "program.source")?;
-        require_complete_edition(source.source())?;
+        require_native_header(source.source())?;
         prepare_complete_run(
             &mut intake,
             &request,
@@ -4089,6 +4105,40 @@ mod tests {
         let command = error.value().expect("command error document");
         assert_eq!(command["stage"], "output");
         assert_eq!(command["code"], "output-failure");
+    }
+
+    /// A package the strict reader refuses, found on the analyze route, stops
+    /// the run with the reader's own code, cause and pointer and that code's
+    /// exit, never as a runtime invariant (exit 30).
+    #[test]
+    #[trace("FR-286-AC-2")]
+    fn a_refused_analyze_package_keeps_its_own_code_cause_pointer_and_exit() {
+        let error = RunError {
+            cause: RunCause::AnalyzeRefused(Box::new(
+                fsl_analyze::analyze::AnalyzeRefusal::Package(
+                    fsl_package::PackageAdmissionRefusal {
+                        code: Code::InvalidPackage,
+                        cause: Some("invalid-value".to_owned()),
+                        pointer: Some("/claim_names/2".to_owned()),
+                        identity: None,
+                    },
+                ),
+            )),
+            sources: crate::Sources::default(),
+        };
+        let outcome: serde_json::Value = serde_json::from_slice(
+            &error
+                .outcome_document(fsl_replay::Operation::Analyze)
+                .to_bytes()
+                .expect("refusal outcome JSON"),
+        )
+        .expect("outcome document");
+        assert_eq!(error.cause.code(), Code::InvalidPackage);
+        assert_eq!(error.category().exit_code(), 20);
+        let diagnostic = &outcome["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "invalid_package");
+        assert_eq!(diagnostic["cause"], "invalid-value");
+        assert_eq!(diagnostic["details"]["path"], "/claim_names/2");
     }
 
     /// FR-100 "Internal failure at S6a" (FND-013): the `CheckedInvariant`

@@ -136,10 +136,11 @@ enum Reading {
 
 impl ModelSystem<'_> {
     /// FR-124: the class of `state`, whose expansion gave a successor
-    /// exactly when `has_successor`. The package's declarations are read in
-    /// model-alias order: `Any` intends every terminal state; `When(P)`
-    /// intends it when `P` is true. An undefined `P` reads before a later
-    /// declaration is consulted, so the class is a function of the state.
+    /// exactly when `has_successor`. `Any` intends every terminal state;
+    /// `When(P)` intends it when `P` is true. The state is intended when any
+    /// declaration intends it, else undecided when any is refused, else
+    /// undefined when any is, else deadlocked, so the class is a function of
+    /// the state and of no declaration order.
     ///
     /// # Errors
     ///
@@ -155,6 +156,13 @@ impl ModelSystem<'_> {
         if has_successor {
             return Ok(TerminalClass::NotTerminal);
         }
+        // FR-124: intended when ANY declaration intends the state; else
+        // undecided when any is refused; else undefined when any is; else
+        // deadlocked. The first refused and first undefined declaration, in
+        // row order, are the ones a report names; the class itself does not
+        // depend on the order.
+        let mut refused = None;
+        let mut undefined = None;
         for terminal in self.terminals() {
             match terminal.declaration {
                 ModelTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
@@ -162,20 +170,21 @@ impl ModelSystem<'_> {
                     Reading::True => return Ok(TerminalClass::Intended),
                     Reading::False => {}
                     Reading::Undefined(cause) => {
-                        return Ok(TerminalClass::Undefined {
-                            model: terminal.model.clone(),
-                            cause,
-                        })
+                        undefined.get_or_insert((terminal.model.clone(), cause));
                     }
                     Reading::Refused => {
-                        return Ok(TerminalClass::Undecided {
-                            model: terminal.model.clone(),
-                        })
+                        refused.get_or_insert_with(|| terminal.model.clone());
                     }
                 },
             }
         }
-        Ok(TerminalClass::Deadlocked)
+        Ok(if let Some(model) = refused {
+            TerminalClass::Undecided { model }
+        } else if let Some((model, cause)) = undefined {
+            TerminalClass::Undefined { model, cause }
+        } else {
+            TerminalClass::Deadlocked
+        })
     }
 
     /// `predicate` at `state`: each conforming object in ascending

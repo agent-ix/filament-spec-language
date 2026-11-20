@@ -10,25 +10,29 @@ relationships:
 
 ## Description
 
-Every construct message begins with the construct.
+An unrepresented-construct refusal for the `declaration` row carries its
+payload, its text cut at 120 bytes, and a message that begins with the row's
+sentence. No source reaches the row, so the test builds the cause directly.
 
 Scope: FR-763-AC-5.
 
 ## Test Procedure
 
-Run `parse` over a temporal clause holding the hyper condition
-`x @ a = x @ b`, the remaining construct kind source reaches; repeat with a
-200-byte condition consisting of a 188-byte identifier followed by
-` @ a = x @ b`. Test: `tests/it/forms_refusal_cause.rs`
-`every_construct_message_begins_with_the_construct`.
+1. Build the `FormsCause::UnrepresentedConstruct` refusal for the
+   `declaration` row over the text `unclaimed` and over a 200-byte text.
+   Test: `fsl-forms/src/dispatch.rs`
+   `an_unrepresented_declaration_construct_carries_its_payload_and_cut_text`.
+2. Render the compile refusal that holds the cause, with and without an owning
+   declaration. Test: `fsl-replay/src/spine/forms_message_tests.rs`
+   `a_declaration_construct_message_begins_with_the_construct_and_names_its_owner`.
 
-Tag the tests `#[trace("TC-2159", "FR-763-AC-5")]`.
+Tag the tests `#[trace("FR-763-AC-5")]`.
 
 ## Expected Results
 
-- Each message begins with its row's sentence filled from `text`.
-- Each outcome is `unsupported`, exit 21, with one diagnostic whose code is
-  `unsupported_construct`, cause is `not-yet-implemented`, construct is
-  `hyper-condition`, declaration is `T`, profile is
-  `filament.value.complete/v1`, and locus starts at the authored condition.
-- The 200-byte construct's `text` is at most 123 bytes and ends with `...`; no `text` is empty.
+- The catalog code is `unsupported_construct`; the construct spelling is
+  `declaration`; `declaration` and `profile` are `null` when no owner is set.
+- The 200-byte construct's `text` is at most 123 bytes and ends with `...`;
+  the short text is kept whole.
+- The message is `` `unclaimed` declarations are not supported yet ``, followed
+  by ` (declaration Owner)` when the owner is set.

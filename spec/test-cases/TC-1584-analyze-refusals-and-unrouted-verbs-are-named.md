@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify FR-624's refusal table and the unrouted-verb refusal. Scope: FR-624-AC-1 to FR-624-AC-5.
+Verify FR-624's refusal table and the unrouted-verb refusal. Scope: FR-624-AC-1 to FR-624-AC-6.
 
 ## Test Procedure
 
@@ -19,6 +19,7 @@ Verify FR-624's refusal table and the unrouted-verb refusal. Scope: FR-624-AC-1 
 3. Analyze with a snapshot naming an undeclared population.
 4. Invoke `generate`, `prove`, `replay`, `inspect`, `render` and `monitor` in a build that does not route them, in JSON mode.
 5. Repeat step 4 in text mode.
+6. Analyze a valid request padded with trailing JSON whitespace to exactly `request_bytes` bytes, then the same request with one more whitespace byte.
 
 Steps 4 and 5 run in the driver repository, against the `fsl` binary.
 
@@ -29,4 +30,5 @@ Steps 4 and 5 run in the driver repository, against the `fsl` binary.
 - Step 3: the binding refusal's code, exit 20.
 - Step 4: each writes a document with that `operation`, `unsupported`, `unsupported_operation`/`operation-not-routed`, payload `verb`, exit 21; stdout never empty.
 - Step 5: each prints the named message and exits 21.
-- Assertions compare the outcome document's typed members and the exit code, never message text.
+- Step 6: the request at the limit is admitted and gives its own outcome; one byte over gives category `incomplete`, empty `items`, `last_stage` `null`, one `resource_exhausted` diagnostic naming `request_bytes`, exit 22, never `refusal` or 20.
+- Assertions compare the outcome document's typed members and the exit code, never message text, except step 6's limit name, which the `resource_exhausted` diagnostic carries only in its message.

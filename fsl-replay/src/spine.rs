@@ -976,9 +976,6 @@ fn forms_message(refusal: &FormsRefusal) -> String {
             ..
         } => {
             let message = match construct {
-                fsl_forms::ConstructKind::HyperCondition => {
-                    "a hyper expression is not supported as a temporal condition yet".to_owned()
-                }
                 fsl_forms::ConstructKind::Declaration => {
                     format!("`{text}` declarations are not supported yet")
                 }
@@ -1910,6 +1907,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     class: RowClass::Object,
                     name,
                 } => format!("the refinement has no object row for `{name}`"),
+                RefinementCause::MissingRow {
+                    class: RowClass::Population,
+                    name,
+                } => format!("the refinement has no population row for `{name}`"),
                 _ => format!("in `refinement {}`", refusal.refinement),
             };
             message = format!("{message}: {detail}");
@@ -3149,6 +3150,9 @@ impl crate::outcome::OutcomeDiagnostic {
 
 #[cfg(test)]
 mod dependency_tests;
+
+#[cfg(test)]
+mod forms_message_tests;
 
 #[cfg(test)]
 pub(crate) mod fixture_ids;

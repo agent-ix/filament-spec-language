@@ -28,7 +28,7 @@ Tag the tests `#[trace("TC-1262", "<AC id>")]`.
 ## Expected Results
 
 - Step 1: usage errors exit 20, with usage on stderr, empty stdout and the path never opened; the blank-label call instead returns the machine outcome with `invalid_source_identity`/`blank-label` and the exact label, before opening the missing file. Every invalid invocation exits 20 without panic and the next valid call succeeds.
-- Step 2: each over-limit run refuses naming the limit, its value and the option; the raised run succeeds. Each over-limit compile refuses naming its fixed setting and maximum with no option hint.
+- Step 2: each over-limit run settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming the limit, its value and the option; the raised run succeeds. Each over-limit compile settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming its fixed setting and maximum with no option hint.
 - Step 3: the non-UTF-8 operand exits 20 before the file is opened, no panic; the non-UTF-8 path parses.
 - Step 4: exit 30 for every verb.
 - Step 5: no stderr output and the outcome's FR-285 exit code.

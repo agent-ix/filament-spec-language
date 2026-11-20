@@ -69,7 +69,6 @@ members are below.
 
 | `construct` | Where S2 refuses it | `text` holds | Message |
 | --- | --- | --- | --- |
-| `hyper-condition` | a hyper expression as a temporal condition | the hyper expression | `` a hyper expression is not supported as a temporal condition yet `` |
 | `declaration` | a declaration whose leading keyword has no dispatch entry | the leading keyword | `` `<text>` declarations are not supported yet `` |
 
 - The message SHALL be the row's sentence with the placeholders filled from
@@ -92,6 +91,13 @@ members are below.
   production, so the `declaration` row is reached only by a keyword that
   lacks its entry; the row stays so that such a gap still refuses with a
   named construct instead of a null cause.
+- A hyper expression (an indexed read `e @ t`, a step label or `stutter`)
+  outside a `hyper` clause is no refusal construct: S2 builds it and S3
+  refuses it `unsupported_construct`/`expression-form` (FR-612), because it is
+  ill-formed there, not an unbuilt feature.
+- No construct reaches `FormsCause::UnrepresentedConstruct` today. It stays
+  the specified S2 cause for a construct that has no form yet, so a new row
+  needs no new cause; FR-763-AC-5 exercises it at unit level.
 - A construct that S2 later learns to build leaves this table with it; a new
   site that refuses with either cause adds a row. Every row's kind is a
   `ConstructKind` variant, and `ConstructKind` has no variant without a row.
@@ -110,8 +116,8 @@ members are below.
 | FR-763-AC-2 | S2 builds function bodies `null` and `xs[0]` as `Null` and `Index`, retaining the index's operand, selector and span; their parse outcome documents have no diagnostics and exit 0. | Test (TC-2156) |
 | FR-763-AC-3 | S2 builds `size<Integer>(xs)` and `size(xs) + xs[1]` without an unsupported-construct diagnostic; typed size retains its result type and operand, and the index and typed-size forms retain their exact spans. | Test (TC-2157) |
 | FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` builds the form without an unsupported-construct diagnostic; the complete edge name and span are retained for S3. | Test (TC-2158) |
-| FR-763-AC-5 | For every `ConstructKind` variant that source reaches (every row but `declaration`), the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
-| FR-763-AC-6 | A function body `null` passes S2 and its check outcome document has one diagnostic with `code` `ill_typed`, `cause` `type-mismatch`, the exact span of `null`, and a message naming `null`, `none` and `absent` (FR-986); the document's category is `refusal`, exit 20. The reachable hyper-condition S2 refusal retains the unsupported payload and exit 21 specified above and exercised by AC-5. | Test (TC-2160) |
+| FR-763-AC-5 | The `FormsCause::UnrepresentedConstruct` refusal for the `declaration` row, built directly because no source reaches the row, has catalog code `unsupported_construct` and construct spelling `declaration`; a 200-byte `text` is cut to at most 123 bytes ending with `...` and a short `text` is kept whole; its message is `` `<text>` declarations are not supported yet `` followed by ` (declaration <declaration>)` when an owner is set. | Test (TC-2159) |
+| FR-763-AC-6 | A function body `null` passes S2 and its check outcome document has one diagnostic with `code` `ill_typed`, `cause` `type-mismatch`, the exact span of `null`, and a message naming `null`, `none` and `absent` (FR-986); the document's category is `refusal`, exit 20. | Test (TC-2160) |
 
 ## Dependencies
 

@@ -6,10 +6,10 @@
 //!
 //! The fixtures are FR-108's ConfigVersion spine files.
 
-use crate::command_harness::{run_file, Output};
-use crate::support::config_version_spine::{spine, Case};
+use crate::command_harness::{Output, run_file};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const FUNCTIONS: &str = "function seven using v(): Integer pure { 7 }\n\
@@ -52,6 +52,27 @@ fn text(output: &Output) -> String {
     )
 }
 
+fn assert_readable_native_result(output: &Output) {
+    assert!(
+        matches!(
+            fsl_replay::spine::read_native_run_result(&output.stdout),
+            Ok(fsl_replay::spine::NativeRunResult::Clause(_))
+        ),
+        "the public reader accepts the command result: {}",
+        text(output)
+    );
+}
+
+fn monitor_item(directory: &Path) -> Value {
+    let result =
+        fsl_command::command::run(&directory.join("request.json"), &crate::negotiation::Fr290)
+            .expect("the function run returns its monitor outcome");
+    let outcome = result
+        .outcome
+        .expect("a function run has a monitor outcome");
+    serde_json::to_value(&outcome.items()[0]).expect("the monitor item serializes")
+}
+
 /// FR-867-AC-1 and AC-2.
 #[test]
 #[trace("TC-2459", "FR-867-AC-1")]
@@ -72,27 +93,59 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
     assert!(refusal.contains("\"stage\":\"select\""), "{refusal}");
     assert!(refusal.contains("ill_typed"), "{refusal}");
     assert!(refusal.contains("type-mismatch"), "{refusal}");
-    assert!(refusal.contains("\"function\":\"seven\""), "{refusal}");
+    let native: Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(
+        native["disposition"]["refusal"]["fields"],
+        json!({"name": "seven"})
+    );
+    assert_readable_native_result(&refused);
     assert!(refusal.contains("\"kind\":\"located\""), "{refusal}");
-    assert!(refusal.contains("\"expected\":\"Boolean\""), "{refusal}");
-    assert!(refusal.contains("\"actual\":\"Integer\""), "{refusal}");
     assert!(
         refusal.contains("function `seven` returns `Integer`")
             && refusal.contains("result is `Boolean`"),
         "{refusal}"
     );
+    assert_eq!(
+        monitor_item(directory.path())["diagnostic"],
+        json!({
+            "code": "ill_typed",
+            "cause": "type-mismatch",
+            "detail": {
+                "function": "seven",
+                "expected": "Boolean",
+                "actual": "Integer",
+            },
+        })
+    );
 
     let bounded = select(directory.path(), "boundedValue");
     assert_eq!(bounded.status.code(), Some(20), "{bounded:?}");
-    let bounded = text(&bounded);
-    assert!(bounded.contains("\"actual\":\"Int[0, 3]\""), "{bounded}");
+    let bounded_text = text(&bounded);
+    let bounded_native: Value = serde_json::from_slice(&bounded.stdout).unwrap();
+    assert_eq!(
+        bounded_native["disposition"]["refusal"]["fields"],
+        json!({"name": "boundedValue"})
+    );
+    assert_readable_native_result(&bounded);
     assert!(
-        bounded.contains("function `boundedValue` returns `Int[0, 3]`"),
-        "{bounded}"
+        bounded_text.contains("function `boundedValue` returns `Int[0, 3]`"),
+        "{bounded_text}"
+    );
+    assert_eq!(
+        monitor_item(directory.path())["diagnostic"]["detail"],
+        json!({
+            "function": "boundedValue",
+            "expected": "Boolean",
+            "actual": "Int[0, 3]",
+        })
     );
 
     let tested = select(directory.path(), "yes");
     assert_eq!(tested.status.code(), Some(0), "{tested:?}");
+    assert_readable_native_result(&tested);
+    let tested_item = monitor_item(directory.path());
+    assert_eq!(tested_item["result"], "tested");
+    assert!(tested_item.get("diagnostic").is_none());
     assert!(
         text(&tested).contains("\"truth\":true"),
         "{}",
@@ -105,4 +158,13 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
     assert!(unknown.contains("\"stage\":\"select\""), "{unknown}");
     assert!(unknown.contains("missing_declaration"), "{unknown}");
     assert!(unknown.contains("nope"), "{unknown}");
+    assert_readable_native_result(&select(directory.path(), "nope"));
+    assert_eq!(
+        monitor_item(directory.path())["diagnostic"],
+        json!({
+            "code": "missing_declaration",
+            "cause": "missing-name",
+            "detail": {"name": "nope"},
+        })
+    );
 }

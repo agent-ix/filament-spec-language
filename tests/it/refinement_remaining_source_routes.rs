@@ -13,7 +13,13 @@ fn corpus() -> PathBuf {
 fn emitted(stem: &str) -> Value {
     let compiled = command::compile_outcome(&corpus().join(format!("{stem}.request.json")))
         .unwrap_or_else(|error| panic!("{stem} must compile: {error}"));
-    serde_json::from_slice(compiled.package_bytes()).expect("the emitted package is JSON")
+    let mut package: Value =
+        serde_json::from_slice(compiled.package_bytes()).expect("the emitted package is JSON");
+    // FSpec FR-322: a node-held id names each operand by a slot of its holder's
+    // own operand row; the resolved form names the graph index every id shares.
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut package)
+        .expect("every operand slot names a row entry");
+    package
 }
 
 fn nodes(package: &Value) -> &[Value] {
@@ -62,7 +68,6 @@ fn remaining_source_forms_compile_and_refuse_as_specified() {
 
 #[test]
 #[trace("FR-171", "FR-488")]
-#[ignore = "QSL-2609: emitted internal references must resolve to their semantic nodes"]
 fn projection_emits_its_bound_skip_operation_and_match() {
     let package = emitted("projection-operation-anchor");
     let hyper = semantic_node(&package, "hyperproperty");
@@ -123,7 +128,6 @@ fn protocol_finish_is_a_concrete_step_mapped_to_stutter() {
 
 #[test]
 #[trace("FR-171")]
-#[ignore = "QSL-2609: emitted internal references must resolve to their semantic nodes"]
 fn execution_relations_keep_distinct_receivers_of_the_same_operation() {
     let package = emitted("relation-pre-and-post");
     let relation = semantic_node(&package, "step_relation");

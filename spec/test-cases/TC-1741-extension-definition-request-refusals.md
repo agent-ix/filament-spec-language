@@ -26,4 +26,4 @@ Tag the tests `#[trace("TC-1741", "<AC id>")]`.
 - Step 1: `unknown_profile`/`unsupported-selection` at the literal `"ext.retention"`, exit 20.
 - Step 2: `invalid_package` with `missing-member`, `conflicting-definition` and `definition-cycle` respectively, naming the definitions, stage `compile`, exit 20.
 - Step 3: `invalid-request` at stage `request` naming the member for the first four, `invalid_package`/`conflicting-definition` naming both indices for the last; only the request file is read.
-- Step 4: refusal naming `dependent_bytes`; the raised request compiles.
+- Step 4: the request settles `incomplete` with `resource_exhausted` (FR-026 Outputs), exit 22, naming `dependent_bytes`; the raised request compiles.

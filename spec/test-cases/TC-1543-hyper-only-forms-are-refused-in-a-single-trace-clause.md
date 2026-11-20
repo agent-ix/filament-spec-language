@@ -18,7 +18,7 @@ Scope: FR-612-AC-1, FR-612-AC-2.
 
 Fixture: the config-version model `V` with operations `step` and `mix`, a non-hyper clause over `v: V::ConfigVersion`.
 
-1. Check formulas `always holds(v.versionNumber @ a = 0)` and `always holds(a.step.mix)`.
+1. Check formulas `always holds(v.versionNumber @ a = 0)`, `always holds(v.versionNumber @ a = v.versionNumber @ b)` and `always holds(a.step.mix)`.
 2. Check activation `on each (w: V::ConfigVersion) when (w.versionNumber @ a = 0)`.
 
 Tag the tests `#[trace("TC-1543", "FR-612-AC-n")]`.

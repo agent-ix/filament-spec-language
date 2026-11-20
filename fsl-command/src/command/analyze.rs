@@ -20,7 +20,7 @@ use fsl_semantics::model::observation::DocumentProvision;
 use super::settle::Settle;
 use super::{
     FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
-    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
     wire,
 };
 
@@ -338,7 +338,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         dependent_bytes,
     )?;
     let source = intake.source(&program.source, "program.source")?;
-    require_complete_edition(source.source())?;
+    require_native_header(source.source())?;
     let RunMembers {
         documents,
         mut subject,
@@ -899,18 +899,6 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         pointer,
         identity,
     } = refusal;
-    // FR-940 "Claim names": a name shared by two `claim_names` rows is the
-    // one ambiguous declaration, whichever reader found it. QSL-2545: the
-    // contract-ir reader still reports `invalid_package` here; delete this
-    // remap once the reader returns `ambiguous_declaration` itself.
-    let code = match (&cause, &pointer) {
-        (Some(cause), Some(pointer))
-            if cause == "ambiguous-name" && pointer.starts_with("/claim_names/") =>
-        {
-            fsl_foundation::Code::AmbiguousDeclaration
-        }
-        _ => code,
-    };
     let named = match (&identity, &pointer) {
         (Some(identity), _) => format!(": no models entry supplies {identity}"),
         (None, Some(pointer)) => format!(" at {pointer}"),
