@@ -2052,7 +2052,13 @@ fn digital_discrete_delay_choice(
             charge_work(meter, cancel, 1)?;
             continue;
         }
-        let tied = digital_enabled_actions(system, timed, &delayed.timed, cancel)?;
+        let tied = digital_enabled_actions(system, timed, &delayed.timed, cancel)?
+            .into_iter()
+            .filter(|candidate| {
+                candidate.identity == action.identity
+                    || discrete_delay(system, &candidate.identity.operation).is_none()
+            })
+            .collect::<Vec<_>>();
         let identities: Vec<_> = tied
             .iter()
             .map(|candidate| candidate.identity.clone())
