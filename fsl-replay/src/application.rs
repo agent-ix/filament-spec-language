@@ -977,27 +977,30 @@ impl<'a> CheckedApplicationSession<'a> {
 
     /// Drive this leaf session to its terminal result.
     pub fn run(self) -> Result<Evaluation, CallFailure> {
-        self.inner
-            .run()
-            .map(|evaluation| account_for_host_root(evaluation, self.host_root))
+        account_for_host_root(self.inner.run(), self.host_root)
     }
 }
 
 /// A live-occurrence stop inside a child frame terminates before the scheduler
 /// resumes its host caller. Count that registered root once, matching the
 /// caller frame retained by the interpreted Machine path.
-fn account_for_host_root(mut evaluation: Evaluation, host_root: bool) -> Evaluation {
-    if host_root
-        && matches!(
-            &evaluation.outcome,
-            filament_eval::FamilyOutcome::Evaluated(
-                filament_exact::Outcome::Incomplete(incomplete),
-            ) if incomplete.limit_kind == filament_exact::LimitKind::LiveOccurrences
-        )
-    {
-        evaluation.frame_depth = evaluation.frame_depth.saturating_add(1);
-    }
-    evaluation
+fn account_for_host_root(
+    result: Result<Evaluation, CallFailure>,
+    host_root: bool,
+) -> Result<Evaluation, CallFailure> {
+    result.map(|mut evaluation| {
+        if host_root
+            && matches!(
+                &evaluation.outcome,
+                filament_eval::FamilyOutcome::Evaluated(
+                    filament_exact::Outcome::Incomplete(incomplete),
+                ) if incomplete.limit_kind == filament_exact::LimitKind::LiveOccurrences
+            )
+        {
+            evaluation.frame_depth = evaluation.frame_depth.saturating_add(1);
+        }
+        evaluation
+    })
 }
 
 /// The runnable or terminal state of one leaf step.
