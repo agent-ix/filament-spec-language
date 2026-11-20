@@ -564,7 +564,11 @@ fn an_omitted_optional_parameter_matches_an_explicit_absent_call() {
         .filter(|node| node["semantic_form"] == "call")
         .collect();
     assert_eq!(dispatch_calls.len(), 1, "one dispatch call is emitted");
-    assert!(references_any_target(dispatch_calls[0], &none_ids));
+    assert!(
+        references_any_target(dispatch_calls[0], &none_ids),
+        "dispatch call {:#}; none literal ids {none_ids:#?}",
+        dispatch_calls[0]
+    );
 }
 
 #[trace("TC-1283", "FR-494-AC-2", "FR-494-AC-4")]
