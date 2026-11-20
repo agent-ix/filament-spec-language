@@ -17,9 +17,9 @@ fn genuine_refuting_traces_do_not_authorize_a_foreign_or_missing_instance() {
     ));
     assert_eq!(original.instance.len(), 1, "one declared object parameter");
     let mut foreign_key = original.clone();
-    foreign_key.instance[0].instance.key = "outside-vault-universe".to_owned();
+    foreign_key.instance[0].1 = "outside-vault-universe".to_owned();
     let mut foreign_parameter = original.clone();
-    foreign_parameter.instance[0].parameter = "undeclared".to_owned();
+    foreign_parameter.instance[0].0 = "undeclared".to_owned();
     let mut missing = original.clone();
     missing.instance.clear();
     let mut duplicate = original.clone();
