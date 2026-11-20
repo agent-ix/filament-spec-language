@@ -16,8 +16,8 @@ use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_foundation::{BackendId, RequestIndex};
 
 use super::{
-    ClaimForm, Decision, StatisticalMethod, StatisticalOutcome, StatisticalRefusal,
-    StatisticalStop, StatisticalUnsupported,
+    ClaimForm, Decision, StatisticalLimit, StatisticalMethod, StatisticalOutcome,
+    StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
 };
 use crate::model_check::limits::{meter_bound, ModelCheckLimit};
 use crate::proof_result::{
@@ -147,6 +147,21 @@ pub fn settle_statistical(
     subject: SubjectLimits<'_>,
 ) -> StatisticalRecord {
     match outcome {
+        // FSpec FR-410 requires an `estimate` value of the verdict and of
+        // every test row. A test that counted no sample, or a regenerative
+        // run with no cycle of positive weight, has none, so the run did
+        // not complete its method: it settles `incomplete`, naming
+        // `max_samples` and the samples it counted, and no verdict is
+        // written.
+        StatisticalOutcome::Completed(verdict)
+            if verdict.estimate.is_none()
+                || verdict.tests.iter().any(|test| test.estimate.is_none()) =>
+        {
+            StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
+                value: verdict.basis.samples,
+            }))
+        }
         StatisticalOutcome::Completed(verdict) => {
             StatisticalRecord::of(TerminalValue::Measured(verdict.clone()))
         }

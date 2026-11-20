@@ -3624,6 +3624,7 @@ fn negotiate_items(
                     Echo {
                         claim_name,
                         request: echo,
+                        locus: fsl_replay::claim_locus_wire(&item.claim).ok(),
                         identity,
                         required: item.options.required,
                         scoped: has_activation_scope(item.kind),
@@ -3801,6 +3802,11 @@ fn write_run(
             .iter()
             .find(|detail| detail.request_index == index);
         let echo = echoes.get(&index);
+        if let Some(locus) = echo.and_then(|echo| echo.locus.as_ref()) {
+            if let Some(verdict) = written.get_mut("verdict") {
+                name_rejection_locus(verdict, locus);
+            }
+        }
         let claim_name = match echo {
             Some(echo) => Some(echo.claim_name.clone()),
             None => settled.get(&index).and_then(|(name, _)| name.clone()),
@@ -3939,6 +3945,9 @@ struct Echo {
     /// FSpec FR-412's certificate identity of the item's obligation;
     /// `None` when no one domain package owns the claim.
     identity: Option<Value>,
+    /// The `{node, occurrence}` of the item's claim, which FSpec FR-410's
+    /// rejection `where` names as its `locus`.
+    locus: Option<Value>,
     /// Whether the aggregate requires the item.
     required: bool,
     /// Whether the item has an activation scope (FR-622).
@@ -4042,10 +4051,6 @@ fn hybrid_certificate_member(identity: Value, recorded: &fsl_replay::Certificate
     Value::Object(member)
 }
 
-/// The checker that accepts an exact probability certificate document
-/// (EN-5, FR-201).
-const EXACT_PROBABILITY_CHECKER: &str = "probability-certificate";
-
 /// FR-621's `certificate` of an exact `proved` item (FR-741): `identity`,
 /// `checker` and `accepted`, `kind` (`long-run` for a long-run objective,
 /// else `exact`) and the `document`.
@@ -4058,7 +4063,12 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     if let Some(identity) = identity {
         member.insert("identity".to_owned(), identity);
     }
-    member.insert("checker".to_owned(), EXACT_PROBABILITY_CHECKER.into());
+    member.insert(
+        "checker".to_owned(),
+        fsl_replay::CertificateChecker::ProbabilityCertificate
+            .as_str()
+            .into(),
+    );
     member.insert("accepted".to_owned(), true.into());
     member.insert(
         "kind".to_owned(),
@@ -4066,6 +4076,26 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     );
     member.insert("document".to_owned(), document);
     Value::Object(member)
+}
+
+/// Write `locus` into every `undefined-evaluation` rejection cause of a
+/// statistical `verdict`: the replay layer holds no claim, and FSpec FR-410's
+/// `where` requires its `locus`.
+fn name_rejection_locus(verdict: &mut Value, locus: &Value) {
+    let fill = |decision: &mut Value| {
+        if let Some(at) = decision
+            .pointer_mut("/cause/where")
+            .and_then(Value::as_object_mut)
+        {
+            at.insert("locus".to_owned(), locus.clone());
+        }
+    };
+    fill(&mut verdict["decision"]);
+    if let Some(tests) = verdict["tests"].as_array_mut() {
+        for test in tests {
+            fill(&mut test["decision"]);
+        }
+    }
 }
 
 /// One FR-621 item from the FR-286 item `written`.

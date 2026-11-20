@@ -1458,6 +1458,23 @@ impl OutcomeItem {
         // disposition carries its diagnostic, and no `result` and no `cause`.
         let invalid_request = matches!(value, TerminalValue::Declined { .. })
             && record.disposition_detail().is_some();
+        // A verdict with a member no spelling exists for is an internal
+        // failure of the item, never a document with the member missing.
+        let (verdict, result, cause, category) = match value {
+            TerminalValue::Measured(measured_verdict) => {
+                match statistical_verdict_wire(measured_verdict) {
+                    Ok(wire) => (Some(wire), result, cause, value.category()),
+                    Err(_) => (
+                        None,
+                        ItemLabel::Failed,
+                        Some(ItemCause::kind("internal-fault")),
+                        TerminalValue::Failed.category(),
+                    ),
+                }
+            }
+            _ => (None, result, cause, value.category()),
+        };
+        let measured = measured.filter(|_| verdict.is_some());
         Self {
             request_index: record.request_index().get(),
             result: (!invalid_request).then_some(result),
@@ -1477,10 +1494,7 @@ impl OutcomeItem {
             basis,
             certification,
             measured,
-            verdict: match value {
-                TerminalValue::Measured(verdict) => Some(statistical_verdict_wire(verdict)),
-                _ => None,
-            },
+            verdict,
             method: None,
             max_depth: None,
             seed: None,
@@ -1498,7 +1512,7 @@ impl OutcomeItem {
             clause: None,
             axes: None,
             protocol_conformance: None,
-            category: value.category(),
+            category,
         }
     }
 
@@ -1728,7 +1742,7 @@ fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json
             serde_json::json!({"type": "clopper-pearson"})
         }
         statistical::StatisticalMethod::Regenerative { min_cycles } => {
-            serde_json::json!({"type": "regenerative", "min_cycles": min_cycles.to_string()})
+            serde_json::json!({"type": "regenerative", "min_cycles": min_cycles})
         }
     }
 }
@@ -1736,15 +1750,13 @@ fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json
 fn statistical_decision_wire(
     decision: Decision,
     undefined: Option<&statistical::SampledUndefined>,
-) -> serde_json::Value {
-    match decision {
+) -> Result<serde_json::Value, CounterexampleWireError> {
+    Ok(match decision {
         Decision::Accepted => serde_json::json!({"type": "accepted"}),
         Decision::Rejected => {
             let mut rejected = serde_json::json!({"type": "rejected"});
-            if let Some(cause) =
-                undefined.and_then(|found| counterexample::sampled_undefined_wire(found).ok())
-            {
-                rejected["cause"] = cause;
+            if let Some(found) = undefined {
+                rejected["cause"] = counterexample::sampled_undefined_wire(found)?;
             }
             rejected
         }
@@ -1755,7 +1767,7 @@ fn statistical_decision_wire(
                 statistical::UndecidedCause::UndecidedSuccessor => "undecided-successor",
             }}
         }),
-    }
+    })
 }
 
 /// FSpec FR-410's `estimate`. The backend-provider `Estimate` schema has no
@@ -1787,67 +1799,107 @@ fn statistical_interval_wire(
     })
 }
 
-fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
+/// Why a sampled witness is not in a verdict's `witnesses` (FSpec FR-410).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WitnessOmission {
+    /// A step of the witness is the terminal stutter step, which has no FR-181
+    /// transition identity.
+    TerminalStutterStep,
+    /// The witness's measure is censored; `Quantity` has no spelling for it.
+    CensoredMeasure,
+    /// The schema requires each step's `scheduled` as a `TypedValue`, which
+    /// cannot hold the scheduled identity (operation, receiver, non-random
+    /// arguments), and the verdict records only the choice indexes.
+    ScheduledIdentityNotSpellable,
+}
+
+impl WitnessOmission {
+    /// The reason's spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TerminalStutterStep => "terminal-stutter-step",
+            Self::CensoredMeasure => "censored-measure",
+            Self::ScheduledIdentityNotSpellable => "scheduled-identity-not-spellable",
+        }
+    }
+}
+
+/// One witness a verdict leaves out, and why.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OmittedWitness {
+    /// The witness's test index.
+    pub test: u32,
+    /// The witness's trace index.
+    pub trace: u64,
+    /// Why it is not written.
+    pub reason: WitnessOmission,
+}
+
+/// Every witness of `verdict` that is not written to its `witnesses`, with the
+/// reason. A witness is written only when every member of it is schema-valid.
+pub fn omitted_witnesses(verdict: &StatisticalVerdict) -> Vec<OmittedWitness> {
+    verdict
+        .witnesses
+        .iter()
+        .map(|witness| OmittedWitness {
+            test: witness.test,
+            trace: witness.trace,
+            reason: counterexample::witness_omission(witness),
+        })
+        .collect()
+}
+
+/// The FSpec FR-410 `StatisticalVerdict` of `verdict`.
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] when a member has no spelling.
+fn statistical_verdict_wire(
+    verdict: &StatisticalVerdict,
+) -> Result<serde_json::Value, CounterexampleWireError> {
     let method = statistical_method_wire(verdict.basis.method);
     let rejection = verdict
         .tests
         .iter()
         .find_map(|test| test.undefined.as_ref());
-    let decision = statistical_decision_wire(verdict.decision, rejection);
-    let tests: Vec<_> = verdict
-        .tests
-        .iter()
-        .map(|test| {
-            let mut result = serde_json::Map::new();
-            result.insert(
-                "index".to_owned(),
-                serde_json::json!(test.index.to_string()),
-            );
-            result.insert(
-                "decision".to_owned(),
-                statistical_decision_wire(test.decision, test.undefined.as_ref()),
-            );
-            if let Some(estimate) =
-                statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref())
-            {
-                result.insert("estimate".to_owned(), estimate);
-            }
-            if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
-                result.insert("interval".to_owned(), interval);
-            }
-            result.insert(
-                "samples".to_owned(),
-                serde_json::json!(test.samples.to_string()),
-            );
-            result.insert(
-                "draws".to_owned(),
-                serde_json::json!(test.draws.to_string()),
-            );
-            serde_json::Value::Object(result)
-        })
-        .collect();
-    let provenance_tests: Vec<_> = verdict
-        .provenance
-        .tests
-        .iter()
-        .map(|test| {
-            let last = test.traces.first.saturating_add(
-                test.traces
-                    .count
-                    .saturating_sub(1)
-                    .saturating_mul(test.traces.step),
-            );
-            serde_json::json!({
-                "index": test.index.to_string(),
-                "initial_state": test.initial.to_string(),
-                "binding": counterexample::binding_wire(test.reference.as_ref())
-                    .unwrap_or(serde_json::Value::Null),
-                "instance": null,
-                "first_trace_index": test.traces.first.to_string(),
-                "last_trace_index": last.to_string(),
-            })
-        })
-        .collect();
+    let decision = statistical_decision_wire(verdict.decision, rejection)?;
+    let mut tests = Vec::with_capacity(verdict.tests.len());
+    for test in &verdict.tests {
+        let mut result = serde_json::Map::new();
+        result.insert("index".to_owned(), serde_json::json!(test.index));
+        result.insert(
+            "decision".to_owned(),
+            statistical_decision_wire(test.decision, test.undefined.as_ref())?,
+        );
+        result.insert(
+            "estimate".to_owned(),
+            statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref())
+                .ok_or(CounterexampleWireError::Unspelled("test estimate"))?,
+        );
+        if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
+            result.insert("interval".to_owned(), interval);
+        }
+        result.insert("samples".to_owned(), serde_json::json!(test.samples));
+        result.insert("draws".to_owned(), serde_json::json!(test.draws));
+        tests.push(serde_json::Value::Object(result));
+    }
+    let mut provenance_tests = Vec::with_capacity(verdict.provenance.tests.len());
+    for test in &verdict.provenance.tests {
+        let last = test.traces.first.saturating_add(
+            test.traces
+                .count
+                .saturating_sub(1)
+                .saturating_mul(test.traces.step),
+        );
+        provenance_tests.push(serde_json::json!({
+            "index": test.index,
+            "initial_state": test.initial,
+            "binding": counterexample::binding_wire(test.reference.as_ref())?,
+            "instance": null,
+            "first_trace_index": test.traces.first.to_string(),
+            "last_trace_index": last.to_string(),
+        }));
+    }
     let mut basis = serde_json::json!({
         "method": method,
         "confidence": {
@@ -1855,10 +1907,10 @@ fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
             "beta": rational_wire(verdict.basis.confidence.beta()),
             "iota": rational_wire(verdict.basis.confidence.indifference()),
         },
-        "samples": verdict.basis.samples.to_string(),
-        "draws": verdict.basis.draws.to_string(),
+        "samples": verdict.basis.samples,
+        "draws": verdict.basis.draws,
         "tests": {
-            "m": verdict.basis.tests.to_string(),
+            "m": verdict.basis.tests,
             "alpha": rational_wire(&verdict.basis.alpha_per_test),
             "beta": rational_wire(&verdict.basis.beta_per_test),
         },
@@ -1868,42 +1920,31 @@ fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
         },
     });
     if let Some(grid) = verdict.basis.delay_grid_bits {
-        basis["grid"] = serde_json::json!(grid.to_string());
+        basis["grid"] = serde_json::json!(grid);
     }
-    let mut provenance = serde_json::json!({
+    // The schema's `provenance` closes its members: `timed_horizon`,
+    // `delay_grid_bits` and `max_sample_steps` are not written.
+    let provenance = serde_json::json!({
         "seed": verdict.provenance.seed.to_string(),
         "sampler": "filament.simulation.sampler/v1",
         "tests": provenance_tests,
     });
-    if let Some(horizon) = &verdict.provenance.timed_horizon {
-        provenance["timed_horizon"] = rational_wire(horizon);
-    }
-    if let Some(grid) = verdict.provenance.delay_grid_bits {
-        provenance["delay_grid_bits"] = serde_json::json!(grid.to_string());
-    }
-    if let Some(max_sample_steps) = verdict.provenance.max_sample_steps {
-        provenance["max_sample_steps"] = serde_json::json!(max_sample_steps.to_string());
-    }
+    // A witness is written only when every member of it is schema-valid;
+    // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
-        "witnesses": verdict
-            .witnesses
-            .iter()
-            .filter_map(|witness| counterexample::sampled_witness_wire(witness).ok().flatten())
-            .collect::<Vec<_>>(),
+        "witnesses": [],
     });
-    if let Some(estimate) =
+    value["estimate"] =
         statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref())
-    {
-        value["estimate"] = estimate;
-    }
+            .ok_or(CounterexampleWireError::Unspelled("verdict estimate"))?;
     if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
         value["interval"] = interval;
     }
-    value
+    Ok(value)
 }
 
 /// The cause an item built from `report` carries: the table's `cause`
