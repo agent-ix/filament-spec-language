@@ -37,3 +37,4 @@ mod standard_forms;
 mod syntax_messages;
 mod taskset;
 mod terminal_declaration;
+mod value_declarations;
