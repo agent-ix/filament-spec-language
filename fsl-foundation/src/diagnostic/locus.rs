@@ -13,7 +13,9 @@ use core::str::FromStr;
 
 use filament_exact::Location;
 
-use crate::source::provenance::{PackageSourceMap, SourceRegion, UnresolvedOccurrence};
+use crate::source::provenance::{
+    PackageSourceMap, RawSourceRef, SourceRegion, UnresolvedOccurrence,
+};
 
 /// ADR-013 T-5: where a diagnostic points.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -26,6 +28,8 @@ pub enum Locus {
     Occurrence(Location),
     /// A JSON pointer into the artifact being read, used by wire readers.
     Artifact {
+        /// The FR-001 identity of that artifact.
+        identity: RawSourceRef,
         /// The pointer into that artifact.
         pointer: JsonPointer,
     },
@@ -45,7 +49,7 @@ impl fmt::Display for Locus {
                 region.end()
             ),
             Self::Occurrence(location) => write!(f, "occurrence {location:?}"),
-            Self::Artifact { pointer } => write!(f, "artifact at `{pointer}`"),
+            Self::Artifact { pointer, .. } => write!(f, "artifact at `{pointer}`"),
         }
     }
 }
