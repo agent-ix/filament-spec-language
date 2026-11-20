@@ -181,7 +181,6 @@ fn deadline_extrema_over_every_scheduler() {
 /// zero-delay cycle, and an `always` event has no digital reading.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
-#[ignore = "QSL-2156: zero-delay cycles and `always` windows settle verdicts, not yet implemented"]
 fn zero_delay_cycle_and_form_shape_settle_verdicts() {
     // Without a guard or a reset `send` loops at the initial state with zero
     // delay; time must diverge, so the cycle's end component is transient.
@@ -268,7 +267,6 @@ fn timed_form_shape_names_the_selected_elapsed_claim_among_equal_names() {
 /// decided with time divergence: each builds a product with no monitor.
 #[trace("TC-639", "FR-204-AC-4")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
     let world = retx(
         "",
@@ -294,7 +292,6 @@ fn unbounded_digital_cycles_settle_with_monitorless_state_identity() {
 /// FR-204-AC-2 (TC-639 step 2): a strict guard is decided over clock regions.
 #[trace("TC-639", "FR-204-AC-2")]
 #[test]
-#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
 fn a_strict_guard_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
     let built = product(&world, "Deadline");
@@ -723,7 +720,6 @@ fn an_until_deadline_has_the_same_extrema() {
 /// but its only delay, 5 ms, lies outside its window.
 #[trace("TC-639", "FR-204")]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn a_bounded_state_where_nothing_races_is_a_time_lock() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
@@ -1043,7 +1039,6 @@ fn exact_initial(product: &ProbProduct, bound: Bound) -> Option<Rational> {
 /// FR-204-AC-13 (TC-2172): a strict guard is decided over the region MDP.
 #[trace("TC-2172", "FR-204-AC-13")]
 #[test]
-#[ignore = "QSL-2156: the region MDP for strict clock constraints not implemented yet"]
 fn strict_clock_constraint_is_decided_over_regions() {
     let world = every(" and self.x > 1 ms", true);
     let built = product(&world, "Deadline");
@@ -1075,7 +1070,6 @@ fn always_window_is_decided_as_a_complement() {
 #[trace("TC-2174", "FR-204-AC-15")]
 #[trace("TC-639", "FR-204-AC-3")]
 #[test]
-#[ignore = "QSL-2156: delay distributions over every scheduler not implemented yet"]
 fn discrete_delay_applies_over_every_scheduler() {
     let world = retx(
         GUARD,
@@ -1090,7 +1084,6 @@ fn discrete_delay_applies_over_every_scheduler() {
 /// divergence instead of refused.
 #[trace("TC-2175", "FR-204-AC-16")]
 #[test]
-#[ignore = "QSL-2156: time-divergent decision of zero-delay cycles not implemented yet"]
 fn zero_delay_cycle_is_decided_with_time_divergence() {
     let world = every("", false);
     let built = product(&world, "Deadline");
@@ -1105,7 +1098,6 @@ fn zero_delay_cycle_is_decided_with_time_divergence() {
 /// FR-204-AC-17 (TC-2176): a time-locked state is terminal.
 #[trace("TC-2176", "FR-204-AC-17")]
 #[test]
-#[ignore = "QSL-2156: time-locked digital states not read as terminal yet"]
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
