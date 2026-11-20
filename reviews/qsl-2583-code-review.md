@@ -3,7 +3,7 @@ id: SR-2026111919340478491681419
 title: "Code review — filament-spec-language Decimal checked types"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; fsl-semantics/src/check/assemble.rs, fsl-semantics/src/check/lowering/model.rs, fsl-semantics/src/check/source_model.rs, fsl-semantics/src/model/domain_package.rs, fsl-semantics/src/model/index.rs, fsl-semantics/src/model/intake.rs, fsl-semantics/tests/it/decimal_value_types.rs, tests/corpus/operations/parameters/pending/README.md, tests/it/source_corpus.rs; FR-056-AC-43, FR-056-AC-63, FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-71, FR-056-AC-72"
+scope: "agent-ix/filament-spec-language; Cargo.toml, Cargo.lock, fsl-semantics/src/check/assemble.rs, fsl-semantics/src/check/lowering/model.rs, fsl-semantics/src/check/source_model.rs, fsl-semantics/src/model/domain_package.rs, fsl-semantics/src/model/index.rs, fsl-semantics/src/model/intake.rs, fsl-semantics/tests/it/decimal_value_types.rs, tests/corpus/operations/parameters/pending/README.md, tests/fixtures/decimal-value-types.semantic-ir.json, tests/it/source_corpus.rs; FR-056-AC-43, FR-056-AC-63, FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-71, FR-056-AC-72"
 review_set: subset
 relationships:
   - type: references
@@ -35,6 +35,7 @@ The direct Decimal reader validates policy precision/scale and constraint coeffi
 - Examined FR-056-AC-43, AC-63, AC-66, AC-67, AC-68, AC-71, and AC-72 and the changed source/test files listed in `scope`.
 - Rust style and safety references were applied. No applicable AssuranceProfile was found.
 - The workspace CI configuration was not changed.
+- Subsequent fixture/pin changes through `a6def083ab4b2322e6712ecb5c5f16a907ab01c8` were reviewed. The Decimal `adjust` result now explicitly declares multiplicity `[1, 1]` (`ordered: false`, `unique: true`) and `nullable: false`, matching other required scalar operation results in the repository. This preserves the AC-66 Decimal result type and adds no mismatch with the FR-056 operation-result contract. Fixture JSON syntax was checked; no builds or tests were run.
 
 ## Dispositions
 

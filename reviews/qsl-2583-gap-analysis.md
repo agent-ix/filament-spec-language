@@ -3,7 +3,7 @@ id: SR-2026111919340478491681420
 title: "Gap analysis — filament-spec-language Decimal checked types"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; repository matrix and changed Decimal implementation/tests; FR-056-AC-43, FR-056-AC-63, FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-71, FR-056-AC-72"
+scope: "agent-ix/filament-spec-language; Cargo.toml, Cargo.lock, repository matrix, changed Decimal implementation/tests, tests/fixtures/decimal-value-types.semantic-ir.json; FR-056-AC-43, FR-056-AC-63, FR-056-AC-66, FR-056-AC-67, FR-056-AC-68, FR-056-AC-71, FR-056-AC-72"
 review_set: subset
 relationships:
   - type: references
@@ -36,6 +36,7 @@ Reverse-gap and stub review covered the changed source and test paths. Decimal p
 
 - `spec/functional/FR-056-admit-domain-package-model-declarations.md`: AC-43, AC-63, AC-66, AC-67, AC-68, AC-71, AC-72 and the Decimal value-type rule.
 - All nine changed paths in PR #3138, with reverse-gap and stub inspection focused on the changed behavior.
+- Subsequent PR delta through `a6def083ab4b2322e6712ecb5c5f16a907ab01c8`: inspected the fixture's explicit required scalar return shape (`[1, 1]`, nonnullable); it is consistent with other operation-result fixtures and does not alter trace bindings or Decimal acceptance.
 
 ## Dispositions
 
