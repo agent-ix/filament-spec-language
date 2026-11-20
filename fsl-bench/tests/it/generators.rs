@@ -52,6 +52,7 @@ fn value_generator_output_parses_and_checks() {
 fn grammar_unit_generator_covers_every_production() {
     let start = std::time::Instant::now();
     let cases = fsl_cst::grammar::generate::covering_derivations();
+    let generated = cases.len();
     let mut covered = BTreeSet::new();
     let mut refused = Vec::new();
     for case in cases {
@@ -74,7 +75,11 @@ fn grammar_unit_generator_covers_every_production() {
         .filter(|production| **production != fsl_cst::Production::ExtensionDeclaration)
         .filter(|production| !covered.contains(production))
         .collect::<Vec<_>>();
-    eprintln!("property suite grammar: {:?}", start.elapsed());
+    eprintln!(
+        "property suite grammar: {generated} derivations, {} parsed productions, {:?}",
+        covered.len(),
+        start.elapsed()
+    );
     assert!(refused.is_empty(), "{}", refused.join("\n"));
     assert!(
         missing.is_empty(),
