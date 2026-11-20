@@ -2208,6 +2208,7 @@ pub enum ExecuteResult {
 enum OutcomeResult {
     Execute(ExecuteResult),
     Parsed(ParsedOutcome),
+    Formatted(FormattedOutcome),
     Exported(ExportedOutcome),
     Replayed(ReplayedOutcome),
     #[cfg(feature = "test-support")]
@@ -2237,6 +2238,12 @@ struct ParsedOutcome {
     path: String,
     bytes: String,
     usage: Vec<ParseUsage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct FormattedOutcome {
+    kind: &'static str,
+    text: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -2308,9 +2315,8 @@ impl From<&CallIncomplete> for ResultLimit {
 ///
 /// `items` is always written, an empty array for an operation with no
 /// requested items. `last_stage` is `null` when no stage is known to have
-/// run. `result` is always written: `null` except for a completed,
-/// undefined or incomplete `execute` outcome. `artifacts` is always written
-/// as an empty array.
+/// run. `result` is always written, either `null` or the operation's result
+/// payload. `artifacts` is always written as an empty array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDocument {
     #[cfg(feature = "quire-extraction")]
@@ -2550,9 +2556,9 @@ impl OutcomeDocument {
         }
     }
 
-    /// The document of a `format` outcome. The complete UTF-8 text stays in
-    /// the staged success value; this non-execute document has no result or
-    /// artifacts. S2 is the reporting default, not a stage run by this adapter.
+    /// The document of a `format` outcome. The complete UTF-8 text is carried
+    /// in the formatted result; S2 is the reporting default, not a stage run
+    /// by this adapter.
     /// Refusals retain their original typed diagnostic and catalog category;
     /// internal failures report no stage (FR-286).
     pub fn from_format<E>(result: &Result<Staged<String>, E>) -> Self
@@ -2560,7 +2566,15 @@ impl OutcomeDocument {
         for<'a> &'a E: Into<FormatOutcomeRefusal>,
     {
         match result {
-            Ok(_) => Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success),
+            Ok(staged) => {
+                let mut document =
+                    Self::new(Operation::Format, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(OutcomeResult::Formatted(FormattedOutcome {
+                    kind: "formatted",
+                    text: staged.value().clone(),
+                }));
+                document
+            }
             Err(refusal) => {
                 let refusal: FormatOutcomeRefusal = refusal.into();
                 let stage = if refusal.category == Category::InternalFailure {
