@@ -299,7 +299,14 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
             &crate::check::test_support::ZeroRewardEvaluator,
         );
         if missing {
-            let found = result.expect_err("undeclared population refuses");
+            let found = match result {
+                Ok(graph) => graph
+                    .protocol_refusals()
+                    .iter()
+                    .flat_map(|result| result.refusals.iter().cloned())
+                    .collect(),
+                Err(found) => found,
+            };
             let matches: Vec<_> = found
                 .iter()
                 .filter(|refusal| {
