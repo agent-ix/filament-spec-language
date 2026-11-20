@@ -210,6 +210,10 @@ pub fn compile_model_unit(
     let mut has_event_type = false;
     let mut has_namespace = false;
     let mut has_systems_interface = false;
+    let mut has_systems_part = false;
+    let mut has_systems_port = false;
+    let mut has_systems_connection = false;
+    let mut has_systems_allocation = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -400,6 +404,104 @@ pub fn compile_model_unit(
                 }
                 types.push(interface);
                 has_systems_interface = true;
+                index = next;
+            }
+            Some("part") => {
+                let Some((node, name, next)) = read_systems_part(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid systems part declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_systems_part = true;
+                index = next;
+            }
+            Some("port") => {
+                let Some((node, name, next)) = read_systems_port(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid systems port declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_systems_port = true;
+                index = next;
+            }
+            Some("connection") => {
+                let Some((node, name, next)) =
+                    read_systems_connection(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid systems connection declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_systems_connection = true;
+                index = next;
+            }
+            Some("allocate") => {
+                let Some((node, name, next)) =
+                    read_systems_allocation(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid systems allocation declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_systems_allocation = true;
                 index = next;
             }
             Some("dimension") => {
@@ -621,6 +723,18 @@ pub fn compile_model_unit(
     }
     if has_systems_interface {
         meanings.push(("interface", "filament.meaning.systems.interface/v1"));
+    }
+    if has_systems_part {
+        meanings.push(("part", "filament.meaning.systems.part/v1"));
+    }
+    if has_systems_port {
+        meanings.push(("port", "filament.meaning.systems.port/v1"));
+    }
+    if has_systems_connection {
+        meanings.push(("connection", "filament.meaning.systems.connection/v1"));
+    }
+    if has_systems_allocation {
+        meanings.push(("allocation", "filament.meaning.systems.allocation/v1"));
     }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
@@ -1324,6 +1438,222 @@ fn read_systems_interface(
         .collect::<Vec<_>>();
     interface.wire["featureOrder"] = json!(feature_order);
     Some((interface.wire, next))
+}
+
+fn read_systems_part(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ":" {
+        return None;
+    }
+    index += 1;
+    let declared_type = tokens.get(index)?.text.clone();
+    index += 1;
+    let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
+    index = next;
+    if tokens.get(index)?.text != "in" {
+        return None;
+    }
+    index += 1;
+    let owner = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    Some((
+        json!({
+            "identity": format!("ix://{package}/{name}"),
+            "displayName": name,
+            "kind": {"module": package, "name": "part"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "fields": [], "operations": [], "relationships": [], "supertypes": [],
+            "identityFields": [],
+            "owner": format!("ix://{package}/{owner}"),
+            "declaredType": format!("ix://{package}/{declared_type}"),
+            "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_systems_port(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ":" {
+        return None;
+    }
+    index += 1;
+    let interface_type = tokens.get(index)?.text.clone();
+    index += 1;
+    let (lower, upper, ordered, unique, next) = read_multiplicity(tokens, index)?;
+    index = next;
+    let direction = tokens.get(index)?.text.clone();
+    if !matches!(direction.as_str(), "in" | "out" | "inout") {
+        return None;
+    }
+    index += 1;
+    if tokens.get(index)?.text != "on" {
+        return None;
+    }
+    index += 1;
+    let owner = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    Some((
+        json!({
+            "identity": format!("ix://{package}/{name}"),
+            "displayName": name,
+            "kind": {"module": package, "name": "port"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "fields": [], "operations": [], "relationships": [], "supertypes": [],
+            "identityFields": [],
+            "owner": format!("ix://{package}/{owner}"),
+            "interfaceType": format!("ix://{package}/{interface_type}"),
+            "direction": direction,
+            "multiplicity": {"lower": lower, "upper": upper, "ordered": ordered, "unique": unique},
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_systems_connection(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    let source_part = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "." {
+        return None;
+    }
+    index += 1;
+    let source_port = tokens.get(index)?.text.clone();
+    index += 1;
+    let operator = tokens.get(index)?.text.clone();
+    if operator != "->" && operator != "<->" {
+        return None;
+    }
+    index += 1;
+    let target_part = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "." {
+        return None;
+    }
+    index += 1;
+    let target_port = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let identity = format!("ix://{package}/{name}");
+    let source_end = json!({
+        "type": format!("ix://{package}/{source_part}/{source_port}"),
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+    });
+    let target_end = json!({
+        "type": format!("ix://{package}/{target_part}/{target_port}"),
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+    });
+    Some((
+        json!({
+            "identity": identity,
+            "displayName": name,
+            "kind": {"module": package, "name": "connection"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "fields": [], "operations": [], "relationships": [], "supertypes": [],
+            "identityFields": [],
+            "sourceEnd": source_end, "targetEnd": target_end,
+            "flowDirection": if operator == "->" { "source-to-target" } else { "bidirectional" },
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_systems_allocation(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "from" {
+        return None;
+    }
+    index += 1;
+    let source = tokens.get(index)?.text.clone();
+    index += 1;
+    let mut source_member = None;
+    if tokens.get(index).is_some_and(|token| token.text == "::") {
+        index += 1;
+        source_member = Some(tokens.get(index)?.text.clone());
+        index += 1;
+    }
+    if tokens.get(index)?.text != "to" {
+        return None;
+    }
+    index += 1;
+    let target = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let source = source_member.map_or_else(
+        || format!("ix://{package}/{source}"),
+        |member| format!("ix://{package}/{source}/{member}"),
+    );
+    Some((
+        json!({
+            "identity": format!("ix://{package}/{name}"),
+            "displayName": name,
+            "kind": {"module": package, "name": "allocation"},
+            "roles": [], "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "fields": [], "operations": [], "relationships": [], "supertypes": [],
+            "identityFields": [],
+            "sourceElement": source,
+            "targetElement": format!("ix://{package}/{target}"),
+        }),
+        name,
+        index,
+    ))
 }
 
 fn read_dimension(

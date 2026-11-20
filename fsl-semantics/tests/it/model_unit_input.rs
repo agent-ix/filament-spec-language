@@ -460,3 +460,44 @@ interface Pump { rate: Integer; operation start(); }
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_systems_parts_ports_connections_and_allocations() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/topology";
+object Sys { level: Integer; }
+interface Pump { rate: Integer; }
+part pump: Sys [1, 1] in Sys;
+port out_port: Pump [1, 1] out on pump;
+port in_port: Pump [1, 1] in on pump;
+connection Pipe pump.out_port -> pump.in_port;
+allocate Alloc from pump to pump;
+"#;
+    let packages = package_input([source.as_bytes()]).expect("systems model compiles");
+    let (_, document) = admit(
+        "example/topology",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits systems model declarations");
+    let records = read_records("example/topology", &document).expect("systems records are read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Component(_)
+        )
+    }));
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Endpoint(_)
+        )
+    }));
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Allocation(_)
+        )
+    }));
+}
