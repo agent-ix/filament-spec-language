@@ -1758,11 +1758,17 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
         CheckedPackageRefusalCode::InvalidPackage,
         "{source_refusal:?}"
     );
-    assert!(
+    assert_eq!(
+        source_refusal.cause,
+        Some(CheckedPackageRefusalCause::InvalidValue),
+        "{source_refusal:?}"
+    );
+    assert_eq!(
         source_refusal.loci[0]
             .path
             .as_ref()
-            .is_some_and(|path| path.as_str().starts_with("/source_map/0/regions/0/source")),
+            .map(|path| path.as_str()),
+        Some("/source_map/0"),
         "{source_refusal:?}"
     );
 
