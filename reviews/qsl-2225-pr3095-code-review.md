@@ -3,7 +3,7 @@ id: SR-2026111919340478491681405
 title: "Code review — QSL-2225 PR #3095 timed await admission and projection"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; fsl-analyze/tests/it/protocol_projection.rs; fsl-package/src/emit/tests/protocol_compensation.rs; FR-892-AC-1..4; FR-575-AC-1; TC-2525"
+scope: "agent-ix/filament-spec-language; fsl-analyze/tests/it/protocol_projection.rs; fsl-package/src/emit/tests/protocol_compensation.rs; fsl-replay/src/spine/clocks.rs; tests/it/protocol_source_routes.rs; tests/corpus/protocol/original/compensation.native; FR-892-AC-1..4; FR-575-AC-1; TC-2525"
 review_set: subset
 ---
 
@@ -31,6 +31,13 @@ Reviewed PR #3095 at `d95c0834561321d6df9deca737e318fe78701def`, limited to its 
 | --- | --- | --- | --- |
 | FND-001 | medium | The newly accepted original-source regressions are not covered: no changed test compiles the corpus await using its timestamped-event request clock, and no changed test reads the original Boolean-result compensation handoff that previously failed strict IR admission. | fsl-package/src/emit/tests/protocol_compensation.rs:154-229 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | Request clock selection for a timed protocol await was refused as `UnusedClockSelection`: checked declaration collection and parsed clock-span lookup both omitted protocol awaits. | fsl-replay/src/spine/clocks.rs:465-477 |
+| FND-003 | low | The original compensation regression fixture used local `Completion` composites for both the attempts type and retry binders, so strict Contract IR rejected the malformed compensation target before the handoff-admission assertion. | tests/corpus/protocol/original/compensation.native:14-15 |
+
 ## Review Notes
 
 - The test assertion change correctly locates a `control` node whose operation member is `await`, then requires exactly one binding row keyed to that node with `model-steps` and the expected event-position configuration.
@@ -43,6 +50,8 @@ Reviewed PR #3095 at `d95c0834561321d6df9deca737e318fe78701def`, limited to its 
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | The fix adds exact corpus regressions for the original await request's timestamped-event binding and the original Boolean-result compensation source's strict handoff admission. |
+| FND-002 | fixed | Clock selection now enumerates each checked protocol await and records its parsed clock argument span, so the request member is used and refusal locations remain exact. |
+| FND-003 | fixed | The original compensation fixture now uses the imported `Factory::WorkOrder` type for attempts; the strict-handoff test can exercise the intended valid route. |
 
 ### FND-001 after excerpt
 
@@ -66,3 +75,28 @@ Reviewed PR #3095 at `d95c0834561321d6df9deca737e318fe78701def`, limited to its 
 ## Disposition Round 1 Verification
 
 Reviewed PR #3095 at `4fe76af7c33dadabb3f7652da5a346d4f5ac0552`. `tests/it/protocol_source_routes.rs` now compiles `staged/await.request.json`, strict-reads its package, and checks that the await node has one `timer` binding with `timestamped_event` seconds. It also compiles the original Boolean-result compensation source through `handoff()` and requires an admitted graph containing a compensation node. These are the two cases from FND-001. No new code defects were found in the changed tests. No builds or tests were run by the reviewer; `git diff --check` and `quire validate --scope . reviews/qsl-2225-pr3095-code-review.md` passed. The PR's in-repository copy of this artifact is still at the initial-review version and must be updated from this disposition version before merge.
+
+### FND-002 after excerpt
+
+```rust
+                    fsl_forms::DeclarationForm::Protocol(protocol) => {
+                        for await_form in &protocol.awaits {
+                            locator.clocks.push((
+                                source.clone(),
+                                await_form.span,
+                                await_form.clock.span,
+                            ));
+                        }
+                    }
+```
+
+### FND-003 after excerpt
+
+```text
+    attempts 1 of Factory::WorkOrder;
+    retry (older: Factory::WorkOrder, newer: Factory::WorkOrder) { true };
+```
+
+## Disposition Round 2 Verification
+
+Reviewed PR #3095 at `4026fdf8bb53e8261bd2002d4751386a74746207`. FND-001 is now covered by both original-source tests: the configured await request is strict-read and its `timer` binding is asserted, and the compensation source uses `Factory::WorkOrder` for both attempts and retry binders before requiring strict admission. FND-002's clock failure is addressed by adding awaits to both checked declaration collection and parsed clock-span lookup. FND-003's invalid local-composite attempts/retry fixture is now aligned with the imported event type. No further defect was found in these changes. No builds or tests were run by the reviewer; `git diff --check` and Quire validation passed.
