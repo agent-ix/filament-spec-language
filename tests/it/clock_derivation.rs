@@ -4,7 +4,7 @@
 //! one `clocks` member.
 use crate::command_harness::compile_file;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const MODEL: &[u8] = include_bytes!("../../examples/config-version/model.semantic-ir.json");

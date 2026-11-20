@@ -153,12 +153,9 @@ impl Lowering<'_> {
             // operation conjoins with the first: each part of the one guard
             // is a part of each, its predicate their conjunction and its
             // constraints both lists.
-            match guards
-                .iter_mut()
-                .find(|held: &&mut GuardNodes| {
-                    held.operation == operation && held.point_anchor == point_anchor
-                })
-            {
+            match guards.iter_mut().find(|held: &&mut GuardNodes| {
+                held.operation == operation && held.point_anchor == point_anchor
+            }) {
                 Some(held) => {
                     let mut product = Vec::with_capacity(held.parts.len() * parts.len());
                     for left in &held.parts {
@@ -360,7 +357,10 @@ impl Lowering<'_> {
             location,
             reference: location,
         };
-        Ok(Some(self.operation_anchor(&anchor, Some(point), location)?.anchor))
+        Ok(Some(
+            self.operation_anchor(&anchor, Some(point), location)?
+                .anchor,
+        ))
     }
 
     /// The nodes of a guard part's constraint.

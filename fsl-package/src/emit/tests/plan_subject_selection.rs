@@ -8,7 +8,7 @@ use filament_semantic_value::checking::CheckMode;
 
 use super::*;
 use crate::emit::monitor_plan::carry_rows;
-use crate::emit::{MonitorPlanWire, TemporalBindingRows, emit_monitor_plan_over};
+use crate::emit::{emit_monitor_plan_over, MonitorPlanWire, TemporalBindingRows};
 
 /// The id the writer renames `id` to in these tests: a different package.
 fn renamed(id: &CheckedNodeId) -> CheckedNodeId {

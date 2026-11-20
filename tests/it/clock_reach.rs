@@ -87,7 +87,9 @@ fn an_open_prefix_and_an_incomplete_input_differ() {
 }
 
 fn quantile_unit(quantile: &str) -> String {
-    aggregate_unit(&format!("quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms"))
+    aggregate_unit(&format!(
+        "quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms"
+    ))
 }
 
 /// A timestamped-event unit whose clause `P` holds the window-aggregate atom
@@ -199,12 +201,36 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
     for (atom, exit, verdict) in [
         ("count over past[0 ms, 300 s] <= 20", 0, "holds"),
         ("count over past[0 ms, 300 s] <= 19", 10, "violated"),
-        ("sum of r.latency over past[0 ms, 300 s] <= 31 ms", 0, "holds"),
-        ("sum of r.latency over past[0 ms, 300 s] <= 30 ms", 10, "violated"),
-        ("min of r.latency over past[0 ms, 300 s] >= 1 ms", 0, "holds"),
-        ("min of r.latency over past[0 ms, 300 s] >= 2 ms", 10, "violated"),
-        ("max of r.latency over past[0 ms, 300 s] <= 7 ms", 0, "holds"),
-        ("max of r.latency over past[0 ms, 300 s] <= 6 ms", 10, "violated"),
+        (
+            "sum of r.latency over past[0 ms, 300 s] <= 31 ms",
+            0,
+            "holds",
+        ),
+        (
+            "sum of r.latency over past[0 ms, 300 s] <= 30 ms",
+            10,
+            "violated",
+        ),
+        (
+            "min of r.latency over past[0 ms, 300 s] >= 1 ms",
+            0,
+            "holds",
+        ),
+        (
+            "min of r.latency over past[0 ms, 300 s] >= 2 ms",
+            10,
+            "violated",
+        ),
+        (
+            "max of r.latency over past[0 ms, 300 s] <= 7 ms",
+            0,
+            "holds",
+        ),
+        (
+            "max of r.latency over past[0 ms, 300 s] <= 6 ms",
+            10,
+            "violated",
+        ),
         (
             "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
             0,
@@ -215,8 +241,16 @@ fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
             10,
             "violated",
         ),
-        ("quantile 0.9 of r.latency over past[0 ms, 300 s] <= 5 ms", 0, "holds"),
-        ("quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms", 10, "violated"),
+        (
+            "quantile 0.9 of r.latency over past[0 ms, 300 s] <= 5 ms",
+            0,
+            "holds",
+        ),
+        (
+            "quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms",
+            10,
+            "violated",
+        ),
     ] {
         let (code, document) = run(
             directory.path(),

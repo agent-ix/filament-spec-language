@@ -12,7 +12,7 @@ use fsl_semantics::check::{CheckCause, CheckRefusal, CheckingLimitKind, MatchPar
 use super::admission_corpus::config_version_unit;
 use super::*;
 use crate::checked_v2::{
-    HyperRootUnresolved, clause_roots, hyper_roots, resolve_clause_root, resolve_hyper_root,
+    clause_roots, hyper_roots, resolve_clause_root, resolve_hyper_root, HyperRootUnresolved,
 };
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
@@ -356,13 +356,7 @@ fn every_emitted_hyper_shape_is_admitted_by_the_i2_read() {
         ),
         unit(
             INFINITE,
-            &hyper(
-                "Receivers",
-                "",
-                "",
-                "match { a.step.receiver = b.step.receiver }",
-                READ_A_B,
-            ),
+            &hyper("Receivers", "", "", "match { a.step.receiver = b.step.receiver }", READ_A_B),
         ),
     ];
     for case in cases {
@@ -756,10 +750,7 @@ fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
     );
     assert!(rows.iter().all(|row| &row["declaration"] == hyper_id));
     assert!(rows.iter().all(|row| row["clock_name"] == "model-steps"));
-    assert_eq!(
-        rows[0]["clock"]["sequence_authority"],
-        "test-hyper-events"
-    );
+    assert_eq!(rows[0]["clock"]["sequence_authority"], "test-hyper-events");
     let package = admitted(&built);
     assert_eq!(
         package.temporal_bindings().expect("admitted rows"),
@@ -830,12 +821,10 @@ fn admitted(built: &Built) -> std::sync::Arc<filament_contract_model::CheckedPac
 
 /// The text a not-emitted refusal's span covers in `text`.
 fn not_emitted_text<'t>(text: &'t str, refusals: &[CheckRefusal]) -> &'t str {
-    let [
-        CheckRefusal {
-            cause: CheckCause::Temporal(cause),
-            ..
-        },
-    ] = refusals
+    let [CheckRefusal {
+        cause: CheckCause::Temporal(cause),
+        ..
+    }] = refusals
     else {
         panic!("one temporal refusal: {refusals:?}");
     };

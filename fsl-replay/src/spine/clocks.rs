@@ -250,9 +250,13 @@ impl RequestClocks {
             let Some(traces) = &declaration.model else {
                 continue;
             };
-            for (trace, clock) in derived_configurations(&declaration, traces)?.unwrap_or_default() {
-                let mut selection =
-                    TemporalClockSelection::new(declaration.source.clone(), declaration.span, clock);
+            for (trace, clock) in derived_configurations(&declaration, traces)?.unwrap_or_default()
+            {
+                let mut selection = TemporalClockSelection::new(
+                    declaration.source.clone(),
+                    declaration.span,
+                    clock,
+                );
                 selection.trace = trace.map(Into::into);
                 selections.push(selection);
             }
