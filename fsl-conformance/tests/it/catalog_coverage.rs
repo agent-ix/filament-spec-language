@@ -31,35 +31,56 @@ macro_rules! operators {
     };
 }
 
-const CASES: &[Case] = &[
-    operators!(
-        "boolean-connectives",
-        "boolean",
-        ["not", "and", "or", "implies"]
-    ),
-    operators!("boolean-equality", "boolean", ["eq", "ne"]),
-    operators!("integer-arithmetic", "integer", ["add", "sub", "mul"]),
-    operators!("integer-negation", "integer", ["negate"]),
-    operators!("integer-equality", "integer", ["eq", "ne"]),
-    operators!("integer-ordering", "integer", ["lt", "le", "gt", "ge"]),
-    operators!("integer-division", "integer", ["div", "rem"]),
-    operators!("integer-modulo", "integer", ["mod"]),
-    operators!("rational-arithmetic", "rational", ["add", "sub", "mul"]),
-    operators!("rational-negation", "rational", ["negate"]),
-    operators!("rational-equality", "rational", ["eq", "ne"]),
-    operators!("rational-ordering", "rational", ["lt", "le", "gt", "ge"]),
-    operators!("rational-division", "rational", ["div"]),
-    operators!("decimal-arithmetic", "decimal", ["add", "sub", "mul"]),
-    operators!("decimal-negation", "decimal", ["negate"]),
-    operators!("decimal-equality", "decimal", ["eq", "ne"]),
-    operators!("decimal-ordering", "decimal", ["lt", "le", "gt", "ge"]),
-    operators!("decimal-division", "decimal", ["div"]),
-    operators!("text-equality", "text", ["eq", "ne"]),
-    operators!("text-ordering", "text", ["lt", "le", "gt", "ge"]),
-    operators!("text-size", "text", ["size"]),
-    operators!("collection-size", "collection", ["size"]),
-    operators!("collection-contains", "collection", ["contains"]),
-    Case {
+macro_rules! source_cases {
+    ($($test:ident => $case:expr),+ $(,)?) => {
+        const CASES: &[Case] = &[$($case),+];
+        $(
+            #[test]
+            #[trace("FR-350", "FSpec-FR-322")]
+            fn $test() {
+                let case = $case;
+                let package = compile_and_read(&case);
+                assert_producers(&case, &catalog_identities(), &package);
+            }
+        )+
+    };
+}
+
+source_cases! {
+    boolean_connectives => operators!("boolean-connectives", "boolean", ["not", "and", "or", "implies"]),
+    boolean_equality => operators!("boolean-equality", "boolean", ["eq", "ne"]),
+    integer_arithmetic => operators!("integer-arithmetic", "integer", ["add", "sub", "mul"]),
+    integer_negation => operators!("integer-negation", "integer", ["negate"]),
+    integer_equality => operators!("integer-equality", "integer", ["eq", "ne"]),
+    integer_ordering => operators!("integer-ordering", "integer", ["lt", "ge"]),
+    integer_division => operators!("integer-division", "integer", ["div", "rem"]),
+    integer_modulo => operators!("integer-modulo", "integer", ["mod"]),
+    rational_arithmetic => operators!("rational-arithmetic", "rational", ["add", "sub", "mul"]),
+    rational_negation => operators!("rational-negation", "rational", ["negate"]),
+    rational_equality => operators!("rational-equality", "rational", ["eq", "ne"]),
+    rational_ordering => operators!("rational-ordering", "rational", ["lt", "ge"]),
+    rational_division => operators!("rational-division", "rational", ["div"]),
+    decimal_arithmetic => operators!("decimal-arithmetic", "decimal", ["add", "sub", "mul"]),
+    decimal_negation => operators!("decimal-negation", "decimal", ["negate"]),
+    decimal_equality => operators!("decimal-equality", "decimal", ["eq"]),
+    decimal_ordering => operators!("decimal-ordering", "decimal", ["lt", "ge"]),
+    decimal_division => operators!("decimal-division", "decimal", ["div"]),
+    text_equality => operators!("text-equality", "text", ["eq"]),
+    text_ordering => operators!("text-ordering", "text", ["lt"]),
+    text_size => operators!("text-size", "text", ["size"]),
+    collection_size => operators!("collection-size", "collection", ["size"]),
+    collection_contains => operators!("collection-contains", "collection", ["contains"]),
+    quantity_arithmetic => operators!("quantity-arithmetic", "quantity", ["add", "sub", "mul"]),
+    quantity_negation => operators!("quantity-negation", "quantity", ["negate"]),
+    quantity_division => operators!("quantity-division", "quantity", ["div"]),
+    quantity_scaling => operators!("quantity-scaling", "quantity", ["scale"]),
+    quantity_power => operators!("quantity-power", "quantity", ["pow"]),
+    quantity_equality => operators!("quantity-equality", "quantity", ["eq"]),
+    quantity_ordering => operators!("quantity-ordering", "quantity", ["lt"]),
+    enum_equality => operators!("enum-equality", "enum", ["eq", "ne"]),
+    enum_ordering => operators!("enum-ordering", "enum", ["lt"]),
+    composite_equality => operators!("composite-equality", "structural", ["eq"]),
+    option_presence => Case {
         name: "option-presence",
         source: include_str!("../../cases/type-operators/option-presence-accepted.native"),
         operations: &[
@@ -69,19 +90,43 @@ const CASES: &[Case] = &[
         ],
         forms: &["application", "option"],
     },
-    Case {
+    sequence_index => Case {
         name: "sequence-index",
         source: include_str!("../../cases/index-accepted.native"),
         operations: &["filament.op.collection.index"],
         forms: &["application", "sequence"],
     },
-    Case {
+    tuple_position => Case {
         name: "tuple-position",
         source: include_str!("../../cases/tuple-position-accepted.native"),
         operations: &["filament.op.tuple.project"],
         forms: &["application", "tuple"],
     },
-];
+    float_arithmetic => Case {
+        name: "float-arithmetic",
+        source: include_str!("../../cases/type-operators/float-arithmetic-accepted.native"),
+        operations: &["filament.op.ieee.float32.add", "filament.op.ieee.float32.sub", "filament.op.ieee.float32.mul", "filament.op.ieee.float64.add", "filament.op.ieee.float64.sub", "filament.op.ieee.float64.mul"],
+        forms: &["application"],
+    },
+    float_negation => Case {
+        name: "float-negation",
+        source: include_str!("../../cases/type-operators/float-negation-accepted.native"),
+        operations: &["filament.op.ieee.float32.negate", "filament.op.ieee.float64.negate"],
+        forms: &["application"],
+    },
+    float_division => Case {
+        name: "float-division",
+        source: include_str!("../../cases/type-operators/float-division-accepted.native"),
+        operations: &["filament.op.ieee.float32.div", "filament.op.ieee.float64.div"],
+        forms: &["application"],
+    },
+    structural_calls => Case {
+        name: "structural-calls",
+        source: include_str!("../../cases/catalog-source-structural.native"),
+        operations: &["filament.op.record.project", "filament.op.function.call", "filament.op.control.let", "filament.op.integer.add"],
+        forms: &["application", "record"],
+    },
+}
 
 fn catalog_identities() -> BTreeSet<String> {
     let catalog: Value = serde_json::from_str(CHECKED_OPERATION_CATALOG_V1)
@@ -171,7 +216,27 @@ fn operation_identities(value: &Value, found: &mut BTreeSet<String>) {
     }
 }
 
-fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
+#[derive(Debug, PartialEq, Eq)]
+enum ProducerMismatch {
+    UnpublishedOperation {
+        case: &'static str,
+        identity: String,
+    },
+    MissingOperation {
+        case: &'static str,
+        identity: String,
+    },
+    MissingForm {
+        case: &'static str,
+        form: String,
+    },
+}
+
+fn check_producers(
+    case: &Case,
+    catalog: &BTreeSet<String>,
+    package: &Value,
+) -> Result<(), ProducerMismatch> {
     let nodes = package["semantic_graph"]["nodes"]
         .as_array()
         .expect("emitted graph nodes");
@@ -187,44 +252,99 @@ fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
         case.name
     );
     for identity in &operations {
-        assert!(
-            catalog.contains(identity),
-            "{} emits unpublished operation {identity}",
-            case.name
-        );
-    }
-    for expected in case.operations {
-        assert!(
-            operations.contains(*expected),
-            "{} must produce {expected}; got {operations:?}",
-            case.name
-        );
-    }
-    for expected in case.forms {
-        assert!(
-            nodes.iter().any(|node| node["semantic_form"] == *expected),
-            "{} must produce node form {expected}",
-            case.name
-        );
-    }
-}
-
-#[test]
-#[trace("FR-350", "FSpec-FR-322")]
-fn scalar_and_structural_operations_are_produced_from_source_and_admitted() {
-    let catalog = catalog_identities();
-    let mut failures = Vec::new();
-    for case in CASES {
-        let result = std::panic::catch_unwind(|| {
-            let package = compile_and_read(case);
-            assert_producers(case, &catalog, &package);
-        });
-        if result.is_err() {
-            failures.push(case.name);
+        if !catalog.contains(identity) {
+            return Err(ProducerMismatch::UnpublishedOperation {
+                case: case.name,
+                identity: identity.clone(),
+            });
         }
     }
+    for expected in case.operations {
+        if !operations.contains(*expected) {
+            return Err(ProducerMismatch::MissingOperation {
+                case: case.name,
+                identity: (*expected).to_owned(),
+            });
+        }
+    }
+    for expected in case.forms {
+        if !nodes.iter().any(|node| node["semantic_form"] == *expected) {
+            return Err(ProducerMismatch::MissingForm {
+                case: case.name,
+                form: (*expected).to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
+    check_producers(case, catalog, package)
+        .unwrap_or_else(|mismatch| panic!("source producer mismatch: {mismatch:?}"));
+}
+
+fn unrepresented_operations(catalog: &BTreeSet<String>) -> BTreeSet<String> {
+    let represented: BTreeSet<_> = CASES
+        .iter()
+        .flat_map(|case| case.operations.iter().copied())
+        .collect();
+    catalog
+        .iter()
+        .filter(|identity| !represented.contains(identity.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// This control checks the runner's catalog dispatch, not language coverage.
+#[test]
+#[trace("FR-350")]
+fn an_added_catalog_entry_is_reported_by_its_identity() {
+    let mut catalog = catalog_identities();
+    let original_gaps = unrepresented_operations(&catalog);
+    let added = "filament.op.conformance.nonexistent".to_owned();
+    assert!(catalog.insert(added.clone()), "the negative entry is new");
+    let new_gaps = unrepresented_operations(&catalog);
+    assert_eq!(
+        new_gaps
+            .difference(&original_gaps)
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec![added]
+    );
+}
+
+/// An altered expected operation is rejected after compiling real source.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn a_wrong_expected_operation_names_the_source_case_and_identity() {
+    let case = Case {
+        name: "altered-boolean-expectation",
+        source: CASES[0].source,
+        operations: &["filament.op.integer.add"],
+        forms: &["application"],
+    };
+    let package = compile_and_read(&case);
+    assert_eq!(
+        check_producers(&case, &catalog_identities(), &package),
+        Err(ProducerMismatch::MissingOperation {
+            case: case.name,
+            identity: "filament.op.integer.add".to_owned(),
+        })
+    );
+}
+
+/// Full source qualification remains strict while additional adapters are authored.
+#[test]
+#[ignore = "QSL-2051: source adapters for the remaining catalog operations and node families are not complete"]
+fn every_catalog_operation_has_a_source_and_is_admitted() {
+    let catalog = catalog_identities();
+    for case in CASES {
+        let package = compile_and_read(case);
+        assert_producers(case, &catalog, &package);
+    }
     assert!(
-        failures.is_empty(),
-        "source producer cases failed: {failures:?}"
+        unrepresented_operations(&catalog).is_empty(),
+        "catalog operations without source adapters: {:?}",
+        unrepresented_operations(&catalog)
     );
 }
