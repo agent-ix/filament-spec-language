@@ -85,6 +85,7 @@ mod export_temporal_lowering;
 mod extension_forms;
 mod extension_s1_parse;
 mod family_outcome_layering;
+mod forms_package_contracts;
 mod first_rule_readme;
 mod formal_source;
 mod formatter_identity;

@@ -13,7 +13,7 @@ relationships:
 Verify the `tl_lowering` member's default and named correspondences, and the
 unsupported record when the clause does not have the named reading. Scope:
 FR-931-AC-1, FR-931-AC-2, FR-931-AC-11, FR-931-AC-12, FR-931-AC-16,
-FR-931-AC-17.
+FR-931-AC-17, FR-931-AC-18.
 
 ## Test Procedure
 
@@ -25,6 +25,8 @@ FR-931-AC-17.
 6. Run FR-931-AC-12's enumeration and `allInstances` leaves under the alias `Config`, under `K`, and from each checked package with the source removed.
 7. Run FR-931-AC-16's `count`, `sum`, `fold` and `reduce` leaves from source and from the unit's checked package with the source removed.
 8. Run FR-931-AC-17's `only` and population `count` leaves under the alias `Config`, under `K`, and from each checked package with the source removed.
+9. From step 7's package, read the `type_argument` members of the `count<Small>` and `count<Int[0, 4]>` applications; run the `Small = Tiny` chain variant on both routes; strip the `alias` member from a copy of the package and run step 7 over it.
+10. Over the `Low` unit's checked package (`{file, equality}`, source removed), run every request of FR-931-AC-18 without `cross_evaluate`, the `Low2` request, `Missing`, `Inv` and the hyper clause `Equal`; run FR-931-AC-9's lasso request over `{file, equality}` and over the handoff `{directory}`; run the same requests over the source.
 
 Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_correspondence`.
 
@@ -38,3 +40,5 @@ Test: `tests/it/request_surface_s1_16.rs` `a_tl_lowering_request_selects_its_cor
 - Step 6: the two atom texts FR-931-AC-12 states, byte-equal across both aliases and both routes.
 - Step 7: `supported` for each leaf, never the no-printer refusal; each atom text exactly as FR-931-AC-16 states, the `Small` and `Int[0, 4]` counts different; byte-equal across both routes.
 - Step 8: each atom text exactly as FR-931-AC-17 states, the `count` type argument the result type its checked node records; byte-equal across both aliases and both routes.
+- Step 9: `count<Small>` carries `alias` `{"package": "I", "node": "ix://I/Small"}`, `count<Int[0, 4]>` none; the chain prints `count<ix://I/Small>` on both routes; the stripped copy prints `count<Int[0, 4]>` with the same `disposition`, `formula` and `classification`.
+- Step 10: every package record byte-equal to the source record with the same exit code; `Low2` gives `Low`'s record with `clause` `Low2`; `Missing`, `Inv` and `Equal` refuse `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; the lasso request over `{file, equality}` refuses `invalid-request` with `requires` `directory`, exit 20, and over `{directory}` returns the source record with `cross_evaluation`.

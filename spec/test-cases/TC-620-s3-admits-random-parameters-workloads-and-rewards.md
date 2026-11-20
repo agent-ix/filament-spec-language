@@ -12,7 +12,7 @@ relationships:
 
 Verify S3's checks of random parameters, workloads and rewards on ADR-024 §7.2's `Service` model and its malformed variants.
 
-Scope: FR-185-AC-1 to FR-185-AC-6, FR-185-AC-8 and FR-185-AC-9 (FR-185-AC-7 is TC-2062's).
+Scope: FR-185-AC-1 to FR-185-AC-6, FR-185-AC-8, FR-185-AC-9 and FR-185-AC-14 (FR-185-AC-7 is TC-2062's).
 
 ## Test Procedure
 
@@ -27,6 +27,7 @@ Fixtures: the dimension `Time`, the unit `s` (root) and the unit `ms` (target `s
 7. (Emission of `Service`, FR-185-AC-7, is verified by TC-2062.)
 8. Check `Server::attempt` with `d: Quantity<ms>` and its supports, then with `1 s` and `true` (FR-185-AC-8, with `Time`, `s` and `ms` declared; it reads FSpec's unit `typeRef` and quantity literal form, FR-322-AC-79 and FR-322-AC-80).
 9. Check the reference-typed parameter variant of FR-185-AC-9 with a reference literal naming the key of a `Server` object as the support value, then the variant with the parameter typed `Int[1, 12]` and the integer support value `3`.
+10. In a unit declaring the source object types `Switch` and `Other`, and `Base` and `Sub extends Base`, of FR-185-AC-14, check each workload of that criterion: `Input on Switch` with and without `Other::poke` and without `Switch::clear`, `Input on Missing`, `W on Sub` with `a` spelled `Sub::a` and `Base::a` and without `a`, `W on Base` with `Sub::b`, `W on Sub` with `Sub` redefining `a`, and `W on J` (`J extends L, R`, both declaring `a`) with `L::a` and `R::a`, without `R::a`, and with `J::a`. Test: `fsl-package/tests/source_probabilistic_emission.rs` (the `a_workload_on_a_source_*` tests).
 
 Tag the tests `#[trace("TC-620", "FR-185-AC-n")]`.
 
@@ -41,3 +42,4 @@ Tag the tests `#[trace("TC-620", "FR-185-AC-n")]`.
 - Step 7: none here.
 - Step 8: with `Time`, `s` and `ms` declared, the quantity supports check; `1 s` and `true` refused `value-outside-type`.
 - Step 9: the reference support value refused `value-outside-type` naming the parameter; the `Int[1, 12]` variant with the integer support value checks.
+- Step 10: `Input on Switch` checks with `choose` `1/1` and `clear` `0/1` only; `Other::poke` refused `invalid_probabilistic_model`/`unknown-operation` naming `Input` and `Other::poke`; the missing `Switch::clear` refused `incomplete-workload`; `on Missing` refused `missing_declaration`/`missing-name`; `W on Sub` checks with weights for exactly `a` and `b` under either spelling, refused `incomplete-workload` naming `Base::a` without it; `W on Base` refused `unknown-operation` naming `Sub::b`; a redefined `a` weighed once; `W on J` checks with exactly `L::a` and `R::a`, refused `incomplete-workload` naming `R::a` without it, and `J::a` refused `ambiguous_declaration`/`ambiguous-name`.
