@@ -444,7 +444,10 @@ pub(super) fn prepare(
         if callable
             .parameters
             .iter()
-            .any(|(_, value_type)| value_type != &filament_exact::ValueType::Integer)
+            .any(|(_, value_type)| {
+                value_type != &filament_exact::ValueType::Integer
+                    && !matches!(value_type, filament_exact::ValueType::Int(_))
+            })
         {
             return Err(invalid(
                 &selection.clause,
