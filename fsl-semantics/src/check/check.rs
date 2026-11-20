@@ -438,6 +438,10 @@ pub struct PackageDeclarations {
     pub untyped_members: Vec<UntypedMember>,
     /// `type Name = T;` aliases, which create no declaration identity.
     pub aliases: Vec<(String, ValueType)>,
+    /// The names of the unit's own `type Name = T;` aliases.
+    pub unit_alias_names: std::collections::BTreeSet<String>,
+    /// Each model alias type by its `alias::T` name, with its declaration.
+    pub model_type_aliases: BTreeMap<String, crate::value::TypeArgumentAlias>,
     /// Each package-owned type name's spelling under a further `model`
     /// alias of the same package (FR-480 "Selections and imports").
     pub(crate) model_spellings: super::model_spelling::ModelSpellings,
@@ -828,6 +832,8 @@ impl PackageDeclarations {
             variant_types: Vec::new(),
             untyped_members: Vec::new(),
             aliases: Vec::new(),
+            unit_alias_names: std::collections::BTreeSet::new(),
+            model_type_aliases: BTreeMap::new(),
             model_spellings: super::model_spelling::ModelSpellings::default(),
             alias_names: std::collections::BTreeMap::new(),
             native_names: std::collections::BTreeSet::new(),
@@ -1129,6 +1135,12 @@ pub struct Scope {
     /// The source unit of each top-level declaration, by declared name; a
     /// name with no entry is the primary unit's.
     source_owners: BTreeMap<String, RawSourceRef>,
+    /// The primary source unit, owner of a declaration with no entry above.
+    primary_source: Option<RawSourceRef>,
+    /// The names of the unit's own `type Name = T;` aliases.
+    own_aliases: BTreeSet<String>,
+    /// Each model alias type by its `alias::T` name, with its declaration.
+    model_aliases: BTreeMap<String, crate::value::TypeArgumentAlias>,
     /// Admitted systems-model ports by their package identity and source
     /// artifact name, with the exact declaration and owning object type
     /// used by a role.
@@ -1507,6 +1519,9 @@ impl Scope {
             complete_model: false,
             model_spellings: ModelSpellings::default(),
             source_owners: BTreeMap::new(),
+            primary_source: None,
+            own_aliases: BTreeSet::new(),
+            model_aliases: BTreeMap::new(),
             model_ports: BTreeMap::new(),
             dispatch_operations,
             symmetric_objects: BTreeMap::new(),
@@ -1701,6 +1716,24 @@ impl Scope {
 
     /// The source unit declaring the top-level declaration `name`, `None`
     /// for the primary unit.
+    /// This scope with the unit's own alias names and its model alias types,
+    /// the two kinds of named type argument that carry an alias (FSpec FR-322).
+    pub(crate) fn with_type_argument_aliases(
+        mut self,
+        own: BTreeSet<String>,
+        model: BTreeMap<String, crate::value::TypeArgumentAlias>,
+    ) -> Self {
+        self.own_aliases = own;
+        self.model_aliases = model;
+        self
+    }
+
+    /// This scope with its primary source unit.
+    pub(crate) fn with_primary_source(mut self, source: RawSourceRef) -> Self {
+        self.primary_source = Some(source);
+        self
+    }
+
     pub(crate) fn source_of(&self, name: &str) -> Option<&RawSourceRef> {
         self.source_owners.get(name)
     }
@@ -1742,6 +1775,30 @@ impl Scope {
     /// Each unit's model aliases bound to their packages.
     pub(crate) fn model_spellings(&self) -> &ModelSpellings {
         &self.model_spellings
+    }
+
+    /// The declaration key of the type alias `written` names, when the unit's
+    /// own source or a selected model declares one (FSpec FR-322 "Named type
+    /// arguments"): a model alias type is its declaration, the unit's own
+    /// alias its qualified name beneath its source unit's identity, and a
+    /// model scalar names none.
+    pub(crate) fn alias_declaration(&self, written: &str) -> Option<crate::value::TypeArgumentAlias> {
+        if let Some(alias) = self.model_aliases.get(written) {
+            return Some(alias.clone());
+        }
+        if !self.own_aliases.contains(written) {
+            return None;
+        }
+        let identity = self
+            .source_owners
+            .get(written)
+            .or(self.primary_source.as_ref())?
+            .identity();
+        let path = written.split("::").collect::<Vec<_>>().join("/");
+        Some(crate::value::TypeArgumentAlias {
+            package: identity.to_owned(),
+            node: format!("ix://{identity}/{path}"),
+        })
     }
 
     /// The source unit of each top-level declaration, by declared name.
@@ -2696,6 +2753,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         field_population: None,
         equality_range_context: None,
         type_argument: None,
+        binder_annotation: None,
     }
 }
 
@@ -2855,6 +2913,7 @@ impl Typer<'_> {
                         field_population: None,
                         equality_range_context: None,
                         type_argument: None,
+                        binder_annotation: None,
                     });
                 }
             }
@@ -2892,6 +2951,7 @@ impl Typer<'_> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2909,6 +2969,7 @@ impl Typer<'_> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -5345,6 +5406,7 @@ impl<'a> Typer<'a> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 });
             }
             return Ok(typed);
@@ -6273,5 +6335,35 @@ mod source_scope_tests {
             );
             assert_eq!(unit.model_port("M::out"), None, "{protocol}: no alias M");
         }
+    }
+
+    /// FSpec FR-322 "Named type arguments": a unit alias is its qualified name
+    /// beneath the unit, a model alias type is its own declaration, and a
+    /// model scalar, though it resolves as a named type, names no alias.
+    #[trace("FR-931-AC-16")]
+    #[test]
+    fn a_type_argument_alias_is_the_unit_s_or_a_model_alias_types_never_a_model_scalars() {
+        let model_alias = crate::value::TypeArgumentAlias {
+            package: "ix://domain".to_owned(),
+            node: "ix://domain/Total".to_owned(),
+        };
+        let scope = crate::check::family::fixtures::scope_with(
+            Default::default(),
+            vec![
+                ("Small".to_owned(), ValueType::Boolean),
+                ("M::Total".to_owned(), ValueType::Boolean),
+                ("M::Count".to_owned(), ValueType::Boolean),
+            ],
+        )
+        .with_primary_source(source("unit"))
+        .with_type_argument_aliases(
+            std::collections::BTreeSet::from(["Small".to_owned()]),
+            BTreeMap::from([("M::Total".to_owned(), model_alias.clone())]),
+        );
+        let own = scope.alias_declaration("Small").expect("the unit's alias");
+        assert_eq!(own.node, "ix://unit/Small");
+        assert_eq!(scope.alias_declaration("M::Total"), Some(model_alias));
+        assert_eq!(scope.alias_declaration("M::Count"), None, "a model scalar");
+        assert_eq!(scope.alias_declaration("Absent"), None);
     }
 }

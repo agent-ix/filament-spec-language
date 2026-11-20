@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -1092,7 +1092,18 @@ fn both_routes(leaf: &str) -> (String, String) {
 
 /// [`both_routes`] with the package leg selecting `package`.
 fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
-    let unit = shape_low(leaf);
+    unit_both_routes(&shape_low(leaf), package)
+}
+
+/// [`both_routes_over`] over the whole `unit`.
+fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
+    unit_both_routes_with(unit, package, |_| {})
+}
+
+/// [`unit_both_routes`] with `edit` run over the compiled directory before the
+/// package route reads it.
+fn unit_both_routes_with(unit: &str, package: Value, edit: impl FnOnce(&Path)) -> (String, String) {
+    let unit = unit.to_owned();
     let lower = json!({"clause": "Low"});
     let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
     assert_eq!(code, 0, "{value}");
@@ -1119,6 +1130,7 @@ fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
     .unwrap();
     fsl_command::command::compile(&compile).expect("the unit compiles");
     std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    edit(directory.path());
     let (code, value) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {"models": models,
@@ -1219,7 +1231,10 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
         assert_eq!(code, 20, "{value}");
         assert_eq!(value["code"], "invalid-request", "{value}");
         assert_eq!(value["stage"], "request", "{value}");
-        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+        assert!(
+            value["message"].as_str().unwrap().contains(member),
+            "{value}"
+        );
     }
 }
 
@@ -1252,7 +1267,7 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// selection returns the source route's atom.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-6")]
-#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object or source union"]
+#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object declaration or source union (FR-533 takes both from the handoff identity file); the package route has no derivation of them from the models and nodes"]
 fn the_file_form_prints_the_source_routes_atoms() {
     let leaf = "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })";
     let (from_source, from_package) = both_routes_over(leaf, json!({"file": "package.json"}));
@@ -1978,4 +1993,45 @@ fn case_binders_print_under_their_declared_names_without_a_model_read() {
         renamed_source.contains("Rect(ww, mm): ww + mm <= 4"),
         "{renamed_source}"
     );
+}
+
+/// The `Low` unit with `declarations` before its clause and `leaf` under
+/// `always`.
+fn declaring_low(declarations: &str, leaf: &str) -> String {
+    shape_low(leaf).replacen("union Shape", &format!("{declarations}\nunion Shape"), 1)
+}
+
+/// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630): the source
+/// route prints the declaration key a `count` type argument names, and a
+/// chain of aliases at the outer alias. The package half and the
+/// alias-removed copy need a model with a collection field, which no fixture
+/// here declares: a `seq` source in a clause is refused by the strict read of
+/// the emitted package, and the projection has no `sequence` literal.
+#[test]
+#[trace("TC-2601", "FR-931-AC-16")]
+fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
+    let identity = "test:s1-16:unit.native";
+    for (declarations, printed) in [
+        ("type Small = Int[0, 2];", format!("ix://{identity}/Small")),
+        (
+            "type Small = Tiny;\ntype Tiny = Int[0, 2];",
+            format!("ix://{identity}/Small"),
+        ),
+    ] {
+        let leaf =
+            "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
+                    in count<Small>(x in q: x > 1) >= 1)";
+        let unit = declaring_low(declarations, leaf);
+        let (code, value) = run(&unit, true, ("tl_lowering", json!({"clause": "Low"})));
+        assert_eq!(code, 0, "{value}");
+        let from_source = value["tl_lowering"]["atoms"]["p0"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let expected = format!("count<{printed}>(x in q: x > 1)");
+        assert!(
+            from_source.contains(&expected),
+            "{declarations}: {from_source}"
+        );
+    }
 }

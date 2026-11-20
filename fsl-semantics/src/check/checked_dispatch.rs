@@ -161,6 +161,24 @@ pub struct OperationClauses {
     /// Exact source declaration paths for source-model effective
     /// preconditions synthesized from inherited clauses.
     pub source_effective_precondition_declarations: BTreeMap<DeclarationKey, Vec<String>>,
+    /// The identity of the source unit that owns these operations, when they
+    /// are a source model's: its clause functions are named under that
+    /// identity, the package the emitted nodes carry (FSpec FR-322), so both
+    /// routes locate a value loss under one name.
+    pub source_owner_identity: Option<String>,
+}
+
+impl OperationClauses {
+    /// The name of the clause function of `key` and `suffix`: the key's node,
+    /// spelled under the owning source's identity for a source model.
+    fn function_name(&self, key: &DeclarationKey, suffix: &str) -> String {
+        let prefix = format!("ix://{}/", key.package);
+        let node = match (&self.source_owner_identity, key.node.strip_prefix(&prefix)) {
+            (Some(identity), Some(declaration)) => format!("ix://{identity}/{declaration}"),
+            _ => key.node.clone(),
+        };
+        format!("{node}{suffix}")
+    }
 }
 
 /// Which [`OperationClauses`] field [`DispatchBridgeRefusal::MissingClauseData`]
@@ -364,7 +382,7 @@ pub(crate) fn body_clause(
 ) -> Result<FunctionDeclaration, DispatchBridgeRefusal> {
     let body = require_expression(&clauses.own_body, operation, MissingClauseField::OwnBody)?;
     Ok(FunctionDeclaration::clause(
-        operation.node.clone(),
+        clauses.function_name(operation, ""),
         opaque_parameters(parameters),
         opaque_type_form(),
         None,
@@ -1097,7 +1115,7 @@ pub(crate) fn checked_dispatch_core(
             },
         );
         functions.push(FunctionDeclaration::clause(
-            format!("{}.precondition", member.node),
+            clauses.function_name(member, ".precondition"),
             declared_parameters,
             opaque_type_form(),
             None,
@@ -1143,7 +1161,7 @@ pub(crate) fn checked_dispatch_core(
                     },
                 );
                 functions.push(FunctionDeclaration::clause(
-                    format!("{}.precondition.effective", candidate.node),
+                    clauses.function_name(candidate, ".precondition.effective"),
                     declared_parameters,
                     opaque_type_form(),
                     None,
@@ -1450,6 +1468,33 @@ mod tests {
             .map(|pair| (pair[1].clone(), pair[0].clone()))
             .collect();
         (keys, redefinitions)
+    }
+
+    /// QSL-2701 item 1: a source model's clause function is named under the
+    /// owning source's identity, the package the emitted nodes carry, so both
+    /// routes locate a value loss under one name; a selected model's keeps
+    /// its own.
+    #[test]
+    #[trace("FSpec-TC-196")]
+    fn a_source_models_clause_function_is_named_under_its_owner() {
+        let key = DeclarationKey {
+            package: "source/unit".to_owned(),
+            node: "ix://source/unit/Order/place".to_owned(),
+        };
+        let mut clauses = OperationClauses::default();
+        assert_eq!(
+            clauses.function_name(&key, ".precondition"),
+            "ix://source/unit/Order/place.precondition"
+        );
+        clauses.source_owner_identity = Some("agent-ix:unit".to_owned());
+        assert_eq!(
+            clauses.function_name(&key, ".precondition"),
+            "ix://agent-ix:unit/Order/place.precondition"
+        );
+        assert_eq!(
+            clauses.function_name(&key, ""),
+            "ix://agent-ix:unit/Order/place"
+        );
     }
 
     /// Every key in `keys` declares a `self`-only signature and its own

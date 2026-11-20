@@ -2841,6 +2841,11 @@ impl PackageDeclarations {
         .with_untyped_members(self.untyped_members)
         .with_model_spellings(self.model_spellings)
         .with_source_owners(self.source_owners.clone())
+        .with_primary_source(self.source.clone())
+        .with_type_argument_aliases(
+            self.unit_alias_names.clone(),
+            self.model_type_aliases.clone(),
+        )
         .with_model_records(self.model_records)
         .with_relationships(self.relationships)
         .with_imports(self.imports)

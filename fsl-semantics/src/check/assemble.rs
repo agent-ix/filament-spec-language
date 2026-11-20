@@ -1420,6 +1420,9 @@ struct ModelTypes {
     objects: Vec<ObjectTypeDeclaration>,
     composites: Vec<CompositeDeclaration>,
     variant_types: Vec<VariantTypeDeclaration>,
+    /// Each model alias type's `alias::T` name and its declaration (FSpec
+    /// FR-322 "Named type arguments"); a model scalar names no alias.
+    model_aliases: Vec<(String, crate::value::TypeArgumentAlias)>,
     /// Each scalar or alias type's `alias::T` name and its admitted kernel type.
     scalars: Vec<(String, ValueType)>,
     model_records: ModelRecords,
@@ -2364,6 +2367,24 @@ fn model_object_types(
         ordered: false,
         unique: true,
     };
+    let model_aliases: Vec<(String, crate::value::TypeArgumentAlias)> = package
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::AliasType(alias_type) => {
+                let key = &alias_type.key;
+                let artifact = type_identity_segment(&key.package, &key.node)?;
+                Some((
+                    super::source_model::qualified(alias, artifact),
+                    crate::value::TypeArgumentAlias {
+                        package: key.package.clone(),
+                        node: key.node.clone(),
+                    },
+                ))
+            }
+            _ => None,
+        })
+        .collect();
     let scalars: Vec<(String, ValueType)> = package
         .records
         .iter()
@@ -2395,6 +2416,7 @@ fn model_object_types(
             composites,
             variant_types,
             scalars,
+            model_aliases,
             model_records,
             relationships,
             untyped_members,
@@ -4640,6 +4662,7 @@ impl PackageDeclarations {
         let mut model_composites = Vec::new();
         let mut model_variant_types = Vec::new();
         let mut model_scalars = Vec::new();
+        let mut model_aliases = Vec::new();
         let mut model_records = ModelRecords::default();
         let mut model_relationships = Vec::new();
         let mut model_untyped_members = Vec::new();
@@ -4796,6 +4819,7 @@ impl PackageDeclarations {
                     model_composites.extend(types.composites);
                     model_variant_types.extend(types.variant_types);
                     model_scalars.extend(types.scalars);
+                    model_aliases.extend(types.model_aliases);
                     model_records.extend(types.model_records);
                     model_relationships.extend(types.relationships);
                     model_untyped_members.extend(types.untyped_members);
@@ -5796,6 +5820,12 @@ impl PackageDeclarations {
         package.selected_exact_identity_rows = (exact_declarations, exact_fields);
         package.selected_tuple_declaration_rows = tuple_declarations;
         package.pending_types = pending.map(super::check::StagedTypes);
+        package.model_type_aliases = model_aliases.into_iter().collect();
+        package.unit_alias_names = unit
+            .aliases
+            .iter()
+            .map(|alias| alias.name.name.clone())
+            .collect();
         package.aliases = unit
             .aliases
             .iter()

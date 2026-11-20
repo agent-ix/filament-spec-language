@@ -257,7 +257,7 @@ fn member_kind_json(member: &Member) -> Json {
         Member::Operation { declaration, name } => {
             json!({"kind": "operation", "declaration": declared(declaration), "name": name.as_str()})
         }
-        Member::TypeArgument { declaration } => {
+        Member::TypeArgument { declaration, .. } => {
             json!({"kind": "type_argument", "declaration": declared(declaration)})
         }
         Member::ProfileOperator { operator } => {

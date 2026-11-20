@@ -793,6 +793,7 @@ mod tests {
             field_population: None,
             equality_range_context: None,
             type_argument: None,
+            binder_annotation: None,
         }
     }
 
@@ -830,6 +831,7 @@ mod tests {
                                 field_population: None,
                                 equality_range_context: None,
                                 type_argument: None,
+                                binder_annotation: None,
                             }),
                         )
                     }

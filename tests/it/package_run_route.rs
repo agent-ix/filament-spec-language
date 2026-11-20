@@ -183,3 +183,106 @@ fn a_package_that_cannot_run_refuses_at_the_request() {
         names(&value, "request");
     }
 }
+
+/// FR-1039 `{file, equality}` (TC-3019): the equality file is read through
+/// `ReadEqualityRows::read` against the admitted package, and each row of
+/// "A package that cannot run" for the member refuses at the request.
+#[cfg(feature = "checked-handoff")]
+#[test]
+#[trace("TC-3019", "FR-1039-AC-6")]
+fn a_file_selection_reads_the_equality_file_beside_it() {
+    let (holder, _request, _files) =
+        crate::bare_equality::handoff(crate::bare_equality::tc1070::SOURCE);
+    let directory = holder.path();
+    std::fs::copy(
+        directory.join("handoff/checked-package.json"),
+        directory.join("package.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("other-format.json"),
+        r#"{"format":"x/1","applications":[],"facts":[],"source_units":[]}"#,
+    )
+    .unwrap();
+    std::fs::write(directory.join("garbage.json"), "not json").unwrap();
+    let models = json!([{"format": "semantic-ir/2.0.0", "source": source("model.json")}]);
+    let lower = json!({"clause": "Nothing"});
+    let attempt = |package: Value| {
+        run(
+            directory,
+            json!({"models": models, "package": package, "tl_lowering": lower}),
+        )
+    };
+    // A package that holds an equality application needs its witness file.
+    let (exit, value) = attempt(json!({"file": "package.json"}));
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "missing-file");
+    names(&value, "/request/package/equality");
+    // With the producer's file the package is admitted, and the request
+    // reaches the member, which refuses its own missing clause.
+    let (exit, value) =
+        attempt(json!({"file": "package.json", "equality": "handoff/equality.json"}));
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "missing_declaration", "{value}");
+    // `equality` beside `directory`, or not a string.
+    for package in [
+        json!({"directory": "handoff", "equality": "handoff/equality.json"}),
+        json!({"file": "package.json", "equality": 7}),
+    ] {
+        let (exit, value) = attempt(package);
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        names(&value, "package.equality");
+    }
+    // A missing file.
+    let (exit, value) = attempt(json!({"file": "package.json", "equality": "absent.json"}));
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "package.equality");
+    names(&value, "absent.json");
+    // A file the equality reader refuses retains its variant.
+    for (file, variant) in [
+        ("other-format.json", "Format"),
+        ("garbage.json", "Malformed"),
+    ] {
+        let (exit, value) = attempt(json!({"file": "package.json", "equality": file}));
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid_package", "{value}");
+        names(&value, "refused-file");
+        names(&value, variant);
+        names(&value, "/request/package/equality");
+    }
+}
+
+/// FR-1039-AC-2: an `equality` file that is the handoff witness of another
+/// unit with an equality application, none of whose rows this package joins,
+/// refuses `invalid_package`/`refused-file` with the `Unjoined` variant.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-2")]
+fn a_foreign_equality_witness_refuses_unjoined() {
+    let unit = |body: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function e using v(n: Integer): Boolean pure {{ {body} }}\n"
+        )
+    };
+    let own = tempfile::tempdir().unwrap();
+    compile(own.path(), &unit("n * 2 - n = n"), json!({}));
+    let foreign = tempfile::tempdir().unwrap();
+    compile(foreign.path(), &unit("n * 3 - n = n * 2"), json!({}));
+    std::fs::copy(
+        foreign.path().join("handoff/equality.json"),
+        own.path().join("foreign-equality.json"),
+    )
+    .unwrap();
+    let (exit, value) = run(
+        own.path(),
+        json!({"models": [], "package": {"file": "package.json", "equality": "foreign-equality.json"},
+            "call": {"function": "e", "arguments": []}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    names(&value, "refused-file");
+    names(&value, "Unjoined");
+}

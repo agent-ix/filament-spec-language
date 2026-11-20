@@ -201,7 +201,6 @@ fn arithmetic_and_boolean_applications_keep_operator_family_and_operand_order() 
 
 #[test]
 #[trace("FR-093-AC-4")]
-#[ignore = "QSL-2709: permitted function-result widening emits a package the strict reader refuses"]
 fn widening_a_parameter_needs_no_conversion_and_the_resulting_package_admits() {
     let widened = package("function widen using v(x: Int[0, 9]): Int[0, 10] pure { x }");
     assert!(applications(&widened, "filament.op.numeric.narrow").is_empty());
@@ -274,3 +273,36 @@ fn sibling_quantifiers_reset_their_level_after_a_nested_binder() {
     assert_eq!(level("y"), json!("2"));
     assert_eq!(level("z"), json!("1"));
 }
+
+/// FSpec FR-149-AC-30: an annotated `let` binds its binder at the annotation,
+/// so `let y: Integer = x in g(y)` passes `y` bare to `g`'s `Integer`
+/// parameter and the strict reader admits the package, with no conversion at
+/// the `let` or at the call.
+#[test]
+#[trace("FR-093-AC-4")]
+fn an_annotated_let_binds_at_its_annotation_and_the_package_admits() {
+    let package = package(
+        "function g using v(n: Integer): Boolean pure { true }\n\
+         function r using v(x: Int[0, 1000]): Boolean pure { let y: Integer = x in g(y) }",
+    );
+    assert!(applications(&package, "filament.op.numeric.convert").is_empty());
+    assert!(applications(&package, "filament.op.numeric.narrow").is_empty());
+    one_application(&package, "filament.op.control.let");
+}
+
+/// FSpec FR-322 "The `if` check": an `if` whose branches are a contained
+/// literal or a contained integer reads back, with the result typed at the
+/// declared type or at the hull of its branches.
+#[test]
+#[trace("FR-093-AC-4")]
+fn an_if_over_contained_integer_branches_admits() {
+    let literal_else = package(
+        "function a using v(c: Boolean, x: Int[0, 9]): Int[0, 10] pure { if c then 10 else x }",
+    );
+    one_application(&literal_else, "filament.op.control.if");
+    let hull = package(
+        "function b using v(c: Boolean, x: Int[0, 9], y: Int[5, 20]): Int[0, 20] pure { if c then x else y }",
+    );
+    one_application(&hull, "filament.op.control.if");
+}
+

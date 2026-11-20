@@ -17,6 +17,7 @@ use fsl_semantics::check::{CheckedNode, NodeId};
 struct ExpressionNode {
     kind: NodeKind<usize, CheckedLiteral>,
     value_type: ValueType,
+    /// The declaration key of the alias the source wrote as the type argument.
     type_argument: Option<String>,
 }
 
@@ -26,7 +27,6 @@ pub(super) struct CanonicalRows {
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
     union_members: BTreeMap<NodeKey, Vec<String>>,
-    type_arguments: BTreeMap<String, String>,
 }
 
 impl CanonicalRows {
@@ -137,7 +137,7 @@ impl CheckedExpression {
                 ExpressionNode {
                     kind,
                     value_type: node.value_type().clone(),
-                    type_argument: node.type_argument().map(str::to_owned),
+                    type_argument: node.type_argument().map(|alias| alias.node.clone()),
                 }
             })
             .collect();
@@ -194,7 +194,7 @@ impl CheckedExpression {
                 Ok(ExpressionNode {
                     kind,
                     value_type,
-                    type_argument: None,
+                    type_argument: projection.type_argument(*index).map(str::to_owned),
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -291,9 +291,7 @@ impl CheckedExpression {
 impl CanonicalRows {
     fn aggregate_type_argument(&self, node: &ExpressionNode) -> String {
         node.type_argument
-            .as_ref()
-            .and_then(|name| self.type_arguments.get(name))
-            .cloned()
+            .clone()
             .unwrap_or_else(|| self.type_argument(&node.value_type))
     }
 
@@ -1139,7 +1137,6 @@ pub(super) fn source_labels(
         functions: valuation.canonical_functions.clone(),
         record_fields: valuation.canonical_record_fields.clone(),
         union_members: valuation.canonical_union_members.clone(),
-        type_arguments: valuation.canonical_type_arguments.clone(),
     };
     valuation
         .checked_conditions
@@ -1698,12 +1695,9 @@ mod tests {
             },
             bounded,
         );
-        nodes[root].type_argument = Some("Small".to_owned());
+        nodes[root].type_argument = Some("ix://I/Small".to_owned());
         let expression = CheckedExpression { nodes, root };
-        let rows = CanonicalRows {
-            type_arguments: BTreeMap::from([("Small".to_owned(), "ix://I/Small".to_owned())]),
-            ..CanonicalRows::default()
-        };
+        let rows = CanonicalRows::default();
         assert_eq!(
             expression.render(&["xs".to_owned()], &rows).unwrap(),
             "count<ix://I/Small>(x in xs: true)"
@@ -1971,12 +1965,12 @@ mod tests {
         );
     }
 
-    /// FR-931-AC-16: a named type argument with no owner of its own (an
-    /// imported or qualified name) prints its retained authored name, never
-    /// the structural spelling.
+    /// FR-931-AC-16: a type argument the source wrote as an alias declared by
+    /// a dependency prints that alias's declaration key, never the structural
+    /// spelling.
     #[test]
     #[trace("TC-2601", "FR-931-AC-16")]
-    fn an_imported_alias_prints_its_authored_name() {
+    fn a_dependency_alias_prints_its_declaration_key() {
         let bounded = ValueType::Int(
             IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
         );
@@ -1998,16 +1992,13 @@ mod tests {
             },
             bounded,
         );
-        nodes[root].type_argument = Some("Lib::Small".to_owned());
-        let rows = CanonicalRows {
-            type_arguments: BTreeMap::from([("Lib::Small".to_owned(), "Lib::Small".to_owned())]),
-            ..CanonicalRows::default()
-        };
+        nodes[root].type_argument = Some("ix://D/Lib/Small".to_owned());
+        let rows = CanonicalRows::default();
         assert_eq!(
             CheckedExpression { nodes, root }
                 .render(&["xs".to_owned()], &rows)
                 .unwrap(),
-            "count<Lib::Small>(x in xs: true)"
+            "count<ix://D/Lib/Small>(x in xs: true)"
         );
     }
 }

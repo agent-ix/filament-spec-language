@@ -71,6 +71,12 @@ impl ReaderProtocolProjection {
         self.nodes.get(index).map(|node| &node.kind)
     }
 
+    /// The declaration key of the alias the source wrote as the type argument
+    /// of the application at `index`, when it wrote one.
+    pub fn type_argument(&self, index: usize) -> Option<&str> {
+        self.nodes.get(index)?.type_argument.as_deref()
+    }
+
     /// The selected exact type of an arena node.
     pub fn value_type(&self, index: usize) -> Option<&ValueType> {
         self.nodes.get(index).map(|node| &node.value_type)
@@ -2027,6 +2033,19 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 ));
             }
         };
+        let type_argument = match &node.body {
+            CheckedTerm::Application { operation, .. } => operation
+                .read()
+                .ok()
+                .and_then(|read| match read.member {
+                    Some(filament_contract_model::CheckedOperationMember::TypeArgument {
+                        alias: Some(alias),
+                        ..
+                    }) => Some(alias.node.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
         let value_type = self.value_type(id)?;
         Ok(self.push(ReaderProjectedNode {
             kind,
@@ -2035,6 +2054,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             children,
             term,
             absorbed: None,
+            type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
         }))
     }
@@ -2459,6 +2479,30 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                         body,
                     },
                     vec![source, body],
+                ))
+            }
+            Some("filament.op.collection.seq") => {
+                // FR-322 `seq`: two bounds outside the binder, the body inside.
+                let [low_term, high_term, CheckedTerm::Binding { name, value }] = arguments else {
+                    return Err(fault("reader-seq-has-two-bounds-and-binder").into());
+                };
+                let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), value, slot, context)?;
+                let low = self.project_argument(id, low_term, context, locals)?;
+                let high = self.project_argument(id, high_term, context, locals)?;
+                let mut body_locals = locals.clone();
+                body_locals.extend(binder.map(|binder| (binder, slot)));
+                let body = self.project_argument(id, value, context, &body_locals)?;
+                self.grow_frame(context, slot.saturating_add(1));
+                Ok((
+                    NodeKind::Seq {
+                        slot,
+                        name: name.as_ref().to_owned(),
+                        low,
+                        high,
+                        body,
+                    },
+                    vec![low, high, body],
                 ))
             }
             Some("filament.op.collection.convert") => {
@@ -3878,6 +3922,9 @@ struct ReaderProjectedNode {
     /// A quantity conversion the walk visits directly above this node,
     /// which the enclosing equality's admitted decision applies itself.
     absorbed: Option<CheckedNodeId>,
+    /// The declaration key of the alias the source wrote as this aggregate's
+    /// type argument (FSpec FR-322 "Named type arguments").
+    type_argument: Option<Box<str>>,
 }
 
 impl ReaderProjectedNode {
@@ -3889,6 +3936,7 @@ impl ReaderProjectedNode {
             children: Vec::new(),
             term: None,
             absorbed: None,
+            type_argument: None,
             occurrence: None,
         }
     }

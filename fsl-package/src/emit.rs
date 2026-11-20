@@ -2596,8 +2596,12 @@ fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Valu
         Member::Operation { declaration, name } => {
             json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
         }
-        Member::TypeArgument { declaration } => {
-            json!({"kind":"type_argument","declaration":node_id(ids, declaration)})
+        Member::TypeArgument { declaration, alias } => {
+            let mut member = json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
+            if let Some(alias) = alias {
+                member["alias"] = json!({"package": alias.package, "node": alias.node});
+            }
+            member
         }
         Member::ProfileOperator { operator } => {
             json!({"kind":"profile_operator","operator":operator.as_str()})

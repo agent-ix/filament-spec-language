@@ -1544,8 +1544,9 @@ fn map_member(
             declaration: map_key(map, pending_member, declaration),
             name,
         },
-        Member::TypeArgument { declaration } => Member::TypeArgument {
+        Member::TypeArgument { declaration, alias } => Member::TypeArgument {
             declaration: map_key(map, pending_member, declaration),
+            alias,
         },
         Member::ProfileOperator { operator } => Member::ProfileOperator { operator },
         Member::StateClause {

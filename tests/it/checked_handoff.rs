@@ -177,6 +177,7 @@ fn other_refusal() -> CheckedPackageRefusal {
         document_pointer: None,
         extension_detail: None,
         protocol_detail: None,
+        type_argument_detail: None,
     }
 }
 

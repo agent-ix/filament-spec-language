@@ -1514,7 +1514,7 @@ struct SeqFrame<'n> {
     body: CheckedNode<'n>,
     low_term: Option<LeafTerm>,
     high_term: Option<LeafTerm>,
-    bound: Option<(NodeRef, String)>,
+    bound: Option<String>,
 }
 
 /// A record value's members, one binding per declared field.
@@ -2173,6 +2173,7 @@ impl<'a> Lowering<'a> {
         Ok(Operation {
             member: Some(Member::TypeArgument {
                 declaration: object,
+                alias: None,
             }),
             ..Operation::plain("filament.op.model.all_instances")
         })
@@ -4512,6 +4513,17 @@ impl<'a> Lowering<'a> {
     ) -> Result<Member, CheckRefusal> {
         Ok(Member::TypeArgument {
             declaration: self.type_node(value_type, location)?,
+            alias: None,
+        })
+    }
+
+    /// The `type_argument` member of `node`'s result type, carrying the alias
+    /// its source wrote for the argument (FSpec FR-322 "Named type
+    /// arguments").
+    fn aliased_type_argument(&mut self, node: CheckedNode<'_>) -> Result<Member, CheckRefusal> {
+        Ok(Member::TypeArgument {
+            declaration: self.type_node(node.value_type(), node.location())?,
+            alias: node.type_argument().cloned(),
         })
     }
 
@@ -5517,7 +5529,7 @@ impl<'a> Lowering<'a> {
                     high_term: None,
                     bound: None,
                 })));
-                return Ok(LowerStep::Descend(node.at(*low)));
+                return self.seq_bound(node.at(*low));
             }
             NodeKind::Query {
                 visit,
@@ -5543,7 +5555,7 @@ impl<'a> Lowering<'a> {
                     Visit::Count => (
                         Operator::Collection,
                         Operation {
-                            member: Some(self.type_argument(node.value_type(), node.location())?),
+                            member: Some(self.aliased_type_argument(node)?),
                             ..plain("filament.op.collection.count")
                         },
                     ),
@@ -5555,7 +5567,7 @@ impl<'a> Lowering<'a> {
                         },
                     ),
                     Visit::Sum => {
-                        let member = Some(self.type_argument(node.value_type(), node.location())?);
+                        let member = Some(self.aliased_type_argument(node)?);
                         // FR-093: the identity is the family of `N`; a float
                         // sum carries the IEEE profile law and a decimal,
                         // float or quantity sum the rounding mode `N` pins
@@ -5827,6 +5839,7 @@ impl<'a> Lowering<'a> {
                         Operation {
                             member: Some(Member::TypeArgument {
                                 declaration: object,
+                alias: None,
                             }),
                             mode: Some(OperationMode::Absence(*absence)),
                             ..plain("filament.op.model.lookup")
@@ -6552,7 +6565,17 @@ impl<'a> Lowering<'a> {
             }
             LowerFrame::Let(mut frame) => match frame.bound.take() {
                 None => {
-                    let value_type = self.value_type_node(frame.value, binders)?;
+                    // An annotated `let` binds at its annotation (FSpec FR-149-AC-30);
+                    // the value reaches it unconverted when its type is contained.
+                    let value_type = match frame.node.binder_annotation() {
+                        Some(annotation)
+                            if frame.value.lowered_value_type().as_ref()
+                                == frame.value.value_type() =>
+                        {
+                            self.type_ref(annotation, frame.node.location())?
+                        }
+                        _ => self.value_type_node(frame.value, binders)?,
+                    };
                     let name = self.bind(binders, frame.slot, value_type, frame.node.location())?;
                     frame.bound = Some((term, name));
                     let body = frame.body;
@@ -6603,46 +6626,53 @@ impl<'a> Lowering<'a> {
                     frame.low_term = Some(term);
                     let high = frame.high;
                     frames.push(LowerFrame::Seq(frame));
-                    return Ok(LowerStep::Descend(high));
+                    return self.seq_bound(high);
                 }
                 if frame.high_term.is_none() {
                     let location = frame.node.location();
-                    let low = frame
-                        .low_term
-                        .take()
+                    // The binder is typed at the `integer_range` node
+                    // `[lo_min, hi_max]` the checker bound it at (FSpec FR-322
+                    // `seq`).
+                    let binder_type = frame
+                        .node
+                        .binder_annotation()
                         .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-                    let integer = self.scalar("integer", location)?;
-                    let range = self.bounded(
-                        "integer_range",
-                        integer.clone(),
-                        vec![("min", low), ("max", term.clone())],
-                        location,
-                    )?;
-                    let name = self.bind(binders, frame.slot, integer, location)?;
+                    let binder_node = self.type_ref(binder_type, location)?;
+                    let name = self.bind(binders, frame.slot, binder_node, location)?;
                     frame.high_term = Some(term);
-                    frame.bound = Some((range, name));
+                    frame.bound = Some(name);
                     let body = frame.body;
                     frames.push(LowerFrame::Seq(frame));
                     return Ok(LowerStep::Descend(body));
                 }
-                let (range, name) = frame
+                let name = frame
                     .bound
                     .take()
                     .ok_or_else(|| fault(frame.node.location(), KeyFault::UnresolvedDraft))?;
+                let (Some(low), Some(high)) = (frame.low_term.take(), frame.high_term.take())
+                else {
+                    return Err(fault(frame.node.location(), KeyFault::UnresolvedDraft));
+                };
                 binders.pop();
                 let leaves = self.leaves(
                     LeafSource::ResultInner(frame.node.value_type()),
                     frame.node.location(),
                 )?;
+                let ValueType::Collection(sequence) = frame.node.value_type() else {
+                    return Err(fault(frame.node.location(), KeyFault::UnresolvedDraft));
+                };
+                let member = self.type_argument(sequence.element(), frame.node.location())?;
                 self.application(
                     frame.node,
                     Operator::Collection,
                     Operation {
                         leaves,
-                        ..plain("filament.op.collection.map")
+                        member: Some(member),
+                        ..plain("filament.op.collection.seq")
                     },
                     vec![
-                        MemberTerm::reference_node(range),
+                        MemberTerm::Leaf(low),
+                        MemberTerm::Leaf(high),
                         MemberTerm::bound(name, term),
                     ],
                 )
@@ -6847,7 +6877,7 @@ impl<'a> Lowering<'a> {
                 binders.pop();
                 binders.pop();
                 let node = frame.node;
-                let member = self.type_argument(node.value_type(), node.location())?;
+                let member = self.aliased_type_argument(node)?;
                 let mut arguments = vec![
                     MemberTerm::Leaf(source),
                     MemberTerm::binding(accumulator, BindingValue::named_leaf(binder, term)),
@@ -6901,6 +6931,22 @@ impl<'a> Lowering<'a> {
     /// enum member.
     fn literal(&mut self, node: CheckedNode<'_>, value: &Value) -> Result<LeafTerm, CheckRefusal> {
         self.literal_as(node, value, node.value_type(), None)
+    }
+
+    /// A `seq` bound (FSpec FR-322 `seq`): an integer literal is a literal
+    /// node typed at the one-value range `Int[v, v]`, since the reader takes
+    /// each bound's extremes from its `integer_range` type node; any other
+    /// bound lowers as the term it is.
+    fn seq_bound<'n>(&mut self, bound: CheckedNode<'n>) -> Result<LowerStep<'n>, CheckRefusal> {
+        if let NodeKind::Literal(CheckedLiteral(value @ Value::Integer(integer))) = bound.kind() {
+            let interval =
+                filament_exact::IntegerInterval::new(integer.clone(), integer.clone())
+                    .map_err(|_| refuse(bound.location(), CheckCause::UnrepresentableBound))?;
+            let term = self.literal_as(bound, value, &ValueType::Int(interval), None)?;
+            self.retain_checked_node(bound, &term);
+            return Ok(LowerStep::Lowered(term));
+        }
+        Ok(LowerStep::Descend(bound))
     }
 
     /// A reference literal's canonical typed leaf, retaining its decoded key
@@ -7871,6 +7917,15 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     walk.text(&interval_spelling(*interval));
                 }
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
+                // FSpec FR-322 "Named type arguments": an alias is part of
+                // the application's identity, after the declaration operand.
+                Some(Member::TypeArgument {
+                    declaration,
+                    alias: Some(alias),
+                }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(&alias.node);
+                }
                 Some(Member::Field {
                     explicit_deref: Some(explicit_deref),
                     ..

@@ -166,7 +166,7 @@ fn the_i2_work_ceiling_admits_its_measured_usage_and_refuses_zero_and_one_short(
             )
         })
         .expect("a small bound admits the one-node package");
-    assert_eq!(measured, 2, "the one-node package costs two work units");
+    assert_eq!(measured, 3, "the one-node package costs three work units");
     zero_exact_one_short(
         &bytes,
         &Ceiling {

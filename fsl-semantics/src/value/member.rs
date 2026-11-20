@@ -69,6 +69,17 @@ impl std::hash::Hash for AcceptedPoint {
 /// `Field` and an `Operation` sharing a declaration and name are never
 /// confused, matching the schema's own discriminated-union shape.
 ///
+/// The original declaration key `{package, node}` of the type alias a
+/// `type_argument` member's source wrote (FSpec FR-322 "Named type
+/// arguments"): a printing label no check reads.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TypeArgumentAlias {
+    /// The identity of the package that declares the alias.
+    pub package: String,
+    /// The alias declaration's key, `ix://<package>/<path>`.
+    pub node: String,
+}
+
 /// filament:canonical
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub enum Member {
@@ -128,6 +139,8 @@ pub enum Member {
     TypeArgument {
         /// The declaring generic type.
         declaration: NodeKey,
+        /// The alias the source wrote for the argument, when it wrote one.
+        alias: Option<TypeArgumentAlias>,
     },
     /// A semantic profile's operator, named directly rather than through a
     /// declaring node -- the only variant with no `declaration` (the schema's
@@ -268,9 +281,10 @@ impl DebugWith for Member {
                 .field("declaration", &NodeKeyDebug(declaration, table))
                 .field("name", &name)
                 .finish(),
-            Self::TypeArgument { declaration } => f
+            Self::TypeArgument { declaration, alias } => f
                 .debug_struct("TypeArgument")
                 .field("declaration", &NodeKeyDebug(declaration, table))
+                .field("alias", alias)
                 .finish(),
             Self::ProfileOperator { operator } => f
                 .debug_struct("ProfileOperator")
@@ -348,7 +362,7 @@ impl Member {
             | Self::Element { declaration }
             | Self::RelationshipEnd { declaration, .. }
             | Self::Operation { declaration, .. }
-            | Self::TypeArgument { declaration } => Some(declaration.clone()),
+            | Self::TypeArgument { declaration, .. } => Some(declaration.clone()),
             Self::Fairness { target, .. } => target.node().cloned(),
             Self::ProfileOperator { .. }
             | Self::StateClause { .. }

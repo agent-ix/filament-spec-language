@@ -28,6 +28,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType) -> Node {
         field_population: None,
         equality_range_context: None,
         type_argument: None,
+        binder_annotation: None,
     }
 }
 

@@ -283,9 +283,25 @@ pub(super) fn admit(
     dependent_bytes: usize,
     snapshot: Option<&str>,
 ) -> Result<AdmittedPackage> {
+    // FR-1039: `equality` is a string admitted on the file form only, and
+    // refuses before any selected file is opened.
+    let equality_file = match &package.equality {
+        None => None,
+        Some(serde_json::Value::String(path)) => Some((path, beneath("package.equality", path)?)),
+        Some(_) => return Err(invalid("package.equality", "must be a string")),
+    };
+    if equality_file.is_some() && package.directory.is_some() {
+        return Err(invalid(
+            "package.equality",
+            "an equality file is selected beside a file, not beside a directory",
+        ));
+    }
     let (selection, handoff) = match (&package.file, &package.directory) {
         (Some(file), None) => (
-            serde_json::json!({ "file": file }),
+            match &equality_file {
+                Some((equality, _)) => serde_json::json!({ "file": file, "equality": equality }),
+                None => serde_json::json!({ "file": file }),
+            },
             Selected::File(beneath("package.file", file)?),
         ),
         (None, Some(handoff)) => (
@@ -299,6 +315,7 @@ pub(super) fn admit(
             ));
         }
     };
+    let equality_file = equality_file.map(|(_, path)| path);
     if request
         .models
         .iter()
@@ -312,7 +329,7 @@ pub(super) fn admit(
         directory,
         FileCounts {
             programs: match handoff {
-                Selected::File(_) => 1,
+                Selected::File(_) => 1 + usize::from(equality_file.is_some()),
                 Selected::Directory(_) => 3,
             },
             models: request.models.len(),
@@ -363,7 +380,10 @@ pub(super) fn admit(
     }
     let mut budget = limits.native_join_limits().budget();
     let (identities, equality) = match &handoff {
-        Selected::File(_) => (None, None),
+        Selected::File(_) => (
+            None,
+            read_equality_file(directory, &mut intake, equality_file.as_deref(), &admitted)?,
+        ),
         Selected::Directory(handoff) => {
             read_witness(directory, &mut intake, handoff, &admitted, &mut budget)?
         }
@@ -419,6 +439,65 @@ fn require_contract_version(bytes: &[u8]) -> Result<()> {
              {version} is not {CONTRACT_VERSION}"
         ),
     })
+}
+
+/// FR-1039: the equality rows of a `{file, equality}` selection, read through
+/// `ReadEqualityRows::read` against the admitted package as a handoff's
+/// `equality.json` is. A `{file}` selection with no `equality` over a package
+/// that holds an equality application refuses `invalid_package/missing-file`,
+/// and one over a package with none carries no rows.
+fn read_equality_file(
+    directory: &Path,
+    intake: &mut super::Intake<'_>,
+    equality: Option<&str>,
+    package: &filament_contract_model::CheckedPackageV2,
+) -> Result<Option<fsl_package::ReadEqualityRows>> {
+    let Some(path) = equality else {
+        if package
+            .checked_term_data()
+            .is_some_and(|data| !data.equality_decisions.is_empty())
+        {
+            return Err(RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::InvalidPackage,
+                cause: Some("missing-file".to_owned()),
+                pointer: Some("/request/package/equality".to_owned()),
+                message: "invalid_package/missing-file at /request/package/equality: the package \
+                          holds an equality application and the selection names no equality file"
+                    .to_owned(),
+            });
+        }
+        return Ok(None);
+    };
+    if !directory.join(path).is_file() {
+        return Err(invalid(
+            "package.equality",
+            format!("no equality file is at {path}"),
+        ));
+    }
+    let bytes = intake.file(path, intake.remaining).map_err(|_| {
+        invalid(
+            "package.equality",
+            format!("the equality file at {path} cannot be read"),
+        )
+    })?;
+    fsl_package::ReadEqualityRows::read(&bytes, package)
+        .map(Some)
+        .map_err(|refusal| {
+            let variant = match &refusal {
+                fsl_package::EqualityFileRefusal::Malformed { .. } => "Malformed",
+                fsl_package::EqualityFileRefusal::Format(_) => "Format",
+                fsl_package::EqualityFileRefusal::Unjoined { .. } => "Unjoined",
+            };
+            RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::InvalidPackage,
+                cause: Some("refused-file".to_owned()),
+                pointer: Some("/request/package/equality".to_owned()),
+                message: format!(
+                    "invalid_package/refused-file at /request/package/equality: {path}: \
+                     {variant}: {refusal}"
+                ),
+            }
+        })
 }
 
 /// The handoff directory's identity rows, and its equality rows when the

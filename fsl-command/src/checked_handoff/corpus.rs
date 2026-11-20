@@ -978,6 +978,7 @@ mod tests {
                 document_pointer: None,
                 extension_detail: None,
                 protocol_detail: None,
+                type_argument_detail: None,
             })
         }
 

@@ -81,14 +81,26 @@ pub struct Node {
     /// Equality operand context used to explain an unproved contextual
     /// integer range refusal.
     pub(in crate::check) equality_range_context: Option<EqualityRangeContext>,
-    /// Authored named aggregate type argument, retained separately from its
-    /// structural checked type for canonical expression labels.
-    pub(in crate::check) type_argument: Option<String>,
+    /// The type alias the source wrote as an aggregate's type argument,
+    /// retained beside its structural checked type for canonical expression
+    /// labels; `None` when the source wrote a structural or declared type.
+    pub(in crate::check) type_argument: Option<crate::value::TypeArgumentAlias>,
+    /// The annotation an annotated `let` writes, the type its binder is
+    /// declared at; `None` on every other node and on an unannotated `let`.
+    pub(in crate::check) binder_annotation: Option<ValueType>,
 }
 
 impl Node {
-    pub(in crate::check) fn with_type_argument(mut self, name: String) -> Self {
-        self.type_argument = Some(name);
+    pub(in crate::check) fn with_binder_annotation(mut self, annotation: Option<ValueType>) -> Self {
+        self.binder_annotation = annotation;
+        self
+    }
+
+    pub(in crate::check) fn with_type_argument(
+        mut self,
+        alias: Option<crate::value::TypeArgumentAlias>,
+    ) -> Self {
+        self.type_argument = alias;
         self
     }
 }
@@ -472,6 +484,7 @@ impl CheckedBody {
                 field_population: None,
                 equality_range_context: None,
                 type_argument: None,
+                binder_annotation: None,
             })
             .collect();
         nodes.push(Node {
@@ -484,8 +497,18 @@ impl CheckedBody {
             field_population: None,
             equality_range_context: None,
             type_argument: None,
+            binder_annotation: None,
         });
         Self::new(nodes)
+    }
+
+    /// The fixture's root typed binder, for a root `seq`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_root_binder_annotation(mut self, annotation: ValueType) -> Self {
+        if let Some(root) = self.data.nodes.last_mut() {
+            root.binder_annotation = Some(annotation);
+        }
+        self
     }
 
     /// Link the reachability `id`, over a relationship end or a field edge,
@@ -521,6 +544,7 @@ impl CheckedBody {
                 field_population: None,
                 equality_range_context: None,
                 type_argument: None,
+                binder_annotation: None,
             })
             .collect::<Vec<_>>();
         Self::new(nodes)
@@ -681,9 +705,14 @@ impl<'a> CheckedNode<'a> {
         &self.node().value_type
     }
 
-    /// The authored named type argument on an aggregate, when retained.
-    pub fn type_argument(self) -> Option<&'a str> {
-        self.node().type_argument.as_deref()
+    /// The type alias the source wrote as an aggregate's type argument.
+    pub fn type_argument(self) -> Option<&'a crate::value::TypeArgumentAlias> {
+        self.node().type_argument.as_ref()
+    }
+
+    /// The type an annotated `let` declares its binder at.
+    pub fn binder_annotation(self) -> Option<&'a ValueType> {
+        self.node().binder_annotation.as_ref()
     }
 
     /// FR-495's lowered integer type, including division-bound locals and
@@ -1324,6 +1353,7 @@ mod tests {
             field_population: None,
             equality_range_context: None,
             type_argument: None,
+            binder_annotation: None,
         };
         let mut builder = BodyBuilder::default();
         let mut operand = builder.push(node(NodeKind::Local(slot)));
