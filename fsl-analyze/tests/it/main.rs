@@ -89,6 +89,7 @@ mod package_forms;
 mod package_refusal_route;
 mod partial_order;
 mod por_world;
+mod package_probabilistic_source;
 mod prob_world;
 mod probabilistic_replay;
 mod probabilistic_request_items;
