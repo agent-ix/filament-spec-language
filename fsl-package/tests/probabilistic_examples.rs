@@ -5,10 +5,10 @@
 #![cfg(feature = "std")]
 
 use filament_contract_model::{
-    CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
+    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_package::{emit_checked, CheckedPackage};
+use fsl_package::{emit_checked, CheckedPackage, EmitLimits};
 use fsl_semantics::{
     check::PackageDeclarations,
     model::{
@@ -111,7 +111,8 @@ fn compile_example(request_path: &str) -> EmittedExample {
     )
     .unwrap_or_else(|refusals| panic!("S3 checks the unit: {refusals:?}"));
     let package = CheckedPackage::link(checked);
-    let emission = emit_checked(&package).expect("S4 emits the package");
+    let emission =
+        emit_checked(&package, EmitLimits::new(10_000_000)).expect("S4 emits the package");
     let wire: Value = serde_json::from_slice(emission.package().bytes()).expect("wire JSON");
     let mut evidence = emission.evidence().clone();
     let model_identity = serde_json::from_slice::<Value>(&model_bytes).expect("model JSON")
