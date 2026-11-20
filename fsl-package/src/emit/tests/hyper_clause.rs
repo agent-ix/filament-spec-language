@@ -101,7 +101,11 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
         .expect("no selected model packages");
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("the finite unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
         .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{source}"));
     assert_eq!(graph.finite_hyper_clauses().len(), 1);
     let package = CheckedPackage::link(graph);
