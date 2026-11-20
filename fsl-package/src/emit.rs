@@ -7971,11 +7971,26 @@ fn source_object_rows(
                             parameter.presence == filament_exact::Presence::Optional,
                         ),
                         None => {
-                            let mut member = SelectedSourceObjectMember::clock(
-                                name,
-                                parameter.value_type.to_string(),
-                            );
-                            member.collections = collection_layers(&parameter.multiplicity);
+                            let collections = collection_layers(&parameter.multiplicity);
+                            let element = parameter.value_type.to_string();
+                            let rendering = match collections.first() {
+                                Some(layer) => {
+                                    let wrapper =
+                                        crate::source_model_read::collection_wrapper(&layer.kind)
+                                            .ok_or(EmitRefusal::SourceMapInvariant)?;
+                                    // The wrapper encloses the element's spelling, and the
+                                    // `resolved:` marker leads the whole rendering.
+                                    match element.strip_prefix("resolved:") {
+                                        Some(element) => {
+                                            format!("resolved:{wrapper}<{element}>")
+                                        }
+                                        None => format!("{wrapper}<{element}>"),
+                                    }
+                                }
+                                None => element,
+                            };
+                            let mut member = SelectedSourceObjectMember::clock(name, rendering);
+                            member.collections = collections;
                             member
                         }
                     })

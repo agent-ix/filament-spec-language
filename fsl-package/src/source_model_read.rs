@@ -250,7 +250,9 @@ impl BarePackage<'_> {
                             None => parameter
                                 .member_type
                                 .as_deref()
-                                .and_then(rendered_scalar)
+                                .and_then(|rendering| {
+                                    rendered_scalar(rendering, &parameter.collections)
+                                })
                                 .map(Some),
                             Some(node) => self
                                 .exact_type_projections()
@@ -305,11 +307,25 @@ impl BarePackage<'_> {
 /// The value type a source operation's parameter row renders, for the types
 /// a reader rebuilds from a rendering: `Boolean`, `Integer`, `Int[lower,
 /// upper]`, `Text[min, max; profile]`, `Decimal[lower, upper; min scale, max
-/// scale; rounding]` and the unparameterized native types. `None` for any
-/// other rendering, which the row does not let a reader rebuild.
-fn rendered_scalar(rendering: &str) -> Option<ValueType> {
+/// scale; rounding]` and the unparameterized native types. The rendering is
+/// that of the whole parameter type (FR-531, FR-789): a parameter with one
+/// collection layer is wrapped in the layer's kind (`Set<Int[1, 3]>`), which
+/// this unwraps to the element type. `None` for any other rendering, which
+/// the row does not let a reader rebuild.
+fn rendered_scalar(
+    rendering: &str,
+    layers: &[filament_contract_model::SelectedClockCollectionLayer],
+) -> Option<ValueType> {
     use filament_exact::{DecimalType, RoundingMode, TextProfile, TextType};
     let rendering = rendering.strip_prefix("resolved:")?;
+    let rendering = match layers {
+        [] => rendering,
+        [layer] => rendering
+            .strip_prefix(collection_wrapper(&layer.kind)?)?
+            .strip_prefix('<')?
+            .strip_suffix('>')?,
+        _ => return None,
+    };
     let bounds = |text: &str| -> Option<(String, String, Option<String>)> {
         let inner = text.strip_suffix(']')?;
         let (first, rest) = inner.split_once(", ")?;
@@ -400,6 +416,17 @@ impl SourceModel {
                         .any(|weight| names(&weight.declaring, &weight.operation))
                 })
         })
+    }
+}
+
+/// The FR-789 wrapper a collection layer of `kind` renders as.
+pub(crate) fn collection_wrapper(kind: &str) -> Option<&'static str> {
+    match kind {
+        "sequence" => Some("Sequence"),
+        "set" => Some("Set"),
+        "ordered_set" => Some("OrderedSet"),
+        "bag" => Some("Bag"),
+        _ => None,
     }
 }
 
