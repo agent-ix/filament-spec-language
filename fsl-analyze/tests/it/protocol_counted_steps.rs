@@ -1027,3 +1027,45 @@ fn only_operations_events_sends_and_receives_count() {
         assert!(!kind.counts(), "{kind:?}");
     }
 }
+
+/// FR-338 "Guarded `on each` activation": a protocol subject's steps do not
+/// all count, so the bounded `on each` translation, whose `Idle` key
+/// `[[],[],[],[]]` is no state there, is refused for it. A certificate that
+/// carries the translation is never accepted: the checker refuses the item
+/// before it reads one state.
+#[trace("TC-525", "FR-338-AC-10")]
+#[test]
+fn a_protocol_subject_certificate_with_the_bounded_each_translation_is_refused() {
+    let case = Case::new(
+        &(fill_unit("self.v <= 1", "")
+            + "temporal Claim using tb over (k: M::Cell) clock \"model-steps\" \
+               on each (q: M::Cell) { always[0,1] holds(k.v >= 0) }\n"),
+    );
+    let letters = CellV(|_| true);
+    let request = ProtocolCertificateRequest {
+        temporal_clock_selections: &case.temporal_clock_selections,
+        subject: case.subject("Fill"),
+        item: ModelCheckItem::Clause {
+            clause: case.clause(),
+            letters: &letters,
+        },
+        max_store_buffer: None,
+        max_messages: None,
+        max_live_instances: None,
+    };
+    let refused = check_protocol_closure(
+        &request,
+        &fsl_replay::ClosureCertificate { states: Vec::new() },
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(fsl_replay::ClosureRefusal::Item(
+                fsl_replay::ItemRefusal::Translation(_)
+            ))
+        ),
+        "{refused:?}"
+    );
+}

@@ -534,10 +534,25 @@ fn a_liveness_violation_settles_refuted_through_replay() {
 /// A `Counter` fixture whose one clause `formula` is under the event-position
 /// false-extension profile, `on origin`.
 pub(crate) fn bounded_fixture(formula: &str) -> Fixture {
-    let doc = document(false);
-    let body = CONTRACT.to_owned()
+    bounded_fixture_on("on origin", formula)
+}
+
+/// [`bounded_fixture`] activated as `activation`.
+pub(crate) fn bounded_fixture_on(activation: &str, formula: &str) -> Fixture {
+    bounded_fixture_over(document(false), CONTRACT, activation, formula)
+}
+
+/// [`bounded_fixture_on`] over the domain package `doc` and the operation
+/// clauses `contract`.
+pub(crate) fn bounded_fixture_over(
+    doc: Vec<u8>,
+    contract: &str,
+    activation: &str,
+    formula: &str,
+) -> Fixture {
+    let body = contract.to_owned()
         + &format!(
-            "temporal C using tb over (c: M::Counter) clock \"model-steps\" on origin {{ {formula} }}\n"
+            "temporal C using tb over (c: M::Counter) clock \"model-steps\" {activation} {{ {formula} }}\n"
         );
     let text = unit_text(&body).replace(
         "profile t0 = \"filament.temporal.infinite-trace/v1\";\n",

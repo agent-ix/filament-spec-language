@@ -736,6 +736,9 @@ struct BoundedRun<'i> {
     visited: BTreeSet<BoundedKey>,
     /// The atom at each model state read so far; `None` is undefined.
     readings: BTreeMap<StateKey, Option<bool>>,
+    /// The `on each` activation at each model state read so far; `None` is
+    /// undefined.
+    guards: BTreeMap<StateKey, Option<bool>>,
 }
 
 /// One expansion of a subject's state, and what a method bound left of it
@@ -1232,6 +1235,7 @@ impl<S: SubjectSystem> Check<'_, S> {
             binding,
             visited: BTreeSet::new(),
             readings: BTreeMap::new(),
+            guards: BTreeMap::new(),
         };
         let mut queue = VecDeque::new();
         let mut zero = ZeroEdges::<S> {
@@ -1273,9 +1277,22 @@ impl<S: SubjectSystem> Check<'_, S> {
                 // is a boundary state, never closed (ADR-025 MB-3, ADR-027
                 // AE-4); any other terminal state closes the monitor by the
                 // bounded profile's closed-boundary rule (FSpec FR-091).
-                if !(cut.memory || cut.instances)
-                    && translation.terminal(pending.automaton).is_rejecting()
-                {
+                if cut.memory || cut.instances {
+                    continue;
+                }
+                if translation.stutters() {
+                    // The infinite trace stutters the terminal state for
+                    // ever: one counted step back into it (FR-125).
+                    let state_key = pending.at.model_state.clone();
+                    let (next, _, _) = self.reach_bounded(
+                        &mut run,
+                        pending.state.clone(),
+                        state_key,
+                        Some((pending.automaton, pending.distance, true)),
+                        CertificateRule::SuccessorMissing,
+                    )?;
+                    queue.extend(next);
+                } else if translation.terminal(pending.automaton).is_rejecting() {
                     return Err(Self::reject(CertificateRule::BadState, pending.at));
                 }
                 continue;
@@ -1373,6 +1390,52 @@ impl<S: SubjectSystem> Check<'_, S> {
         Ok(least)
     }
 
+    /// Whether the `on each` activation of the clause holds at `state`
+    /// (always, when it has no `when` condition); `None` when the condition
+    /// reads undefined.
+    fn activation_reading(
+        &self,
+        run: &mut BoundedRun<'_>,
+        state: &S::State,
+        state_key: &StateKey,
+    ) -> Step<Option<bool>> {
+        let ModelCheckItem::Clause { clause, .. } = self.item else {
+            return Err(fault("clause-item-translation").into());
+        };
+        if clause.activation() != (fsl_semantics::check::Activation::Each { guarded: true }) {
+            return Ok(Some(true));
+        }
+        if let Some(reading) = run.guards.get(state_key) {
+            return Ok(*reading);
+        }
+        self.poll()?;
+        let mut meter = Meter::new(self.meter);
+        let atom_state = self.system.atom_state(state);
+        let reading = match run
+            .letters
+            .activation(run.binding, atom_state.as_ref(), &mut meter)
+        {
+            Ok(AtomReading::True) => Some(true),
+            Ok(AtomReading::False) => Some(false),
+            Ok(AtomReading::Undefined(_)) => None,
+            Err(AtomStop::Incomplete(incomplete)) => {
+                return Err(stopped(
+                    ModelCheckLimit::EvaluationMeter {
+                        counter: incomplete.limit_kind,
+                    },
+                    crate::meter_bound(&self.meter, incomplete.limit_kind),
+                ))
+            }
+            Err(AtomStop::Fault(internal)) => return Err(ClosureRefusal::Fault(internal).into()),
+            Err(AtomStop::Refused(outcome)) => {
+                return Err(fault(refused_invariant(&outcome)).into())
+            }
+            Err(AtomStop::Unobservable(stop)) => return Err(self.expansion_stop(stop)),
+        };
+        run.guards.insert(state_key.clone(), reading);
+        Ok(reading)
+    }
+
     /// The certificate's reference to the bounded product state `key`.
     fn bounded_ref(&mut self, run: &BoundedRun<'_>, key: &BoundedKey) -> Step<ProductStateRef> {
         let automaton = run
@@ -1398,21 +1461,44 @@ impl<S: SubjectSystem> Check<'_, S> {
         missing: CertificateRule,
     ) -> Step<(Option<BoundedPending<S>>, BoundedState, u64)> {
         let horizon = run.translation.horizon();
+        let each = run.translation.each();
+        // An `on each` monitor reads every position, so no distance decides
+        // what it reads; it is not part of its product state.
         let distance = match before {
+            _ if each => 0,
             None => 0,
             Some((_, distance, counted)) => distance
                 .saturating_add(u64::from(counted))
                 .min(horizon.saturating_add(1)),
         };
+        // UE-1: a guarded activation's condition is read before the
+        // captures and the atom.
+        let activates = if each {
+            match self.activation_reading(run, &state, &state_key)? {
+                Some(activates) => activates,
+                None => {
+                    let key = run
+                        .translation
+                        .key(BoundedState::Reject)
+                        .map_err(|_| ClosureRefusal::Encoding)?;
+                    let at = self.product_of(state_key.clone(), key)?;
+                    return Err(Self::reject(CertificateRule::BadState, at));
+                }
+            }
+        } else {
+            true
+        };
         // A position past the horizon is never read (ADR-018 UE-1), and a
         // step that counts out of the window closes it before its letter.
-        let holds = if distance <= horizon {
-            if !self.captured(
-                run.letters,
-                run.binding,
-                &self.system.atom_state(&state),
-                before.is_none(),
-            )? {
+        let holds = if each || distance <= horizon {
+            if (!each || activates)
+                && !self.captured(
+                    run.letters,
+                    run.binding,
+                    &self.system.atom_state(&state),
+                    before.is_none(),
+                )?
+            {
                 let key = run
                     .translation
                     .key(BoundedState::Reject)
@@ -1447,9 +1533,13 @@ impl<S: SubjectSystem> Check<'_, S> {
         } else {
             false
         };
-        let after = match before {
-            None => run.translation.start(holds),
-            Some((monitor, _, counted)) => run.translation.step(monitor, counted, holds),
+        let after = match (before, each) {
+            (None, false) => run.translation.start(holds),
+            (None, true) => run.translation.start_each(holds, activates),
+            (Some((monitor, _, counted)), false) => run.translation.step(monitor, counted, holds),
+            (Some((monitor, _, counted)), true) => run
+                .translation
+                .step_each(monitor, counted, holds, activates),
         };
         let key = run
             .translation
