@@ -974,9 +974,37 @@ fn malformed_hyper_domains_quantifiers_and_matches_refuse_at_the_slot() {
     }
 }
 
-// Pending QSL-2599: the empty align-skip syntax has no settled required oracle.
-// Original input, outside active coverage until that ambiguity is resolved:
-// hyper Q using h over behaviours forall trace a align skip { } { holds(true) }
+#[test]
+#[trace("FSpec-FR-339-AC-1", "FR-172-AC-9")]
+fn empty_align_skip_parses_as_a_list_for_the_semantic_refusal() {
+    for (declaration, expected_entries) in [
+        (
+            "hyper Q using h over behaviours forall trace a align skip { } { holds(true) }",
+            0,
+        ),
+        (
+            "hyper Q using h over behaviours forall trace a align skip { V::Vault::step } { holds(true) }",
+            1,
+        ),
+    ] {
+        let source = unit(declaration);
+        let parsed = admitted(&source);
+        let align_skip = node(
+            &parsed,
+            &source,
+            Production::AlignSkip,
+            if expected_entries == 0 {
+                "align skip { }"
+            } else {
+                "align skip { V::Vault::step }"
+            },
+        );
+        assert_eq!(
+            children(&parsed, &source, align_skip, Production::QualifiedName).len(),
+            expected_entries
+        );
+    }
+}
 
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
