@@ -10,7 +10,7 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Choice, Graph, UnboundedError, UnboundedObjective, maximal_end_components_from,
+    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from,
     policy_iteration,
 };
 use super::{
