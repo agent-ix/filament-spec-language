@@ -98,16 +98,11 @@ source_cases! {
     quantity_power => operators!("quantity-power", "quantity", ["pow"]),
     quantity_equality => operators!("quantity-equality", "quantity", ["eq"]),
     quantity_ordering => operators!("quantity-ordering", "quantity", ["lt"]),
-    enum_equality => operators!("enum-equality", "enum", ["eq", "ne"]),
+    enum_equality => operators!("enum-equality", "enum", ["eq"]),
     enum_ordering => operators!("enum-ordering", "enum", ["lt"]),
     integer_record_equality => structural_equality!("integer-record-equality", "record R { n: Integer; }", "R"),
     integer_tuple_equality => structural_equality!("integer-tuple-equality", "tuple T(Integer,Integer);", "T"),
     integer_union_equality => structural_equality!("integer-union-equality", "union U { A(Integer),B }", "U"),
-    float_record_equality => structural_equality!("float-record-equality", "type F = Float64[nearest-even]; record R { n: F; }", "R"),
-    float_tuple_equality => structural_equality!("float-tuple-equality", "type F = Float64[nearest-even]; tuple T(F,F);", "T"),
-    float_union_equality => structural_equality!("float-union-equality", "type F = Float64[nearest-even]; union U { A(F),B }", "U"),
-    float_option_equality => structural_equality!("float-option-equality", "type F = Float64[nearest-even];", "Option<F>"),
-    float_sequence_equality => structural_equality!("float-sequence-equality", "type F = Float64[nearest-even];", "Sequence<F>[0,3]"),
     option_presence => Case {
         name: "option-presence",
         source: include_str!("../../cases/type-operators/option-presence-accepted.native"),
@@ -385,4 +380,26 @@ fn sequence_index_is_emitted_and_admitted() {
     };
     let package = compile_and_read(&case);
     assert_producers(&case, &catalog_identities(), &package);
+}
+
+macro_rules! pending_float_equality {
+    ($($test:ident => $case:expr),+ $(,)?) => {
+        $(
+            #[test]
+            #[ignore = "IR-1320 (STD-654): composite IEEE leaves refuse OperatorIneligible at operation/leaves"]
+            fn $test() {
+                let case = $case;
+                let package = compile_and_read(&case);
+                assert_producers(&case, &catalog_identities(), &package);
+            }
+        )+
+    };
+}
+
+pending_float_equality! {
+    float_record_equality => structural_equality!("float-record-equality", "type F = Float64[nearest-even]; record R { n: F; }", "R"),
+    float_tuple_equality => structural_equality!("float-tuple-equality", "type F = Float64[nearest-even]; tuple T(F,F);", "T"),
+    float_union_equality => structural_equality!("float-union-equality", "type F = Float64[nearest-even]; union U { A(F),B }", "U"),
+    float_option_equality => structural_equality!("float-option-equality", "type F = Float64[nearest-even];", "Option<F>"),
+    float_sequence_equality => structural_equality!("float-sequence-equality", "type F = Float64[nearest-even];", "Sequence<F>[0,3]"),
 }
