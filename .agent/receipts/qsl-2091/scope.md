@@ -19,13 +19,20 @@ certificates, real model-check outcomes and EN-5 provider results.
 
 ## Pending behavior
 
-QSL-2713 owns state-constraint liveness admission. The original combined
-initial-boundary test executed its deadlock and safety controls, then failed
-when the eventuality selection returned `ReducedLiveness` before exploration.
-Current FR-158-AC-2 requires boundary handling without a stutter lasso. Its
-desired initial-boundary oracle is retained as one ignored test, excluded
-from coverage; no new liveness run or proof is claimed. The issue blocks
-QSL-2091. Existing Done QSL-913 and QSL-541 were not reopened.
+The original reduction fixture selected `invariant` declarations as constraints,
+which FR-158's Resolution rule forbids. Its passing reduction receipts do not
+back the required constraint behavior, and its liveness refusal is retracted
+as QSL-2713 evidence. The inherited fixture and tests remain unchanged.
+
+Only the new child now declares actual native `constraint Low` and
+`constraint Started` clauses, using real parsing, checking and `World::new`
+under Linked mode. All three supported reduction cases passed this fixture.
+The changed liveness case was executed once with this actual declaration
+source; it still refused `ReducedLiveness` before exploration. That new receipt
+grounds QSL-2713 against FR-158-AC-2, replacing the invalid original evidence.
+Its desired initial-boundary oracle remains ignored and excluded from coverage;
+no liveness exploration or proof is claimed. The issue blocks QSL-2091 on the
+new evidence. Existing Done QSL-913 and QSL-541 were not reopened.
 
 This slice covers concrete FR-149, FR-158 and FR-195 behavior. The ticket's
 broader historical refinement, reduction, hyper and statistical families

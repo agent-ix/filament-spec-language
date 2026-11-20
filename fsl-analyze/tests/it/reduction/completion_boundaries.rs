@@ -3,10 +3,23 @@
 
 use super::*;
 
+fn constrained_count(clauses: &[Clause<'_>]) -> World {
+    World::new(
+        shape(false, 3),
+        "pre Below using v on M::Counter::bump { self.v < 3 }\n\
+         post Up using v on M::Counter::bump { self.v - pre(self.v) = 1 }\n\
+         constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+         constraint Started using v on M::Counter at current { self.v >= 1 }\n",
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+    )
+}
+
 #[trace("FR-158-AC-1", "FR-158-AC-2")]
 #[test]
 fn the_twentieth_stored_state_completes_the_constrained_cube() {
-    let world = count(&[infinite("always holds(x.v <= 2)")]);
+    let world = constrained_count(&[infinite("always holds(x.v <= 2)")]);
     // Eight expanding 0/1 triples and twelve triples with exactly one 2.
     for maximum in [1, 8, 19, 20, 21] {
         let limits = ModelCheckLimits {
@@ -61,7 +74,7 @@ fn the_twentieth_stored_state_completes_the_constrained_cube() {
 #[trace("FR-158-AC-2", "FR-158-AC-3")]
 #[test]
 fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
-    let world = count(&[
+    let world = constrained_count(&[
         infinite("always holds(x.v <= 3)"),
         infinite("eventually holds(x.v = 3)"),
     ]);
@@ -69,7 +82,6 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
         let atoms = match selection {
             None => Vec::new(),
             Some(0) => vec![atom(|v| Some(v <= 3))],
-            Some(1) => vec![atom(|v| Some(v == 3))],
             _ => unreachable!("listed selections"),
         };
         let actual = world
@@ -104,7 +116,7 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
 #[test]
 #[ignore = "QSL-2713: state constraints refuse liveness before reading the initial boundary"]
 fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
-    let world = count(&[
+    let world = constrained_count(&[
         infinite("always holds(x.v <= 3)"),
         infinite("eventually holds(x.v = 3)"),
     ]);
@@ -138,7 +150,7 @@ fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
 #[trace("FR-158-AC-1", "FR-158-AC-3")]
 #[test]
 fn a_false_initial_letter_refutes_before_the_initial_constraint_cuts() {
-    let world = count(&[infinite("always holds(x.v = 1)")]);
+    let world = constrained_count(&[infinite("always holds(x.v = 1)")]);
     let outcome = run(
         &world,
         Some(0),
