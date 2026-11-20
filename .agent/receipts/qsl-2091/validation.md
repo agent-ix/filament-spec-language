@@ -76,5 +76,8 @@ in the fix round. The original nonpassing records remain intact.
 
 Leaf `rustfmt --edition 2021 --check` and `git diff --check` exited 0.
 The Rust implementation/testing checklist was applied to the changed tests.
-Independent review and one final affected-component gate remain pending.
+Same-reviewer SR-1497/SR-1498 disposition is PASS after the actual-constraint
+fixture correction. The single final affected-component gate passed 60 tests,
+with zero failures and one strict QSL-2713 ignored case. Exact commands,
+tested head and per-parent exit receipts are in `final-gate.md`.
 No author self-approval replaces the lead's independent review.
