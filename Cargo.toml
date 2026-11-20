@@ -5,8 +5,8 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "f32bca6c7937e0652742b2bbe27a52419bf5a0ae" }
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "f32bca6c7937e0652742b2bbe27a52419bf5a0ae" }
+filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "1c70322bede555940c518be439e3907a8e4064f1" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "1c70322bede555940c518be439e3907a8e4064f1" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
@@ -27,7 +27,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "f
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "fa2b722080f3a37e85e85e646590a40d5fcf5756" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "ed9c2cb1b5e4418d386967b17320b7ae5bef016c" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "308116a07a294d8a04c73abf425bb28c14425e7f" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "5f67eb4c3abac582753901675d36eac91e093b1d" }
 

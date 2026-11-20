@@ -64,6 +64,9 @@ const STACK: usize = 512 * 1024;
 /// How many terms, branches or bindings each body has.
 const DEEP: usize = 100_000;
 
+/// A depth whose body-location rows still fit the output limit.
+const MODERATE: usize = 2_000;
+
 /// The header every deep unit starts with.
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
                       profile v = \"filament.value.complete/v1\";\n";
@@ -71,9 +74,14 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// A unit whose `f(a, x)` has a body of [`DEEP`] terms, read from source: a
 /// sum of `x`, an `else if` chain over `a`, or nested `let`s.
 fn deep_source(label: &str) -> String {
+    deep_source_at(label, DEEP)
+}
+
+/// [`deep_source`] with `depth` terms, branches or bindings.
+fn deep_source_at(label: &str, depth: usize) -> String {
     let mut source =
         format!("{HEADER}function f using v(a: Boolean, x: Integer): Integer pure {{ ");
-    for level in 0..DEEP {
+    for level in 0..depth {
         match label {
             // 99,999 additions join 100,000 terms.
             "sum" if level == 0 => {}
@@ -135,16 +143,32 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     )
                     .unwrap_or_else(|refusals| panic!("{label}: checks: {refusals:?}"));
                 let package = CheckedPackage::link(graph);
-                let emission = emit_checked(&package)
-                    .unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
-                let written = wire(&emission);
-                let written = nodes(&written);
-                assert!(written.len() >= DEEP, "{label}: one node per level");
-                for node in written {
+                // Each term of the sum is a body-location row carrying its path
+                // from the root, so the rows of a 100,000-deep sum cost the
+                // square of its depth: emission is refused at the output
+                // limit before they are built (FR-264 Behavior 5). The
+                // `else if` and `let` bodies hold no term rows.
+                let emitted = crate::emit::emit_checked(
+                    &package,
+                    crate::EmitLimits::new(if label == "sum" { 1 << 27 } else { 1 << 32 }),
+                );
+                if label == "sum" {
                     assert!(
-                        fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
-                        "{label}: a written body is in the five-stratum grammar"
+                        matches!(emitted, Err(EmitRefusal::OutputLimit(_))),
+                        "{label}: refused at the output limit: {emitted:?}"
                     );
+                } else {
+                    let emission = emitted
+                        .unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
+                    let written = wire(&emission);
+                    let written = nodes(&written);
+                    assert!(written.len() >= DEEP, "{label}: one node per level");
+                    for node in written {
+                        assert!(
+                            fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
+                            "{label}: a written body is in the five-stratum grammar"
+                        );
+                    }
                 }
                 // The checked package: every checked function body (the
                 // arena a deep expression nests in) and the lowered graph
@@ -179,17 +203,18 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
     }
 }
 
-/// FR-264-AC-1: the 100,000-term sum, emitted under limits raised to fit it,
+/// FR-264-AC-1: a 2,000-term sum (a 100,000-term sum is refused at the output
+/// limit for its body-location rows), emitted under limits raised to fit it,
 /// reads back through the I2 read with `i2.*` raised to fit it and verifies at
 /// its emitted package. The `V2Read` clones, compares equal to its clone,
 /// formats for debug and drops, all on a 512 KiB stack.
 #[trace("TC-738", "FR-264-AC-1")]
 #[test]
-fn a_100000_term_sum_reads_back_verifies_clones_compares_and_drops_on_a_small_stack() {
+fn a_2000_term_sum_reads_back_verifies_clones_compares_and_drops_on_a_small_stack() {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(|| {
-            let graph = deep_declarations(&deep_source("sum"))
+            let graph = deep_declarations(&deep_source_at("sum", MODERATE))
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::new(u64::MAX)

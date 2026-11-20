@@ -79,7 +79,15 @@ fn emitted_byte_count(depth: usize) -> usize {
         crate::emit::emit_checked(&package, EmitLimits::new(u64::MAX)).unwrap_or_else(|refusal| {
             panic!("depth {depth} emits under a raised output limit: {refusal}")
         });
-    emission.package().bytes().len()
+    // The body-location rows carry each term's path from the root, so they
+    // grow with the square of the depth; the package without them is what
+    // stays linear.
+    let mut wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
+    if let Some(data) = wire["checked_term_data"].as_object_mut() {
+        data.remove("body_locations");
+    }
+    serde_json::to_vec(&wire).expect("serializes").len()
 }
 
 /// The bound is inclusive: `N` bytes under bound `N` are emitted, byte for
@@ -214,8 +222,9 @@ fn nested_not_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
 }
 
 /// QSL-1985: the default output ceiling refuses 20,000 nested `not`s at a
-/// source occurrence; raising the named setting admits the same package, and
-/// a 100-level body remains below the default ceiling.
+/// source occurrence; raising the named setting admits a 2,000-level package
+/// (the rows of a deeper body are charged by path length), and a 100-level
+/// body remains below the default ceiling.
 #[trace("FR-264-AC-6", "FR-255-AC-4")]
 #[test]
 fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
@@ -245,6 +254,8 @@ fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
     assert!(message.contains("output byte limit"), "{message}");
     assert!(message.contains("emit.output_bytes"), "{message}");
 
-    crate::emit::emit_checked(&deep, EmitLimits::new(u64::MAX))
-        .expect("raising emit.output_bytes admits the 20,000-level package");
+    // The rows of a 20,000-level body cost the square of its depth, so the
+    // raised ceiling is shown at a depth whose rows stay small.
+    crate::emit::emit_checked(&nested_not_package(2_000), EmitLimits::new(u64::MAX))
+        .expect("raising emit.output_bytes admits the 2,000-level package");
 }

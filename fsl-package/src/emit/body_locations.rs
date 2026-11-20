@@ -27,6 +27,10 @@ use super::EmitRefusal;
 /// The least bytes one row costs beyond its path.
 const ROW_BYTES: u128 = 64;
 
+/// The bytes charged for each index of a row's path: its spelling and the
+/// room it takes while the rows are held.
+const PATH_ENTRY_BYTES: u128 = 8;
+
 /// Whether an emitted function node carries a `body` binding.
 fn has_body_binding(node: &CheckedSemanticNodeV2) -> bool {
     let CheckedTerm::Aggregate { members } = &node.body else {
@@ -91,7 +95,7 @@ pub(super) fn checked_body_locations(
             if &at.origin != origin {
                 return None;
             }
-            let cost = 2 * u128::try_from(at.depth()).ok()? + ROW_BYTES;
+            let cost = PATH_ENTRY_BYTES * u128::try_from(at.depth()).ok()? + ROW_BYTES;
             charged.set(charged.get().saturating_add(cost));
             if charged.get() > u128::from(output_bytes) {
                 exceeded.set(true);

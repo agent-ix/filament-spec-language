@@ -387,6 +387,10 @@ fn reachable_operands(graph: &CheckedGraph, key: &NodeKey) -> HashSet<NodeKey> {
         let Some(node) = graph.semantic_graph().node(key) else {
             continue;
         };
+        // A call's callee is a function node whose body is its own walk.
+        if node.node_tag() != NodeTag::Expression {
+            continue;
+        }
         for leaf in node.body().leaves() {
             let LeafTerm::Reference { target } = leaf else {
                 continue;
