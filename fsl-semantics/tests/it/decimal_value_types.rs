@@ -713,7 +713,7 @@ fn decimal_policy_defects_refuse_once() {
         "bound held by another node",
         document,
         "malformed-declaration",
-        "appliesTo",
+        "cannot be carried by another node",
         false,
     ));
     for (precision, scale) in [(39, 2), (0, 0), (2, 3)] {
