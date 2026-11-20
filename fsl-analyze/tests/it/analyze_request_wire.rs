@@ -529,6 +529,41 @@ fn only_an_explicit_universe_refuses_an_incomplete_population() {
     assert_eq!(run.exit, 22, "{document}");
 }
 
+/// A shared multi-model snapshot keys each universe by the package named by
+/// that population, even though its snapshot header names only the first model.
+#[test]
+fn a_multi_model_snapshot_keys_each_population_universe_by_its_package() {
+    use fsl_analyze::analyze::document::SubjectSelection;
+
+    let mut snapshot: Value =
+        serde_json::from_slice(&crate::analyze_cli_support::counter_snapshot(&[("a", 0)]))
+            .expect("the snapshot is JSON");
+    snapshot["identity"]["identity"] = json!("multi-model-start");
+    snapshot["model"]["identity"] = json!("test/counter");
+    let mut second_population = snapshot["populations"][0].clone();
+    second_population["population"] = json!("ix://test/vault-other/counters");
+    second_population["objects"][0]["type"] = json!("ix://test/vault-other/Counter");
+    snapshot["populations"]
+        .as_array_mut()
+        .expect("populations")
+        .push(second_population);
+    let bytes = snapshot.to_string().into_bytes();
+    let mut documents = fsl_semantics::model::observation::DocumentProvision::new();
+    let reference = fsl_semantics::model::observation::document_reference(&bytes)
+        .expect("the snapshot declares its identity");
+    documents.insert(reference, bytes);
+
+    let selection = SubjectSelection::default_over(&documents);
+    let package_input = fsl_semantics::model::intake::PackageInput::default();
+    let binding = selection.binding(&package_input, &documents);
+    let packages: Vec<_> = binding
+        .universes
+        .iter()
+        .map(|universe| universe.population.package.as_str())
+        .collect();
+    assert_eq!(packages, ["test/counter", "test/vault-other"]);
+}
+
 /// FR-620 "Reading": a `temporal.limits` or `temporal.max_depth` count past
 /// 2^53 - 1 refuses the whole request naming the member, never a dropped
 /// bound.

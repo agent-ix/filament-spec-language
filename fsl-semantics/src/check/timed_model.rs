@@ -59,6 +59,7 @@ use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
 use super::time_units::{TimeScale, TimeUnits};
 use crate::family::CheckContext;
+use crate::value::member::AcceptedPoint;
 
 mod collection_write;
 mod quantified;
@@ -514,8 +515,10 @@ pub struct ClockGuard {
     pub(crate) context: EffectiveId,
     /// The precondition's declaration span.
     span: Span,
-    /// Whether the precondition is bound to an execution point.
-    point: bool,
+    /// The execution point the precondition is bound to, whose
+    /// point-qualified anchor the guard names by its `point_anchor` (FSpec
+    /// FR-342-AC-13).
+    point: Option<AcceptedPoint>,
 }
 
 impl ClockGuard {
@@ -527,6 +530,11 @@ impl ClockGuard {
     /// The guarded operation.
     pub fn operation(&self) -> &ClauseOperation {
         &self.operation
+    }
+
+    /// The execution point the precondition is bound to, if any.
+    pub fn point(&self) -> Option<&AcceptedPoint> {
+        self.point.as_ref()
     }
 
     /// The convex parts, in the order the precondition's disjunctive form
@@ -681,8 +689,10 @@ pub struct ClockResets {
     pub(crate) context: EffectiveId,
     /// The postcondition's declaration span.
     span: Span,
-    /// Whether the postcondition is bound to an execution point.
-    point: bool,
+    /// The execution point the postcondition is bound to, whose
+    /// point-qualified anchor the reset names by its `point_anchor` (FSpec
+    /// FR-342-AC-13).
+    point: Option<AcceptedPoint>,
 }
 
 impl ClockResets {
@@ -694,6 +704,11 @@ impl ClockResets {
     /// The operation whose postcondition it is.
     pub fn operation(&self) -> &ClauseOperation {
         &self.operation
+    }
+
+    /// The execution point the postcondition is bound to, if any.
+    pub fn point(&self) -> Option<&AcceptedPoint> {
+        self.point.as_ref()
     }
 
     /// The resets, in source order.
@@ -1016,6 +1031,9 @@ fsl_foundation::debug_with_struct!(TimedClauseNodes, "TimedClauseNodes" { guards
 pub struct GuardNodes {
     /// The operation's no-point `state`/`operation_anchor` node.
     pub operation: NodeKey,
+    /// The point-qualified `operation_anchor` of a point-bound guard (FSpec
+    /// FR-342-AC-13), its final `point_anchor` binding.
+    pub point_anchor: Option<NodeKey>,
     /// The guarding precondition's declaration span.
     pub span: Span,
     /// The parts, in the precondition's disjunctive-form order.
@@ -1026,11 +1044,16 @@ impl DebugWith for GuardNodes {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         let Self {
             operation,
+            point_anchor,
             span,
             parts,
         } = self;
         f.debug_struct("GuardNodes")
             .field("operation", &NodeKeyDebug(operation, table))
+            .field(
+                "point_anchor",
+                &point_anchor.as_ref().map(|key| NodeKeyDebug(key, table)),
+            )
             .field("span", &span)
             .field("parts", &With(parts, table))
             .finish()
@@ -1147,6 +1170,9 @@ impl std::fmt::Debug for ConstraintTargetNodes {
 pub struct ResetNodes {
     /// The operation's no-point `state`/`operation_anchor` node.
     pub operation: NodeKey,
+    /// The point-qualified `operation_anchor` of a point-bound reset (FSpec
+    /// FR-342-AC-13), its final `point_anchor` binding.
+    pub point_anchor: Option<NodeKey>,
     /// What it resets.
     pub target: ResetTargetNodes,
     /// The value, in the model's unit.
@@ -1159,12 +1185,17 @@ impl DebugWith for ResetNodes {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         let Self {
             operation,
+            point_anchor,
             target,
             value,
             span,
         } = self;
         f.debug_struct("ResetNodes")
             .field("operation", &NodeKeyDebug(operation, table))
+            .field(
+                "point_anchor",
+                &point_anchor.as_ref().map(|key| NodeKeyDebug(key, table)),
+            )
             .field("target", &With(target, table))
             .field("value", &value)
             .field("span", &span)
@@ -1453,9 +1484,6 @@ impl TimedModel {
         use TimedOmission::{Excluded, Unwritten};
         use UnwrittenTimedMember as Member;
         for (at, guard) in self.guards.iter().enumerate() {
-            if guard.point {
-                return Some((Unwritten(Member::PointQualifiedClause), guard.span));
-            }
             for (index, part) in guard.parts.iter().enumerate() {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
@@ -1487,9 +1515,6 @@ impl TimedModel {
             }
         }
         for written in &self.resets {
-            if written.point {
-                return Some((Unwritten(Member::PointQualifiedClause), written.span));
-            }
             if let Some(write) = written.writes.first() {
                 return Some((Excluded(ExcludedClauseForm::CollectionWrite), write.span()));
             }
@@ -1757,8 +1782,8 @@ struct ResetsDraft {
     index: usize,
     /// The postcondition's declaration span.
     span: Span,
-    /// Whether the postcondition is bound to an execution point.
-    point: bool,
+    /// The execution point the postcondition is bound to.
+    point: Option<AcceptedPoint>,
     operation: ClauseOperation,
     context: EffectiveId,
     resets: Vec<ResetDraft>,
@@ -4513,7 +4538,7 @@ fn prepare_models(
                             clause: clause.name.clone(),
                             index,
                             span: clause.spans.declaration,
-                            point: clause.execution_point.is_some(),
+                            point: clause.execution_point.clone(),
                             operation: operation.clone(),
                             context: clause.context.clone(),
                             resets: cut.resets,
@@ -4923,7 +4948,7 @@ pub(crate) fn check(
                 index,
                 context: clause.context.clone(),
                 span: clause.spans.declaration,
-                point: clause.execution_point.is_some(),
+                point: clause.execution_point.clone(),
             });
         }
         let mut invariants = Vec::with_capacity(draft.invariants.len());

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-640, FSpec FR-540: a compile or run request's `clocks` member, keyed by
-//! clock name, turned into one [`TemporalClockSelection`] per clock-bearing
-//! declaration.
+//! clock name, turned into [`TemporalClockSelection`]s for clock-bearing
+//! declarations (one selection per quantified trace for hyper clauses).
 //!
 //! A clock name is the role a declaration writes; every declaration that
 //! writes the same name reads the same clock, so one configuration per name
 //! binds them all. A declaration over a model subject, and a hyper clause over
-//! a model's behaviours, take their binding from the model and no member: the
-//! configuration is derived from the binding and the declaration's profile.
+//! a model's behaviours, take their binding from the model and no member:
+//! each configuration is derived from that trace's binding and the
+//! declaration's profile.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -236,8 +237,8 @@ impl RequestClocks {
     ///
     /// # Errors
     ///
-    /// The FR-763 refusal of a declaration whose traces need different
-    /// configurations.
+    /// The FR-763 refusal of an event-position model trace whose parameters
+    /// do not identify one sequence authority.
     pub fn model_selections(
         package: &pkg::CheckedPackage,
     ) -> Result<Vec<TemporalClockSelection>, Box<CompileRefusal>> {
@@ -249,12 +250,15 @@ impl RequestClocks {
             let Some(traces) = &declaration.model else {
                 continue;
             };
-            if let Some(clock) = derived_configuration(&declaration, traces)? {
-                selections.push(TemporalClockSelection::new(
+            for (trace, clock) in derived_configurations(&declaration, traces)?.unwrap_or_default()
+            {
+                let mut selection = TemporalClockSelection::new(
                     declaration.source.clone(),
                     declaration.span,
                     clock,
-                ));
+                );
+                selection.trace = trace.map(Into::into);
+                selections.push(selection);
             }
         }
         Ok(selections)
@@ -302,13 +306,13 @@ impl RequestClocks {
             let Some(expected) = configured_kind(declaration.profile) else {
                 continue;
             };
-            let clock = if let Some(traces) = &declaration.model {
+            let clocks = if let Some(traces) = &declaration.model {
                 // A model subject: the model supplies the binding, and the
                 // configuration is derived from it and the profile.
-                let Some(clock) = derived_configuration(&declaration, traces)? else {
+                let Some(clocks) = derived_configurations(&declaration, traces)? else {
                     continue;
                 };
-                clock
+                clocks
             } else if is_model_binding_name(declaration.clock) {
                 continue;
             } else {
@@ -349,13 +353,17 @@ impl RequestClocks {
                     self.is_program_source(&declaration.source),
                     declaration.clock.to_owned(),
                 ));
-                clock.clone()
+                vec![(None, clock.clone())]
             };
-            selections.push(TemporalClockSelection::new(
-                declaration.source.clone(),
-                declaration.span,
-                clock,
-            ));
+            for (trace, clock) in clocks {
+                let mut selection = TemporalClockSelection::new(
+                    declaration.source.clone(),
+                    declaration.span,
+                    clock,
+                );
+                selection.trace = trace.map(Into::into);
+                selections.push(selection);
+            }
         }
         Ok(selections)
     }
@@ -448,6 +456,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 }
                 _ => None,
             },
+            trace_aliases: None,
             source,
             span: clause.span(),
         });
@@ -490,6 +499,13 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
             profile: hyper.profile(),
             clock: "model-steps",
             model: Some(traces),
+            trace_aliases: Some(
+                hyper
+                    .quantifiers()
+                    .iter()
+                    .map(|quantifier| quantifier.variable.clone())
+                    .collect(),
+            ),
             source,
             span: hyper.span(),
         });
@@ -504,6 +520,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 profile,
                 clock: &await_form.clock,
                 model: None,
+                trace_aliases: None,
                 source: graph.source().clone(),
                 span: await_form.span,
             });
@@ -517,6 +534,7 @@ fn declarations(package: &pkg::CheckedPackage) -> Vec<Declaration<'_>> {
                 profile,
                 clock: &template.clock,
                 model: None,
+                trace_aliases: None,
                 source: graph.source().clone(),
                 span: template.span,
             });
@@ -549,23 +567,21 @@ struct Declaration<'a> {
     /// determined. `None` over a trace subject and for a `compensate`
     /// template.
     model: Option<Vec<Option<String>>>,
+    trace_aliases: Option<Vec<String>>,
     source: RawSourceRef,
     span: Span,
 }
 
-/// FR-640: the configuration a declaration over model traces derives, the
-/// one every trace derives (FR-640 "Behavior"); `None` when the profile and
-/// binding configure none. A clause whose traces derive different
-/// configurations, or an event-position trace with no determined sequence
-/// authority, needs one configuration per trace, which a binding row cannot
-/// carry yet: it refuses `unsupported_construct`/`not-yet-implemented` naming
-/// the clause (FR-763's form).
-fn derived_configuration(
+/// FR-640: each configured model trace's derived clock and, for hyper
+/// clauses, its quantifier alias. `None` means the profile and binding do not
+/// configure any trace. An event-position trace with no determined sequence
+/// authority refuses as `unsupported_construct`/`not-yet-implemented`.
+fn derived_configurations(
     declaration: &Declaration<'_>,
     traces: &[Option<String>],
-) -> Result<Option<ClockConfiguration>, Box<CompileRefusal>> {
-    let mut derived: Option<Option<ClockConfiguration>> = None;
-    for authority in traces {
+) -> Result<Option<Vec<(Option<String>, ClockConfiguration)>>, Box<CompileRefusal>> {
+    let mut derived = Vec::with_capacity(traces.len());
+    for (index, authority) in traces.iter().enumerate() {
         let clock = match authority {
             Some(authority) => {
                 model_configuration(declaration.profile, declaration.clock, authority)
@@ -575,17 +591,20 @@ fn derived_configuration(
             }
             None => model_configuration(declaration.profile, declaration.clock, ""),
         };
-        match &derived {
-            Some(first) if first != &clock => return Err(per_trace_clocks(declaration)),
-            Some(_) => {}
-            None => derived = Some(clock),
+        if let Some(clock) = clock {
+            let trace = declaration
+                .trace_aliases
+                .as_ref()
+                .and_then(|aliases| aliases.get(index))
+                .cloned();
+            derived.push((trace, clock));
         }
     }
-    Ok(derived.flatten())
+    Ok((!derived.is_empty()).then_some(derived))
 }
 
-/// The implementation-gap refusal of a clause whose traces need different
-/// clock configurations.
+/// Refuse an event-position model trace whose parameters do not identify one
+/// sequence authority for that trace.
 fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
     Box::new(CompileRefusal::Emit(
         EmitRefusal::PerTraceClockConfigurations {

@@ -35,7 +35,7 @@ use crate::check::timed_model::{
     ConstraintTargetNodes, ElementBinding, GuardNodes, InvariantNodes, PartNodes, ResetNodes,
     ResetTargetNodes, StateAlternative, TimedClauseNodes, TimedModel,
 };
-use crate::value::member::Member;
+use crate::value::member::{AcceptedPoint, Member};
 
 /// What [`Lowering::timed_clauses`] reads beside the model.
 pub(crate) struct TimedClauseInput<'a> {
@@ -82,11 +82,43 @@ impl Lowering<'_> {
                 .get(index)
                 .ok_or_else(|| super::fault(input.declaration, KeyFault::UnkeyableRequirements))
         };
+        // FSpec FR-342 "Point-bound timed clauses": an operation's guard is
+        // point-bound when any clause it holds is, and then holds every clause
+        // of the operation, so the anchor is decided once for each operation
+        // over all its clauses; likewise for its resets.
+        let mut guard_anchors: Vec<(NodeKey, NodeKey)> = Vec::new();
+        for guard in model.guards() {
+            let location = clause_at(guard.index)?;
+            let operation = self.clause_anchor(guard.operation(), location)?;
+            if guard_anchors.iter().any(|(held, _)| *held == operation) {
+                continue;
+            }
+            if let Some(anchor) = self.point_anchor(guard.operation(), guard.point(), location)? {
+                guard_anchors.push((operation, anchor));
+            }
+        }
+        let mut reset_anchors: Vec<(NodeKey, NodeKey)> = Vec::new();
+        for written in model.resets() {
+            let location = clause_at(written.index)?;
+            let operation = self.clause_anchor(written.operation(), location)?;
+            if reset_anchors.iter().any(|(held, _)| *held == operation) {
+                continue;
+            }
+            if let Some(anchor) =
+                self.point_anchor(written.operation(), written.point(), location)?
+            {
+                reset_anchors.push((operation, anchor));
+            }
+        }
         let mut guards = Vec::with_capacity(model.guards().len());
         for (at, guard) in model.guards().iter().enumerate() {
             let location = clause_at(guard.index)?;
             let context = guard.context.clone();
             let operation = self.clause_anchor(guard.operation(), location)?;
+            let point_anchor = guard_anchors
+                .iter()
+                .find(|(held, _)| *held == operation)
+                .map(|(_, anchor)| anchor.clone());
             let mut parts = Vec::with_capacity(guard.parts().len());
             // A covered guard is its always-holding part: the disjuncts that
             // constrain no clock add nothing (FSpec `GJ-03`).
@@ -196,6 +228,7 @@ impl Lowering<'_> {
                 }
                 None => guards.push(GuardNodes {
                     operation,
+                    point_anchor,
                     span: guard.span(),
                     parts,
                 }),
@@ -206,6 +239,10 @@ impl Lowering<'_> {
             let location = clause_at(written.index)?;
             let context = written.context.clone();
             let operation = self.clause_anchor(written.operation(), location)?;
+            let point_anchor = reset_anchors
+                .iter()
+                .find(|(held, _)| *held == operation)
+                .map(|(_, anchor)| anchor.clone());
             for reset in written.resets() {
                 let target = match reset.parameter() {
                     Some(position) => ResetTargetNodes::Parameter {
@@ -249,6 +286,7 @@ impl Lowering<'_> {
                 };
                 resets.push(ResetNodes {
                     operation: operation.clone(),
+                    point_anchor: point_anchor.clone(),
                     target,
                     value: reset.value().clone(),
                     span: reset.span(),
@@ -333,6 +371,31 @@ impl Lowering<'_> {
             reference: location,
         };
         Ok(self.operation_anchor(&anchor, None, location)?.anchor)
+    }
+
+    /// FSpec FR-342-AC-13: the point-qualified `operation_anchor` a
+    /// point-bound guard or reset names by its final `point_anchor` binding,
+    /// the anchor its state clause binds; `None` for a point-free clause. The
+    /// clause names it already, so the reference adds no occurrence.
+    fn point_anchor(
+        &mut self,
+        operation: &ClauseOperation,
+        point: Option<&AcceptedPoint>,
+        location: &Location,
+    ) -> Result<Option<NodeKey>, CheckRefusal> {
+        let Some(point) = point else {
+            return Ok(None);
+        };
+        let anchor = super::AnchorInput {
+            declaring: operation.declaring.clone(),
+            operation: &operation.declaration,
+            location,
+            reference: location,
+        };
+        Ok(Some(
+            self.operation_anchor(&anchor, Some(point), location)?
+                .anchor,
+        ))
     }
 
     /// The nodes of a guard part's constraint.

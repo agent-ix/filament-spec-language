@@ -654,8 +654,6 @@ pub(crate) fn clock_selections(
                     clause: selection.clause.clone(),
                 })?,
         };
-        // One request clock cannot serve traces over different models
-        // (FR-640, FR-763): the emitter does not derive one per trace.
         if let Some(hyper) = checked
             .package()
             .graph()
@@ -663,6 +661,8 @@ pub(crate) fn clock_selections(
             .iter()
             .find(|hyper| hyper.name() == selection.clause)
         {
+            // One request clock cannot serve traces over different models
+            // (FR-517, FR-640): each trace's clock is derived from its model.
             let mut aliases = Vec::new();
             for quantifier in hyper.quantifiers() {
                 if !aliases.contains(&&quantifier.alias) {
@@ -672,6 +672,18 @@ pub(crate) fn clock_selections(
             if aliases.len() > 1 {
                 return Err(per_trace_clocks(checked, &selection.clause, span));
             }
+            // FR-640: one row per quantified trace, each with the one
+            // clock its single model reads.
+            for quantifier in hyper.quantifiers() {
+                let mut traced = fsl_package::TemporalClockSelection::new(
+                    checked.source().reference().clone(),
+                    span,
+                    selection.clock.clone(),
+                );
+                traced.trace = Some(quantifier.variable.as_str().into());
+                joined.push(traced);
+            }
+            continue;
         }
         joined.push(fsl_package::TemporalClockSelection::new(
             checked.source().reference().clone(),
@@ -679,11 +691,31 @@ pub(crate) fn clock_selections(
             selection.clock.clone(),
         ));
     }
+    // A hyper clause's model-derived selections (FR-640) are not written to a
+    // handoff: derive them as the compile does, for each hyper clause no name
+    // selects.
+    let hypers = checked.package().graph().hyper_clauses();
+    let derived = spine::RequestClocks::model_selections(checked.package()).map_err(|refusal| {
+        Error::Producer(Box::new(ReplayRefusal::Recompile {
+            refusal,
+            pointer: None,
+        }))
+    })?;
+    let named: Vec<fsl_foundation::Span> =
+        joined.iter().map(|held| held.declaration_span).collect();
+    for selection in derived {
+        let hyper = hypers
+            .iter()
+            .any(|hyper| hyper.span() == selection.declaration_span);
+        if hyper && !named.contains(&selection.declaration_span) {
+            joined.push(selection);
+        }
+    }
     Ok(joined)
 }
 
-/// The implementation-gap refusal of a hyper clause whose quantified traces
-/// range over more than one model.
+/// The refusal of an explicit clause-name clock selection for a hyper clause
+/// whose quantified traces range over more than one model (FR-517).
 fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::Span) -> Error {
     let region = fsl_foundation::source::provenance::SourceRegion::new(
         checked.source().reference().clone(),
