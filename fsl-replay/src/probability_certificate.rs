@@ -1402,12 +1402,12 @@ struct CheckerGraph {
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
 }
 
-/// Check exact reachability values on a checker-owned acyclic graph.
+/// Check exact reachability values on a checker-owned graph.
 ///
 /// The graph representation and this evaluator are independent of
-/// `fsl-analyze`; this core performs no policy iteration or linear algebra.
-/// Cyclic graphs are rejected until FR-201's unbounded graph checks are
-/// implemented.
+/// `fsl-analyze`. Closed nonprogressive action components are reconstructed
+/// here and checked against their best exit values before ordinary Bellman
+/// equations are checked.
 fn check_exact_reachability(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
@@ -1422,23 +1422,99 @@ fn check_exact_reachability(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    let order = topological_order(graph, cancel)?;
-
     let zero = rational(0);
     let one = rational(1);
-    let mut computed = BTreeMap::new();
-    for key in order.into_iter().rev() {
+    let components = nonprogressive_end_components(graph, cancel)?;
+    let mut component_of = BTreeMap::new();
+    for (component, members) in components.iter().enumerate() {
+        for key in members {
+            component_of.insert(key.clone(), component);
+        }
+    }
+    for members in &components {
         poll_cancel(cancel)?;
-        let Some(state) = graph.states.get(&key) else {
-            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
-        };
+        let member_set = members.iter().cloned().collect::<BTreeSet<_>>();
+        let mut exit_values = Vec::new();
+        for key in members {
+            let Some(state) = graph.states.get(key) else {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            };
+            for choice in &state.choices {
+                poll_cancel(cancel)?;
+                let mut mass = zero.clone();
+                let mut internal = zero.clone();
+                let mut outside = zero.clone();
+                for edge in choice {
+                    poll_cancel(cancel)?;
+                    if edge.probability < zero {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    }
+                    if edge.probability == zero {
+                        continue;
+                    }
+                    let Some(successor) = values.get(&edge.target) else {
+                        return Ok(rejected(
+                            ProbabilityCertificateRule::InequalityFails,
+                            key.clone(),
+                        ));
+                    };
+                    mass = mass.add(&edge.probability);
+                    if member_set.contains(&edge.target) {
+                        internal = internal.add(&edge.probability);
+                    } else {
+                        outside = outside.add(&edge.probability.mul(successor));
+                    }
+                }
+                if mass != one {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        key.clone(),
+                    ));
+                }
+                let denominator = one.sub(&internal);
+                if !denominator.is_zero() {
+                    exit_values.push(outside.div(&denominator));
+                }
+            }
+        }
+        let actual = match objective {
+            ProbabilityObjective::Minimum => exit_values.into_iter().min(),
+            ProbabilityObjective::Maximum => exit_values.into_iter().max(),
+            ProbabilityObjective::Workload => {
+                return Err(ExactProbabilityGraphError::UnsupportedClaimForm);
+            }
+        }
+        .unwrap_or_else(|| zero.clone());
+        for key in members {
+            if values.get(key) != Some(&actual) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            }
+        }
+    }
+    for (key, state) in &graph.states {
+        poll_cancel(cancel)?;
+        if component_of.contains_key(key) {
+            continue;
+        }
         let actual = if let Some(target) = state.terminal {
             if target { one.clone() } else { zero.clone() }
         } else {
             if state.choices.is_empty()
                 || (objective == ProbabilityObjective::Workload && state.choices.len() != 1)
             {
-                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
             }
             let mut choice_values = Vec::with_capacity(state.choices.len());
             for choice in &state.choices {
@@ -1456,7 +1532,7 @@ fn check_exact_reachability(
                     if edge.probability == zero {
                         continue;
                     }
-                    let Some(successor) = computed.get(&edge.target) else {
+                    let Some(successor) = values.get(&edge.target) else {
                         return Ok(rejected(
                             ProbabilityCertificateRule::InequalityFails,
                             key.clone(),
@@ -1480,16 +1556,18 @@ fn check_exact_reachability(
             }
             .unwrap_or_else(|| zero.clone())
         };
-        let Some(certified) = values.get(&key) else {
-            return Ok(rejected(ProbabilityCertificateRule::Malformed, key));
+        let Some(certified) = values.get(key) else {
+            return Ok(rejected(ProbabilityCertificateRule::Malformed, key.clone()));
         };
         if actual != *certified {
-            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
         }
-        computed.insert(key, actual);
     }
 
-    let Some(initial) = computed.get(&graph.initial) else {
+    let Some(initial) = values.get(&graph.initial) else {
         return Ok(rejected(
             ProbabilityCertificateRule::InequalityFails,
             graph.initial.clone(),
@@ -1567,66 +1645,184 @@ fn certificate_values(
     Ok(CertificateValues::Complete(values))
 }
 
-fn topological_order(
+/// Independently enumerate the maximal checker-side components whose action
+/// support is closed and does not advance the checked deadline clock.
+fn nonprogressive_end_components(
     graph: &CheckerGraph,
     cancel: &Cancel,
-) -> Result<Vec<ProbabilityProductKey>, ExactProbabilityGraphError> {
+) -> Result<Vec<Vec<ProbabilityProductKey>>, ExactProbabilityGraphError> {
+    let keys = graph.states.keys().cloned().collect::<Vec<_>>();
+    let indices = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| (key.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut pending = vec![(0..keys.len()).collect::<BTreeSet<_>>()];
+    let mut result = Vec::new();
     let zero = rational(0);
-    let mut indegree = BTreeMap::new();
-    for key in graph.states.keys() {
-        poll_cancel(cancel)?;
-        indegree.insert(key.clone(), 0_usize);
-    }
-    for state in graph.states.values() {
-        for edge in state.choices.iter().flatten() {
+    while let Some(mut candidate) = pending.pop() {
+        loop {
             poll_cancel(cancel)?;
-            if edge.probability == zero {
-                continue;
+            let mut retained = BTreeSet::new();
+            for state_index in &candidate {
+                let Some(key) = keys.get(*state_index) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let Some(state) = graph.states.get(key) else {
+                    return Err(ExactProbabilityGraphError::MissingSuccessor);
+                };
+                let mut has_internal_action = false;
+                for choice in &state.choices {
+                    if internal_nonprogressive_choice(key, choice, &candidate, &indices, &zero)? {
+                        has_internal_action = true;
+                        break;
+                    }
+                }
+                if has_internal_action {
+                    retained.insert(*state_index);
+                }
             }
-            let Some(count) = indegree.get_mut(&edge.target) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            *count = count
-                .checked_add(1)
-                .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+            if retained == candidate {
+                break;
+            }
+            candidate = retained;
+            if candidate.is_empty() {
+                break;
+            }
+        }
+        if candidate.is_empty() {
+            continue;
+        }
+        let mut adjacency = vec![Vec::new(); keys.len()];
+        let mut reverse = vec![Vec::new(); keys.len()];
+        for state_index in &candidate {
+            let key = keys
+                .get(*state_index)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            for choice in &state.choices {
+                if !internal_nonprogressive_choice(key, choice, &candidate, &indices, &zero)? {
+                    continue;
+                }
+                for edge in choice.iter().filter(|edge| edge.probability > zero) {
+                    let target = *indices
+                        .get(&edge.target)
+                        .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+                    adjacency[*state_index].push(target);
+                    reverse[target].push(*state_index);
+                }
+            }
+        }
+        let components = restricted_components(&candidate, &adjacency, &reverse, cancel)?;
+        if components.len() == 1 && components[0] == candidate {
+            result.push(candidate.iter().map(|index| keys[*index].clone()).collect());
+        } else {
+            pending.extend(components);
         }
     }
-    let mut ready = BTreeSet::new();
-    for (key, degree) in &indegree {
-        poll_cancel(cancel)?;
-        if *degree == 0 {
-            ready.insert(key.clone());
-        }
-    }
-    let mut order = Vec::with_capacity(graph.states.len());
-    while let Some(key) = ready.pop_first() {
-        poll_cancel(cancel)?;
-        order.push(key.clone());
-        let Some(state) = graph.states.get(&key) else {
+    result.sort_by(|left, right| left.first().cmp(&right.first()));
+    Ok(result)
+}
+
+fn internal_nonprogressive_choice(
+    source: &ProbabilityProductKey,
+    choice: &ProbabilityChoice,
+    candidate: &BTreeSet<usize>,
+    indices: &BTreeMap<ProbabilityProductKey, usize>,
+    zero: &Rational,
+) -> Result<bool, ExactProbabilityGraphError> {
+    let mut has_support = false;
+    for edge in choice.iter().filter(|edge| edge.probability > *zero) {
+        has_support = true;
+        let Some(target) = indices.get(&edge.target) else {
             return Err(ExactProbabilityGraphError::MissingSuccessor);
         };
-        for edge in state.choices.iter().flatten() {
+        if !candidate.contains(target) || deadline_advances(source, &edge.target) {
+            return Ok(false);
+        }
+    }
+    Ok(has_support)
+}
+
+/// Whether a checker-key edge advances the deadline's elapsed clock.
+fn deadline_advances(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
+    fn elapsed(key: &ProbabilityProductKey) -> Option<String> {
+        let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
+        let timed = root.get(2)?.get(1)?;
+        let deadline = timed.get(5)?.as_array()?;
+        if deadline.first()?.as_str()? != "deadline" {
+            return None;
+        }
+        deadline.get(2)?.as_str().map(ToOwned::to_owned)
+    }
+    match (elapsed(from), elapsed(to)) {
+        (Some(from), Some(to)) => from != to,
+        _ => false,
+    }
+}
+
+fn restricted_components(
+    allowed: &BTreeSet<usize>,
+    adjacency: &[Vec<usize>],
+    reverse: &[Vec<usize>],
+    cancel: &Cancel,
+) -> Result<Vec<BTreeSet<usize>>, ExactProbabilityGraphError> {
+    let mut visited = vec![false; adjacency.len()];
+    let mut order = Vec::with_capacity(allowed.len());
+    for root in allowed {
+        poll_cancel(cancel)?;
+        if visited.get(*root).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(slot) = visited.get_mut(*root) {
+            *slot = true;
+        }
+        let mut work = vec![(*root, 0_usize)];
+        while let Some((state, cursor)) = work.pop() {
             poll_cancel(cancel)?;
-            if edge.probability == zero {
-                continue;
-            }
-            let Some(count) = indegree.get_mut(&edge.target) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            let Some(remaining) = count.checked_sub(1) else {
-                return Err(ExactProbabilityGraphError::MissingSuccessor);
-            };
-            *count = remaining;
-            if *count == 0 {
-                ready.insert(edge.target.clone());
+            let successors = adjacency
+                .get(state)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
+            if let Some(target) = successors.get(cursor).copied() {
+                work.push((state, cursor + 1));
+                if allowed.contains(&target) && !visited[target] {
+                    visited[target] = true;
+                    work.push((target, 0));
+                }
+            } else {
+                order.push(state);
             }
         }
     }
-    if order.len() == graph.states.len() {
-        Ok(order)
-    } else {
-        Err(ExactProbabilityGraphError::Cycle)
+    visited.fill(false);
+    let mut components = Vec::new();
+    for root in order.into_iter().rev() {
+        poll_cancel(cancel)?;
+        if visited[root] {
+            continue;
+        }
+        visited[root] = true;
+        let mut component = BTreeSet::new();
+        let mut work = vec![root];
+        while let Some(state) = work.pop() {
+            poll_cancel(cancel)?;
+            component.insert(state);
+            for predecessor in reverse
+                .get(state)
+                .ok_or(ExactProbabilityGraphError::MissingSuccessor)?
+            {
+                if allowed.contains(predecessor) && !visited[*predecessor] {
+                    visited[*predecessor] = true;
+                    work.push(*predecessor);
+                }
+            }
+        }
+        components.push(component);
     }
+    Ok(components)
 }
 
 fn poll_cancel(cancel: &Cancel) -> Result<(), ExactProbabilityGraphError> {
@@ -1700,6 +1896,166 @@ mod tests {
             },
         );
         CheckerGraph { initial, states }
+    }
+
+    fn zero_time_mec_graph() -> CheckerGraph {
+        let initial = key(0);
+        let accepted = key(1);
+        let rejected = key(2);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![
+                    vec![edge(0, 1, 1)],
+                    vec![edge(1, 1, 1)],
+                    vec![edge(2, 1, 1)],
+                ],
+            },
+        );
+        states.insert(
+            accepted,
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        states.insert(
+            rejected,
+            CheckerState {
+                terminal: Some(false),
+                choices: Vec::new(),
+            },
+        );
+        CheckerGraph { initial, states }
+    }
+
+    fn zero_time_mec_certificate(initial: i64) -> ExactProbabilityCertificate {
+        ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(initial),
+                },
+                ExactProbabilityValue {
+                    state: key(1),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: key(2),
+                    value: rational(0),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn checker_reconstructs_action_level_zero_time_mec_best_exit() {
+        let graph = zero_time_mec_graph();
+        let minimum = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(0),
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(0)),
+            &Cancel::new(),
+        )
+        .expect("checker evaluates the minimum MEC exit");
+        assert!(matches!(
+            minimum,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let maximum = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(1),
+            ProbabilityObjective::Maximum,
+            &Bound::AtLeast(rational(1)),
+            &Cancel::new(),
+        )
+        .expect("checker evaluates the maximum MEC exit");
+        assert!(matches!(
+            maximum,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let forged = check_exact_reachability(
+            &graph,
+            &zero_time_mec_certificate(1),
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(0)),
+            &Cancel::new(),
+        )
+        .expect("a non-optimal MEC value is a typed rejection");
+        assert!(matches!(
+            forged,
+            ExactProbabilityCertificateCheck::Rejected(_)
+        ));
+    }
+
+    #[test]
+    fn checker_does_not_collapse_a_leaky_zero_time_cycle() {
+        let initial = key(0);
+        let target = key(1);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![vec![edge(0, 1, 2), edge(1, 1, 2)]],
+            },
+        );
+        states.insert(
+            target.clone(),
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        let graph = CheckerGraph { initial, states };
+        let certificate = ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: target,
+                    value: rational(1),
+                },
+            ],
+        };
+        let checked = check_exact_reachability(
+            &graph,
+            &certificate,
+            ProbabilityObjective::Minimum,
+            &Bound::AtLeast(rational(1)),
+            &Cancel::new(),
+        )
+        .expect("the leaky cycle has an exact checker value");
+        assert!(matches!(
+            checked,
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+    }
+
+    #[test]
+    fn checker_mec_progress_uses_the_checked_deadline_clock() {
+        let key = |elapsed| {
+            digital_probability_product_key(DigitalProductKeyInput {
+                binding: None,
+                discrete: json!([]),
+                unit: json!("second"),
+                scale: 1,
+                clocks: Vec::new(),
+                deadline: Some(DigitalDeadlineKey { limit: 2, elapsed }),
+                tail: DigitalTail::Running,
+                monitor: Some(json!(["deadline", "eventually", "pending"])),
+                accumulator: None,
+                pending: None,
+            })
+            .expect("digital timed keys are valid")
+        };
+        assert!(!deadline_advances(&key(0), &key(0)));
+        assert!(deadline_advances(&key(0), &key(1)));
     }
 
     fn certificate(initial_value: Rational) -> ExactProbabilityCertificate {
