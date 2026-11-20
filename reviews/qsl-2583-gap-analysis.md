@@ -36,3 +36,9 @@ Reverse-gap and stub review covered the changed source and test paths. Decimal p
 
 - `spec/functional/FR-056-admit-domain-package-model-declarations.md`: AC-43, AC-63, AC-66, AC-67, AC-68, AC-71, AC-72 and the Decimal value-type rule.
 - All nine changed paths in PR #3138, with reverse-gap and stub inspection focused on the changed behavior.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `amount_decimal_native_alias_has_its_policy_and_checks_equality` is an active test tagged to FR-056-AC-63. It checks the named Amount alias's policy-derived field type and evaluates `self.amount = self.amount`; the original ignored test no longer stands as the only AC-63 binder. |

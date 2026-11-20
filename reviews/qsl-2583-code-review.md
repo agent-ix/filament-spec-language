@@ -35,3 +35,9 @@ The direct Decimal reader validates policy precision/scale and constraint coeffi
 - Examined FR-056-AC-43, AC-63, AC-66, AC-67, AC-68, AC-71, and AC-72 and the changed source/test files listed in `scope`.
 - Rust style and safety references were applied. No applicable AssuranceProfile was found.
 - The workspace CI configuration was not changed.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `decimal_type_for_identity` now walks aliases iteratively, uses the indexed identity map and cache, and detects cycles without recursive calls. The 4,096-alias regression fixture covers a long chain. |
