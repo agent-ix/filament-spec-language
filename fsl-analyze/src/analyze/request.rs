@@ -954,6 +954,9 @@ fn work<'a>(
                 form,
                 limits.accounting.work_units,
                 limits.deadline,
+                engines.options().provider_limits,
+                engines.manifest_wire(),
+                item.candidates.iter().map(|candidate| candidate.id().clone()).collect(),
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,

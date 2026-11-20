@@ -14,6 +14,7 @@ use fsl_package::{read_hybrids, HybridRead, ReadHybridClaim};
 use quire_canonical::Limits;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -120,9 +121,18 @@ pub struct HybridProcessItem {
     extent: Value,
     candidates: Value,
     budget: SolverBudget,
+    options: BTreeMap<String, String>,
 }
 
 impl HybridProcessItem {
+    /// The item's FSpec FR-331 `options`, names and string values as the
+    /// analyze request wrote them. An item with none writes no member.
+    #[must_use]
+    pub fn with_options(mut self, options: BTreeMap<String, String>) -> Self {
+        self.options = options;
+        self
+    }
+
     /// Construct an item from the claim locus, extent and negotiated
     /// candidates already prepared by the request writer.
     /// The claim's node uses document-held indices, never node-local operand slots.
@@ -139,9 +149,34 @@ impl HybridProcessItem {
             extent,
             candidates,
             budget,
+            options: BTreeMap::new(),
         }
     }
 }
+
+/// A dependency package of the proved package's recursively derived
+/// closure (FSpec FR-331 "Package bytes"): its identity and v2 bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HybridProcessDependency {
+    /// The package's name, its identity.
+    pub identity: String,
+    /// The package's RFC 8785 v2 bytes.
+    pub package: Vec<u8>,
+}
+
+/// What the FSpec FR-331 request stage carries beside the items: the registry
+/// snapshot the items' candidates are checked against (FSL FR-635) and the
+/// package's dependency closure.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HybridProcessStage {
+    /// One FSpec FR-331 `BackendDescriptor` per registered backend.
+    pub manifest: Vec<Value>,
+    /// The closure, written only when it is not empty.
+    pub dependencies: Vec<HybridProcessDependency>,
+}
+
+const CONTRACT_VERSION: &str = "filament.backend-provider/v1";
+const CAPABILITY_VOCABULARY: &str = "filament.capability-kind/v1";
 
 /// Why a process hybrid request could not be composed or read.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -178,8 +213,17 @@ pub struct HybridProcessRequest(Vec<u8>);
 #[serde(deny_unknown_fields)]
 struct ProcessRequestWire {
     package: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dependencies: Vec<ProcessDependencyWire>,
     deadline_ms: u64,
     items: Vec<ProcessRequestItemWire>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessDependencyWire {
+    identity: String,
+    package: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -193,6 +237,8 @@ struct ProcessRequestItemWire {
     requirements: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hybrid: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    options: BTreeMap<String, String>,
 }
 
 impl HybridProcessRequest {
@@ -204,8 +250,17 @@ impl HybridProcessRequest {
         context: &HybridProcessPackageContext,
         deadline_ms: u64,
         items: &[HybridProcessItem],
+        stage: &HybridProcessStage,
     ) -> Result<Self, HybridProcessRequestRefusal> {
         admit_package(package, context)?;
+        if stage.manifest.is_empty() {
+            return Err(HybridProcessRequestRefusal::MalformedRequest);
+        }
+        let mut dependencies: Vec<&HybridProcessDependency> = stage.dependencies.iter().collect();
+        dependencies.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
+        if dependencies.windows(2).any(|pair| pair[0].identity == pair[1].identity) {
+            return Err(HybridProcessRequestRefusal::MalformedRequest);
+        }
         let mut wire_items = Vec::with_capacity(items.len());
         for (position, item) in items.iter().enumerate() {
             let position = u64::try_from(position)
@@ -224,6 +279,7 @@ impl HybridProcessRequest {
                 candidates: item.candidates.clone(),
                 requirements: vec!["hybrid-dynamics".to_owned()],
                 hybrid,
+                options: item.options.clone(),
             });
         }
         if wire_items.is_empty() {
@@ -231,11 +287,24 @@ impl HybridProcessRequest {
         }
         let request = ProcessRequestWire {
             package: URL_SAFE_NO_PAD.encode(package),
+            dependencies: dependencies
+                .into_iter()
+                .map(|dependency| ProcessDependencyWire {
+                    identity: dependency.identity.clone(),
+                    package: URL_SAFE_NO_PAD.encode(&dependency.package),
+                })
+                .collect(),
             deadline_ms,
             items: wire_items,
         };
         let request = serde_json::to_value(request)
             .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
+        let request = serde_json::json!({
+            "contract_version": CONTRACT_VERSION,
+            "capability_vocabulary": CAPABILITY_VOCABULARY,
+            "manifest": stage.manifest,
+            "request": request,
+        });
         let bytes = quire_canonical::to_vec(&request, Limits::new(u64::MAX))
             .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
         let composed = Self(bytes);
@@ -256,8 +325,43 @@ impl HybridProcessRequest {
         bytes: &[u8],
         context: &HybridProcessPackageContext,
     ) -> Result<AdmittedHybridProcessRequest, HybridProcessRequestRefusal> {
-        let wire: ProcessRequestWire = serde_json::from_slice(bytes)
+        let stage: Value = serde_json::from_slice(bytes)
             .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
+        let members = stage
+            .as_object()
+            .filter(|members| {
+                members.len() == 4
+                    && members.get("contract_version").and_then(Value::as_str)
+                        == Some(CONTRACT_VERSION)
+                    && members.get("capability_vocabulary").and_then(Value::as_str)
+                        == Some(CAPABILITY_VOCABULARY)
+                    && members
+                        .get("manifest")
+                        .and_then(Value::as_array)
+                        .is_some_and(|manifest| !manifest.is_empty())
+            })
+            .ok_or(HybridProcessRequestRefusal::MalformedRequest)?;
+        let wire: ProcessRequestWire = members
+            .get("request")
+            .cloned()
+            .ok_or(HybridProcessRequestRefusal::MalformedRequest)
+            .and_then(|request| {
+                serde_json::from_value(request)
+                    .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)
+            })?;
+        let mut previous: Option<&str> = None;
+        for dependency in &wire.dependencies {
+            let bytes = URL_SAFE_NO_PAD
+                .decode(&dependency.package)
+                .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
+            if URL_SAFE_NO_PAD.encode(&bytes) != dependency.package
+                || previous.is_some_and(|before| before.as_bytes() >= dependency.identity.as_bytes())
+            {
+                return Err(HybridProcessRequestRefusal::MalformedRequest);
+            }
+            admit_package(&bytes, context)?;
+            previous = Some(&dependency.identity);
+        }
         let package_bytes = URL_SAFE_NO_PAD
             .decode(&wire.package)
             .map_err(|_| HybridProcessRequestRefusal::MalformedRequest)?;
@@ -342,10 +446,16 @@ impl HybridProcessRequest {
                 ),
                 claim: claim.clone(),
                 budget,
+                options: item.options.clone(),
             });
         }
         Ok(AdmittedHybridProcessRequest {
             package,
+            manifest: members
+                .get("manifest")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
             hybrids,
             items: admitted_items,
         })
@@ -356,11 +466,17 @@ impl HybridProcessRequest {
 #[derive(Debug)]
 pub struct AdmittedHybridProcessRequest {
     package: Box<CheckedPackageV2>,
+    manifest: Vec<Value>,
     hybrids: HybridRead,
     items: Vec<AdmittedHybridProcessItem>,
 }
 
 impl AdmittedHybridProcessRequest {
+    /// The registry snapshot the request carries.
+    pub fn manifest(&self) -> &[Value] {
+        &self.manifest
+    }
+
     /// The package admitted from `request.package`.
     pub fn package(&self) -> &CheckedPackageV2 {
         &self.package
@@ -424,6 +540,7 @@ pub struct AdmittedHybridProcessItem {
     request_index: RequestIndex,
     claim: ReadHybridClaim,
     budget: SolverBudget,
+    options: BTreeMap<String, String>,
 }
 
 impl AdmittedHybridProcessItem {
@@ -440,6 +557,11 @@ impl AdmittedHybridProcessItem {
     /// The limits the request supplied; absent fields remain unset.
     pub fn budget(&self) -> SolverBudget {
         self.budget
+    }
+
+    /// The item's FSpec FR-331 `options`.
+    pub fn options(&self) -> &BTreeMap<String, String> {
+        &self.options
     }
 }
 

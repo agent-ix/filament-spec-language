@@ -3582,6 +3582,20 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             cause.insert("where".to_owned(), at.clone());
         }
     }
+    // FR-450 "Settlement": a `hybrid-trace` disagreement retains the complete
+    // counterexample replay did not agree with.
+    if let Some(found) = detail
+        .as_ref()
+        .and_then(|detail| detail.hybrid_disagreement.as_ref())
+    {
+        if let Some(Value::Object(disagreement)) = record
+            .get_mut("cause")
+            .and_then(|cause| cause.get_mut("parity"))
+            .and_then(|parity| parity.get_mut("disagreement"))
+        {
+            disagreement.insert("counterexample".to_owned(), found.clone());
+        }
+    }
     // FR-621: `settled_by`, and `backend` exactly when a result settled
     // the record.
     if let Some(stated) = memory_bound {

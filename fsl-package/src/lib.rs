@@ -67,7 +67,11 @@ mod obligation_identity;
 #[cfg(feature = "std")]
 mod probabilistic_read;
 #[cfg(feature = "std")]
+mod source_model_read;
+#[cfg(feature = "std")]
 pub use probabilistic_read::ProbabilisticReadFault;
+#[cfg(feature = "std")]
+pub use source_model_read::{SourceModel, SourceModelFault, UnreadSourceParameter};
 #[cfg(feature = "std")]
 pub mod number;
 #[cfg(feature = "std")]

@@ -1937,19 +1937,28 @@ fn a_recursion_group_holding_an_application_is_written() {
     }
 }
 
-/// FR-322 admits no empty semantic graph: an empty package refuses with no
-/// bytes.
+/// FR-746 refuses an empty checked graph before emission.
 #[trace("FR-093-AC-7", "TC-416")]
 #[test]
-fn a_package_with_nothing_writable_refuses() {
-    let empty = emit_package(&package(Vec::new()), whole_unit).unwrap_err();
-    assert_eq!(
-        empty,
-        EmitRefusal::NothingToEmit {
-            omitted: Vec::new()
-        }
-    );
-    assert_eq!(empty.code(), Code::UnsupportedProjection);
+fn an_empty_package_refuses_during_check() {
+    let refusals = PackageDeclarations::new(
+        source(),
+        "pkg",
+        fsl_foundation::IdentityLimits::default(),
+    )
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
+    .expect_err("an empty package has no graph to emit");
+    assert!(matches!(
+        refusals.as_slice(),
+        [CheckRefusal {
+            cause: fsl_semantics::check::CheckCause::EmptyPackage { .. },
+            ..
+        }]
+    ));
 }
 
 /// An occurrence the caller's region conversion cannot place refuses the

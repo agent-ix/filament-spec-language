@@ -151,6 +151,33 @@ impl ValueFault {
 }
 
 impl PluginResultRefusal {
+    /// The FR-272 `(code, cause)` pair of this refusal and its pointer, the
+    /// structured form of [`Self::diagnostic`]: `invalid_result` with the
+    /// cause its table gives and the pointer it names, or
+    /// `unknown_required_feature`/`unsupported-feature` with the pointer of
+    /// the unsupported value.
+    pub fn catalog(&self) -> (&'static str, &'static str, Option<&str>) {
+        const INVALID: &str = "invalid_result";
+        match self {
+            Self::FslOnlyCause(_) => (INVALID, "unknown-cause", Some("/cause/type")),
+            Self::CoreOnlyBasis => (INVALID, "unknown-cause", Some("/basis/type")),
+            Self::UnknownSpelling { pointer } => (INVALID, "unknown-cause", Some(pointer)),
+            Self::MissingMember { pointer } => (INVALID, "missing-member", Some(pointer)),
+            Self::MissingCounterexample { pointer, cause } | Self::Malformed { pointer, cause } => {
+                (INVALID, cause.as_str(), Some(pointer))
+            }
+            Self::UnknownMember { pointer } => (INVALID, "unknown-member", Some(pointer)),
+            Self::CertificationNotTrusted { .. } => {
+                (INVALID, "certification-mismatch", Some("/certification"))
+            }
+            Self::Unsupported { pointer, .. } => (
+                "unknown_required_feature",
+                "unsupported-feature",
+                Some(pointer),
+            ),
+        }
+    }
+
     /// The outcome-document diagnostic for this refusal (FR-290
     /// "Diagnostics", ADR-029 CB-4), with the FR-272 code and cause the table
     /// gives. Every `invalid_result` cause names `document_pointer`, the

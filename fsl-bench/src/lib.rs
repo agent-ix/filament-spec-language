@@ -50,6 +50,8 @@ pub mod kernel;
 pub mod mc;
 pub mod model;
 pub mod parse;
+#[cfg(feature = "property-generators")]
+pub mod prop;
 pub mod recursion;
 pub mod rss;
 pub mod text_cluster;

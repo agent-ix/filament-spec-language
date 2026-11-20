@@ -9,10 +9,10 @@
 use super::*;
 use std::collections::BTreeSet;
 
-fn fixtures_directory() -> std::path::PathBuf {
-    fspec_directory()
-        .expect("pinned FSpec publishes protocol fixtures")
-        .join("proposals/checked-package-v2/fixtures")
+fn fixtures_directory() -> (tempfile::TempDir, std::path::PathBuf) {
+    let view = fspec_directory();
+    let fixtures = view.path().join("proposals/checked-package-v2/fixtures");
+    (view, fixtures)
 }
 
 fn unescape(segment: &str) -> String {
@@ -508,7 +508,7 @@ fn pending_is_executed(id: &str, layout_ids: &BTreeSet<&str>) -> bool {
 #[trace("FR-383-AC-20", "TC-1063")]
 #[test]
 fn conformance_protocol_mutation_manifest_replays_through_i2() {
-    let directory = fixtures_directory();
+    let (_view, directory) = fixtures_directory();
     let manifest = read_fixture(&directory.join("protocol-node-mutation-manifest.json"));
     let layout = read_fixture(&directory.join("protocol-node-layout-rows.json"));
     assert_eq!(

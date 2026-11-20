@@ -7970,10 +7970,29 @@ fn source_object_rows(
                             node.clone(),
                             parameter.presence == filament_exact::Presence::Optional,
                         ),
-                        None => SelectedSourceObjectMember::clock(
-                            name,
-                            parameter.value_type.to_string(),
-                        ),
+                        None => {
+                            let collections = collection_layers(&parameter.multiplicity);
+                            let element = parameter.value_type.to_string();
+                            let rendering = match collections.first() {
+                                Some(layer) => {
+                                    let wrapper =
+                                        crate::source_model_read::collection_wrapper(&layer.kind)
+                                            .ok_or(EmitRefusal::SourceMapInvariant)?;
+                                    // The wrapper encloses the element's spelling, and the
+                                    // `resolved:` marker leads the whole rendering.
+                                    match element.strip_prefix("resolved:") {
+                                        Some(element) => {
+                                            format!("resolved:{wrapper}<{element}>")
+                                        }
+                                        None => format!("{wrapper}<{element}>"),
+                                    }
+                                }
+                                None => element,
+                            };
+                            let mut member = SelectedSourceObjectMember::clock(name, rendering);
+                            member.collections = collections;
+                            member
+                        }
                     })
                 })
                 .collect::<Result<Vec<_>, EmitRefusal>>()?;
@@ -9766,3 +9785,29 @@ pub(crate) mod protocol_locations;
 pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;
+
+/// The collection layer of a source operation parameter whose multiplicity is
+/// not exactly one value (FR-789 "Rendering"): the kind its ordering and
+/// uniqueness spell and its bounds, so a reader rebuilds the multiplicity the
+/// rendering of the element type does not carry. A single-valued parameter has
+/// no layer.
+fn collection_layers(
+    multiplicity: &fsl_semantics::model::domain_package::Multiplicity,
+) -> Vec<filament_contract_model::SelectedClockCollectionLayer> {
+    if multiplicity.lower == 1 && multiplicity.upper == Some(1) {
+        return Vec::new();
+    }
+    let kind = match (multiplicity.ordered, multiplicity.unique) {
+        (true, false) => "sequence",
+        (false, true) => "set",
+        (true, true) => "ordered_set",
+        (false, false) => "bag",
+    };
+    vec![filament_contract_model::SelectedClockCollectionLayer {
+        kind: kind.into(),
+        minimum: multiplicity.lower.to_string().into(),
+        maximum: multiplicity
+            .upper
+            .map_or_else(|| "unbounded".into(), |upper| upper.to_string().into()),
+    }]
+}

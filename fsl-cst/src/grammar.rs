@@ -4,6 +4,9 @@ use std::collections::BTreeMap;
 
 use super::{ExtensionForms, ExtensionProduction, Production as P};
 
+#[cfg(feature = "test-support")]
+pub mod generate;
+
 /// The built-in time type's spelling (FR-393).
 const CLOCK: &str = "Clock";
 

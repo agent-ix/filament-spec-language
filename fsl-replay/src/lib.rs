@@ -227,7 +227,7 @@ pub use hybrid::{
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
-    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
+    HybridProcessDependency, HybridProcessStage, HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSettlement, HybridSolveRequest,
     HybridVerdict, NegativeHorizon, OptionRefusal, SolverBudget, SolverCoverage, SolverHorizon, SolverMethod,
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };

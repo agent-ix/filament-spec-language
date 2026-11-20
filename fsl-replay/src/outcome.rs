@@ -51,7 +51,7 @@ use crate::proof_result::{
     ReportedInconclusiveCause, StaleIdentity, SymmetryBrokenCause, TerminalRecord, TerminalValue,
     UnavailabilityCause, WeakAccessFailure,
 };
-use crate::result::ReplayResult;
+use crate::result::{DisagreementCause, ReplayResult};
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
     classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
@@ -253,11 +253,22 @@ pub enum OutcomeItemError {
     Unspelled(#[from] CounterexampleWireError),
 }
 
+/// The `type` of a `hybrid-trace` disagreement (FR-450 "Settlement").
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HybridDisagreementType {
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
 /// Why a replay settled inconclusive: its disagreement reason and the two
 /// verdicts' categories.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ParityReason {
     reason: &'static str,
+    /// A `hybrid-trace` reason's FR-450 disagreement: why exact replay did
+    /// not reproduce the provider's counterexample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disagreement: Option<HybridDisagreementType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     proved: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -858,6 +869,14 @@ impl ItemCause {
             ReportedInconclusiveCause::Cause(InconclusiveCause::ReplayParity(parity)) => {
                 item.parity = Some(ParityReason {
                     reason: parity.as_str(),
+                    disagreement: match parity {
+                        DisagreementCause::HybridTrace(disagreement) => {
+                            Some(HybridDisagreementType {
+                                kind: disagreement.as_str(),
+                            })
+                        }
+                        _ => None,
+                    },
                     proved: parity.proved().map(|verdict| verdict.category().as_str()),
                     replayed: parity.replayed().map(|verdict| verdict.category().as_str()),
                 });
