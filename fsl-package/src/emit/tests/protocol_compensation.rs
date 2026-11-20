@@ -380,8 +380,6 @@ fn a_compensation_without_a_selected_temporal_profile_is_refused_by_i2() {
     assert_eq!(
         refusal.loci[0].path.as_ref().map(|path| path.as_str()),
         Some(format!("/semantic_graph/nodes/{first}").as_str())
-    );|path| path.as_str()),
-        Some("/semantic_graph/nodes/1")
     );
 }
 
