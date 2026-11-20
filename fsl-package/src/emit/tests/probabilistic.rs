@@ -284,6 +284,52 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!((rows.len(), nodes.len()), (2, 2));
 }
 
+/// FR-498-AC-1/AC-2: same-path expression nodes retain repeated operand
+/// positions, so changing declaration order cannot swap their ordinals or
+/// alter the claims' checked identities.
+#[trace("TC-1288", "FR-498-AC-1", "FR-498-AC-2")]
+#[test]
+fn probabilistic_claims_with_repeated_expression_operands_keep_identity_when_reordered() {
+    let claims = [
+        (
+            "RepeatedTrue",
+            "if c.versionNumber = 1 then c.versionNumber = 1 else c.versionNumber = 2",
+        ),
+        (
+            "RepeatedFalse",
+            "if c.versionNumber = 1 then c.versionNumber = 2 else c.versionNumber = 2",
+        ),
+    ];
+    let declaration = |(name, expression): (&str, &str)| {
+        format!(
+            "probabilistic {name} using ev on Config under every scheduler on origin \
+             {{ probability >= 0.5 [ always[0,2] holds({expression}) ] }}"
+        )
+    };
+    let emit = |order: &[usize]| {
+        let sources: Vec<_> = order.iter().map(|&at| declaration(claims[at])).collect();
+        let labels: Vec<_> = order
+            .iter()
+            .zip(&sources)
+            .map(|(&at, source)| (claims[at].0, source.as_str()))
+            .collect();
+        let package = claims_package(&sources.iter().map(String::as_str).collect::<Vec<_>>());
+        let mut ids = identities(&package, &labels);
+        let (rows, nodes) = emitted_claims(&package);
+        assert_eq!((rows.len(), nodes.len()), (2, 2));
+        ids.sort_by(|left, right| left.0.cmp(&right.0));
+        (ids, rows)
+    };
+
+    let (forward, forward_rows) = emit(&[0, 1]);
+    let (reversed, reversed_rows) = emit(&[1, 0]);
+    assert_eq!(forward, reversed, "each claim keeps its checked identity");
+    assert_eq!(
+        forward_rows, reversed_rows,
+        "the rows remain byte-identical"
+    );
+}
+
 /// FR-940-AC-9 (TC-3015): a second probabilistic claim named as an earlier
 /// one is refused `ambiguous_declaration`/`ambiguous-name` at the second,
 /// naming both; with the second renamed the unit checks and its package
