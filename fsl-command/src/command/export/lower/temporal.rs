@@ -12,7 +12,7 @@ pub(super) use self::tla::{Extra, tla};
 use super::{
     Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
 };
-use filament_contract_model::CheckedOperationInterval;
+use filament_contract_model::{CheckedOperationInterval, CheckedProtocolActivation};
 use fsl_package::checked_views::{
     Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
 };
@@ -95,6 +95,9 @@ pub(super) struct ClauseRead {
     /// The node of each atom's Boolean operand, in formula order.
     pub(super) atoms: Vec<usize>,
     pub(super) fairness: Vec<FairRead>,
+    /// Protocol subjects that require this clause on an origin row and are
+    /// in the stutter-only subset lowered by this build.
+    pub(super) protocols: Vec<String>,
 }
 
 /// A temporal clause with its atoms lowered.
@@ -113,6 +116,8 @@ pub(super) struct ClauseLow {
     pub(super) cur: Vec<E>,
     pub(super) next: Vec<E>,
     pub(super) fairness: Vec<FairLow>,
+    /// Protocol subjects whose projected model state is stutter-only.
+    pub(super) protocols: Vec<String>,
 }
 
 /// A fairness constraint over an exported operation.
@@ -266,12 +271,109 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
             "a clause the package does not read as a temporal clause",
         )
     })?;
-    if let Some(protocol) = view.requirements().first() {
-        return defer_at(
-            at_node(graph, protocol)?,
-            "temporal/protocol-subject",
-            "a clause that a protocol requires through its activation relation",
-        );
+    let clause_position = position;
+    let mut protocols = Vec::new();
+    for protocol in view.requirements() {
+        let row = graph
+            .package
+            .protocol_activation_relation()
+            .into_iter()
+            .find(|row| &row.clause == *protocol && row.required_temporal == node.node_id);
+        if let Some(row) = row {
+            if let CheckedProtocolActivation::Each { trigger } = row.activation {
+                let position = at_node(graph, &trigger)?;
+                let node = graph.node(position);
+                let construct = format!("{}/{}", node.node_tag, node.semantic_form);
+                return defer_at(
+                    position,
+                    &construct,
+                    "a protocol-required clause on an `each` activation row",
+                );
+            }
+        }
+        let position = at_node(graph, protocol)?;
+        let protocol_node = graph.node(position);
+        let construct = format!("{}/{}", protocol_node.node_tag, protocol_node.semantic_form);
+        let protocol_view =
+            fsl_package::protocol_view::protocol_view(graph.package, &protocol_node.node_id)
+                .map_err(|_| {
+                    refusal(
+                        &construct,
+                        "a required protocol the package view cannot read",
+                    )
+                })?;
+        let stutter_only = protocol_view.channels().is_empty()
+            && protocol_view.queues().is_empty()
+            && protocol_view.compensations().is_empty()
+            && protocol_view.terminal().is_none()
+            && protocol_view.requirements().len() == 1
+            && protocol_view.requirements()[0] == &node.node_id
+            && graph
+                .package
+                .protocol_activation_relation()
+                .into_iter()
+                .any(|row| {
+                    row.clause == protocol_node.node_id
+                        && row.required_temporal == node.node_id
+                        && row.activation == CheckedProtocolActivation::Origin
+                })
+            && !protocol_view.controls().is_empty()
+            && protocol_view.controls().iter().all(|control| {
+                graph
+                    .package
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| &node.node_id == *control)
+                    .and_then(|node| fsl_package::protocol_view::control_operation(node).ok())
+                    .is_some_and(|operation| {
+                        let Some(control_node) = graph
+                            .package
+                            .resolved_graph()
+                            .nodes
+                            .iter()
+                            .find(|node| &node.node_id == *control)
+                        else {
+                            return false;
+                        };
+                        match operation {
+                            fsl_package::protocol_view::ControlOperation::Sequence => true,
+                            fsl_package::protocol_view::ControlOperation::Check => {
+                                binding_is_true(graph, control_node, "condition")
+                            }
+                            _ => false,
+                        }
+                    })
+            })
+            && graph
+                .package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| node.node_id == *protocol_view.finish())
+                .is_some_and(|finish| binding_is_true(graph, finish, "constraint"));
+        if !stutter_only || !super::fairness_of(graph, clause_position)?.is_empty() {
+            return defer_at(
+                position,
+                &construct,
+                "a protocol subject outside the check-only, channel-free subset",
+            );
+        }
+        let path = serde_json::to_value(&protocol_node.node_id)
+            .map_err(|_| refusal(&construct, "the protocol identity does not serialize"))?;
+        let protocol_name = path["path"]
+            .as_array()
+            .and_then(|segments| segments.iter().find_map(serde_json::Value::as_str))
+            .ok_or_else(|| refusal(&construct, "the protocol identity has no declared name"))?
+            .to_owned();
+        if !stutter_invariant(view.formula_graph(), 0) {
+            return defer_at(
+                position,
+                &construct,
+                "a protocol subject with a temporal formula outside the unbounded, stutter-invariant subset",
+            );
+        }
+        protocols.push(protocol_name);
     }
     if let Activation::Each { trigger, .. } = view.activation() {
         return defer_at(
@@ -291,6 +393,10 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         // The capture is read as a name, with no node of its own.
         return defer_at(position, "temporal/capture", "a capture of the activation");
     }
+    let over = graph
+        .position(view.over())
+        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
+    let (context, context_node) = super::context_of(graph, over)?;
     let profile = TemporalProfile::from_identity(&view.profile().definition.identity);
     if profile != Some(TemporalProfile::InfiniteTrace) {
         // The package has no node for the profile selection (a lock row), so
@@ -328,12 +434,8 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
                 .ok_or_else(|| refusal(CONSTRUCT, "an atom names no package node"))
         })
         .collect::<Lower<Vec<_>>>()?;
-    let over = graph
-        .position(view.over())
-        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
     let binder = super::parameter_name(graph, over)
         .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder has no name"))?;
-    let (context, context_node) = super::context_of(graph, over)?;
     Ok(ClauseRead {
         name: name.to_owned(),
         position,
@@ -345,7 +447,83 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,
+        protocols,
     })
+}
+
+/// Whether the formula uses only unbounded operators and is invariant under
+/// the control-only stuttering abstracted by the protocol subject subset.
+fn stutter_invariant(uses: &[FormulaNodeUse<'_>], at: usize) -> bool {
+    let Some(root) = uses.get(at) else {
+        return false;
+    };
+    let Some(kind) = root.kind() else {
+        return false;
+    };
+    if root.interval.is_some()
+        || !matches!(
+            kind,
+            FormulaOperation::True
+                | FormulaOperation::False
+                | FormulaOperation::Holds
+                | FormulaOperation::Not
+                | FormulaOperation::And
+                | FormulaOperation::Or
+                | FormulaOperation::Implies
+                | FormulaOperation::Always
+                | FormulaOperation::Eventually
+        )
+    {
+        return false;
+    }
+    root.operands
+        .iter()
+        .all(|&index| stutter_invariant(uses, index))
+}
+
+/// Whether one named argument of a checked control points directly to a
+/// Boolean `true` literal. The protocol projection admits only these constant
+/// predicates; references, applications and all other values need protocol
+/// state semantics this stuttering subset does not model.
+fn binding_is_true(
+    graph: &Graph<'_>,
+    node: &filament_contract_model::CheckedSemanticNodeV2,
+    name: &str,
+) -> bool {
+    let Ok(body) = serde_json::to_value(&node.body) else {
+        return false;
+    };
+    let Some(value) = body
+        .get("arguments")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|arguments| {
+            arguments.iter().find_map(|argument| {
+                (argument.get("term").and_then(serde_json::Value::as_str) == Some("binding")
+                    && argument.get("name").and_then(serde_json::Value::as_str) == Some(name))
+                .then(|| argument.get("value"))
+                .flatten()
+            })
+        })
+    else {
+        return false;
+    };
+    let Some(target) = value.get("target") else {
+        return false;
+    };
+    let Ok(target) =
+        serde_json::from_value::<filament_contract_model::CheckedNodeId>(target.clone())
+    else {
+        return false;
+    };
+    let Some(position) = graph.position(&target) else {
+        return false;
+    };
+    let Ok(literal) = serde_json::to_value(&graph.node(position).body) else {
+        return false;
+    };
+    literal.get("term").and_then(serde_json::Value::as_str) == Some("literal")
+        && literal.get("value_kind").and_then(serde_json::Value::as_str) == Some("boolean")
+        && literal.get("value") == Some(&serde_json::Value::Bool(true))
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -419,13 +597,15 @@ impl LeanClause<'_> {
             }
             Tf::Always(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let next_position = format!("({position} + {d})");
+                let body = self.at(inner, &next_position)?;
                 let window = Self::window(*iv, &d, None).join(" -> ");
                 format!("(forall {d} : Int, {window} -> {body})")
             }
             Tf::Eventually(iv, inner) => {
                 let d = self.fresh("d");
-                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let next_position = format!("({position} + {d})");
+                let body = self.at(inner, &next_position)?;
                 let window = Self::window(*iv, &d, None).join(" /\\ ");
                 format!("(exists {d} : Int, {window} /\\ {body})")
             }
@@ -494,7 +674,7 @@ fn lean_fair(input: &Input<'_>, clause: &ClauseLow) -> Lower<Option<String>> {
             .operations
             .get(constraint.operation)
             .ok_or_else(|| refusal("temporal/fairness", "an operation outside the state"))?;
-        let name = mangle("op_", &operation.name);
+        let name = object.operation(operation);
         let params = parameters(operation);
         let names: Vec<&str> = params.iter().map(|(param, _)| param.as_str()).collect();
         let chosen: Vec<&str> = if constraint.each {
@@ -535,6 +715,18 @@ fn lean_fair(input: &Input<'_>, clause: &ClauseLow) -> Lower<Option<String>> {
 /// Lower the clauses of `input` to Lean 4.
 pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     let mut universes = std::collections::BTreeSet::new();
+    if input
+        .temporals
+        .iter()
+        .any(|clause| !clause.protocols.is_empty())
+    {
+        out.push(define(
+            input.first,
+            Some("PBehaviour".to_owned()),
+            "structure PBehaviour where\n  st : Nat -> State\n  init : Init (st 0)\n  next : forall n, st (n + 1) = st n".to_owned(),
+            None,
+        ));
+    }
     for clause in input.temporals {
         let object = input
             .objects
@@ -572,6 +764,11 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         let atom = mangle("at_", &clause.name);
         let holds = mangle("holds_", &clause.name);
         let ob = mangle("Ob_", &clause.name);
+        let behavior = if clause.protocols.is_empty() {
+            "Behaviour"
+        } else {
+            "PBehaviour"
+        };
         let binder = &clause.binder;
         for (index, e) in clause.cur.iter().enumerate() {
             out.push(define(
@@ -594,7 +791,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             clause.position,
             Some(holds.clone()),
             format!(
-                "def {holds} (b : Behaviour) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
+                "def {holds} (b : {behavior}) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
             ),
             obligation,
         ));
@@ -610,15 +807,27 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             ));
             premise = format!("{fair} b -> ");
         }
-        out.push(define(
-            clause.position,
-            Some(ob.clone()),
-            format!(
-                "def {ob} : Prop :=\n  forall b : Behaviour, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
-                mangle("Ids_", &object.name)
-            ),
-            obligation,
-        ));
+        let protocol_rows = if clause.protocols.is_empty() {
+            vec![None]
+        } else {
+            clause.protocols.iter().map(Some).collect()
+        };
+        for (index, protocol) in protocol_rows.into_iter().enumerate() {
+            let name = match protocol {
+                None => ob.clone(),
+                Some(_) if index == 0 => ob.clone(),
+                Some(protocol) => mangle("Ob_", &format!("{}_{}", clause.name, protocol)),
+            };
+            out.push(define(
+                clause.position,
+                Some(name.clone()),
+                format!(
+                    "def {name} : Prop :=\n  forall b : {behavior}, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
+                    mangle("Ids_", &object.name)
+                ),
+                obligation,
+            ));
+        }
     }
     Ok(())
 }

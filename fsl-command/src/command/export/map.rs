@@ -2,9 +2,9 @@
 //! FSpec FR-811 classification and FR-814 name mangling. An obligation whose
 //! dependency closure holds a construct the target cannot state is
 //! `unrepresented`, with one `target-unrepresentable` cause per such node. An
-//! obligation the target can state is lowered by FR-812 and FR-813; this
-//! build lowers none, so it stops the export as a mapper failure after the
-//! floor is decided and writes no package.
+//! obligation the target can state is lowered by FR-812 and FR-813 when its
+//! state and temporal constructs are in the supported subset; an unsupported
+//! specified construct stops the export with a typed capability refusal.
 
 use super::super::{Result, RunCause};
 use super::lower;
@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -405,7 +405,15 @@ pub(super) fn run(
             .iter()
             .map(|(name, root, _)| (name.clone(), *root))
             .collect();
-        match lower::lower(&graph, models, initial, request.target, &module, &wanted) {
+        match lower::lower(
+            &graph,
+            models,
+            initial,
+            request.target,
+            &module,
+            &wanted,
+            request,
+        ) {
             Ok(done) => {
                 for (name, _, index) in &lowerable {
                     if let Some(record) = records.get_mut(*index) {

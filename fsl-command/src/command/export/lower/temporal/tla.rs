@@ -709,6 +709,7 @@ impl Ctx<'_> {
             }
         })
     }
+
 }
 
 fn boolean(value: bool) -> &'static str {
@@ -794,8 +795,7 @@ fn monitor_step(
 
 /// The action an operation contributes, with its arguments chosen.
 fn operation_action(object: &Object, operation: &Operation, ids: &str, receiver: bool) -> String {
-    let _ = object;
-    let name = mangle("op_", &operation.name);
+    let name = object.operation(operation);
     let params = parameters(operation);
     let names: Vec<&str> = params.iter().map(|(name, _)| name.as_str()).collect();
     let binders: Vec<String> = params
@@ -823,6 +823,7 @@ pub(in crate::command::export::lower) fn tla(
 ) -> Lower<Extra> {
     let mut extra = Extra::default();
     let mut universes = BTreeSet::new();
+    let mut protocol_specs = BTreeSet::new();
     for clause in input.temporals {
         let object = input
             .objects
@@ -843,6 +844,17 @@ pub(in crate::command::export::lower) fn tla(
                 node: object.node,
                 type_name: Some(object.name.clone()),
             });
+        }
+        for protocol in &clause.protocols {
+            if protocol_specs.insert(protocol.clone()) {
+                let spec = mangle("PSpec_", protocol);
+                out.push(define(
+                    clause.position,
+                    Some(spec.clone()),
+                    format!("{spec} == Init /\\ [][UNCHANGED vars]_vars"),
+                    Some(clause.name.as_str()),
+                ));
+            }
         }
         let ctx = Ctx {
             input,
@@ -951,7 +963,6 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             );
         }
     }
-
     let names = &ctx.names;
     let composed = !vars.is_empty();
     let fair = fairness(&ctx)?;
@@ -1043,7 +1054,16 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             obligation,
         ));
     }
-    let premise = if spec_t { names.spec.as_str() } else { "Spec" };
+    let default_premise = if spec_t { names.spec.as_str() } else { "Spec" };
+    let protocol_premises = if clause.protocols.is_empty() {
+        vec![default_premise.to_owned()]
+    } else {
+        clause
+            .protocols
+            .iter()
+            .map(|protocol| mangle("PSpec_", protocol))
+            .collect()
+    };
     for (name, condition) in &accepts {
         out.push(define(
             clause.position,
@@ -1053,12 +1073,22 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
         ));
     }
     let statement = ctx.guarded(&statements.join(" /\\ "));
-    out.push(define(
-        clause.position,
-        Some(names.theorem.clone()),
-        format!("THEOREM {} == {premise} => {statement}", names.theorem),
-        obligation,
-    ));
+    for (index, premise) in protocol_premises.iter().enumerate() {
+        let theorem = if index == 0 {
+            names.theorem.clone()
+        } else {
+            mangle(
+                "Th_",
+                &format!("{}_{}", clause.name, clause.protocols[index]),
+            )
+        };
+        out.push(define(
+            clause.position,
+            Some(theorem.clone()),
+            format!("THEOREM {theorem} == {premise} => {statement}"),
+            obligation,
+        ));
+    }
     extra
         .variables
         .extend(vars.iter().map(|var| var.name.clone()));
