@@ -3377,12 +3377,11 @@ fn check_sources<T>(
             );
         }
         let checked = checked_result.map_err(failure)?.into_value();
-        let selections = match &request.clocks {
-            Some(clocks) => clocks
-                .package_selections(&checked, &[&parsed])
-                .map_err(|refusal| spine_failure(*refusal))?,
-            None => Vec::new(),
-        };
+        // An absent `clocks` member selects like an empty one: a clause whose
+        // clock needs no configuration still binds its default selection.
+        let selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|refusal| spine_failure(*refusal))?;
         (checked, selections)
     };
     finish(
