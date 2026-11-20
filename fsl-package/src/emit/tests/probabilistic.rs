@@ -1767,8 +1767,7 @@ fn a_package_delay_that_breaks_fr_253_is_refused_on_read_back() {
 
 /// FR-230: a timed model over a domain package that declares two object types
 /// has no single timed root, so S3 refuses the time source at its span before
-/// any delay is checked. (A timed SOURCE model is another route: see
-/// `a_delay_on_a_timed_source_model_refuses_emission_with_its_locus`.)
+/// any delay is checked.
 #[trace("TC-685", "FR-230-AC-38")]
 #[test]
 fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
@@ -1842,79 +1841,6 @@ fn the_delay_unit_is_that_of_the_dense_source_of_the_declaring_nodes_root() {
         None,
         "a node that roots no timed model has no unit"
     );
-}
-
-/// FSL FR-740, FSpec FR-640 Reader rule 5: a delay declared in a unit that
-/// times a SOURCE model (`object O { .. }` written in the unit, `time O dense
-/// unit ms`) is accepted by S3 and refused at S4 with its declaration's locus,
-/// whether the delay is on the timed object or on another source object.
-///
-/// An interim refusal, not a deferral of scope: arch has ruled (FSpec FR-740
-/// AC-5/6, FR-569-AC-18, TC-3012; language #2959, FSpec #716) that delays,
-/// random parameters and workloads on a timed source model are in scope and S4
-/// SHALL emit them. Until contract-ir admits a source-owned declaring node
-/// (contract-ir #1053, FR-369-AC-25/26) and QSL-2463 emits them, S4 finds no
-/// `model` node for the declaring source object (a source declaration is
-/// written under its source-owner identity, not the model-owned object type
-/// key `delay_node` looks up), and IR's `join.operation` resolves the
-/// `declaring` node only through the selected domain packages, so the package
-/// is refused here, with the declaration's locus, rather than written without
-/// the delay. QSL-2463 replaces this test with the emission test.
-#[trace("TC-2062", "FR-185-AC-12")]
-#[test]
-fn a_delay_on_a_timed_source_model_refuses_emission_with_its_locus() {
-    for (objects, delay, operation) in [
-        (
-            "object O { d: Clock; operation step() modifies self.d; }\n",
-            "delay O::step ~ uniform;\n",
-            "step",
-        ),
-        (
-            "object O { d: Clock; operation step() modifies self.d; }\n\
-             object Other { n: Integer; operation poke() modifies self.n; }\n",
-            "delay Other::poke ~ uniform;\n",
-            "poke",
-        ),
-    ] {
-        let source = format!(
-            "language \"ix:native\" edition \"1-draft\";\n\
-             profile P = \"filament.temporal.complete/v1\";\n\
-             dimension Time; unit ms : Time = rational(1, 1);\n\
-             time O dense unit ms;\n{objects}{delay}"
-        );
-        let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
-            .expect("the package input is empty");
-        let graph = assemble_with_models(source.as_bytes(), &packages)
-            .expect("the unit assembles")
-            .check(
-                CheckMode::Linked,
-                CheckingLimits::default(),
-                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-            )
-            .unwrap_or_else(|refusals| panic!("{operation}: S3 accepts the delay: {refusals:?}"));
-        assert_eq!(
-            graph.probabilistic_model().delays().len(),
-            1,
-            "{operation}: one checked delay"
-        );
-        let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
-        assert!(
-            matches!(
-                &refusal,
-                EmitRefusal::ProbabilisticModelNotEmitted {
-                    declaration,
-                    feature: fsl_semantics::check::ProbabilisticFeature::Delay,
-                    region,
-                    ..
-                } if declaration == operation && region.start() < region.end()
-            ),
-            "{operation}: {refusal:?}"
-        );
-        assert_eq!(
-            (refusal.code(), refusal.cause()),
-            (Code::UnsupportedConstruct, Some("not-yet-implemented"))
-        );
-    }
 }
 
 /// The abstraction fixture's unit with the random parameter `attemptUpdate(n)`
@@ -2374,7 +2300,7 @@ fn refusal_of(
     )
 }
 
-/// TC-2062 (FR-185-AC-12): the S4 refusal of a delay, a random parameter and a
+/// TC-2062 (FR-185-AC-12): the S4 refusal of a random parameter and a
 /// workload is located at the declaration (its label span in
 /// the unit's text) and names the declaration in words, with no debug
 /// rendering of a span or source reference.
@@ -2384,9 +2310,6 @@ fn probabilistic_refusals_have_locus() {
     use super::abstraction::fixture as abstraction;
     use fsl_semantics::check::ProbabilisticFeature;
     let head = "language \"ix:native\" edition \"1-draft\";\n";
-    let objects = "object O { n: Integer; operation step(x: Integer) modifies self.n; }\n";
-    let timed = "profile T = \"filament.temporal.complete/v1\";\n\
-                 dimension Time; unit ms : Time = rational(1, 1);\ntime O dense unit ms;\n";
     let abstraction_document =
         crate::emit::tests::wire_bytes(&abstraction::document()).expect("serializes");
     // A random parameter over a `String`, which has no support literal kind,
@@ -2403,13 +2326,7 @@ fn probabilistic_refusals_have_locus() {
         })
         .expect("the first parameter of attemptUpdate");
     let string_document = crate::emit::tests::wire_bytes(&string_model).expect("serializes");
-    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 3] = [
-        (
-            format!("{head}{timed}{objects}delay O::step ~ uniform;\n"),
-            Vec::new(),
-            ProbabilisticFeature::Delay,
-            "step",
-        ),
+    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 2] = [
         (
             format!(
                 "{head}profile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n\

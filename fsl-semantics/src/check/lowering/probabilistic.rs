@@ -77,6 +77,13 @@ impl Lowering<'_> {
                 self.rooted_model_node(model, &at)?;
             }
         }
+        for delay in model.delays() {
+            let at = delay.declaration_location();
+            self.charge(1, &at)?;
+            if let Some(declaring) = delay.operation().declaring_key() {
+                self.rooted_model_node(declaring, &at)?;
+            }
+        }
         // Functions of one owner share a key path and take their ordinals in
         // the order they are lowered, so the rewards are lowered by
         // (operation, name), not by declaration order: writing them in

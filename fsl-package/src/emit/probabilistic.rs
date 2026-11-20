@@ -13,7 +13,7 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{
-    CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedLiteralValue, CheckedNodeId, CheckedNodeOwner, CheckedOccurrence, CheckedOccurrenceRole,
     CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
 
@@ -140,7 +140,7 @@ fn model_node(
     nodes: &[CheckedSemanticNodeV2],
     declaration: &DeclarationKey,
 ) -> Option<(NodeKey, CheckedNodeId)> {
-    let key = fsl_semantics::model::key::object_type_node_key(declaration).ok()?;
+    let key = fsl_semantics::model::key::declaring_node_key(declaration)?;
     let id = node_id(ids, &key);
     nodes
         .iter()
@@ -389,6 +389,29 @@ pub(super) fn dense_unit(
         .flatten()
 }
 
+/// The unit of the `dense` source of the timed model of the unit's own source
+/// model: the one unit its timed roots over source object types share. A
+/// delay on any source object type of the model is typed by it, as FR-230
+/// gives the source model one time member.
+fn source_dense_unit(nodes: &[CheckedSemanticNodeV2]) -> Option<CheckedNodeId> {
+    let mut units = nodes
+        .iter()
+        .filter(|node| {
+            CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
+        })
+        .filter_map(|root| {
+            let CheckedTerm::Reference { target } = member(&root.body, 0)? else {
+                return None;
+            };
+            let model = nodes.iter().find(|node| &node.node_id == target)?;
+            matches!(model.owner, Some(CheckedNodeOwner::Source { .. }))
+                .then(|| dense_unit(nodes, target))
+                .flatten()
+        });
+    let unit = units.next()?;
+    units.all(|other| other == unit).then_some(unit)
+}
+
 fn delay_node(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -418,7 +441,15 @@ fn delay_node(
         .ok_or_else(unwritable)?;
     // IR's reader admits a delay only on a model with a timed root whose
     // source is `dense`, and types every time by that source's unit.
-    let unit = dense_unit(nodes, &declaring).ok_or_else(unwritable)?;
+    let unit = dense_unit(nodes, &declaring)
+        .or_else(|| {
+            operation
+                .model()
+                .is_empty()
+                .then(|| source_dense_unit(nodes))
+                .flatten()
+        })
+        .ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let time = |value: &Rational| literal(&unit, LiteralKind::Quantity, &spelling(value));

@@ -138,13 +138,12 @@ fn first_reference(node: &Value) -> &Value {
     &node["body"]["members"][0]["value"]["target"]
 }
 
-const TIMED: &str = "object O { d: Clock; operation step() modifies self.d; }\n\
+const TIMED: &str = "object O { n: Integer; operation step() modifies self.n; }\n\
     object Other { n: Integer; operation poke() modifies self.n; }\n";
 
 #[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2463: S4 emission of a source-owned declaration waits on the contract-ir #1082 pin (PR 3157 carries the pin bump) and the identity-row join (QSL-2645)"]
 fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
     let package = check(&format!(
         "{TIMED}time O dense unit ms;\n\
@@ -171,9 +170,11 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
 #[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2699: S3 refuses a delay on an untimed source model as invalid_timed_model, where FR-740-AC-5 states invalid_probabilistic_model/delay-on-untimed-model"]
 fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
-    let Err(refusals) = check(&format!("{TIMED}delay O::step ~ uniform;\n")) else {
+    let Err(refusals) = check(
+        "object O { n: Integer; operation step() modifies self.n; }\n\
+         delay O::step ~ uniform;\n",
+    ) else {
         panic!("a delay on an untimed source model checks");
     };
     let [refusal] = &refusals[..] else {
@@ -186,7 +187,6 @@ fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
 #[trace("TC-3012", "FR-740-AC-6")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2463: S4 emission of a source-owned declaration waits on the contract-ir #1082 pin (PR 3157 carries the pin bump) and the identity-row join (QSL-2645)"]
 fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
     let package = check(
         "object O { n: Integer; operation step(k: Int[1, 3]) modifies self.n; }\n\
@@ -206,7 +206,7 @@ fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
 #[trace("TC-3012", "FR-569-AC-18")]
 #[trace("FSpec-TC-2033", "FSpec-FR-610-AC-9")]
 #[test]
-#[ignore = "QSL-2463: the strict read refuses the source clock place with MalformedClockPlace until the contract-ir #1082 pin lands (PR 3157)"]
+#[ignore = "QSL-2463: the strict read refuses a clock place over a source object type (MalformedClockPlace: contract-ir resolves clock places through selected model packages only); needs a contract-ir ticket"]
 fn a_source_operation_entry_lists_its_parameters() {
     let package = check(
         "object O { d: Clock; n: Integer; \
@@ -438,4 +438,50 @@ fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
         )),
         "{refusals:?}"
     );
+}
+
+/// FR-740-AC-5's literal untimed unit has a `Clock` field. FR-230 refuses a
+/// clock of an untimed model at the model's declaration, in a stage that ends
+/// checking before any probabilistic declaration is read, so S3 gives
+/// `invalid_timed_model` and the criterion's `delay-on-untimed-model` is not
+/// reached.
+#[trace("TC-3012", "FR-740-AC-5")]
+#[test]
+#[ignore = "QSL-2699: FR-230 refuses the clock of an untimed source model (invalid_timed_model) before the delay is read; FR-740-AC-5's fixture names both causes"]
+fn a_delay_beside_an_untimed_source_clock_is_refused_as_untimed() {
+    let Err(refusals) = check(&format!("{TIMED_CLOCK}delay O::step ~ uniform;\n")) else {
+        panic!("a delay on an untimed source model checks");
+    };
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| refusal.cause.cause() == Some("delay-on-untimed-model")),
+        "{refusals:?}"
+    );
+}
+
+const TIMED_CLOCK: &str = "object O { d: Clock; operation step() modifies self.d; }\n";
+
+/// The QSL-2045 shape: a source `Switch` with a Boolean random parameter, a
+/// reward, and a workload on it emits and is admitted by the strict read and
+/// the identity-row join.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_boolean_source_switch_with_a_workload_and_a_reward_emits() {
+    let package = check(
+        "object Switch { n: Integer; operation choose(bit: Boolean) modifies self.n; \
+         operation clear() modifies self.n; }\n\
+         random Switch::choose(bit) ~ { true: 1, false: 3 };\n\
+         reward cost on Switch::choose = 1;\n\
+         workload Input on Switch { weight Switch::choose = 1; weight Switch::clear = 0; }\n",
+    )
+    .unwrap_or_else(|refusals| panic!("S3 admits the unit: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    let object = source_node(&wire, "Switch");
+    let random = probabilistic(&wire, "random_parameter");
+    let workload = probabilistic(&wire, "workload");
+    assert_eq!((random.len(), workload.len()), (1, 1));
+    assert_eq!(first_reference(random[0]), object);
+    assert_eq!(first_reference(workload[0]), object);
+    assert_eq!(probabilistic(&wire, "reward").len(), 1);
 }

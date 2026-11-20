@@ -121,6 +121,20 @@ pub fn object_type_node_key(key: &DeclarationKey) -> Result<NodeKey, InvalidNode
     model_node_key(&key.package, "model", "object_type", &key.node)
 }
 
+/// The node of the object type `key` declares as a probabilistic declaration
+/// names it: the `model` node of a selected domain package, and for an object
+/// type the unit declares in its own source the type's own declaration node
+/// (FSpec FR-640 Reader rule 1), which its source owner identity names. `None`
+/// when no node key can be formed.
+#[must_use]
+pub fn declaring_node_key(key: &DeclarationKey) -> Option<NodeKey> {
+    let Some(package) = key.package.strip_prefix("source/") else {
+        return object_type_node_key(key).ok();
+    };
+    let name = crate::model::intake::type_identity_segment(&key.package, &key.node)?;
+    crate::check::declared_node_key(package.to_owned(), vec![name.to_owned()], 0).ok()
+}
+
 /// The structural node identity of the population `key` declares.
 ///
 /// # Errors
