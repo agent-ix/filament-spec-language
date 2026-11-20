@@ -61,7 +61,7 @@ impl RandomParameter {
     #[must_use]
     pub fn node_key(&self, package: &str) -> Option<NodeKey> {
         let operation = self.operation();
-        let declaring = declaring_node_key(operation.declaring_key()?)?;
+        let declaring = declaring_node_key(operation.declaring_key()?, package)?;
         let content = self
             .support()
             .iter()
@@ -93,10 +93,10 @@ impl Workload {
     /// written in changes nothing.
     #[must_use]
     pub fn node_key(&self, package: &str) -> Option<NodeKey> {
-        let model = declaring_node_key(self.model_key()?)?;
+        let model = declaring_node_key(self.model_key()?, package)?;
         let mut weights = Vec::with_capacity(self.weights().len());
         for (operation, weight) in self.weights() {
-            let declaring = declaring_node_key(operation.declaring_key()?)?;
+            let declaring = declaring_node_key(operation.declaring_key()?, package)?;
             weights.push((declaring, operation.name(), weight));
         }
         weights.sort_by(|left, right| (&left.0, left.1).cmp(&(&right.0, right.1)));
@@ -122,7 +122,7 @@ impl Delay {
     #[must_use]
     pub fn node_key(&self, package: &str) -> Option<NodeKey> {
         let operation = self.operation();
-        let declaring = declaring_node_key(operation.declaring_key()?)?;
+        let declaring = declaring_node_key(operation.declaring_key()?, package)?;
         let (family, content) = match self.distribution() {
             DelayDistribution::Uniform => ("uniform", String::new()),
             DelayDistribution::UniformRange { a, b } => (
@@ -337,7 +337,10 @@ impl CheckedProbabilisticClaim {
             ProbScheduler::Every => {
                 let mut set = Vec::with_capacity(self.fairness.len());
                 for (constraint, declaring) in self.fairness.iter().zip(&self.fairness_declaring) {
-                    let Some(declaring) = declaring.as_ref().and_then(declaring_node_key) else {
+                    let Some(declaring) = declaring
+                        .as_ref()
+                        .and_then(|declaring| declaring_node_key(declaring, package))
+                    else {
                         fault.get_or_insert(ClaimReadFault::Subject);
                         continue;
                     };

@@ -507,27 +507,55 @@ fn a_boolean_source_switch_with_a_workload_and_a_reward_emits() {
     assert_eq!(first_reference(random[0]), object);
     assert_eq!(first_reference(workload[0]), object);
     assert_eq!(probabilistic(&wire, "reward").len(), 1);
-    let model = package.graph().probabilistic_model();
-    let support: Vec<(bool, String)> = model.random_parameters()[0]
-        .support()
+    // The emitted bodies carry the Boolean support and the workload weights.
+    let support: Vec<(Value, Value, Value)> = random[0]["body"]["members"][3]["value"]["members"]
+        .as_array()
+        .expect("support")
         .iter()
-        .map(|support| match &support.value.0 {
-            filament_exact::Value::Boolean(value) => (*value, support.weight.to_string()),
-            other => panic!("a Boolean support value: {other:?}"),
+        .map(|pair| {
+            let value = &pair["members"][0]["value"];
+            (
+                value["value_kind"].clone(),
+                value["value"].clone(),
+                pair["members"][1]["value"]["value"].clone(),
+            )
+        })
+        .collect();
+    let boolean = serde_json::json!("boolean");
+    assert_eq!(
+        support,
+        [
+            (
+                boolean.clone(),
+                serde_json::json!(true),
+                serde_json::json!("1")
+            ),
+            (boolean, serde_json::json!(false), serde_json::json!("3")),
+        ]
+    );
+    let weights: Vec<(&Value, &Value, &Value)> = workload[0]["body"]["members"][2]["value"]
+        ["members"]
+        .as_array()
+        .expect("weights")
+        .iter()
+        .map(|entry| {
+            (
+                &entry["members"][0]["value"]["target"],
+                &entry["members"][1]["value"]["value"],
+                &entry["members"][2]["value"]["value"],
+            )
         })
         .collect();
     assert_eq!(
-        support,
-        [(true, "1/1".to_owned()), (false, "3/1".to_owned())]
-    );
-    let weights: Vec<(&str, String)> = model.workloads()[0]
-        .weights()
-        .iter()
-        .map(|(operation, weight)| (operation.name(), weight.to_string()))
-        .collect();
-    assert_eq!(
         weights,
-        [("choose", "1/1".to_owned()), ("clear", "0/1".to_owned())]
+        [
+            (
+                object,
+                &serde_json::json!("choose"),
+                &serde_json::json!("1")
+            ),
+            (object, &serde_json::json!("clear"), &serde_json::json!("0")),
+        ]
     );
 }
 
@@ -591,4 +619,145 @@ fn a_workload_weighing_two_operations_of_one_name_is_refused_at_its_span() {
         .expect("the region lies in the unit");
     assert!(label.contains('W'), "{label}");
     assert!(!refusal.to_string().contains("Span {"), "{refusal}");
+}
+
+/// `units`, each a source identity and its text, assembled as one package
+/// with no selected domain package, through S3.
+fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+    let units: Vec<_> = units
+        .iter()
+        .enumerate()
+        .map(|(at, (identity, text))| {
+            // The dimension and unit of `HEADER` are declared once, by the first unit.
+            let header: String = HEADER
+                .lines()
+                .take(if at == 0 { usize::MAX } else { 3 })
+                .map(|line| format!("{line}\n"))
+                .collect();
+            let parsed = fsl_cst::parse(
+                fsl_foundation::SourceIdentity::new("agent-ix", *identity),
+                "program.native",
+                format!("{header}{text}").as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .expect("the source parses");
+            assert_eq!(parsed.diagnostics(), []);
+            let unit = fsl_forms::build_unit(&parsed).expect("the forms build");
+            (parsed.source().reference().clone(), unit)
+        })
+        .collect();
+    let inputs: PackageInput = package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let selections: Vec<_> = units
+        .iter()
+        .map(|(_, unit)| unit.selections().models.as_slice())
+        .collect();
+    let selected = fsl_semantics::model::intake::admit_units_with_cancel(
+        &selections,
+        &inputs,
+        ModelNormalizationLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("empty selected models admit");
+    let mut declarations = PackageDeclarations::assemble_units(
+        "source-probabilistic".to_owned(),
+        units,
+        selected,
+        Vec::new(),
+        fsl_semantics::check::AssemblyLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the package assembles");
+    let _pending = declarations
+        .link_dispatch(Default::default())
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .map(CheckedPackage::link)
+}
+
+const FIRST_UNIT: &str = "object A { n: Integer; operation t(k: Int[1, 3]) modifies self.n; }\n\
+    time A dense unit ms;\n\
+    delay A::t ~ discrete { 2 ms: 1, 4 ms: 1 };\n\
+    random A::t(k) ~ { 1: 1, 3: 3 };\n\
+    workload WA on A { weight A::t = 1; }\n";
+
+const SECOND_UNIT: &str = "unit s : Time = rational(1000, 1) * ms;\n\
+    object B { n: Integer; operation u(k: Int[1, 3]) modifies self.n; }\n\
+    time B dense unit s;\n\
+    delay B::u ~ discrete { 1 s: 9, 3 s: 1 };\n\
+    random B::u(k) ~ { 1: 3, 3: 1 };\n\
+    workload WB on B { weight B::u = 1; }\n";
+
+/// FR-740: each unit of a package emits its declarations on its own source
+/// object types, whichever unit declares them.
+#[trace("TC-3012", "FR-740-AC-5")]
+#[test]
+fn the_declarations_of_each_unit_of_a_package_are_emitted_on_its_own_types() {
+    let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)])
+        .unwrap_or_else(|refusals| panic!("S3 admits the units: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    let delays = probabilistic(&wire, "delay_distribution");
+    assert_eq!(delays.len(), 2);
+    assert_eq!(probabilistic(&wire, "random_parameter").len(), 2);
+    let workloads = probabilistic(&wire, "workload");
+    assert_eq!(workloads.len(), 2);
+    for (name, unit) in [("A", "ms"), ("B", "s")] {
+        let object = source_node(&wire, name);
+        let delay = delays
+            .iter()
+            .find(|node| first_reference(node) == object)
+            .unwrap_or_else(|| panic!("a delay on {name}"));
+        let mut times = Vec::new();
+        quantities(&delay["body"], &mut times);
+        assert_eq!(times.len(), 2, "{name}");
+        assert!(
+            times.iter().all(|(_, ty)| *ty == unit_node(&wire, unit)),
+            "{name}: {times:?}"
+        );
+        assert!(
+            workloads.iter().any(|node| first_reference(node) == object),
+            "{name}"
+        );
+        assert!(
+            probabilistic(&wire, "random_parameter")
+                .iter()
+                .any(|node| first_reference(node) == object),
+            "{name}"
+        );
+    }
+}
+
+/// FR-185-AC-12: an S4 refusal of a declaration in a later unit of a package
+/// carries that unit's source reference and the declaration's label span.
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_refusal_in_a_later_unit_is_located_in_that_unit() {
+    let second = "object B { n: Integer; operation x() modifies self.n; }\n\
+        object C { m: Integer; operation x() modifies self.m; }\n\
+        object D extends B, C { operation y() modifies self.n; }\n\
+        workload W on D { weight D::y = 1; weight B::x = 1; weight C::x = 1; }\n";
+    let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", second)])
+        .unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let refusal = emit_checked(&package, EmitLimits::new(10_000_000))
+        .expect_err("a repeated operation name is refused");
+    let EmitRefusal::ProbabilisticModelNotEmitted { region, .. } = &refusal else {
+        panic!("a located probabilistic refusal: {refusal:?}");
+    };
+    assert_eq!(region.source().identity(), "test:second");
+    let text = format!(
+        "{}{second}",
+        HEADER
+            .lines()
+            .take(3)
+            .map(|l| format!("{l}\n"))
+            .collect::<String>()
+    );
+    let label = text
+        .get(region.start() as usize..region.end() as usize)
+        .expect("the region lies in the second unit");
+    assert!(label.contains('W'), "{label}");
 }

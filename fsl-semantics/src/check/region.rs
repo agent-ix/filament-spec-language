@@ -114,13 +114,22 @@ struct DeclaredSpans<'a> {
     synthesized: &'a BTreeMap<usize, Span>,
 }
 
-/// The declaration name of a `dimension <name>` or `unit <name>` type
-/// declaration origin, `None` for any other origin name.
+/// The `probabilistic N` declaration an `N`th probabilistic declaration's site
+/// name begins with.
+fn probabilistic_declaration_name(origin: &str) -> Option<&str> {
+    let rest = origin.strip_prefix("probabilistic ")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    (digits > 0).then(|| &origin[.."probabilistic ".len() + digits])
+}
+
+/// The declaration name of a `dimension <name>`, `unit <name>` or
+/// `probabilistic <N>` site origin, `None` for any other origin name.
 #[ix_trace_rs::string_edge]
 fn nominal_declaration_name(origin: &str) -> Option<&str> {
     origin
         .strip_prefix("dimension ")
         .or_else(|| origin.strip_prefix("unit "))
+        .or_else(|| probabilistic_declaration_name(origin))
 }
 
 /// The region `location` names, given each function's and each state

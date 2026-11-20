@@ -309,8 +309,9 @@ impl StateModel {
                     .type_identities()
                     .iter()
                     .find_map(|(key, effective)| {
-                        (crate::model::key::declaring_node_key(key).as_ref() == Some(node))
-                            .then_some((view, key, effective))
+                        (crate::model::key::declaring_node_key(key, node.package()).as_ref()
+                            == Some(node))
+                        .then_some((view, key, effective))
                     })
             })
             .ok_or_else(|| PackageProbabilisticRefusal::UnknownModel(node.clone()))

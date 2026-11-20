@@ -124,25 +124,40 @@ pub fn object_type_node_key(key: &DeclarationKey) -> Result<NodeKey, InvalidNode
 /// The node of the object type `key` declares as a probabilistic declaration
 /// names it: the `model` node of a selected domain package, and for an object
 /// type the unit declares in its own source the type's own declaration node
-/// (FSpec FR-640 Reader rule 1), which its source owner identity names. `None`
-/// when no node key can be formed.
+/// (FSpec FR-640 Reader rule 1), which its source owner identity names, under
+/// the checked package's name `package_name`. `None` when no node key can be
+/// formed.
 #[must_use]
-pub fn declaring_node_key(key: &DeclarationKey) -> Option<NodeKey> {
+pub fn declaring_node_key(key: &DeclarationKey, package_name: &str) -> Option<NodeKey> {
     if key.package.starts_with("source/") {
-        source_object_node_key(key)
+        source_object_node_key(key, package_name)
     } else {
         object_type_node_key(key).ok()
     }
 }
 
-/// The own declaration node of the object type `key` declares in the unit's
-/// source: its source package name and its type name, at ordinal 0. `None` for
-/// a key of no source package.
+/// The checked package's name a unit's source model identity `source/<name>` (or
+/// `source/<name>/<position>` for a later unit of the package) is minted from.
 #[must_use]
-pub(crate) fn source_object_node_key(key: &DeclarationKey) -> Option<NodeKey> {
-    let package = key.package.strip_prefix("source/")?;
+pub(crate) fn source_package_name(identity: &str) -> Option<&str> {
+    let rest = identity.strip_prefix("source/")?;
+    Some(match rest.rsplit_once('/') {
+        Some((name, position))
+            if !position.is_empty() && position.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            name
+        }
+        _ => rest,
+    })
+}
+
+/// The own declaration node of the object type `key` declares in the unit's
+/// source: the checked package's name and its type name, at ordinal 0 (every
+/// unit of a package names its types under the package name).
+#[must_use]
+pub(crate) fn source_object_node_key(key: &DeclarationKey, package_name: &str) -> Option<NodeKey> {
     let name = super::intake::type_identity_segment(&key.package, &key.node)?;
-    crate::check::declared_node_key(package.to_owned(), vec![name.to_owned()], 0).ok()
+    crate::check::declared_node_key(package_name.to_owned(), vec![name.to_owned()], 0).ok()
 }
 
 /// The structural node identity of the population `key` declares.

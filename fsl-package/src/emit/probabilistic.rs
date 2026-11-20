@@ -137,10 +137,11 @@ fn reference(target: CheckedNodeId) -> CheckedTerm {
 /// graph holds its node.
 fn model_node(
     ids: &StructuralIds,
+    package_name: &str,
     nodes: &[CheckedSemanticNodeV2],
     declaration: &DeclarationKey,
 ) -> Option<(NodeKey, CheckedNodeId)> {
-    let key = fsl_semantics::model::key::declaring_node_key(declaration)?;
+    let key = fsl_semantics::model::key::declaring_node_key(declaration, package_name)?;
     let id = node_id(ids, &key);
     nodes
         .iter()
@@ -234,6 +235,7 @@ fn random_parameter_node(
     let region = region_of(graph, &location)?;
     let (_, declaring) = model_node(
         ids,
+        graph.package_name(),
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
@@ -315,7 +317,7 @@ fn workload_node(
     // has no model node to hang from; QSL-2444 tracks emitting it.
     let (_, model) = workload
         .model_key()
-        .and_then(|declaration| model_node(ids, nodes, declaration))
+        .and_then(|declaration| model_node(ids, graph.package_name(), nodes, declaration))
         .ok_or_else(unwritable)?;
     let key = workload
         .node_key(graph.package_name())
@@ -324,6 +326,7 @@ fn workload_node(
     for (operation, weight) in workload.weights() {
         let (_, declaring) = model_node(
             ids,
+            graph.package_name(),
             nodes,
             operation.declaring_key().ok_or_else(unwritable)?,
         )
@@ -400,11 +403,23 @@ pub(super) fn dense_unit(
         .flatten()
 }
 
-/// The unit of the `dense` source of the timed model of the unit's own source
-/// model: the one unit its timed roots over source object types share. A
-/// delay on any source object type of the model is typed by it, as FR-230
-/// gives the source model one time member.
-fn source_dense_unit(nodes: &[CheckedSemanticNodeV2]) -> Option<CheckedNodeId> {
+/// The unit of the `dense` source of the timed model of the source unit that
+/// declares `declaring`: the timed roots over the types of that unit alone
+/// type a delay on any of its types, as FR-230 gives each unit's source model
+/// one time member. `None` when the unit has no such root or its roots
+/// disagree.
+fn source_dense_unit(
+    nodes: &[CheckedSemanticNodeV2],
+    declaring: &CheckedNodeId,
+) -> Option<CheckedNodeId> {
+    let owner = nodes
+        .iter()
+        .find(|node| &node.node_id == declaring)?
+        .owner
+        .as_ref()?;
+    if !matches!(owner, CheckedNodeOwner::Source { .. }) {
+        return None;
+    }
     let mut units = nodes
         .iter()
         .filter(|node| {
@@ -415,7 +430,7 @@ fn source_dense_unit(nodes: &[CheckedSemanticNodeV2]) -> Option<CheckedNodeId> {
                 return None;
             };
             let model = nodes.iter().find(|node| &node.node_id == target)?;
-            matches!(model.owner, Some(CheckedNodeOwner::Source { .. }))
+            (model.owner.as_ref() == Some(owner))
                 .then(|| dense_unit(nodes, target))
                 .flatten()
         });
@@ -443,6 +458,7 @@ fn delay_node(
     let region = region_of(graph, &location)?;
     let (_, declaring) = model_node(
         ids,
+        graph.package_name(),
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
@@ -457,7 +473,7 @@ fn delay_node(
             operation
                 .model()
                 .is_empty()
-                .then(|| source_dense_unit(nodes))
+                .then(|| source_dense_unit(nodes, &declaring))
                 .flatten()
         })
         .ok_or_else(unwritable)?;

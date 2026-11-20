@@ -1443,7 +1443,8 @@ impl AdmittedModel {
                 Some(DomainPackageRecord::ObjectType(_))
             )
         {
-            return crate::model::key::source_object_node_key(declaration);
+            let package_name = crate::model::key::source_package_name(&self.selection.identity)?;
+            return crate::model::key::source_object_node_key(declaration, package_name);
         }
         record_node_key(self.records.get(declaration)?)
             .ok()

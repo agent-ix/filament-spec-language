@@ -8580,8 +8580,13 @@ fn type_tables<'m>(
                 objects.insert(artifact, key.clone());
             }
         }
+        // The source models of a package's several units share one alias (FR-569), so
+        // their declarations join under it instead of the last unit's replacing the rest.
         if let Some(alias) = model.alias() {
-            by_alias.insert(alias.to_owned(), objects);
+            by_alias
+                .entry(alias.to_owned())
+                .or_insert_with(BTreeMap::new)
+                .extend(objects);
         }
     }
     (by_alias, identities)
