@@ -433,3 +433,58 @@ fn the_package_route_rebuilds_the_multiplicity_of_a_collection_parameter() {
         assert_eq!(parameters(&model.packages), expected);
     });
 }
+
+/// FR-740-AC-6: each collection kind and element type a source operation
+/// parameter spells rebuilds, from the emitted bytes, with the key,
+/// multiplicity, presence and value type S3's record gives it.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn the_package_route_rebuilds_every_collection_kind_of_a_parameter() {
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    let parameters = |packages: &[fsl_semantics::model::domain_package::DomainPackage]| {
+        packages
+            .iter()
+            .flat_map(|package| &package.records)
+            .filter_map(|record| match record {
+                DomainPackageRecord::OperationMember(operation) => Some(
+                    operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| {
+                            (
+                                parameter.key.clone(),
+                                parameter.multiplicity,
+                                parameter.presence,
+                                parameter.value_type.to_string(),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    for (spelling, unbounded) in [
+        ("Bag<Int[1, 3]>[0, 2]", false),
+        ("Sequence<Int[1, 3]>[1, 4]", false),
+        ("OrderedSet<Int[1, 3]>[0, 3]", false),
+        ("Sequence<Text[0, 8; nfc]>[0, 2]", false),
+        ("Set<Decimal[0, 100; 2, 2; exact]>[0, 2]", false),
+        ("Sequence<Integer>", true),
+    ] {
+        let package = checked(&format!(
+            "object O {{ n: Integer; operation step(ks: {spelling}) modifies self.n; }}\n\
+             workload W on O {{ weight O::step = 1; }}\n"
+        ));
+        let expected = parameters(package.graph().source_packages());
+        assert_eq!(expected.len(), 1, "{spelling}");
+        assert_eq!(expected[0].len(), 1, "{spelling}");
+        assert_eq!(expected[0][0].1.upper.is_none(), unbounded, "{spelling}");
+        through_the_route("source-object-probabilistic", &package, |bare| {
+            let model = bare
+                .source_model()
+                .expect("the rows describe the source model");
+            assert_eq!(parameters(&model.packages), expected, "{spelling}");
+        });
+    }
+}
