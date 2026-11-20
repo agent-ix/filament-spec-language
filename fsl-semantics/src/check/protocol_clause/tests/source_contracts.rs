@@ -96,11 +96,11 @@ fn three_branch_all_join_resolves_every_label_and_covers_every_branch() {
         "Dispatches",
     );
     assert_locus(
-        &source.replace("[west, north, south]", "[west, north, absent]"),
+        &source.replace("[west, north, south]", "[west, north, missingBranch]"),
         "missing_declaration",
         "missing-name",
-        "absent",
-        "absent",
+        "missingBranch",
+        "missingBranch",
     );
 }
 
@@ -115,9 +115,12 @@ fn repeat_with_a_real_step_admits_no_maximum_and_rejects_zero_maximum() {
         ),
     );
     super::checks(&source);
-    let invalid = source.replace(
-        "visible (dispatched) while",
-        "visible (dispatched) max 0 while",
+    let invalid = protocol(
+        "",
+        ROLES,
+        &format!(
+            "sequence Main {{ repeat Deliver by Courier visible (dispatched) max 0 while {{ not dispatched }} sequence Body {{ {ATTEMPT} }} exhausted sequence Drained {{ }} }}"
+        ),
     );
     assert_locus(
         &invalid,
@@ -259,7 +262,10 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
     );
     for (text, missing) in [
         (&source, false),
-        (&source.replace("from couriers", "from absent"), true),
+        (
+            &source.replace("from couriers", "from missingPopulation"),
+            true,
+        ),
     ] {
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("a", "u"),
@@ -306,14 +312,16 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
             let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
                 panic!("{refusal:?}");
             };
-            let expected = text.find("absent").expect("offending population");
+            let expected = text
+                .find("missingPopulation")
+                .expect("offending population");
             assert_eq!(anchor.span().start, expected);
-            assert_eq!(anchor.span().end, expected + "absent".len());
+            assert_eq!(anchor.span().end, expected + "missingPopulation".len());
             let region = regions.refusal_region(refusal).expect("source locus");
             assert_eq!(
                 &text[usize::try_from(region.start()).expect("start")
                     ..usize::try_from(region.end()).expect("end")],
-                "absent"
+                "missingPopulation"
             );
             assert!(format!("{anchor:?}").contains("courier"));
         } else {
