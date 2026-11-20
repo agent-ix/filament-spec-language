@@ -1037,8 +1037,14 @@ fn model_based_test_request_rules() {
     assert_eq!(code, 20, "{conflict}");
     assert_eq!(conflict["code"], "invalid-request", "{conflict}");
     assert_eq!(conflict["stage"], "request", "{conflict}");
-    assert_eq!(
-        conflict["details"]["member"], "model_based_test",
+    assert!(
+        conflict["message"]
+            .as_str()
+            .is_some_and(|message| {
+                message.contains("model_based_test")
+                    && message.contains("tl_lowering")
+                    && message.contains("mutually exclusive")
+            }),
         "{conflict}"
     );
 }
