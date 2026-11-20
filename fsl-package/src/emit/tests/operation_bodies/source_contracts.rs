@@ -155,8 +155,9 @@ fn assert_invalid_body(source: &str) {
         .expect("original model input");
     let mut declarations =
         assemble_with_models(text.as_bytes(), &inputs).expect("operation body forms assemble");
+    let linked = declarations.link_dispatch(Default::default());
     let regions = declarations.regions();
-    let checked = match declarations.link_dispatch(Default::default()) {
+    let checked = match linked {
         Ok(pending) => declarations
             .check(
                 CheckMode::Linked,
@@ -200,9 +201,7 @@ fn uncalled_wrong_type_body_refuses_at_its_body() {
 #[trace("TC-1011", "FR-576-AC-2")]
 #[test]
 fn uncalled_wrong_arity_body_refuses_at_its_body() {
-    assert_invalid_body(
-        "body wrongArity using v on Config::ConfigVersion::score(extra: Integer) { extra }\n",
-    );
+    assert_invalid_body("body wrongArity using v on Config::ConfigVersion::score(extra) { 43 }\n");
 }
 
 #[trace("TC-1011", "FR-576-AC-10")]
