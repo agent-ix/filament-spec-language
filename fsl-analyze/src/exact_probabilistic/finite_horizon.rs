@@ -428,6 +428,9 @@ impl ZeroTimeSolver<'_> {
         let mut outside = rational_zero();
         let mut internal = rational_zero();
         for edge in edges {
+            if edge.probability.is_zero() {
+                continue;
+            }
             if members.contains(&edge.to.index()) {
                 internal = internal.add(&edge.probability);
             } else {
