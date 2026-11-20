@@ -184,7 +184,7 @@ pub struct PackageTerminal<'p> {
     /// The declaration's `temporal`/`terminal` node.
     pub node: filament_exact::NodeKey,
     /// The declaration's ordinal among the declarations of models selecting
-    /// the same identity, in alias order (FR-411).
+    /// the same identity, in terminal node key order (FR-411).
     pub ordinal: usize,
     /// The declared name.
     pub name: &'p str,
@@ -267,9 +267,9 @@ pub fn resolve_terminals(
             declaration,
         });
     }
-    // FR-940: both routes order the declarations by the model selection's
-    // identity, so the first undefined or intended one is the same.
-    resolved.sort_by(|left, right| (left.package, left.model).cmp(&(right.package, right.model)));
+    // FR-124-AC-11: aliases and source placement do not affect a declaration's
+    // ordinal; both routes order each identity's terminals by node key.
+    resolved.sort_by(|left, right| (left.package, &left.node).cmp(&(right.package, &right.node)));
     let mut ordinals = std::collections::BTreeMap::<&str, usize>::new();
     for terminal in &mut resolved {
         let ordinal = ordinals.entry(terminal.package).or_default();

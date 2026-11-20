@@ -1128,6 +1128,7 @@ fn tc_160_a_root_of_an_undeclared_composite_is_a_fault() {
         equality_producer: None,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     };
     let mut body = BodyBuilder::default();
     let record = body.push(node(

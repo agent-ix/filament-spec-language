@@ -802,6 +802,39 @@ impl<'a> ModelSystem<'a> {
         Self::over(request, selections, None)
     }
 
+    /// [`Self::new`] over the `model_selections` rows the subject reads: those
+    /// of the identities its universes cover (FR-124-AC-12). Only the derived
+    /// deadlock-freedom item reads a subject this way: it classifies the
+    /// terminal states of the identities the subject reads and no other. When
+    /// the universes cover every selection or none, this is [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn new_over_read_identities(
+        request: ModelSimulationRequest<'a>,
+    ) -> Result<Self, AdmissionFailure> {
+        use fsl_semantics::model::observation::ModelSelections;
+
+        let covered: BTreeSet<&str> = request
+            .universes
+            .iter()
+            .map(|universe| universe.population.package.as_str())
+            .collect();
+        let read: Vec<_> = request
+            .input
+            .model_selections
+            .iter()
+            .filter(|selection| covered.contains(selection.identity.as_str()))
+            .cloned()
+            .collect();
+        if read.is_empty() || read.len() == request.input.model_selections.len() {
+            return Self::new(request);
+        }
+        let sources = request.input.source_packages;
+        Self::over(request, ModelSelections::new(&read, sources), None)
+    }
+
     /// [`Self::new`] with the caller's cancellation shared by qualified
     /// reward-expression meters during reward admission.
     ///
