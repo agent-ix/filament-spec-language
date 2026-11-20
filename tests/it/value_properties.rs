@@ -4,11 +4,14 @@
 //! remains outside the admitted generator pending QSL-2003.
 //! P2 and near misses use Linked mode. P4's deliberately partial conversion
 //! functions use public Kernel admission before runtime refusal evaluation.
+//! Scalar extrema require nonempty collections in the bounded domain [-5,5].
+//! Sequences use folds; unordered extrema use supported exists/if composition,
+//! without claiming that arbitrary unordered fold steps are eligible.
 
 use std::collections::BTreeMap;
 
 use filament_eval::FamilyOutcome;
-use filament_exact::{FieldValue, Meter, Outcome, Refusal, Value, ValueType};
+use filament_exact::{FieldValue, Meter, Outcome, Refusal, Undefined, Value, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_bench::prop::{self, near_miss, value};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -499,7 +502,7 @@ fn agreement_case(case: &AgreementCase) -> (String, Reference) {
                 3 => ("/", rational(a * d, b * c)),
                 _ => unreachable!("rational strategy domain"),
             };
-            (format!("{}function invoke using v(): Rational[-250, 250; 1, 25] pure {{ rational({a}, {b}) {operator} rational({c}, {d}) }}\n", value::VALUE_HEADER), expected)
+            (format!("{}function invoke using v(): Rational[-250, 250; 1, 25] pure {{ let left: Rational[-5, 5; 1, 5] = rational({a}, {b}) in let right: Rational[1, 5; 1, 5] = rational({c}, {d}) in left {operator} right }}\n", value::VALUE_HEADER), expected)
         }
         AgreementCase::Text(a, b, op) => {
             let texts = ["", "abc", "ab", "é", "e\u{301}", "🙂"];
@@ -694,29 +697,44 @@ fn partial_conversion_keeps_the_linked_range_boundary() {
     assert_eq!(required.upper, Some(filament_exact::Integer::from(3_i64)));
 }
 
-/// Provenance: QSL-2055 P4. Public Kernel evaluation observes partial conversions.
+/// Provenance: QSL-2055 P4. Public Kernel evaluation observes partial operations.
 #[ix_trace_rs::trace("FSpec-FR-140-AC-7")]
 #[test]
 fn p4_refusals_agree_with_the_reference() {
-    prop::run("p4_refusals_agree_with_the_reference", prop::config(1000), &(-20i16..=20, 1u8..=9, any::<bool>()), |(number, denominator, decimal_case)| {
-        let (source, expected, code, cause) = if decimal_case {
-            (decimal_source(number, denominator, 0), rounded(i128::from(number), i128::from(denominator), 0), "inexact_decimal", "nonzero-discarded-digit")
-        } else {
-            let source = format!("{}function f using v(x: Integer): Int[0, 3] pure {{ convert<Int[0, 3]>(x) }}\nfunction invoke using v(): Int[0, 3] pure {{ f({number}) }}\n", value::VALUE_HEADER);
-            (source, (0..=3).contains(&number).then_some(Reference::Integer(i128::from(number))), "undefined_expression", "outside-domain")
+    prop::run("p4_refusals_agree_with_the_reference", prop::config(1000), &(-20i16..=20, -8i16..=8, 0u8..3), |(number, divisor, kind)| {
+        let (source, expected) = match kind {
+            0 => {
+                let denominator = u8::try_from(divisor.unsigned_abs() + 1).unwrap();
+                (decimal_source(number, denominator, 0), rounded(i128::from(number), i128::from(denominator), 0))
+            }
+            1 => {
+                let source = format!("{}function f using v(x: Integer): Int[0, 3] pure {{ convert<Int[0, 3]>(x) }}\nfunction invoke using v(): Int[0, 3] pure {{ f({number}) }}\n", value::VALUE_HEADER);
+                (source, (0..=3).contains(&number).then_some(Reference::Integer(i128::from(number))))
+            }
+            2 => {
+                let source = format!("{}profile d = \"filament.value.integer-division.euclidean/v1\";\nfunction f using v(a: Integer, b: Integer): Integer pure {{ a div b }}\nfunction invoke using v(): Integer pure {{ f({number}, {divisor}) }}\n", value::VALUE_HEADER);
+                let expected = (divisor != 0).then(|| {
+                    let (a, b) = (i128::from(number), i128::from(divisor));
+                    Reference::Integer(if a % b < 0 { a / b - b.signum() } else { a / b })
+                });
+                (source, expected)
+            }
+            _ => unreachable!("partial operation strategy domain"),
         };
         let package = compile_mode(&source, CheckMode::Kernel).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
         let result = call(&package);
         match (expected, result) {
             (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value)), "{source}"),
             (None, Outcome::Refused(refusal)) => {
-                if decimal_case {
-                    prop_assert_eq!(refusal.code(), Some(code), "{}", source);
-                    prop_assert_eq!(refusal.cause(), Some(cause), "{}", source);
+                if kind == 0 {
+                    prop_assert_eq!(refusal.code(), Some("inexact_decimal"), "{}", source);
+                    prop_assert_eq!(refusal.cause(), Some("nonzero-discarded-digit"), "{}", source);
                 } else {
+                    prop_assert_eq!(kind, 1, "{}", source);
                     prop_assert!(matches!(refusal, Refusal::IntegerOutOfDomain { .. }), "{}: {:?}", source, refusal);
                 }
             }
+            (None, Outcome::Undefined(Undefined::DivisionByZero)) => prop_assert_eq!(kind, 2, "{}", source),
             (expected, result) => return Err(TestCaseError::fail(format!("reference {expected:?}, evaluator {result:?}\n{source}"))),
         }
         Ok(())
@@ -735,6 +753,19 @@ fn near_miss_is_never_evaluated_to_a_value() {
     .unwrap();
 }
 
+fn bounded_extremum(minimum: bool) -> String {
+    let mut candidates: Vec<i64> = (-5..=5).collect();
+    if !minimum {
+        candidates.reverse();
+    }
+    let mut expression = candidates.pop().unwrap().to_string();
+    for candidate in candidates.into_iter().rev() {
+        expression =
+            format!("if exists(x in xs: x = {candidate}) then {candidate} else ({expression})");
+    }
+    expression
+}
+
 fn aggregate_source(
     kind: value::CollectionKind,
     values: &[i64],
@@ -750,37 +781,37 @@ fn aggregate_source(
         members.sort_unstable();
         members.dedup();
     }
-    let (result, expression, expected) = match operation {
+    let (result, expression, expected): (&str, String, Reference) = match operation {
         0 => (
             "Integer",
-            "sum<Total>(x in xs: x)",
+            "sum<Total>(x in xs: x)".into(),
             Reference::Integer(members.iter().map(|x| i128::from(*x)).sum()),
         ),
         1 => (
             "Integer",
-            "count<Count>(x in xs: x >= 0)",
+            "count<Count>(x in xs: x >= 0)".into(),
             Reference::Integer(
                 i128::try_from(members.iter().filter(|x| **x >= 0).count()).unwrap(),
             ),
         ),
         2 => (
             "Integer",
-            "fold<Total>(a, x in xs: if a < x then a else x, identity: 5)",
+            bounded_extremum(true),
             Reference::Integer(i128::from(*members.iter().min().unwrap())),
         ),
         3 => (
             "Integer",
-            "fold<Total>(a, x in xs: if a > x then a else x, identity: -5)",
+            bounded_extremum(false),
             Reference::Integer(i128::from(*members.iter().max().unwrap())),
         ),
         4 => (
             "Boolean",
-            "exists(x in xs: x >= 0)",
+            "exists(x in xs: x >= 0)".into(),
             Reference::Boolean(members.iter().any(|x| *x >= 0)),
         ),
         5 => (
             "Boolean",
-            "forall(x in xs: x >= 0)",
+            "forall(x in xs: x >= 0)".into(),
             Reference::Boolean(members.iter().all(|x| *x >= 0)),
         ),
         _ => unreachable!("aggregate strategy domain"),
@@ -796,6 +827,21 @@ fn aggregate_source(
             .collect::<Vec<_>>()
             .join(", ");
         source.push_str(&format!("function {name} using v(): {result} pure {{ let xs: {kind_name}<Int[-5, 5]>[1, 4] = {constructor}[{values}] in f(xs) }}\n"));
+    }
+    if operation == 2 || operation == 3 {
+        let (comparison, identity) = if operation == 2 { ("<", 5) } else { (">", -5) };
+        source.push_str(&format!("function sequence_fold using v(xs: Sequence<Int[-5, 5]>[1, 4]): Integer pure {{ fold<Total>(a, x in xs: if a {comparison} x then a else x, identity: {identity}) }}\n"));
+        for (name, permutation) in [
+            ("sequence_original", values.to_vec()),
+            ("sequence_permuted", values.iter().rev().copied().collect()),
+        ] {
+            let values = permutation
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            source.push_str(&format!("function {name} using v(): Integer pure {{ let xs: Sequence<Int[-5, 5]>[1, 4] = sequence[{values}] in sequence_fold(xs) }}\n"));
+        }
     }
     (source, expected)
 }
@@ -821,7 +867,11 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
             let (source, expected) = aggregate_source(kind, &values, operation);
             let package = compile(&source)
                 .map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
-            for name in ["invoke", "permuted"] {
+            let mut names = vec!["invoke", "permuted"];
+            if operation == 2 || operation == 3 {
+                names.extend(["sequence_original", "sequence_permuted"]);
+            }
+            for name in names {
                 let outcome = call_named(&package, name);
                 let Outcome::Completed(value) = outcome else {
                     return Err(TestCaseError::fail(format!(
@@ -837,6 +887,32 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
         },
     )
     .unwrap();
+}
+
+/// Provenance: QSL-2055 P5 boundary. Scalar extrema require nonempty source domains.
+#[test]
+fn empty_extrema_input_is_refused_before_evaluation() {
+    for kind in [value::CollectionKind::Set, value::CollectionKind::Bag] {
+        for operation in [2, 3] {
+            let (source, _) = aggregate_source(kind, &[0], operation);
+            let empty = source
+                .replace("set[0]", "set[]")
+                .replace("bag[0]", "bag[]")
+                .replace("sequence[0]", "sequence[]");
+            let refusals = match compile(&empty) {
+                Err(CompileFailure::Check(refusals)) => refusals,
+                Err(other) => panic!("a checker cardinality refusal, got {other:?}\n{empty}"),
+                Ok(_) => panic!("empty input must not enter scalar extrema\n{empty}"),
+            };
+            assert!(!refusals.is_empty());
+            assert!(
+                refusals
+                    .iter()
+                    .all(|refusal| matches!(refusal.cause, CheckCause::Unproved(_))),
+                "{refusals:?}\n{empty}"
+            );
+        }
+    }
 }
 
 /// Provenance: QSL-2055 mutation control. A wrong reference must expose a real evaluator mismatch.
