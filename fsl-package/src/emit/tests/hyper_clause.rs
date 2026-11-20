@@ -108,8 +108,26 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
         )
         .unwrap_or_else(|refusals| panic!("the finite clause checks: {refusals:?}\n{source}"));
     assert_eq!(graph.finite_hyper_clauses().len(), 1);
+    let selections = graph
+        .finite_hyper_clauses()
+        .iter()
+        .map(|clause| {
+            crate::emit::TemporalClockSelection::new(
+                graph.source().clone(),
+                clause.span(),
+                filament_contract_model::ClockConfiguration::EventPosition {
+                    sequence_authority: "test-hyper-events".into(),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
     let package = CheckedPackage::link(graph);
-    let emission = emit_checked(&package).expect("the finite clause emits");
+    let emission = crate::emit::emit_checked_with_temporal_selections(
+        &package,
+        &selections,
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the finite clause emits");
     assert!(emission.omitted.is_empty());
     let wire = wire(&emission);
     let mut evidence = CheckedPackageEvidence::new();
@@ -1125,30 +1143,22 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
 }
 
 /// FR-488-AC-18: a clause with two refusals reports the first in the order
-/// of "Clauses S4 does not emit": an alias that binds no object parameter
-/// (at the clause) before a fairness set under a bounded profile (at the
-/// constraint).
+/// of "Clauses S4 does not emit". An alias that binds no object parameter is
+/// not a refusal, so the fairness set under a bounded profile is reported, at
+/// its constraint, ahead of the unencodable read.
 #[trace("TC-1266", "FR-488-AC-18")]
 #[test]
 fn the_first_refusal_in_precedence_order_is_reported() {
     let body = "eventually [0, 2] holds(d.versionNumber @ s = d.versionNumber @ s)";
-    let alias_only = format!(
-        "hyper Unbound using t over behaviours (d: S::ConfigVersion) \
-         forall trace s of S forall trace n of N {{ {body} }}"
-    );
-    let (text, refusals) = refused(EVENT, &["S", "N"], &alias_only);
-    assert!(
-        not_emitted_text(&text, &refusals).starts_with("hyper Unbound"),
-        "an alias with no parameter is refused at the clause"
-    );
     let both = format!(
         "hyper Unbound using t over behaviours (d: S::ConfigVersion) \
          forall trace s of S fair weak S::ConfigVersion::mix; forall trace n of N {{ {body} }}"
     );
     let (text, refusals) = refused(EVENT, &["S", "N"], &both);
-    assert!(
-        not_emitted_text(&text, &refusals).starts_with("hyper Unbound"),
-        "the clause-level refusal precedes the constraint's"
+    assert_eq!(
+        not_emitted_text(&text, &refusals),
+        "S::ConfigVersion::mix",
+        "the fairness constraint is the first refusal"
     );
 }
 
