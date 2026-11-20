@@ -47,11 +47,13 @@ Private receipts are under `/home/peter/dev/.agent/qsl-2090/logs/`:
   expected nested operation behind each unary operand, through typed resolved
   structural keys. Other passing cases were excluded.
 
-Each `.log` has its own actual `.exit` receipt. The final branch does not
-claim a green aggregate gate: one independent review and one complete
-affected-component gate are still reserved for the lead. The two components
-are root `lowering_intake_boundaries::` and analysis
-`source_model_boundaries::`.
+Each `.log` has its own actual `.exit` receipt. Subsequent independent
+SR-1499/SR-1500 reviews passed with no findings. The single final complete
+affected-component gate passed: root `lowering_intake_boundaries::` 19 passed,
+0 failed, 1 pending ignored; analysis `source_model_boundaries::` 1 passed,
+0 failed, 3 pending ignored. Both actual exits were 0. Exact commands, tested
+head, exclusions and final receipts are in `final-gate.md`. These final
+component results are separate from the preserved authoring failures above.
 
 Leaf rustfmt checks and `git diff --check` emitted no diagnostics. Known
 unchanged root/semantics/analyze lint limitations were accepted by the lead;
