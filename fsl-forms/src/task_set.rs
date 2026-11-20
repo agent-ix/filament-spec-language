@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The S2 build of a task set and the claims over it: `taskset`, `schedulable`
-//! and `response` (FSpec shared grammar `taskset-decl`, `task`,
-//! `signed-quantity` and `schedulability-clause`, FR-419).
+//! and `response`, and the `release` and `mode` declarations that bind
+//! operations to it (FSpec shared grammar `taskset-decl`, `task`,
+//! `signed-quantity`, `schedulability-clause`, `release-decl` and
+//! `mode-switch-decl`, FR-419).
 //!
 //! These forms select no meaning, the contract `time_model` keeps: the sign of
 //! a value, its unit, the emptiness of a task set, a `lo` task's `wcet_hi`,
@@ -15,8 +17,9 @@ use fsl_cst::{CstNode, CstToken, LosslessCst, Production, TokenKind};
 
 use super::dispatch::{Construct, FormsRefusal};
 use super::syntax::{
-    ArrivalForm, CriticalityForm, DeclarationForm, DeclaredName, PolicyForm, PriorityForm,
-    ReleaseForm, ResponseForm, SchedulableForm, SignedQuantityForm, TaskForm, TasksetForm,
+    ArrivalForm, CriticalityForm, DeclarationForm, DeclaredName, ModeSwitchForm, PolicyForm,
+    PriorityForm, ReleaseForm, ResponseForm, SchedulableForm, SignedQuantityForm, TaskForm,
+    TasksetForm,
 };
 use super::value::{
     integer, items, name_form, nodes_of, only, production_node, quantity_form, text, tokens_of,
@@ -222,6 +225,34 @@ pub(crate) fn release_declaration(
     Ok(DeclarationForm::Release(Box::new(ReleaseForm {
         task_set: name_of(set, node)?,
         task: name_of(task, node)?,
+        operation: name_form(
+            cst,
+            only(&declaration_items, Production::QualifiedName, node)?,
+        )?,
+        span: node.span(),
+    })))
+}
+
+/// `mode TaskSet hi on Model::operation;` (FSpec `mode-switch-decl`).
+pub(crate) fn mode_switch_declaration(
+    construct: Construct<'_>,
+) -> Result<DeclarationForm, FormsRefusal> {
+    let cst = construct.cst;
+    let node = production_node(construct)?;
+    if node.production() != Production::ModeSwitchDeclaration {
+        return Err(unexpected(node));
+    }
+    let declaration_items = items(cst, node);
+    // `mode` and `on` are reserved words and `hi` is a contextual one, so the
+    // identifier tokens are the task set and `hi`.
+    let [set, hi] = tokens_of(&declaration_items, TokenKind::Identifier)[..] else {
+        return Err(unexpected(node));
+    };
+    if hi.spelling() != b"hi" {
+        return Err(unexpected(node));
+    }
+    Ok(DeclarationForm::ModeSwitch(Box::new(ModeSwitchForm {
+        task_set: name_of(set, node)?,
         operation: name_form(
             cst,
             only(&declaration_items, Production::QualifiedName, node)?,

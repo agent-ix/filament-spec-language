@@ -2102,3 +2102,66 @@ fn generated_config_version_unit_keeps_checked_identity() {
     )
     .expect("ConfigVersion fixture checks before and after formatting");
 }
+
+/// FR-249-AC-16: a `mode` switch declaration split across lines formats to
+/// its one-line canonical spelling, formatting is idempotent, and the
+/// original and the formatted source compile to equal packages.
+#[trace("TC-704", "FR-249-AC-16")]
+#[test]
+fn mode_switch_declarations_format_to_one_line_and_keep_package_identity() {
+    use semantic_models::{
+        attempt_update_modifies_version_number, config_unit_with_profiles,
+        config_version_document_with_operations, empty_frame, operation,
+    };
+    let document = config_version_document_with_operations(vec![
+        attempt_update_modifies_version_number(),
+        operation("command", serde_json::json!([]), None, empty_frame()),
+    ]);
+    let body = "dimension Time;\n\
+         unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         taskset Ctl {\n\
+         task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 hi wcet_hi 2 ms;\n\
+         }\n\
+         release Ctl.a on ConfigVersion::attemptUpdate;\n\
+         mode   Ctl hi\n  on ConfigVersion::command ;\n";
+    let (text, packages) = config_unit_with_profiles(
+        &document,
+        "profile t = \"filament.temporal.complete/v1\";\n",
+        body,
+    );
+    let source = SourceIdentity::new("test", "mode-switch-format");
+    let parsed = fsl_cst::parse(
+        source.clone(),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .unwrap();
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let formatted = fsl_cst::format::format(&parsed).unwrap();
+    assert!(
+        formatted
+            .lines()
+            .any(|line| line == "mode Ctl hi on ConfigVersion::command;"),
+        "{formatted}"
+    );
+    let reparsed = fsl_cst::parse(
+        source.clone(),
+        "unit.native",
+        formatted.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(fsl_cst::format::format(&reparsed).unwrap(), formatted);
+    // `emitted` compiles the original and its formatted output and asserts
+    // that both reach equal packages.
+    emitted(
+        source,
+        "unit.native",
+        text.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("mode switch unit must compile: {refusal}"));
+}

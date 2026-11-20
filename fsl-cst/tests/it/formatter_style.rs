@@ -184,3 +184,27 @@ fn a_reference_literal_prints_with_its_hash_touching_both_neighbours() {
     assert!(out.contains("V::Server#\"s2\""), "{out}");
     assert_eq!(formatted(&out), out);
 }
+
+/// FSpec FR-339-AC-1 and FR-249-AC-16: an empty qualified call prints with
+/// its parentheses touching the name, and a `mode` switch declaration split
+/// across lines prints on one line; both format idempotently.
+#[trace("FSpec-FR-339-AC-1", "FR-249-AC-16")]
+#[test]
+fn empty_qualified_calls_and_mode_switches_print_canonically() {
+    let text = format!(
+        "{}function f(): Integer pure {{ Pair(Store::construct ( ), Store::Row::make( )) }}\n\
+         mode   MC hi\n  on C::go_hi ;\n",
+        header("filament.value.complete/v1")
+    );
+    let out = formatted(&text);
+    assert!(
+        out.contains("Pair(Store::construct(), Store::Row::make())"),
+        "{out}"
+    );
+    assert!(
+        out.lines().any(|line| line == "mode MC hi on C::go_hi;"),
+        "{out}"
+    );
+    assert_eq!(formatted(&out), out);
+    assert_eq!(stripped(&out), stripped(&text));
+}

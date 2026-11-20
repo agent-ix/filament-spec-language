@@ -145,7 +145,7 @@ impl ParsedForm {
             F::Taskset(form) => Some(&form.name.name),
             F::Schedulable(form) => Some(&form.name.name),
             F::Response(form) => Some(&form.name.name),
-            F::Release(_) => None,
+            F::Release(_) | F::ModeSwitch(_) => None,
             F::Hybrid(form) => Some(&form.name.name),
             F::Synthesis(form) => Some(&form.name.name),
             F::VerificationPlan(form) => Some(&form.name.name),
@@ -392,6 +392,10 @@ pub enum LeadingTokenKind {
     /// the reserved temporal operator, which is infix, so at a declaration
     /// head it leads this form only.
     Release,
+    /// `mode`: a criticality mode switch on an operation (FSpec FR-419).
+    /// Inside a `hybrid` body the reserved word begins a hybrid mode, which
+    /// is not a declaration, so at a declaration head it leads this form only.
+    Mode,
     /// `hyper`: the `TemporalTrace` hyper clause form, over `behaviours` or
     /// over a finite trace domain (FR-171).
     Hyper,
@@ -922,6 +926,7 @@ fn dispatch(
         LeadingTokenKind::Schedulable => task_set::schedulable_declaration(construct),
         LeadingTokenKind::Response => task_set::response_declaration(construct),
         LeadingTokenKind::Release => task_set::release_declaration(construct),
+        LeadingTokenKind::Mode => task_set::mode_switch_declaration(construct),
         LeadingTokenKind::Hyper => hyper_clause::hyper_clause(construct),
         LeadingTokenKind::Relation => hyper_clause::relation_clause(construct),
         LeadingTokenKind::Random => probabilistic::random_declaration(construct),
@@ -1004,6 +1009,7 @@ const LEADING_SPELLINGS: &[(&str, LeadingTokenKind)] = &[
     ("schedulable", LeadingTokenKind::Schedulable),
     ("response", LeadingTokenKind::Response),
     ("release", LeadingTokenKind::Release),
+    ("mode", LeadingTokenKind::Mode),
     ("hyper", LeadingTokenKind::Hyper),
     ("relation", LeadingTokenKind::Relation),
     ("random", LeadingTokenKind::Random),

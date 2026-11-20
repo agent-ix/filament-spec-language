@@ -210,3 +210,33 @@ fn s2_builds_a_release_declaration_as_written() {
     assert_eq!(second.task.name, "z");
     assert_eq!(second.operation.name, "ConfigVersion::command");
 }
+
+#[trace("TC-704", "FR-249-AC-16")]
+#[test]
+fn s2_builds_a_mode_switch_declaration_as_written_beside_hybrid_modes() {
+    let (text, unit) = build(
+        "mode MC hi on C::go_hi;\n\
+         hybrid Motion using t { mode Rest invariant { x >= 0 } flow { x' = 0; } }\n\
+         mode Other hi on Plant::Valve::open;",
+    );
+    let forms: Vec<_> = unit.forms().iter().map(|form| form.form()).collect();
+    let [DeclarationForm::ModeSwitch(first), DeclarationForm::Hybrid(hybrid), DeclarationForm::ModeSwitch(second)] =
+        forms[..]
+    else {
+        panic!("two mode switches around a hybrid declaration: {forms:?}");
+    };
+    assert_eq!(first.task_set.name, "MC");
+    assert_eq!(
+        &text[first.task_set.span.start..first.task_set.span.end],
+        "MC"
+    );
+    assert_eq!(first.operation.name, "C::go_hi");
+    assert_eq!(
+        &text[first.span.start..first.span.end],
+        "mode MC hi on C::go_hi;"
+    );
+    assert_eq!(hybrid.modes.len(), 1);
+    // S2 resolves no name: an undeclared task set and operation still build.
+    assert_eq!(second.task_set.name, "Other");
+    assert_eq!(second.operation.name, "Plant::Valve::open");
+}

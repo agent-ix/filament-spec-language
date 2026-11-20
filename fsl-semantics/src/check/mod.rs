@@ -222,8 +222,8 @@ pub use probabilistic::{
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
 pub use task_set::{
-    Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, Release, ScheduleClaim,
-    SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
+    Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release,
+    ScheduleClaim, SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub mod stratum;
@@ -5139,21 +5139,23 @@ impl PackageDeclarations {
         );
         refusals.extend(checked_extensions.refusals);
         let checked_extension_forms = checked_extensions.forms;
-        // FSL FR-249: the `release` declarations, resolved against the task
-        // sets and the operations of the admitted models.
+        // FSL FR-249: the `release` and `mode` switch declarations, resolved
+        // against the task sets and the operations of the admitted models.
         if task_sets_admitted {
-            refusals.extend(
-                task_set::check_releases(
-                    &self.task_set_forms,
-                    &probabilistic_input,
-                    &mut checked_task_sets,
-                )
-                .into_iter()
-                .map(|cause| CheckRefusal {
-                    location: root(Origin::Expression),
-                    cause: CheckCause::Temporal(Box::new(cause)),
-                }),
+            let mut causes = task_set::check_releases(
+                &self.task_set_forms,
+                &probabilistic_input,
+                &mut checked_task_sets,
             );
+            causes.extend(task_set::check_mode_switches(
+                &self.task_set_forms,
+                &probabilistic_input,
+                &mut checked_task_sets,
+            ));
+            refusals.extend(causes.into_iter().map(|cause| CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::Temporal(Box::new(cause)),
+            }));
         }
         // FR-165: each state-graph claim, checked through the `StateGraph`
         // family's contract once every function signature is known, against

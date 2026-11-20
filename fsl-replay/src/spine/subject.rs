@@ -460,6 +460,7 @@ fn declaration_profile(form: &DeclarationForm) -> Option<&str> {
         | F::Workload(_)
         | F::TimeSource(_)
         | F::Release(_)
+        | F::ModeSwitch(_)
         | F::TimeInvariant(_)
         | F::Urgent(_)
         | F::Taskset(_)

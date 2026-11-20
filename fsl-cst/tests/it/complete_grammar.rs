@@ -111,6 +111,7 @@ const ACCEPTED_PRODUCTIONS: &[Production] = &[
     Production::SchedulableDeclaration,
     Production::ResponseDeclaration,
     Production::ReleaseDeclaration,
+    Production::ModeSwitchDeclaration,
     Production::TemporalExpression,
     Production::TemporalImplication,
     Production::TemporalDisjunction,
@@ -392,7 +393,8 @@ fn corpus() -> Vec<(&'static str, String)> {
                 "taskset Empty { }\n",
                 "schedulable CtlFp on Ctl under fixed_priority;\n",
                 "response R on Ctl.b <= 12 ms under fixed_priority;\n",
-                "release Ctl.a on Server::attempt;",
+                "release Ctl.a on Server::attempt;\n",
+                "mode Ctl hi on Server::escalate;",
             )),
         ),
         (
