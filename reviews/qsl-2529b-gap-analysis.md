@@ -42,3 +42,9 @@ Round 1, head 83965af6ab28295a586474584ef2beeefd16736c.
 | FND-002 | deferred | FR-1019-AC-15 cannot be built under FR-447 (first appearance as an equation's left side) because the grammar has no other variable declaration. This is blocked on an arch amendment, which the coordinator is raising. No test was invented, which is correct. |
 | FND-003 | still-open | The untracked wrong answer is gone, because nested windows are fixed (code-review FND-001). The PR body was not updated: it still cites "Remaining work: QSL-2529" for ActivationInfimum (it should be QSL-2690), still describes the gap's second trigger as "an atom with no value at an instant that moves with tau" (the code raises it whether or not the instant moves), does not say that FR-1019-AC-15 is blocked on arch, and still reports the old test counts (70 / 9 instead of 72 / 11). This is a PR-body edit only, no code. |
 | FND-004 | fixed | The test now asserts `counterexample.kind == formula` and the replay row `settlement == reproduced-with-evaluated-witness`. Its doc records that the checker requires a range on a capture's Rational type, which explains the `Rational[0, 2; 1, 2]` fixture. |
+
+Round 2, head 4ec9848cad2c5283559d57d243ff5a49513ae75b.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-003 | fixed | The PR body now cites QSL-2690 for ActivationInfimum and states both triggers exactly, including "whether or not its instant moves". It says FR-1019-AC-15 is blocked on an arch amendment, describes the nested-window fix, and reports counts that match the reviewer's run (73 / 11 passed + 12 ignored / 8 / 3). The body says "eight charge sites"; there are nine counting the projection closure, a wording nit and not a defect. |

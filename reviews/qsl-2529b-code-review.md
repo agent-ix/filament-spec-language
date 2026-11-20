@@ -77,3 +77,19 @@ Reviewer verification this round:
 | FND-007 | fixed | The variant doc now states both triggers exactly, including an atom with no value whether or not its instant moves with tau. |
 | FND-008 | fixed | The scan charges each fixpoint pass and each root isolation. The module doc lists exactly what is left uncharged: arithmetic on one polynomial and sorting the cuts. |
 | FND-009 | fixed | `partition` is wrapped by rustfmt, and `cargo fmt --check` is clean on signal.rs. |
+
+Round 2, head 4ec9848cad2c5283559d57d243ff5a49513ae75b (fix commit 4ec9848cad plus a merge of main).
+
+Reviewer verification this round:
+- The soundness grid was re-run against the filtered projection, in the review worktree only. Each full claim was compared with single-instant claims.
+- The nine formulas: the round-1 eight (three and four nested windows, `and` across differently nested branches, `eventually [2, 9] always [1, 6]`, `until [1, 5]` inside `eventually`, `always eventually`) plus the new `eventually [2, 9] always [1, 6] eventually [0, 1]`. Eight are now decided within 3,000,000 units; in round 1 only four were. All eight are Reproduced and each has false grid points. `and` across branches still exhausts the 3,000,000 units.
+- One formula's full claim was Reproduced with an empty false grid at 12 points: `until` inside `eventually`. A 120-point grid confirmed the hand derivation: false exactly for tau in (0, 1/12), kind Formula.
+- I also built a case designed to defeat the filter: both atom polynomials coincide with lines, so neither is shifted. On a trace with a segment end at 15/2, `x - tau - 1` equals the offset-1 line and `x - 15/2` equals the segment-end line. The claim is `eventually [0, 5] always [0, 1] holds(h.v >= v0 + 1 and h.v <= 15 / 2)` with guard `4 < q.v < 6`. It is correctly Reproduced: false for tau > 11/2, and the false grid points 90/16 to 94/16 agree. I tried two spellings of the atoms.
+- The original Ramp repro is still Reproduced (false grid 1/16 to 3/16).
+- Why the filter is sound: shifting one polynomial of a pair by `-d` gives the same critical values as shifting the other by `d`, and the difference set is symmetric. An edge compared with `tau` or with a segment end needs only the unshifted line set plus shifted read polynomials. `shifts` is still built from every pair of window offsets.
+- Gates: `-p fsl-replay --lib hybrid` 73 passed. `hybrid_requests::` 11 passed, 12 ignored. `hybrid_provider::` 8 passed. `-p fsl-hybrid-reference --lib` 3 passed. Clippy reports nothing in the diff; the hit at hybrid_requests.rs:915 is pre-existing. rustfmt is clean on the touched files.
+- Mutation: deleting each of the nine charge sites in turn (activation.rs:130, 339, 360, 379, 412 projection closure, 462, 497, 516, 519) fails `the_activation_scan_is_charged_to_the_meter` every time. Emptying `shifts` fails the nested-window regression test.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-010 | fixed | Shifted copies are now made only of the polynomials read, never of the lines (`fresh`). Nested is 9224 units (was 96789). The new test `three_nested_windows_are_decided_within_a_moderate_meter` decides within 400,000. My grid and the line-coincidence probe found no lost critical value. |
