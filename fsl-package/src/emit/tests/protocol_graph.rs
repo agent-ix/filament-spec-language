@@ -825,31 +825,38 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
 fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     use super::variant_types::fixture;
     let document = || {
+        let origin = serde_json::json!(fixture::instant()["origin"]);
+        let constraint = |keyword: &str, value: &str| {
+            serde_json::json!({
+                "identity": fixture::id(&format!("PartId/constraints/{keyword}")),
+                "keyword": keyword,
+                "operands": {"value": value},
+                "appliesTo": "ix://filament/native/Integer",
+                "diagnosticCode": format!("bound.{keyword}"),
+                "origin": origin,
+            })
+        };
         let mut part_id = fixture::instant();
         part_id["displayName"] = serde_json::json!("PartId");
         part_id["identity"] = fixture::id("PartId").into();
+        part_id["kind"]["name"] = serde_json::json!("bounded");
         part_id.as_object_mut().unwrap().remove("target");
         part_id["scalar"] = serde_json::json!("integer");
-        part_id["constraints"] = serde_json::Value::Array(
-            [("min", "0"), ("max", "99")]
-                .into_iter()
-                .map(|(keyword, value)| {
-                    serde_json::json!({
-                        "identity": fixture::id(&format!("PartId/constraints/{keyword}")),
-                        "keyword": keyword,
-                        "operands": {"value": value},
-                        "appliesTo": "ix://filament/native/Integer",
-                        "diagnosticCode": format!("bound.{keyword}"),
-                        "origin": part_id["origin"].clone(),
-                    })
-                })
-                .collect(),
-        );
-        crate::emit::tests::wire_bytes(&fixture::with_types(vec![
+        part_id["constraints"] = serde_json::json!([constraint("min", "0"), constraint("max", "99")]);
+        let mut document = fixture::with_types(vec![
             fixture::variant_type("Odd", &["2x", "Café", "Gold Plus"]),
             part_id,
-        ]))
-        .unwrap()
+        ]);
+        let mut bounded_kind = document["constructs"][0].clone();
+        bounded_kind["kind"]["name"] = serde_json::json!("bounded");
+        bounded_kind["construct"] = serde_json::json!({
+            "identity": "none",
+            "shape": "record",
+            "members": {},
+            "meaning": fsl_semantics::model::intake::meaning::VALUE_TYPE,
+        });
+        document["constructs"].as_array_mut().unwrap().push(bounded_kind);
+        crate::emit::tests::wire_bytes(&document).unwrap()
     };
     let package = (fixture::PACKAGE, "1");
     let flow = |carries: &str, ordering: &str| {
