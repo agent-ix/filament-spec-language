@@ -13,7 +13,8 @@
 //! directory of the target's `src_path`) of every library, binary and
 //! proc-macro target of every workspace member, and the same for every
 //! resolved package that FR-059's `graph::classify` assigns to an ecosystem
-//! repository, and the shared leaves `filament-exact` and `filament-semantic-value`
+//! repository, and the shared leaves `filament-exact`, `filament-semantic-value`,
+//! `filament-checked` and `filament-eval`
 //! wherever they come from, each as its own ecosystem repository. Test, bench, example and
 //! build-script targets are test or
 //! build code, and test code under a root is excluded as `typestate_scan`
@@ -59,10 +60,11 @@ const TAG: &str = "filament:canonical";
 /// scans them wherever they are sourced from, as it scans IR's types. The
 /// `copy` rule holds them against the code that runs the gate; their own
 /// one-definition checks belong to their repositories.
-const SHARED_LEAVES: [&str; 3] = [
+const SHARED_LEAVES: [&str; 4] = [
     "filament-exact",
     "filament-semantic-value",
     "filament-checked",
+    "filament-eval",
 ];
 
 /// Target kinds whose sources are shipped code.
