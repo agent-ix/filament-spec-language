@@ -16,12 +16,12 @@
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::{BackendId, RequestIndex};
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, Value, ValueType};
 
 use crate::certificate::closure::{
-    check_closure, check_components, check_protocol_closure, check_protocol_components,
     CertificateRejection, CertificateRequest, ClosureRefusal, ProtocolCertificateRequest,
-    TemporalCertificateCheck,
+    TemporalCertificateCheck, check_closure, check_components, check_protocol_closure,
+    check_protocol_components,
 };
 use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
@@ -29,8 +29,8 @@ use crate::model_check::counterexample::TemporalCounterexample;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
 use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause, RunStats};
 use crate::model_check::replay::{
-    no_value_cause, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
-    StrongFairnessHint,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, StrongFairnessHint,
+    no_value_cause,
 };
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound,
@@ -41,9 +41,10 @@ use crate::proof_result::{
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::ProtocolDefinition;
 use fsl_eval::simulation::protocol::{
-    activates_on_each, live_instance_bound, load_buffering_shapes, ProtocolRefusal,
-    ProtocolTransition, SubjectMemory, WeakAccessShape,
+    PackageProtocolProgram, ProtocolRefusal, ProtocolTransition, SubjectMemory, WeakAccessShape,
+    activates_on_each, live_instance_bound, load_buffering_shapes, package_load_buffering_shapes,
 };
 use fsl_eval::simulation::{ExpansionStop, SubjectTransition};
 
@@ -408,21 +409,28 @@ pub fn settle_protocol_check(
 fn load_buffering_warnings(
     subject: &ProtocolSubject<'_>,
 ) -> Result<Vec<RecordWarning>, Option<ExpansionStop>> {
-    let protocol = subject
-        .model
-        .simulation
-        .input
-        .evaluator
-        .protocol(&subject.protocol)
-        .ok_or(None)?;
     let model = ModelSystem::new(subject.model.simulation.clone()).map_err(|_| None)?;
-    let shapes = load_buffering_shapes(
-        &model,
-        protocol,
-        &subject.memory,
-        &subject.over,
-        &subject.capacities,
-    )
+    let input = &subject.model.simulation.input;
+    let shapes = match input.protocol_definition(&subject.protocol).ok_or(None)? {
+        ProtocolDefinition::Source(protocol) => load_buffering_shapes(
+            &model,
+            protocol,
+            &subject.memory,
+            &subject.over,
+            &subject.capacities,
+        ),
+        ProtocolDefinition::Package(form) => {
+            let package = PackageProtocolProgram::with_memory(input, form, subject.memory.clone())
+                .map_err(|_| None)?;
+            let ValueType::Reference(object_type) = &package.over_type else {
+                return Err(None);
+            };
+            let reference = model
+                .bound_reference(object_type.clone(), &subject.over)
+                .map_err(|_| None)?;
+            package_load_buffering_shapes(&model, &package, &Value::Reference(reference))
+        }
+    }
     .map_err(|refusal| match refusal {
         ProtocolRefusal::InitialStop(stop) if !stop.is_internal_failure() => Some(stop),
         _ => None,
