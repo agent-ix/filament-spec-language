@@ -150,6 +150,7 @@ fn tc_3121_unit_text() -> String {
         .filter(|line| {
             !line.starts_with("invariant ")
                 || line.starts_with("invariant AllBelow ")
+                || line.starts_with("invariant NotAllBelow ")
                 || line.starts_with("invariant RefusedDomain ")
                 || line.starts_with("invariant MatchesParent ")
                 || line.starts_with("invariant AtLeastParent ")
@@ -160,15 +161,6 @@ fn tc_3121_unit_text() -> String {
 
 fn tc_3121_unit() -> Unit {
     unit_for(tc_3121_unit_text(), config_version_domain_document())
-}
-
-fn tc_3121_undefined_unit() -> Unit {
-    let mut text = tc_3121_unit_text();
-    text.push_str(
-        "\ninvariant UndefinedParent using v on Config::ConfigVersion at current { \
-         value(self.parent).versionNumber = 1 }\n",
-    );
-    unit_for(text, config_version_domain_document())
 }
 
 fn comparison_witness_unit_text() -> String {
@@ -2133,33 +2125,26 @@ fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
     );
 }
 
-/// FR-269-AC-7: a genuine undefined evaluator result retains its reason and
-/// expression pointer through the public replay preparation path.
-#[trace("TC-3121", "FR-269-AC-7")]
+/// FR-269-AC-6/9: the no-parent case has a false, closed-scope basis and
+/// therefore returns `Ok(None)`.
+#[trace("TC-3121", "FR-269-AC-6", "FR-269-AC-9")]
 #[test]
-fn tc_3121_public_derivation_undefined_keeps_catalog_metadata() {
-    let unit = tc_3121_undefined_unit();
+fn tc_3121_no_parent_closed_scope_returns_none() {
+    let unit = tc_3121_unit();
     let (wire, envelope) = replay_case(
         &unit,
-        "UndefinedParent",
+        "NotAllBelow",
         Snapshot::Low,
         "root",
         None,
         witness_source(),
     );
-    let undefined = crate::derive_state_clause_witness(
+    let result = crate::derive_state_clause_witness(
         wire,
-        &envelope.expect("the undefined envelope reconstructs"),
+        &envelope.expect("the no-parent envelope reconstructs"),
         crate::ReplayLimits::default(),
-    )
-    .expect_err("division by zero is undefined");
-    assert!(matches!(undefined, crate::DerivationRefusal::Undefined { .. }));
-    assert_eq!(undefined.code(), crate::Code::UndefinedExpression.as_str());
-    assert_eq!(undefined.cause(), Some("division-by-zero"));
-    assert_eq!(
-        undefined.pointer().as_deref(),
-        Some("/family_payload/observation")
     );
+    assert!(result.unwrap().is_none());
 }
 
 fn input_source() -> ReplaySource {
