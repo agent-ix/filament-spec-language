@@ -3879,15 +3879,7 @@ fn prepare_complete_run(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| RunCause::ClauseRequest {
-        member: "models".to_owned(),
-        reason: refusal.detail,
-    })?;
+    let packages = package_input_from_selected_models(&request.models, &documents)?;
     let libraries = request
         .libraries
         .iter()
