@@ -1026,7 +1026,7 @@ fn synthesis_declarations_keep_grammar_domain_and_predicate_order() {
 
 #[test]
 #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
-#[ignore = "QSL-2235: admitted synthesis objectives are not parsed yet"]
+#[trace("TC-2104", "FR-754-AC-1")]
 fn synthesis_objectives_preserve_direction_objective_and_predicate_roles() {
     for (direction, objective) in [
         ("minimize", "candidate.cost"),
