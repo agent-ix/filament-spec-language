@@ -18,7 +18,7 @@ use crate::checked_v2::{
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
 const FINITE_DET: &str = "hyper Det using t over t in Obs bounded 3 forall trace a forall trace b \
-    { (a.inp = b.inp) implies (a.out = b.out) }";
+    { (a.inp = b.inp) implies (a.res = b.res) }";
 
 /// `a` and `b` read the same version number.
 const READ_A_B: &str = "always holds(c.versionNumber @ a = c.versionNumber @ b)";
@@ -94,7 +94,7 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"{EVENT}\";\n\
-         record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n\
+         record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
         {FINITE_DET}"
     );
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
