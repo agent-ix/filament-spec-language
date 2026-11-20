@@ -38,6 +38,7 @@ mod digital_item;
 pub mod document;
 mod exact;
 mod hybrid_item;
+mod hybrid_process;
 mod invariant_item;
 mod items;
 mod protocol_item;
@@ -169,6 +170,29 @@ pub struct Engine {
     /// The in-process hybrid provider an [`Engine::hybrid`] engine decides
     /// hybrid items with (FR-750).
     hybrid: Option<std::sync::Arc<dyn fsl_replay::HybridProvider>>,
+    /// The byte exchange of an [`Engine::hybrid_process`] engine (FR-750).
+    hybrid_exchange: Option<std::sync::Arc<dyn HybridProcessExchange>>,
+}
+
+/// The transport of one process hybrid provider (FR-750, FR-635): it takes
+/// the FR-447 process request frame bytes and the run's cancellation token
+/// and returns the provider's FSpec FR-331 result frame bytes or a typed
+/// tool failure. FSL writes the request and reads the result; starting the
+/// process, FR-462 framing, limits, the deadline and cancellation belong to
+/// the implementor, the driver's plugin host. A deadline overrun or a
+/// cancellation is returned as a result frame whose entry is `incomplete`
+/// with cause `timed-out` or `cancelled` (FSpec FR-462).
+pub trait HybridProcessExchange: std::fmt::Debug + Send + Sync {
+    /// Exchange one request frame for its result frame.
+    ///
+    /// # Errors
+    ///
+    /// The [`fsl_replay::ToolFailure`] FSpec FR-462's failure table names.
+    fn exchange(
+        &self,
+        request: &[u8],
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<u8>, fsl_replay::ToolFailure>;
 }
 
 impl Engine {
@@ -180,6 +204,7 @@ impl Engine {
             tool: BackendTool::linked(),
             provider: None,
             hybrid: None,
+            hybrid_exchange: None,
         }
     }
 
@@ -209,6 +234,7 @@ impl Engine {
             tool: BackendTool::linked(),
             provider: None,
             hybrid: Some(provider.into()),
+            hybrid_exchange: None,
         })
     }
 
@@ -228,7 +254,51 @@ impl Engine {
             hybrid: Some(std::sync::Arc::new(
                 fsl_hybrid_reference::ReferenceProvider,
             )),
+            hybrid_exchange: None,
         })
+    }
+
+    /// An engine whose hybrid provider runs in a process of its own
+    /// (FR-750): `descriptor` is its `Process` descriptor, `tool` its FSpec
+    /// FR-331 tool record and `exchange` the transport of its request and
+    /// result frames. FSL writes the request, reads the result and settles it
+    /// as it settles an in-process provider's answer, except that a `proved`
+    /// entry is the plugin's `trusted` word unless FR-751 accepts its
+    /// certificate.
+    ///
+    /// # Errors
+    ///
+    /// [`NotHybrid`] when `descriptor`'s `dynamics` lacks `hybrid` or it does
+    /// not advertise `temporal-satisfaction`; no engine is made and `exchange`
+    /// is never called.
+    pub fn hybrid_process(
+        descriptor: BackendDescriptor,
+        tool: BackendTool,
+        exchange: Box<dyn HybridProcessExchange>,
+    ) -> Result<Self, NotHybrid> {
+        let hybrid = descriptor
+            .dynamics()
+            .is_some_and(|kinds| kinds.contains(&fsl_route::DynamicsKind::Hybrid))
+            && descriptor
+                .advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction);
+        if !hybrid {
+            return Err(NotHybrid {
+                backend: descriptor.id().clone(),
+            });
+        }
+        Ok(Self {
+            descriptor,
+            tool,
+            provider: None,
+            hybrid: None,
+            hybrid_exchange: Some(exchange.into()),
+        })
+    }
+
+    /// The process exchange this engine decides hybrid items with, if any.
+    pub(crate) fn hybrid_exchange(&self) -> Option<&dyn HybridProcessExchange> {
+        self.hybrid_exchange.as_deref()
     }
 
     /// The hybrid provider this engine decides items with, if any.
@@ -265,6 +335,7 @@ impl Engine {
             descriptor,
             provider: Some(provider.into()),
             hybrid: None,
+            hybrid_exchange: None,
             tool,
         })
     }
@@ -648,6 +719,9 @@ pub struct ItemDetail {
     pub finite_replay: Option<FiniteReplayDetail>,
     /// A hybrid entry's certificate and its outcome (FSpec FR-652).
     pub hybrid_certificate: Option<fsl_replay::CertificateRecord>,
+    /// The FR-286 spelling of the provider's complete counterexample in a
+    /// `hybrid-trace` disagreement (FR-450 "Settlement").
+    pub hybrid_disagreement: Option<serde_json::Value>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -684,6 +758,7 @@ impl ItemDetail {
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
             hybrid_certificate: record.hybrid_certificate.clone(),
+            hybrid_disagreement: record.hybrid_disagreement.clone(),
         }
     }
 }
@@ -1118,6 +1193,23 @@ impl Engines {
     pub fn under(mut self, options: ProviderOptions) -> Self {
         self.options = options;
         self
+    }
+
+    /// The registry snapshot a process request carries (FSpec FR-331): the
+    /// FR-331 descriptor of every registered engine, ordered by backend.
+    pub(crate) fn manifest_wire(&self) -> Vec<serde_json::Value> {
+        let mut snapshot: Vec<_> = self
+            .engines
+            .iter()
+            .map(|engine| (engine.descriptor.id().as_str(), engine))
+            .collect();
+        snapshot.sort_by_key(|(id, _)| *id);
+        snapshot
+            .into_iter()
+            .map(|(_, engine)| {
+                hybrid_process::descriptor_wire(&engine.descriptor, &engine.tool)
+            })
+            .collect()
     }
 
     /// The run's provider options.
@@ -1763,6 +1855,9 @@ pub struct AnalyzeRecord {
     /// The certificate of a hybrid provider's entry and what FR-751 did
     /// with it (FSpec FR-652).
     pub hybrid_certificate: Option<fsl_replay::CertificateRecord>,
+    /// The FR-286 spelling of the provider's complete counterexample in a
+    /// `hybrid-trace` disagreement (FR-450 "Settlement").
+    pub hybrid_disagreement: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1806,6 +1901,7 @@ impl AnalyzeRecord {
             schedule_miss: None,
             hybrid_counterexample: None,
             hybrid_certificate: None,
+            hybrid_disagreement: None,
             state_graph: None,
         }
     }
@@ -2291,7 +2387,9 @@ fn run(
             Disposition::Supported(candidate)
                 if engines
                     .get(candidate.id())
-                    .is_none_or(|engine| engine.hybrid_provider().is_none()) =>
+                    .is_none_or(|engine| {
+                        engine.hybrid_provider().is_none() && engine.hybrid_exchange().is_none()
+                    }) =>
             {
                 return record(terminal(TerminalRecord::hybrid_tool_unavailable(
                     index,
@@ -2650,6 +2748,7 @@ fn settle(
                 counterexample,
                 wire,
                 certificate,
+                disagreement,
             } = *report;
             // A refuted value without its replayed counterexample is an
             // engine fault, never a verdict.
@@ -2660,6 +2759,7 @@ fn settle(
             AnalyzeRecord {
                 hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
                 hybrid_certificate: certificate,
+                hybrid_disagreement: disagreement,
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

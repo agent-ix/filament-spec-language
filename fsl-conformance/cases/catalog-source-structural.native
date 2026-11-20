@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+record Pair { number: Integer; flag: Boolean; }
+function project using v(p: Pair): Integer pure { p.number }
+function increment using v(n: Integer): Integer pure { n + 1 }
+function composed using v(p: Pair): Integer pure {
+  let n = project(p) in increment(n)
+}

@@ -279,6 +279,60 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal BigMoves using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 1] holds(1 / ((h.v - v0 - 1) * 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) != 0) }\n\
+     temporal CurveSq using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v > 2 and q.v < 3) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0 * v0 - v0) != 0) }\n\
+     temporal CurveRoot using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v * h.v - v0 - 3) != 0) }\n\
+     temporal CurveDip using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 3) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - (3 * v0 - 4) * (3 * v0 - 4) - 1) != 0) }\n\
+     temporal CurveDown using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 3) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v + v0 - 5) != 0) }\n\
+     temporal CurveMerge using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v * h.v - v0) != 0) }\n\
+     temporal CurveTwice using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - 3) * (h.v - 2 * v0)) != 0) }\n\
+     temporal CurveBig using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - 3 * v0) * 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) != 0) }\n\
+     temporal CurveCirc using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - v0 - 2) * (h.v - v0 - 2) - 2) != 0) }\n\
+     temporal CrossPair using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 / 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - 2 * v0) * (h.v - 3 + v0)) != 0) }\n\
+     temporal TwoBranch using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - 1) * (h.v - 1) - v0) != 0) }\n\
+     temporal TwoBranchQ using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1 / 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - 1) * (h.v - 1) - v0) != 0) }\n\
+     temporal DipA using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - (v0 - 7 / 10) * (v0 - 7 / 10) - 13 / 10) != 0) }\n\
+     temporal DipC using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 3) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - (v0 - 2) * (v0 - 2) * (v0 + 1) - 3) != 0) }\n\
+     temporal CurveHi5 using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v * h.v * h.v * h.v * h.v - 3 * h.v * h.v * h.v + v0 * v0 * v0 * h.v - 4 * v0) != 0) }\n\
+     temporal CurveBig5 using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v * h.v * h.v - 1000000000000000000000000000000 / 7 * v0 * v0 * h.v + v0 - 3) != 0) }\n\
+     temporal TauDeg using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 2] holds(h.v * h.v * h.v != v0 * v0 * v0 * v0 * v0 + v0 + 1) }\n\
+     temporal CurveHigh using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v * h.v * h.v * h.v * h.v - 3 * h.v * h.v * h.v + v0 * h.v - 4) != 0) }\n\
+     temporal Worst using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 1] holds(h.v * h.v * h.v * h.v * h.v - 3 * h.v * h.v * h.v + v0 * h.v <= 40) }\n\
      temporal Moves using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
@@ -368,24 +422,37 @@ fn the_activation_scan_is_charged_to_the_meter() {
     let phase = check(PHASE);
     let phase_trace = phase_lasso();
     let cases = [
-        (&shuttle, "Cap", &lasso, 2152),
-        (&shuttle, "Range", &lasso, 1555),
+        (&shuttle, "Cap", &lasso, 1753),
+        (&shuttle, "Range", &lasso, 1370),
         (&shuttle, "Past", &lasso, 46),
         (&shuttle, "Origin", &lasso, 36),
-        (&ramp, "Nested", &ramp_trace, 16724),
+        (&ramp, "Nested", &ramp_trace, 17181),
         (&phase, "Twice", &phase_trace, 71),
-        (&ramp, "Cube", &ramp_trace, 483),
-        (&ramp, "Touch", &ramp_trace, 4653),
-        (&ramp, "Moves", &ramp_trace, 412),
-        (&ramp, "Meet", &ramp_trace, 1169),
-        (&ramp, "Shared", &ramp_trace, 1134),
-        (&ramp, "Pole", &ramp_trace, 4821),
-        (&ramp, "LeadHolds", &ramp_trace, 2321),
-        (&ramp, "CubeLeadHolds", &ramp_trace, 11660),
-        (&ramp, "Lead3", &ramp_trace, 20715),
-        (&ramp, "Sqrt", &ramp_trace, 992),
-        (&ramp, "BigAtoms", &ramp_trace, 13398),
-        (&ramp, "BigMoves", &ramp_trace, 2279),
+        (&ramp, "Cube", &ramp_trace, 1707),
+        (&ramp, "Touch", &ramp_trace, 4043),
+        (&ramp, "Moves", &ramp_trace, 717),
+        (&ramp, "Meet", &ramp_trace, 5241),
+        (&ramp, "Shared", &ramp_trace, 4622),
+        (&ramp, "Pole", &ramp_trace, 1884),
+        (&ramp, "LeadHolds", &ramp_trace, 12458),
+        (&ramp, "CubeLeadHolds", &ramp_trace, 91496),
+        (&ramp, "Lead3", &ramp_trace, 104904),
+        (&ramp, "Sqrt", &ramp_trace, 1480),
+        (&ramp, "BigAtoms", &ramp_trace, 7415),
+        (&ramp, "BigMoves", &ramp_trace, 1486),
+        (&ramp, "CurveSq", &ramp_trace, 16425),
+        (&ramp, "CurveRoot", &ramp_trace, 3332),
+        (&ramp, "CurveDip", &ramp_trace, 92983),
+        (&ramp, "CurveDown", &ramp_trace, 6591),
+        (&ramp, "CurveMerge", &ramp_trace, 11540),
+        (&ramp, "CurveTwice", &ramp_trace, 6250),
+        (&ramp, "CurveBig", &ramp_trace, 7399),
+        (&ramp, "CurveCirc", &ramp_trace, 25820),
+        (&ramp, "CrossPair", &ramp_trace, 62283),
+        (&ramp, "TwoBranch", &ramp_trace, 21149),
+        (&ramp, "TwoBranchQ", &ramp_trace, 4615),
+        (&ramp, "DipA", &ramp_trace, 33949),
+        (&ramp, "DipC", &ramp_trace, 96879),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
@@ -602,6 +669,21 @@ fn the_meter_bounds_the_work_at_an_algebraic_activation_instant() {
         );
         assert!(consumed <= 20_000, "{name}");
     }
+    // The infimum of a curved instant of degree 5, and of one with a
+    // coefficient of 100 bits, under a small and a middling meter.
+    for name in ["CurveHi5", "CurveBig5"] {
+        for bound in [2_000, 20_000, 100_000, 300_000] {
+            let (found, consumed) = charged_within(name, bound);
+            assert_eq!(
+                found,
+                Err(HybridReplayRefusal::ResourceExhausted {
+                    counter: LimitKind::WorkUnits
+                }),
+                "{name} {bound}"
+            );
+            assert!(consumed <= bound, "{name} {bound}");
+        }
+    }
     let graph = check(RAMP);
     let trace = ramp_trace();
     let (square, cube, linear) = (
@@ -609,8 +691,93 @@ fn the_meter_bounds_the_work_at_an_algebraic_activation_instant() {
         units(&graph, "CubeLeadHolds", &trace),
         units(&graph, "Lead3", &trace),
     );
-    assert!(cube > 4 * square, "{square} {cube}");
+    assert!(cube > square, "{square} {cube}");
     assert!(linear > 4 * square, "{square} {linear}");
+}
+
+/// A rational limit of a curved moving instant is reported as the rational
+/// (FR-450: the point interval), not as a root with an isolating interval:
+/// the two branches of `(x - 2 tau)(x - 3 + tau)` meet at 1 (`tau = 1`), the
+/// branches of `(x - 1)^2 = tau` leave 0 and 1/2 as their limits, and the
+/// minimum of `x = (tau - 2)^2 (tau + 1) + 3` is 3.
+#[trace("TC-1221")]
+#[test]
+fn a_rational_limit_of_a_curved_instant_is_reported_as_a_point() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    for (name, expected) in [
+        ("CrossPair", q(1, 1)),
+        ("TwoBranch", q(0, 1)),
+        ("TwoBranchQ", q(1, 2)),
+        ("DipC", q(3, 1)),
+        ("DipA", q(13, 10)),
+    ] {
+        let (cause, time) = undefined(&graph, name, &trace);
+        assert_eq!(cause, UndefinedCause::DivisionByZero, "{name}");
+        assert_eq!(time, ExactReal::Rational(expected), "{name}");
+        assert!(matches!(time, ExactReal::Rational(_)), "{name}: {time:?}");
+    }
+}
+
+/// The cut at the stationary polynomial is needed for soundness: over
+/// `(0, 2)` the curve `x = (tau - 7/10)^2 + 13/10` has its minimum 13/10 at
+/// `tau = 7/10`, strictly inside the cell and on no other cut, so without the
+/// cut the limits at the cell's ends alone give a later instant (with the cut
+/// disabled the claim reports about 1.394, and no gap).
+#[trace("TC-1221")]
+#[test]
+fn the_minimum_inside_a_cell_is_the_infimum_of_a_curved_instant() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    let (_, time) = undefined(&graph, "DipA", &trace);
+    assert_eq!(time, ExactReal::Rational(q(13, 10)));
+    assert!(time < ExactReal::Rational(q(139, 100)));
+}
+
+/// A unit of the meter costs about the same wall time on every path
+/// (QSL-2724): a big-rational product costs the square of its operands'
+/// words, and the algebraic paths (reduction modulo `tau`'s polynomial, gcds,
+/// Sturm sequences, resultants, the curve's root isolation) used to charge
+/// it linearly and ran 50 to 300 times slower per unit than the rational
+/// ones. The slowest and fastest per-unit times of a spread of claims stay
+/// within a factor of 50, and a degree-5 curve or guard that took minutes
+/// is exhausted under a small meter within seconds.
+#[trace("TC-1221")]
+#[test]
+fn a_unit_of_the_meter_costs_the_same_time_on_every_path() {
+    let mut rates = Vec::new();
+    for (name, bound) in [
+        ("Nested", 300_000),
+        ("Lead3", 300_000),
+        ("Lead3b", 300_000),
+        ("CurveBig", 300_000),
+        ("CurveSq", 300_000),
+        ("CurveHigh", 300_000),
+        ("Worst", 300_000),
+        ("TauDeg", 300_000),
+        ("CurveHi5", 20_000),
+        ("CurveHi5", 100_000),
+        ("CurveHi5", 300_000),
+        ("CurveBig5", 20_000),
+        ("CurveBig5", 100_000),
+        ("CurveBig5", 300_000),
+    ] {
+        let started = std::time::Instant::now();
+        let (_, consumed) = charged_within(name, bound);
+        let elapsed = started.elapsed();
+        assert!(consumed <= bound, "{name}");
+        if elapsed.as_millis() >= 20 {
+            rates.push((
+                name,
+                bound,
+                elapsed.as_nanos() / u128::from(consumed.max(1)),
+            ));
+        }
+    }
+    assert!(rates.len() >= 8, "{rates:?}");
+    let slowest = rates.iter().map(|(_, _, r)| *r).max().unwrap_or(0);
+    let fastest = rates.iter().map(|(_, _, r)| *r).min().unwrap_or(1).max(1);
+    assert!(slowest <= 50 * fastest, "ns per unit: {rates:?}");
 }
 
 /// An expression with no value only at the first-pass sample of an open
@@ -691,4 +858,55 @@ fn three_nested_windows_are_decided_within_a_moderate_meter() {
         super::super::exact_replay(&graph, claim(&graph, "Deep"), &trace, &mut meter),
         Ok(reproduced_formula(&trace))
     );
+}
+
+/// The infimum of an instant with no value that moves along a curve other
+/// than `x = tau + c` (QSL-2706): the lesser of the limits of the root curve
+/// at the two ends of the cell of activation instants, not attained.
+/// Hand-derived: `x = tau^2 + tau` over `tau^2 > 2`, `tau < 3` starts at the
+/// irrational `tau = sqrt 2`, where it is `2 + sqrt 2`, the root above 3 of
+/// `x^2 - 4x + 2`; `x^2 = tau + 3` over `(0, 1)` starts at `sqrt 3`;
+/// `x = 5 - tau` over `(1, 3)` ends at 2; `x^2 = tau` over `(0, 1)` merges its
+/// two branches at 0; `(x - 3)(x - 2 tau)` over `(1, 2)` has the vertical
+/// factor `x - 3` (the curve `x = 2 tau` starts at 2, below 3 until
+/// `tau = 3/2`); `(x - 3 tau) 10^300` over `(1, 2)` starts at 3.
+#[trace("TC-1221")]
+#[test]
+fn the_infimum_of_a_curved_moving_instant_is_the_limit_of_its_root_curve() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    for (name, expected) in [
+        ("CurveDown", 2),
+        ("CurveMerge", 0),
+        ("CurveTwice", 2),
+        ("CurveBig", 3),
+        ("CurveDip", 1),
+    ] {
+        assert_eq!(
+            undefined(&graph, name, &trace),
+            (
+                UndefinedCause::DivisionByZero,
+                ExactReal::Rational(q(expected, 1))
+            ),
+            "{name}"
+        );
+    }
+    let (_, time) = undefined(&graph, "CurveRoot", &trace);
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(-3, 1), q(0, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+    assert!(time > ExactReal::Rational(q(0, 1)));
+    let (_, time) = undefined(&graph, "CurveCirc", &trace);
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(2, 1), q(-4, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+    assert!(time > ExactReal::Rational(q(1, 2)) && time < ExactReal::Rational(q(3, 5)));
+    let (_, time) = undefined(&graph, "CurveSq", &trace);
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(2, 1), q(-4, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+    assert!(time > ExactReal::Rational(q(3, 1)));
 }

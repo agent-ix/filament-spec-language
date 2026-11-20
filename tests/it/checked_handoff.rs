@@ -1757,7 +1757,7 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
     assert_eq!(
         source_refusal.code,
         CheckedPackageRefusalCode::InvalidPackage,
-        "{source_refusal:?}"
+        "the declared-node/source-map mismatch is FR-322-AC-52: {source_refusal:?}"
     );
     assert_eq!(
         source_refusal.cause,

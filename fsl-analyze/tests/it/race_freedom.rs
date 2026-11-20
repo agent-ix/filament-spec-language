@@ -79,7 +79,7 @@ fn put(node: &str, cell: &str, ordering: &str) -> String {
 /// reader loads `data` only after a flag load that read 1.
 fn message_passing(data: &str, flag_store: &str, flag_load: &str) -> String {
     let reader = format!(
-        "{} choice Pick by c visible (bLy and true) {{ case yes when {{ bLy and true }} {} \
+        "{} choice Pick by c visible (bLy) {{ case yes when {{ bLy and true }} {} \
          case no when {{ not (bLy and true) }} sequence Skip {{ }} }}",
         attempt("Ly", "c", "Core::look", flag_load, "LooksY, Looked"),
         load_ordered("Lx", "x", 2, data),
@@ -486,7 +486,7 @@ fn unit_with(members: &str, extra: &str, a: &str, b: &str) -> Case {
 /// `flag_load` that read 1, then `after`.
 fn reader(flag_load: &str, before_data: &str) -> String {
     format!(
-        "sequence B {{ {} choice Pick by c visible (bLy and true) {{ case yes when {{ bLy and true }} \
+        "sequence B {{ {} choice Pick by c visible (bLy) {{ case yes when {{ bLy and true }} \
          sequence Yes {{ {before_data} {} }} \
          case no when {{ not (bLy and true) }} sequence Skip {{ }} }} }}",
         attempt("Ly", "c", "Core::look", flag_load, "LooksY, Looked"),
@@ -919,7 +919,7 @@ fn a_second_receiver_of_an_older_equal_entry_races_with_the_store() {
         put("Sy", "y", "relaxed"),
     );
     let second = format!(
-        "sequence R2 {{ {} choice Pick2 by c visible (bLy and true) {{ case yes when {{ bLy and true }} \
+        "sequence R2 {{ {} choice Pick2 by c visible (bLy) {{ case yes when {{ bLy and true }} \
          sequence Y {{ receive Rb via ch of s::S::Loop::Body::Tx as (rb: Boolean) \
          {{ true }}; {} }} case no when {{ not (bLy and true) }} sequence Skip2 {{ }} }} }}",
         attempt("Ly", "c", "Core::look", "relaxed", "LooksY, Looked"),
@@ -972,7 +972,7 @@ fn a_second_receiver_of_an_older_equal_entry_races_with_the_store_under_tso() {
         put("Sy", "y", "relaxed"),
     );
     let second = format!(
-        "sequence R2 {{ {} choice Pick2 by c visible (bLy and true) {{ case yes when {{ bLy and true }} \
+        "sequence R2 {{ {} choice Pick2 by c visible (bLy) {{ case yes when {{ bLy and true }} \
          sequence Y {{ receive Rb via ch of s::S::Loop::Body::Tx as (rb: Boolean) \
          {{ true }}; {} }} case no when {{ not (bLy and true) }} sequence Skip2 {{ }} }} }}",
         attempt("Ly", "c", "Core::look", "relaxed", "LooksY, Looked"),
@@ -1434,7 +1434,7 @@ fn seq_cst_fences_do_not_order_threads_under_tso() {
         ],
     );
     let reader = format!(
-        "sequence B {{ fence F2 ordering seq_cst; {} choice Pick by c visible (bLy and true) {{ \
+        "sequence B {{ fence F2 ordering seq_cst; {} choice Pick by c visible (bLy) {{ \
          case yes when {{ bLy and true }} {} case no when {{ not (bLy and true) }} sequence Skip {{ }} }} }}",
         attempt("Ly", "c", "Core::look", "relaxed", "LooksY, Looked"),
         load_ordered("Lx", "x", 2, ""),

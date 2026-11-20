@@ -82,17 +82,39 @@ fn every_nested_form_checks_at_1000_levels_as_at_2_on_a_small_stack() {
 #[trace("FR-093-AC-14", "TC-415")]
 #[test]
 fn a_postcondition_pre_over_1000_levels_refuses_on_a_small_stack() {
-    let graph = PackageDeclarations::new(
+    let marker = filament_exact::NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text("Marker".to_owned())],
+        0,
+    )
+    .expect("the fixture type has a structural key");
+    let mut declarations = PackageDeclarations::new(
         fixture_source(),
         "fixture",
         fsl_foundation::IdentityLimits::default(),
+    );
+    declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+        [filament_semantic_value::declaration::CompositeDeclaration::new(
+            marker,
+            "Marker",
+            filament_semantic_value::declaration::CompositeShape::Record(vec![
+                filament_semantic_value::declaration::FieldDeclaration::new(
+                    "ready",
+                    filament_exact::ValueType::Boolean,
+                    filament_exact::Presence::Required,
+                ),
+            ]),
+        )],
+        [],
     )
-    .check(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &crate::check::test_support::ZeroRewardEvaluator,
-    )
-    .expect("an empty package checks");
+    .expect("the minimal type fixture is admitted");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("the minimal fixture package checks");
     let refused = std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(STACK)

@@ -1,0 +1,37 @@
+[package]
+name = "fsl-hybrid-test-provider"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "A scripted process hybrid provider speaking filament.plugin-wire/v1, the process the FR-750 process-provider tests start"
+
+# A developer-tool package like `fsl-probability-check`: the executable the
+# integration tests of FR-750 start as a process of its own (FR-287-AC-1
+# admits a `bin` target only in `tools/`).
+[dependencies]
+quire-canonical = { workspace = true }
+serde_json = "1.0.151"
+
+[dev-dependencies]
+filament-exact = { workspace = true }
+fsl-analyze = { path = "../../fsl-analyze" }
+fsl-command = { path = "../../fsl-command" }
+fsl-foundation = { path = "../../fsl-foundation" }
+fsl-replay = { path = "../../fsl-replay" }
+fsl-route = { path = "../../fsl-route" }
+fsl-semantics = { path = "../../fsl-semantics" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+quire-canonical = { workspace = true }
+serde_json = "1.0.151"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"

@@ -911,6 +911,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "filament-verification-contracts",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -1001,6 +1002,22 @@ dependencies = [
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
+]
+
+[[package]]
+name = "fsl-hybrid-test-provider"
+version = "0.1.0"
+dependencies = [
+ "filament-exact",
+ "fsl-analyze",
+ "fsl-command",
+ "fsl-foundation",
+ "fsl-replay",
+ "fsl-route",
+ "fsl-semantics",
+ "ix-trace-rs",
+ "quire-canonical",
+ "serde_json",
 ]
 
 [[package]]

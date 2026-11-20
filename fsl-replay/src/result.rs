@@ -132,6 +132,23 @@ pub enum HybridTraceDisagreement {
     },
 }
 
+impl HybridTraceDisagreement {
+    /// The complete provider counterexample that replay did not agree with.
+    pub fn counterexample(&self) -> &HybridCounterexample {
+        match self {
+            Self::NotReproduced { counterexample } | Self::NotExact { counterexample } => counterexample,
+        }
+    }
+
+    /// The disagreement's wire `type` (FR-450).
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::NotReproduced { .. } => "not-reproduced",
+            Self::NotExact { .. } => "not-exact",
+        }
+    }
+}
+
 impl DisagreementCause {
     /// The reason's wire spelling.
     pub const fn as_str(&self) -> &'static str {

@@ -127,7 +127,13 @@ pub(crate) fn document() -> Json {
             node,
             record("Receipt", &[("total", &model::id("Total"))]),
             record("Attempt", &[("tally", &model::id("Tally"))]),
-            record("Flag", &[("ready", "ix://filament/native/Boolean")]),
+            record(
+                "Flag",
+                &[
+                    ("ready", "ix://filament/native/Boolean"),
+                    ("count", &model::id("Count")),
+                ],
+            ),
             record(
                 "Tick",
                 &[

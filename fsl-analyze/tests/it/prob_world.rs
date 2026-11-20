@@ -65,6 +65,19 @@ pub(crate) struct Model {
 }
 
 impl Model {
+    /// The unit that selects this model as `M` and the model's domain
+    /// package document, as a compile request reads them from files.
+    pub(crate) fn unit_and_document(&self) -> (String, Vec<u8>) {
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+             profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+             profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+             model M = \"{}\";\n{}\n",
+            self.package, self.body
+        );
+        (unit, self.document(false))
+    }
+
     /// The identity of `suffix` in this package.
     pub(crate) fn ident(&self, suffix: &str) -> String {
         format!("ix://{}/{suffix}", self.package)
