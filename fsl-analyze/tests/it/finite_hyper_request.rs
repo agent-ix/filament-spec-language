@@ -48,7 +48,7 @@ fn unit(body: &str) -> String {
 
 fn request(ws: &Workspace, clause: &str, traces: Value) -> crate::analyze_cli_support::Run {
     let source = unit(&format!(
-        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n{clause}"
+        "record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n{clause}"
     ));
     run_items(
         ws,
@@ -74,12 +74,12 @@ fn population(closure: &str, traces: Value) -> Value {
 fn trace(identity: &str, states: &[(u64, u64)]) -> Value {
     json!({
         "identity": identity,
-        "states": states.iter().map(|(inp, out)| json!({"inp": inp, "out": out})).collect::<Vec<_>>(),
+        "states": states.iter().map(|(inp, res)| json!({"inp": inp, "res": res})).collect::<Vec<_>>(),
     })
 }
 
 const DET: &str = "hyper Det using ep over t in Obs bounded 3 \
-    forall trace a forall trace b { (a.inp = b.inp) implies (a.out = b.out) }";
+    forall trace a forall trace b { (a.inp = b.inp) implies (a.res = b.res) }";
 
 /// FR-898-AC-3: the checked clause settles closed trace populations.
 #[trace("TC-2535", "FR-898-AC-3")]
@@ -132,12 +132,12 @@ fn closed_population_proves_and_replays_a_joint_position_refutation() {
 #[test]
 fn quantifier_order_open_prefix_and_population_bound_settle() {
     let clauses = "hyper ForallExists using ep over t in Obs bounded 3 \
-         forall trace a exists trace b { a.out = b.inp }\n\
+         forall trace a exists trace b { a.res = b.inp }\n\
          hyper ExistsForall using ep over t in Obs bounded 3 \
-         exists trace b forall trace a { a.out = b.inp }";
+         exists trace b forall trace a { a.res = b.inp }";
     let ws = Workspace::new("finite-hyper-prefix-order");
     let source = unit(&format!(
-        "record Obs {{ inp: Int[0, 3]; out: Int[0, 3]; }}\n{clauses}"
+        "record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n{clauses}"
     ));
     let items = json!([
         {"claim": "ForallExists", "kind": "temporal-satisfaction", "traces": {"authority": "test", "identity": POPULATION}},
@@ -227,7 +227,7 @@ fn repeated_trace_identities_fold_only_when_records_match() {
 fn missing_aligned_record_is_inconclusive() {
     let ws = Workspace::new("finite-hyper-incomplete");
     let clause = "hyper Det using ep over t in Obs bounded 3 \
-        forall trace a forall trace b { a.out = b.out }";
+        forall trace a forall trace b { a.res = b.res }";
     let run = request(
         &ws,
         clause,

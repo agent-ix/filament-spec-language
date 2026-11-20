@@ -2032,9 +2032,9 @@ fn a_relation_body_reading_a_member_of_no_checked_type_refuses_operator_ineligib
 
 /// The finite trace-set clause of FR-898: `Obs` is the record of one trace
 /// state, and the traces come with the request.
-const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
+const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; res: Int[0, 3]; }\n\
     hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
-    { (a.inp = b.inp) implies (a.out = b.out) }";
+    { (a.inp = b.inp) implies (a.res = b.res) }";
 
 /// FR-898-AC-1 (TC-2534): a `hyper` clause over a declared finite trace
 /// domain checks under a finite-trace profile; S3 never answers it with the
@@ -2075,14 +2075,14 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "trace a",
         ),
         (
-            FINITE_DET.replace("b.out)", "c.out)"),
+            FINITE_DET.replace("b.res)", "c.res)"),
             Code::MissingDeclaration,
-            "c.out",
+            "c.res",
         ),
         (
-            FINITE_DET.replace("(a.inp = b.inp) implies (a.out = b.out)", "a.out"),
+            FINITE_DET.replace("(a.inp = b.inp) implies (a.res = b.res)", "a.res"),
             Code::IllTyped,
-            "a.out",
+            "a.res",
         ),
     ];
     for (declaration, code, at) in cases {
