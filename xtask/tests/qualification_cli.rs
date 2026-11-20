@@ -9,12 +9,16 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 use tempfile::TempDir;
 
-fn fspec_dir() -> PathBuf {
+fn fspec_dir() -> TempDir {
     xtask::published_fspec::directory("proposals/")
 }
 
-fn fixture_dir() -> PathBuf {
-    fspec_dir().join("proposals/conformance-corpus-v1/fixtures")
+fn fixture_dir() -> (TempDir, PathBuf) {
+    let fspec = fspec_dir();
+    let fixtures = fspec
+        .path()
+        .join("proposals/conformance-corpus-v1/fixtures");
+    (fspec, fixtures)
 }
 
 fn run(arguments: &[&str]) -> Output {
@@ -30,14 +34,15 @@ fn utf8(bytes: &[u8]) -> &str {
 
 fn copy_fixture(temp: &TempDir) -> PathBuf {
     let root = temp.path();
+    let (_fspec, fixtures) = fixture_dir();
     fs::create_dir_all(root.join("inputs")).unwrap();
     fs::copy(
-        fixture_dir().join("complete-v1.json"),
+        fixtures.join("complete-v1.json"),
         root.join("complete-v1.json"),
     )
     .unwrap();
     fs::copy(
-        fixture_dir().join("inputs/native.native"),
+        fixtures.join("inputs/native.native"),
         root.join("inputs/native.native"),
     )
     .unwrap();
@@ -52,7 +57,7 @@ fn write_canonical(path: &Path, value: &Value) {
 #[test]
 #[trace("TC-880", "FR-353-AC-1")]
 fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
-    let fixture = fixture_dir();
+    let (_fspec, fixture) = fixture_dir();
     let output = run(&["qualify", "--corpus", fixture.to_str().unwrap()]);
 
     assert_eq!(output.status.code(), Some(0), "{}", utf8(&output.stderr));

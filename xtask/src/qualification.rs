@@ -377,8 +377,8 @@ struct Report {
 
 /// Run `cargo xtask qualify` after a full preflight. All corpus reads and
 /// FSL calls occur sequentially on this thread (FR-350-AC-7).
-pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<Outcome> {
-    execute(workspace_root, operands).map(|execution| execution.outcome)
+pub fn run(operands: &[OsString]) -> Result<Outcome> {
+    execute(operands).map(|execution| execution.outcome)
 }
 
 /// A qualification report and the exact public-operation bytes of its passed
@@ -392,9 +392,9 @@ pub struct Execution {
 
 /// Execute qualification, retaining successful operation bytes for callers
 /// that compare determinism. The CLI writes only the report.
-pub fn execute(_workspace_root: &Path, operands: &[OsString]) -> Result<Execution> {
+pub fn execute(operands: &[OsString]) -> Result<Execution> {
     let fspec = fspec_dir();
-    execute_with_fspec(&fspec, operands)
+    execute_with_fspec(fspec.path(), operands)
 }
 
 /// Execute against an explicitly selected FSpec checkout, without changing
@@ -699,7 +699,7 @@ fn parse_args(operands: &[OsString]) -> Result<Args> {
     })
 }
 
-fn fspec_dir() -> PathBuf {
+fn fspec_dir() -> tempfile::TempDir {
     crate::published_fspec::directory("proposals/")
 }
 
@@ -1347,7 +1347,7 @@ mod tests {
                     let arguments = [
                         "--corpus".into(), corpus_root.as_os_str().to_owned(),
                     ];
-                    let execution = super::execute_with_fspec(&fspec, &arguments)
+                    let execution = super::execute_with_fspec(fspec.path(), &arguments)
                         .expect("a mismatching deep oracle settles rather than aborting");
                     assert_eq!(execution.outcome.code, 1);
                     let report = DeepValue::new(parse_unique_json(execution.outcome.stdout.as_bytes()).unwrap());
@@ -1360,7 +1360,7 @@ mod tests {
                     let expected = &report["capabilities"][0]["vectors"][0]["expected"];
                     let retained = if refusal { &expected["details"]["deep"] } else { &expected["value"] };
                     assert!(json_equal(&oracle, retained), "the complete oracle is retained in the report");
-                    let repeated = super::execute_with_fspec(&fspec, &arguments)
+                    let repeated = super::execute_with_fspec(fspec.path(), &arguments)
                         .expect("the repeated complete qualification remains admitted");
                     assert_eq!(execution.outcome.stdout, repeated.outcome.stdout);
 
@@ -1373,7 +1373,7 @@ mod tests {
                         corpus_root.join("complete-v1.json"),
                         json_bytes(&corpus).unwrap(),
                     ).unwrap();
-                    let failure = match super::execute_with_fspec(&fspec, &arguments) {
+                    let failure = match super::execute_with_fspec(fspec.path(), &arguments) {
                         Err(failure) => failure,
                         Ok(_) => panic!("an invalid deep oracle refuses before execution"),
                     };

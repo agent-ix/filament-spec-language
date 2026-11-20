@@ -358,13 +358,8 @@ ci: check-spec-validation pin-check
 pin-check:
 	@cargo run --locked --package xtask -- pin-check
 
-# Scope the conformance prerequisite to this graph, so standalone targets such
-# as ci-clean-build retain their own process oracle.
 .PHONY: ci-internal
 ci-internal: $(CI_TARGETS)
-ifneq ($(filter ci-internal,$(MAKECMDGOALS)),)
-$(CI_TARGETS):
-endif
 
 # FSpec inputs come from the pinned published package dependency.
 CONFORMANCE_XTASK = cargo run --locked --package xtask --
