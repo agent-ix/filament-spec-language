@@ -179,3 +179,78 @@ fn replacing_a_recorded_edge_target_by_a_different_real_state_is_refused() {
         matches!(*reason, ModelTraceRefusal::PostState { step: 0, recorded, .. } if recorded == second)
     );
 }
+
+#[trace("FR-170-AC-3", "FR-170-AC-8")]
+#[test]
+fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_target() {
+    let world = game_world(false, false, CAN_STILL_WIN);
+    let result = run(world.request(&["g"], vec![world.item("CanStillWin")], no_samples()));
+    let [instance] = result.items[0].as_slice() else {
+        panic!("one game instance")
+    };
+    let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
+        panic!("the lost branch traps")
+    };
+    assert_eq!(names(&stem.steps), ["play", "lose"]);
+    let mut observed = None;
+    let record = fsl_replay::settle_state_graph(
+        instance,
+        &fsl_replay::StateGraphMethod {
+            limits: no_samples(),
+            max_depth: None,
+            seed: DEFAULT_WITNESS_SEED,
+        },
+        &world.subject(&["g"], UNLIMITED),
+        world.claim("CanStillWin"),
+        &crate::fill::tcb_01_event_position_selection(&world.package),
+        &Cancel::new(),
+        |evidence| {
+            let replay = world.replay_evidence(
+                world.claim("CanStillWin"),
+                evidence.clone(),
+                &["g"],
+                ReplayLimits::default(),
+            )?;
+            observed = Some(replay.clone());
+            Ok(replay)
+        },
+    );
+    let replay = observed.expect("a trap must replay before settlement");
+    assert_eq!(replay.settlement, GraphReplaySettlement::Reproduced);
+    assert_eq!(replay.closure_nodes, Some(1));
+    assert_eq!(replay.first_target, None);
+    assert_eq!(record.value, fsl_replay::TerminalValue::Refuted);
+    assert_eq!(record.basis, fsl_replay::SettlementBasis::ClosedScope);
+
+    let mut shortened = stem.clone();
+    shortened.steps.pop();
+    let over = ModelInstance {
+        population: world.subject(&["g"], UNLIMITED).simulation.universes[0]
+            .population
+            .clone(),
+        key: "g".to_owned(),
+    };
+    let replay = world
+        .replay_evidence(
+            world.claim("CanStillWin"),
+            GraphEvidence::Trap {
+                stem: shortened,
+                closure: fsl_replay::TrapClosure::StateGraph,
+                over: Some(over),
+            },
+            &["g"],
+            ReplayLimits::default(),
+        )
+        .expect("the shorter stem is a real path to Mid");
+    assert!(matches!(
+        replay.settlement,
+        GraphReplaySettlement::Inconclusive(fsl_replay::DisagreementCause::Verdicts { .. })
+    ));
+    assert_eq!(replay.closure_nodes, Some(3));
+    assert_eq!(
+        replay.first_target,
+        Some(state_key_where(&world, &["g"], |state| world
+            .value(state, "g", "phase")
+            == 3))
+    );
+}
