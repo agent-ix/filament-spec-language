@@ -22,6 +22,34 @@ For cancellation, begin a new uncancelled operation when the caller intends
 to continue. For a named budget, raise only that caller-selected ceiling when
 the work is intended and affordable. Neither result supplies predicate truth.
 
+For population input, bind the document to the selected model, supply a closed
+subtype environment and keep the selected count within its declared bound.
+Abstract types cannot have direct instances. A missing snapshot is incomplete
+evidence; a supplied snapshot with the wrong observation role is refused.
+Recorded creation and deletion lists must match the complete pre/post
+observations, and the operation's frame must separately authorize each change.
+
+Extracted Markdown belongs to a clause run. Select one authored clause binding,
+keep the source package and extraction modes separate, and correct the semantic
+package named by retained Quire diagnostics. These request defects settle
+before compilation; they do not report the clause's truth.
+
+A clock requires dense time on its own source model. A random distribution
+requires positive exact weights. Correct either declaration at its reported
+locus. A sequence whose computed maximum exceeds the fixed representable bound
+needs a smaller declared range; raising a work budget cannot change that bound.
+Give each resolved operation at most one body, and supply a unique applicable
+body for every concrete subtype reached by a dispatched call. For an execution
+backend the caller has not supplied, supply that backend or explicitly choose
+an available one.
+
+The producer tests use each stage's own typed cause: source tooling returns
+`CompleteCause`, bundle resolution returns `ResolutionCause`, and model
+admission retains its model or observation cause. A catalogue mapping alone
+does not establish that an input can reach a producer. Internal-fault codes
+describe a broken established invariant, rather than a supported way to refuse
+user input; an ordinary malformed document must retain its input-defect code.
+
 FR-010 exposes one native `Diagnostic` envelope with phase, code, exact caller
 source labels, display path, original span and explanatory message. `Display`
 renders `code: message`; `std::error::Error` has no underlying cause. The public
