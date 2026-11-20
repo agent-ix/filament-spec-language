@@ -10,18 +10,18 @@
 
 use super::frame::object;
 use super::frame_replay::{
-    config_version_unit, packet, unit_for, unit_for_with_function_modes, witness_source, Unit,
+    Unit, config_version_unit, packet, unit_for, unit_for_with_function_modes, witness_source,
 };
 use super::*;
-use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
+use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{derive_separating_witness, Derived};
+use crate::witness::{Derived, derive_separating_witness};
 use crate::{
-    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
-    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
-    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
-    WitnessEnvelope, WitnessFailure, WitnessSettlement,
+    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
+    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
+    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
+    WitnessFailure, WitnessSettlement, replay_state_clause,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -194,11 +194,7 @@ fn tc_3121_unit() -> Unit {
     )
 }
 
-fn tc_3121_run(
-    clause: &str,
-    snapshot: Snapshot,
-    self_key: &str,
-) -> crate::spine::ClauseRunReport {
+fn tc_3121_run(clause: &str, snapshot: Snapshot, self_key: &str) -> crate::spine::ClauseRunReport {
     let (selection, snapshots) = selection(clause, snapshot, self_key);
     let document = config_version_domain_document();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
@@ -270,9 +266,9 @@ fn version_advances_replay_case(
         super::frame::snapshot(label, "post", &objects)
     });
     let (invocation, invocation_bytes) = document_ref_and_bytes("tc-3121-invocation", |label| {
-        let mut value: serde_json::Value = serde_json::from_slice(&config_version_invocation_bytes(
-            label, &pre, &post, self_key,
-        ))
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &config_version_invocation_bytes(label, &pre, &post, self_key),
+        )
         .expect("the invocation fixture is JSON");
         value["result"] = json!({"boolean": result});
         serde_json::to_vec(&value).expect("the invocation fixture serializes")
@@ -313,9 +309,9 @@ fn version_advances_clause_report(
         super::frame::snapshot(label, "post", &objects)
     });
     let (invocation, invocation_bytes) = document_ref_and_bytes("tc-3121-invocation", |label| {
-        let mut value: serde_json::Value = serde_json::from_slice(&config_version_invocation_bytes(
-            label, &pre, &post, self_key,
-        ))
+        let mut value: serde_json::Value = serde_json::from_slice(
+            &config_version_invocation_bytes(label, &pre, &post, self_key),
+        )
         .expect("the invocation fixture is JSON");
         value["result"] = json!({"boolean": result});
         serde_json::to_vec(&value).expect("the invocation fixture serializes")
@@ -2102,13 +2098,9 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     );
     let envelope = envelope.expect("the envelope reconstructs");
     let derive = || {
-        crate::derive_state_clause_witness(
-            wire.clone(),
-            &envelope,
-            crate::ReplayLimits::default(),
-        )
-        .expect("the public derivation completes")
-        .expect("MatchesParent has a decisive comparison")
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default())
+            .expect("the public derivation completes")
+            .expect("MatchesParent has a decisive comparison")
     };
     let record = derive();
     let repeated = derive();
@@ -2127,11 +2119,9 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
         let value = serde_json::to_value(wire).unwrap();
         quire_canonical::to_vec(&value, quire_canonical::Limits::new(u64::MAX)).unwrap()
     };
-    let native_witness = quire_canonical::to_vec(
-        &native["witness"],
-        quire_canonical::Limits::new(u64::MAX),
-    )
-    .unwrap();
+    let native_witness =
+        quire_canonical::to_vec(&native["witness"], quire_canonical::Limits::new(u64::MAX))
+            .unwrap();
     assert_eq!(encoded(&record), native_witness);
     assert_eq!(encoded(&record), encoded(&repeated));
 
@@ -2198,8 +2188,7 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     let version_record = version_derive();
     let version_repeat = version_derive();
     assert_eq!(version_record, version_repeat);
-    let version_report =
-        version_advances_clause_report(0, Some(2), 0, Some(4), "child", true);
+    let version_report = version_advances_clause_report(0, Some(2), 0, Some(4), "child", true);
     assert_eq!(version_report.witness.as_ref(), Some(&version_record));
     let version_bytes = crate::spine::write_clause_run_result(&version_report).unwrap();
     let version_native: serde_json::Value = serde_json::from_slice(&version_bytes).unwrap();
@@ -2215,10 +2204,7 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
         crate::ReplayLimits::default(),
     )
     .unwrap();
-    assert_eq!(
-        witness_arm(&version_replay).record(),
-        Some(&version_record)
-    );
+    assert_eq!(witness_arm(&version_replay).record(), Some(&version_record));
     assert_eq!(
         encoded(witness_arm(&version_replay).record().unwrap()),
         version_native_witness
@@ -2243,12 +2229,8 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     .expect("MatchesParent has a decisive comparison");
     assert_eq!(derived_from_different, record);
 
-    let replay = replay_state_clause(
-        wire.clone(),
-        &envelope,
-        crate::ReplayLimits::default(),
-    )
-    .unwrap();
+    let replay =
+        replay_state_clause(wire.clone(), &envelope, crate::ReplayLimits::default()).unwrap();
     let replay_record = witness_arm(&replay)
         .record()
         .expect("the absent comparison record settles with the derived record");
@@ -2264,14 +2246,11 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
         input_source(),
     );
     let input_envelope = input_envelope.expect("the input envelope reconstructs");
-    let ReplayResult::Input(input) = replay_state_clause(
-        input_wire,
-        &input_envelope,
-        crate::ReplayLimits::default(),
-    )
-    .unwrap()
-    .result()
-    .clone()
+    let ReplayResult::Input(input) =
+        replay_state_clause(input_wire, &input_envelope, crate::ReplayLimits::default())
+            .unwrap()
+            .result()
+            .clone()
     else {
         panic!("the input arm stays an input result");
     };
@@ -2309,12 +2288,7 @@ fn tc_3121_absent_quantifier_and_different_comparison_records_still_mismatch() {
         witness_source(),
     );
     let envelope = envelope.expect("the envelope reconstructs");
-    let replay = replay_state_clause(
-        wire,
-        &envelope,
-        crate::ReplayLimits::default(),
-    )
-    .unwrap();
+    let replay = replay_state_clause(wire, &envelope, crate::ReplayLimits::default()).unwrap();
     let arm = witness_arm(&replay);
     assert_eq!(arm.settlement(), WitnessSettlement::Inconclusive);
     let DisagreementCause::Witness {
@@ -2322,7 +2296,9 @@ fn tc_3121_absent_quantifier_and_different_comparison_records_still_mismatch() {
         derived: Some(derived),
         failure: WitnessFailure::Mismatch,
         ..
-    } = arm.disagreement().expect("the absent quantifier record mismatches")
+    } = arm
+        .disagreement()
+        .expect("the absent quantifier record mismatches")
     else {
         panic!("the absent quantifier record remains a one-sided mismatch");
     };
@@ -2348,18 +2324,15 @@ fn tc_3121_absent_quantifier_and_different_comparison_records_still_mismatch() {
         witness_source(),
     );
     let envelope = envelope.expect("the envelope reconstructs");
-    let replay = replay_state_clause(
-        wire,
-        &envelope,
-        crate::ReplayLimits::default(),
-    )
-    .unwrap();
+    let replay = replay_state_clause(wire, &envelope, crate::ReplayLimits::default()).unwrap();
     let DisagreementCause::Witness {
         given: Some(given),
         derived: Some(derived),
         failure: WitnessFailure::Mismatch,
         ..
-    } = witness_arm(&replay).disagreement().expect("the records differ")
+    } = witness_arm(&replay)
+        .disagreement()
+        .expect("the records differ")
     else {
         panic!("the two-sided mismatch keeps both records");
     };
@@ -2372,7 +2345,10 @@ fn tc_3121_absent_quantifier_and_different_comparison_records_still_mismatch() {
     };
     assert_eq!(given_left.to_string(), "600");
     assert_eq!(given_right.to_string(), "1");
-    assert_eq!(witness_arm(&replay).settlement(), WitnessSettlement::Inconclusive);
+    assert_eq!(
+        witness_arm(&replay).settlement(),
+        WitnessSettlement::Inconclusive
+    );
     let [Value::Integer(derived_left), Value::Integer(derived_right)] = derived
         .operands
         .as_ref()
@@ -2430,12 +2406,8 @@ fn tc_3121_absent_comparison_record_is_no_value_one_unit_below_need() {
 
     let mut one_short_wire = base_wire.clone();
     one_short_wire.accounting_limits = default_accounting(low);
-    let one_short = replay_state_clause(
-        one_short_wire,
-        &envelope,
-        crate::ReplayLimits::default(),
-    )
-    .expect("the one-unit-short replay settles");
+    let one_short = replay_state_clause(one_short_wire, &envelope, crate::ReplayLimits::default())
+        .expect("the one-unit-short replay settles");
     let arm = witness_arm(&one_short);
     assert_eq!(arm.settlement(), WitnessSettlement::Inconclusive);
     assert_eq!(
@@ -2464,12 +2436,8 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
     );
     let envelope = envelope.expect("the envelope reconstructs");
     let derive_not_refuted = || {
-        crate::derive_state_clause_witness(
-            wire.clone(),
-            &envelope,
-            crate::ReplayLimits::default(),
-        )
-        .expect_err("AtLeastParent holds over the high snapshot")
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default())
+            .expect_err("AtLeastParent holds over the high snapshot")
     };
     let refusal = derive_not_refuted();
     let repeated_refusal = derive_not_refuted();
@@ -2492,12 +2460,8 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
     );
     let envelope = envelope.expect("the undefined-domain envelope reconstructs");
     let derive_undefined = || {
-        crate::derive_state_clause_witness(
-            wire.clone(),
-            &envelope,
-            crate::ReplayLimits::default(),
-        )
-        .expect_err("u(x) evaluates undefined under Kernel")
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default())
+            .expect_err("u(x) evaluates undefined under Kernel")
     };
     let first = derive_undefined();
     let second = derive_undefined();
@@ -2512,9 +2476,10 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
     };
     assert!(matches!(
         &expression.origin,
-        filament_semantic_value::location::ExpressionOwner::StateClause { clause, .. }
-            if clause == "UndefinedDomain"
+        filament_semantic_value::location::ExpressionOwner::Body { function, .. }
+            if function == "u"
     ));
+    assert!(!expression.path().is_empty(), "{expression:?}");
     assert_eq!(*cause, "division-by-zero");
     let crate::DerivationRefusal::Undefined {
         expression: repeated_expression,
@@ -2534,7 +2499,9 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
         None,
         witness_source(),
     );
-    let mut stale_packet = envelope.expect("the stale-node source envelope reconstructs").to_packet();
+    let mut stale_packet = envelope
+        .expect("the stale-node source envelope reconstructs")
+        .to_packet();
     stale_packet.clause_node = Some(
         unit.compiled
             .package
@@ -2544,11 +2511,8 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
             .identity()
             .clone(),
     );
-    let stale_envelope = WitnessEnvelope::reconstruct(
-        stale_packet,
-        crate::ReplayLimits::default(),
-    )
-    .expect("the stale-node envelope is structurally complete");
+    let stale_envelope = WitnessEnvelope::reconstruct(stale_packet, crate::ReplayLimits::default())
+        .expect("the stale-node envelope is structurally complete");
     let stale_refusal = || {
         crate::derive_state_clause_witness(
             wire.clone(),
@@ -2584,12 +2548,8 @@ fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
     );
     let envelope = envelope.expect("the refusal envelope reconstructs");
     let derive_refused = || {
-        crate::derive_state_clause_witness(
-            wire.clone(),
-            &envelope,
-            crate::ReplayLimits::default(),
-        )
-        .expect_err("the RefusedDomain expression refuses during evaluation")
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default())
+            .expect_err("the RefusedDomain expression refuses during evaluation")
     };
     let refused = derive_refused();
     let repeated_refused = derive_refused();
@@ -2610,18 +2570,19 @@ fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
         None,
         witness_source(),
     );
-    let need = tc_3121_run("MatchesParent", Snapshot::High, "mid")
-        .usage
-        .evaluation_admissions;
+    let evaluation = tc_3121_run("MatchesParent", Snapshot::High, "mid").usage;
+    let need = evaluation
+        .evaluation_consumed
+        .iter()
+        .find_map(|(kind, consumed)| {
+            (*kind == filament_exact::LimitKind::WorkUnits).then_some(*consumed)
+        })
+        .expect("evaluation reports its WorkUnits consumption");
     wire.accounting_limits = default_accounting(need.saturating_sub(1));
     let envelope = envelope.expect("the exhausted envelope reconstructs");
     let derive_exhausted = || {
-        crate::derive_state_clause_witness(
-            wire.clone(),
-            &envelope,
-            crate::ReplayLimits::default(),
-        )
-        .expect_err("the one-unit-short accounting budget exhausts evaluation")
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default())
+            .expect_err("the one-unit-short accounting budget exhausts evaluation")
     };
     let exhausted = derive_exhausted();
     let repeated_exhausted = derive_exhausted();
@@ -2633,6 +2594,12 @@ fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
         Some("/family_payload/observation")
     );
     assert_eq!(exhausted.to_string(), repeated_exhausted.to_string());
+
+    wire.accounting_limits = default_accounting(need);
+    assert!(
+        crate::derive_state_clause_witness(wire, &envelope, crate::ReplayLimits::default()).is_ok(),
+        "the measured WorkUnits need itself completes"
+    );
 }
 
 /// FR-269-AC-8: a post-state range violation wins over either Boolean
@@ -2643,7 +2610,7 @@ fn tc_3121_public_derivation_range_violations_win_first() {
     let unit = tc_3121_version_unit();
     for (root_pre, child_pre, root_post, child_post, self_key, result, object, observed) in [
         (0, Some(0), 0, Some(-1), "child", true, "child", -1),
-        (1000, None, 1001, None, "root", false, "root", 1001),
+        (1000, Some(2), 1001, Some(2), "child", false, "root", 1001),
     ] {
         let (wire, envelope, _) = version_advances_replay_case(
             &unit,
@@ -2693,11 +2660,8 @@ fn tc_3121_no_parent_closed_scope_returns_none() {
         witness_source(),
     );
     let envelope = envelope.expect("the no-parent envelope reconstructs");
-    let result = crate::derive_state_clause_witness(
-        wire.clone(),
-        &envelope,
-        crate::ReplayLimits::default(),
-    );
+    let result =
+        crate::derive_state_clause_witness(wire.clone(), &envelope, crate::ReplayLimits::default());
     assert!(result.unwrap().is_none());
 
     let (label, bytes) = Snapshot::High.document();
@@ -2720,7 +2684,10 @@ fn tc_3121_no_parent_closed_scope_returns_none() {
 
     let replay = replay_state_clause(wire, &envelope, crate::ReplayLimits::default()).unwrap();
     let arm = witness_arm(&replay);
-    assert_eq!(arm.settlement(), WitnessSettlement::ReproducedWithEvaluatedWitness);
+    assert_eq!(
+        arm.settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
     assert!(arm.record().is_none());
 }
 
@@ -3524,7 +3491,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
+        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({

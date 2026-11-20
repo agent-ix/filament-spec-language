@@ -10,7 +10,7 @@ use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind, Visit};
 use filament_eval::FamilyOutcome;
 use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
+use filament_semantic_value::location::ExpressionLocation;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
 
@@ -19,11 +19,11 @@ use fsl_eval::value::{ClauseEvaluation, StopReport};
 use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
 use crate::{
+    ReplayRefusal, ReplayRequestWire, StateClauseCounterexample, WitnessEnvelope,
     bounds::ReplayLimits,
     execute::{prepare_state_clause, separation_refusal},
     result::SeparationRefusal,
     spine::{CallOutcome, CallValue, ClauseDisposition},
-    ReplayRefusal, ReplayRequestWire, StateClauseCounterexample, WitnessEnvelope,
 };
 use fsl_foundation::Code;
 use fsl_semantics::model::observation::OutOfRange;
@@ -117,32 +117,13 @@ pub fn derive_state_clause_witness(
         .and_then(|observations| observations.post.as_ref())
         .map(|post| post.out_of_range.clone())
         .unwrap_or_default();
-    let clause_location = prepared.target.segments().first().and_then(|name| {
-        let graph = prepared.compiled.checked.package().graph();
-        graph
-            .state_clauses()
-            .iter()
-            .position(|clause| clause.name() == name.as_str())
-            .map(|index| {
-                ExpressionLocation::root(ExpressionOwner::StateClause {
-                    clause: name.as_str().to_owned(),
-                    index,
-                })
-            })
-    });
     let report = prepared.check.report;
-    classify_with_range_violations(
-        range_violations,
-        report.disposition,
-        report.witness,
-        clause_location,
-    )
+    classify_with_range_violations(range_violations, report.disposition, report.witness)
 }
 
 fn classify_clause_outcome(
     disposition: ClauseDisposition,
     witness: Option<SeparatingWitnessRecord>,
-    enclosing_clause_expression: Option<ExpressionLocation>,
 ) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
     match disposition {
         ClauseDisposition::Admit(failure)
@@ -174,12 +155,6 @@ fn classify_clause_outcome(
                     )))
                 },
                 |expression| {
-                    let expression = match (&expression.origin, &enclosing_clause_expression) {
-                        (ExpressionOwner::Body { .. }, Some(clause_expression)) => {
-                            clause_expression.clone()
-                        }
-                        _ => expression,
-                    };
                     Err(DerivationRefusal::Undefined {
                         expression,
                         cause: reason,
@@ -216,7 +191,7 @@ mod tests {
     #[test]
     fn in_crate_fault_disposition_remains_a_derivation_fault() {
         let fault = InternalFault::new("S6a", "checked-program-invariant");
-        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None, None)
+        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None)
             .expect_err("an in-crate fault is a typed derivation refusal");
         assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
         assert!(matches!(error, DerivationRefusal::Fault(_)));
@@ -232,10 +207,7 @@ mod tests {
         let observed = filament_exact::Integer::from(-1_i64);
         let object_type = filament_exact::EffectiveId::new(
             None,
-            filament_exact::OriginalDeclarationKey::new(
-                "agent-ix/config-version",
-                "ConfigVersion",
-            ),
+            filament_exact::OriginalDeclarationKey::new("agent-ix/config-version", "ConfigVersion"),
         );
         let range_violation = OutOfRange {
             object: filament_exact::ObjectReference::new(
@@ -243,7 +215,10 @@ mod tests {
                 object_type.clone(),
                 filament_exact::ObjectId::new("child").unwrap(),
             ),
-            field: filament_semantic_value::declaration::FieldRef::new(object_type, "versionNumber"),
+            field: filament_semantic_value::declaration::FieldRef::new(
+                object_type,
+                "versionNumber",
+            ),
             index: None,
             range: filament_exact::IntegerInterval::new(
                 filament_exact::Integer::from(0_i64),
@@ -256,7 +231,6 @@ mod tests {
         let error = classify_with_range_violations(
             vec![range_violation.clone()],
             ClauseDisposition::EvaluateFault(fault),
-            None,
             None,
         )
         .expect_err("range admission takes precedence over clause evaluation");
@@ -284,7 +258,6 @@ mod tests {
                 location: Some(location.clone()),
             }),
             None,
-            None,
         )
         .expect_err("an undefined evaluation has no witness");
         assert_eq!(error.code(), Code::UndefinedExpression.as_str());
@@ -301,12 +274,11 @@ fn classify_with_range_violations(
     range_violations: Vec<OutOfRange>,
     disposition: ClauseDisposition,
     witness: Option<SeparatingWitnessRecord>,
-    enclosing_clause_expression: Option<ExpressionLocation>,
 ) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
     if !range_violations.is_empty() {
         return Err(DerivationRefusal::RangeViolation(range_violations));
     }
-    classify_clause_outcome(disposition, witness, enclosing_clause_expression)
+    classify_clause_outcome(disposition, witness)
 }
 
 /// FR-265's output for a clause that completed a Boolean: the basis, and
@@ -503,11 +475,7 @@ pub(crate) fn decisive_stop<'e>(
                     Connective::And | Connective::Implies => !left_value,
                     Connective::Or => left_value,
                 };
-                if stopped_on_left {
-                    left
-                } else {
-                    right
-                }
+                if stopped_on_left { left } else { right }
             }
             NodeKind::Query {
                 visit: Visit::Forall | Visit::Exists,
