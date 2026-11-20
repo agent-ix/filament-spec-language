@@ -592,10 +592,10 @@ fn pick(block: &str, objective: &str) -> String {
 /// `no-candidate` after ten values; `minimize Pick` with `Pick >= 3` gives 3.
 #[test]
 #[trace("TC-2104", "FR-754-AC-3")]
+#[trace("TC-3017", "FR-1037-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
-#[ignore = "QSL-2235: value synthesis run depends on FR-1037 selection through the Arch #2961 claim_names writer"]
 fn pick_finds_validates_exhausts_and_optimizes() {
     let synth = |unit: String| run(&unit, false, ("synthesis", json!({"declaration": "Pick"}))).1;
     let found = synth(pick("Pick * Pick = 49", ""));
