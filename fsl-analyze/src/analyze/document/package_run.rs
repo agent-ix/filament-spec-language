@@ -240,7 +240,10 @@ pub fn settle_package_run(
             | PendingPackageForm::Model(_)
             | PendingPackageForm::Operations(_)
             | PendingPackageForm::ProbabilisticNodes(_)
-            | PendingPackageForm::Probabilistic(_) => {
+            | PendingPackageForm::Probabilistic(_)
+            // Only `source_object_probabilistic_model` reads the source-object
+            // rows, so `of` never gives this one.
+            | PendingPackageForm::SourceModel(_) => {
                 PackageRunError::Document(AnalyzeDocumentError::Fault)
             }
         })?;

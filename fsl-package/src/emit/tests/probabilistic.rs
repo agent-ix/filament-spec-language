@@ -3098,9 +3098,10 @@ fn a_time_window_over_a_tick_model_is_a_quantity_at_the_model_unit() {
 /// TC-3012 (FR-740-AC-6): FSL's reader rebuilds the random parameter and the
 /// workload declared on a source object from the emitted package: the
 /// parameter with probabilities `1/4` and `3/4`, the workload equal to S3's.
-/// The join runs over S3's own source packages, which the bytes do not carry.
-/// The production route, fsl-eval `PackageModelInput::of`, passes no sources and so
-/// cannot rebuild these records yet: QSL-2716.
+/// The join runs over S3's own source packages; the production route, fsl-eval
+/// `PackageModelInput::source_object_probabilistic_model`, rebuilds them from
+/// the package's source-object rows (`source_object_probabilistic` in fsl-eval's
+/// `it` target).
 #[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn a_source_random_parameter_and_workload_are_read_back_equal() {

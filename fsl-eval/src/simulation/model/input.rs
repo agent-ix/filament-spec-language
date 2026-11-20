@@ -327,6 +327,11 @@ pub enum PendingPackageForm {
     /// type (FR-120 "Operations").
     #[error("the selected domain packages' operations are not typed: {0:?}")]
     Operations(fsl_semantics::check::AssemblyRefusal),
+    /// The package's source-object rows do not describe source packages the
+    /// `probabilistic` nodes join to (FSL FR-740 "Source objects"), at the
+    /// row's node.
+    #[error("the package's source objects are not readable: {0}")]
+    SourceModel(fsl_package::SourceModelFault),
     /// The package's `probabilistic` nodes do not read (FSL FR-740).
     #[error("the package's probabilistic nodes are not readable: {0}")]
     ProbabilisticNodes(fsl_package::ProbabilisticReadFault),
@@ -360,6 +365,85 @@ impl PendingClauseForm {
             }
             Self::Read(fsl_package::BareClauseRefusal::Selection(_)) | Self::Build(_) => None,
         }
+    }
+}
+
+/// What the package route reads to rebuild a package's probabilistic model: the
+/// declarations, the selected domain packages' model and operations, and the
+/// model itself.
+struct ProbabilisticParts {
+    world: fsl_package::BareWorld,
+    model: StateModel,
+    model_selections: Vec<DomainPackageRef>,
+    operations: OperationTable,
+    probabilistic: CheckedProbabilisticModel,
+}
+
+impl ProbabilisticParts {
+    /// With `source_objects`, the unit's own object types are declared in the
+    /// type environment and their rebuilt source packages are selected beside
+    /// the domain packages (FSL FR-740 "Source objects").
+    fn read(
+        package: &BarePackage<'_>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+        source_objects: bool,
+    ) -> Result<Self, PendingPackageForm> {
+        let world = if source_objects {
+            package.world_with_source_objects()
+        } else {
+            package.world()
+        }
+        .map_err(PendingPackageForm::World)?;
+        let model_selections = fsl_package::AnalysisView::model_selections(package);
+        let source = if source_objects {
+            package
+                .source_model()
+                .map_err(PendingPackageForm::SourceModel)?
+        } else {
+            fsl_package::SourceModel::default()
+        };
+        let mut selections = model_selections.clone();
+        selections.extend(
+            source
+                .packages
+                .iter()
+                .map(|source| source.model_selection.clone()),
+        );
+        let model = StateModel::new(
+            ModelSelections::new(&selections, &source.packages),
+            world.types(),
+            packages,
+            normalization,
+        )
+        .map_err(PendingPackageForm::Model)?;
+        let operations = model
+            .operation_table(&std::collections::BTreeMap::new())
+            .map_err(PendingPackageForm::Operations)?;
+        let nodes = package
+            .probabilistic()
+            .map_err(PendingPackageForm::ProbabilisticNodes)?;
+        // A probabilistic node is rebuilt only over an operation whose
+        // parameter types the rows spell readably.
+        if let Some(unread) = source.unread_named(&nodes) {
+            return Err(PendingPackageForm::SourceModel(
+                fsl_package::SourceModelFault::UnreadParameter {
+                    operation: format!("{}::{}", unread.object, unread.operation),
+                    parameter: unread.parameter.clone(),
+                    node: unread.node.clone(),
+                },
+            ));
+        }
+        let probabilistic = model
+            .probabilistic_model(&operations, &nodes)
+            .map_err(PendingPackageForm::Probabilistic)?;
+        Ok(Self {
+            world,
+            model,
+            model_selections,
+            operations,
+            probabilistic,
+        })
     }
 }
 
@@ -413,24 +497,13 @@ impl<'p> PackageModelInput<'p> {
                 node: node.clone(),
             });
         }
-        let world = package.world().map_err(PendingPackageForm::World)?;
-        let model_selections = fsl_package::AnalysisView::model_selections(package);
-        let model = StateModel::new(
-            ModelSelections::new(&model_selections, &[]),
-            world.types(),
-            packages,
-            normalization,
-        )
-        .map_err(PendingPackageForm::Model)?;
-        let operations = model
-            .operation_table(&std::collections::BTreeMap::new())
-            .map_err(PendingPackageForm::Operations)?;
-        let nodes = package
-            .probabilistic()
-            .map_err(PendingPackageForm::ProbabilisticNodes)?;
-        let probabilistic = model
-            .probabilistic_model(&operations, &nodes)
-            .map_err(PendingPackageForm::Probabilistic)?;
+        let ProbabilisticParts {
+            world,
+            model,
+            model_selections,
+            operations,
+            probabilistic,
+        } = ProbabilisticParts::read(package, packages, normalization, false)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
         let state_clauses = package
@@ -463,6 +536,38 @@ impl<'p> PackageModelInput<'p> {
             state_clauses,
             terminals,
         })
+    }
+
+    /// FSL FR-740 "Source objects": the probabilistic model of `package` when
+    /// its random parameters and workloads sit on source object types, which
+    /// [`Self::of`] refuses. The source packages are rebuilt from the
+    /// package's source-object rows ([`BarePackage::source_model`]), one per
+    /// declaring unit, and the `probabilistic` nodes join to them as S3's
+    /// records do. The rebuilt packages hold the types, supertypes,
+    /// operations and parameters of those objects, and no field, population
+    /// or effect frame: they serve this join only, so no model-check input
+    /// is built from them.
+    ///
+    /// # Errors
+    ///
+    /// [`PendingPackageForm::Form`] at the first node of a form the package
+    /// route does not read yet (a source object is not one);
+    /// [`PendingPackageForm::SourceModel`], at the row's node, when the rows
+    /// do not describe source packages or a `probabilistic` node names an
+    /// operation one of whose parameter types the rows do not let a reader
+    /// rebuild; otherwise as [`Self::of`].
+    pub fn source_object_probabilistic_model(
+        package: &BarePackage<'_>,
+        packages: &fsl_semantics::model::intake::PackageInput,
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    ) -> Result<CheckedProbabilisticModel, PendingPackageForm> {
+        if let Some((form, node)) = package.first_unread_node_form() {
+            return Err(PendingPackageForm::Form {
+                form,
+                node: node.clone(),
+            });
+        }
+        Ok(ProbabilisticParts::read(package, packages, normalization, true)?.probabilistic)
     }
 
     /// FR-940: the package form of the temporal clause declared at the
