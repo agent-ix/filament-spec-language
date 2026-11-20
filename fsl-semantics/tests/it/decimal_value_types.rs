@@ -230,7 +230,7 @@ fn bound(owner: &str, tag: &str, keyword: &str, value: Value) -> Value {
 /// the result of `adjust` have the golden `Decimal[lo, hi; s, s; exact]`.
 #[trace("TC-3042", "FR-056-AC-66")]
 #[test]
-#[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
+#[ignore = "QSL-2583: the Decimal value type reader is not implemented yet"]
 fn decimal_members_have_the_golden_policy_types() {
     let checked = check(GOLDEN, &unit_text(PACKAGE, "Config", ""));
     let (by, result) = checked.adjust();
@@ -258,7 +258,7 @@ fn decimal_members_have_the_golden_policy_types() {
 /// narrows the range and the tighter wins; `lo > hi` refuses.
 #[trace("TC-3042", "FR-056-AC-67")]
 #[test]
-#[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
+#[ignore = "QSL-2583: the Decimal value type reader is not implemented yet"]
 fn bounds_on_every_node_of_the_walk_narrow() {
     let golden_checked = check_golden(&golden());
     assert_eq!(golden_checked.field("half"), decimal("0", "50", 2));
@@ -301,7 +301,7 @@ fn bounds_on_every_node_of_the_walk_narrow() {
 /// and FSpec's o2 planning model admits and checks its `SocFloor` invariant.
 #[trace("TC-3042", "FR-056-AC-68")]
 #[test]
-#[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
+#[ignore = "QSL-2583: the Decimal value type reader is not implemented yet"]
 fn decimal_members_check_in_clauses() {
     for clause in [
         "self.soc >= 0.20",
@@ -379,7 +379,7 @@ fn admit_meter(checked: &Checked, fields: Value) -> Result<(), (String, Option<S
 /// membership by value in the field's Decimal value type.
 #[trace("TC-3042", "FR-056-AC-71")]
 #[test]
-#[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
+#[ignore = "QSL-2583: the Decimal value type reader is not implemented yet"]
 fn snapshot_decimals_admit_by_membership() {
     let checked = check(GOLDEN, &unit_text(PACKAGE, "Config", ""));
     for (field, c, s) in [
@@ -416,7 +416,7 @@ fn snapshot_decimals_admit_by_membership() {
 /// builds no declaration.
 #[trace("TC-3042", "FR-056-AC-72")]
 #[test]
-#[ignore = "QSL-2451: the Decimal value type reader is not implemented yet"]
+#[ignore = "QSL-2583: the Decimal value type reader is not implemented yet"]
 fn decimal_policy_defects_refuse_once() {
     const VALIDATOR: &str = "agent-ix.semantic-ir.";
     // (name, document, cause, text the detail holds, whether a validator

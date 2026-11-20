@@ -365,7 +365,7 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
+#[ignore = "QSL-2509: the request reader rejects the verification_plan member as an unknown field, so no plan document is emitted"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -536,7 +536,7 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
+#[ignore = "QSL-2508: the request reader rejects the verification_plan member as an unknown field, so no plan is selected"]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let (_, value) = run(
@@ -1010,7 +1010,6 @@ fn shape_low(leaf: &str) -> String {
 /// `case_binders_match_across_the_source_and_package_routes`.
 #[test]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2632: a bounded-integer argument to a union member emits a union_value the strict package read refuses (TypeMismatch); the literal-argument twin below runs"]
 fn case_binders_print_under_their_declared_names() {
     let atom = |leaf: &str| {
         let (code, value) = run(
