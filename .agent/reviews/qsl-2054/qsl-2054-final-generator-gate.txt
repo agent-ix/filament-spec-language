@@ -1,0 +1,54 @@
+QSL-2054 final complete affected generator component gate
+
+Reviewed implementation head: 3d01aa9e3ba97919fd93ff706bdbd9dc1ad6499e
+PR: https://github.com/agent-ix/filament-spec-language/pull/3193
+
+One authorized final gate. No whole-workspace, dependency-policy, lint,
+matrix, proof, Kani or mutation run. No retry was performed.
+Disk before build: 209G available on /.
+
+Exact command:
+env -u PROPTEST_CASES -u PROPTEST_RNG_SEED CARGO_TARGET_DIR=/home/peter/dev/.worktrees/luna-qsl-2054/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked -p fsl-bench --features property-generators --test property_generators -- --test-threads=1 --nocapture
+
+Actual exit code: 0
+Actual combined test-harness elapsed: 9.96s
+Result: 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out.
+
+Actual sample receipts:
+- Grammar: 228 derivations; 228 admitted/parser-covered productions; 0.477162334s.
+- Models: 256 configured cases; 3.453326246s.
+- Near misses: 256 configured cases; 0.584374420s.
+- Checked package inputs: 256 configured cases; 1.737266284s.
+- Trace/profile shapes: 256 configured cases; 0.004807843s.
+- Linked typed expressions: 1000 configured cases; 3.698556313s.
+- Config determinism/scoped override control: PASS.
+- Deliberately false property/shrinking/seed persistence control: PASS.
+
+The combined elapsed includes both config controls. All eight tests ran
+with one thread and with both documented environment overrides removed.
+The strict combined-sample runtime below 10s was observed in this required
+gate; all per-suite 10s limits and the general combined 60s policy also held.
+
+Prior receipts remain preserved, including the earlier unclaimed combined
+sums 10.231657553s and 10.571546060s and their original working logs. This
+receipt records the required final gate and does not replace those results.
+No merge, ticket Done transition or dependent unblocking was performed.
+
+Verbatim test output:
+running 8 tests
+test generators::grammar_unit_generator_covers_every_production ... property suite grammar: 228 derivations, 228 parsed productions, 477.162334ms
+ok
+test generators::model_generator_models_are_enumerable ... property suite model_generator_models_are_enumerable: 256 cases, 3.453326246s
+ok
+test generators::near_miss_generator_output_is_refused ... property suite near_miss_generator_output_is_refused: 256 cases, 584.37442ms
+ok
+test generators::package_generator_emits_checked_units ... property suite package_generator_emits_checked_units: 256 cases, 1.737266284s
+ok
+test generators::trace_generator_respects_profile ... property suite trace_generator_respects_profile: 256 cases, 4.807843ms
+ok
+test generators::value_generator_output_parses_and_checks ... property suite value_generator_output_parses_and_checks: 1000 cases, 3.698556313s
+ok
+test prop_config::config_is_deterministic_under_fixed_seed ... ok
+test prop_config::failing_property_shrinks_and_persists ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.96s
