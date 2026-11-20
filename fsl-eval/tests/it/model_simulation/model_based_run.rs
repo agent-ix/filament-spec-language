@@ -23,7 +23,6 @@ const JAM: &str = "pre CanJam using v on M::Counter::jam { self.value > 5 }\n\
 
 /// FSpec FR-190's typed evidence retains FR-301's exit code for every result
 /// category, including unsupported and internal-failure outcomes.
-#[trace("TC-2102", "FR-301")]
 #[test]
 fn model_based_test_evidence_preserves_fr301_exit_codes() {
     use ModelBasedTestEvidence::{Failed, Incomplete, Inconclusive, Refuted, Tested, Unsupported};
