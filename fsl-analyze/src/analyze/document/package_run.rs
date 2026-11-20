@@ -26,7 +26,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -34,10 +34,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
-    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
-    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
-    SubjectSelection,
+    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
+    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
+    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
+    write_run,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -83,13 +83,15 @@ impl PendingPackageFamily {
                 ": items[{}] names the probabilistic claim {}, which cannot run on the package route: the model has source objects and the package rows carry no effects, fields or populations to step it{}",
                 index.get(),
                 self.note.as_deref().unwrap_or_default(),
-                self.locus().map_or_else(String::new, |locus| format!(" at node `{locus}`"))
+                self.locus()
+                    .map_or_else(String::new, |locus| format!(" at node `{locus}`"))
             ),
             (Some(index), PendingFamily::ProbabilisticClaimUnresolved) => format!(
                 ": items[{}] names the probabilistic claim {}, which does not resolve against the package's source objects{}",
                 index.get(),
                 self.note.as_deref().unwrap_or_default(),
-                self.locus().map_or_else(String::new, |locus| format!(" at node `{locus}`"))
+                self.locus()
+                    .map_or_else(String::new, |locus| format!(" at node `{locus}`"))
             ),
             (Some(index), PendingFamily::ClauseFact(fact)) => format!(
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
@@ -227,6 +229,7 @@ enum Named<'s> {
         index: RequestIndex,
         name: &'s str,
         declaration: CheckedNodeId,
+        ordinal: u64,
         selection: &'s ItemSelection,
     },
     StateGraph {
@@ -362,8 +365,9 @@ pub fn settle_package_run(
                 index,
                 name,
                 declaration,
+                ordinal,
                 selection,
-            } => match reads.state_clause(index, name, &declaration, selection)? {
+            } => match reads.state_clause(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     invariant_claims.push(claim.item.claim.clone());
@@ -714,6 +718,7 @@ fn resolve_names<'s>(
                     index,
                     name,
                     declaration: found.declaration,
+                    ordinal: found.occurrence.ordinal,
                     selection,
                 });
             }
@@ -1178,6 +1183,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         index: RequestIndex,
         name: &str,
         declaration: &CheckedNodeId,
+        ordinal: u64,
         selection: &ItemSelection,
     ) -> Result<Resolution<()>, PackageRunError> {
         let pending = |family| {
@@ -1195,8 +1201,9 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .package()
             .node_key(declaration)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        let origin = filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal);
         let clause = input
-            .state_clause_at(&key)
+            .state_clause(&key, &origin)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
         // FR-290: the operation-contract record's extent from its domain
