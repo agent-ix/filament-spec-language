@@ -66,3 +66,21 @@ Fixes:
 ## Package route
 
 A selected-package run with `verification_plan` refuses "not implemented yet" (package_run.rs:147). The reader still refuses a missing `document` at `/request/verification_plan/document` first. No FR-753 AC is left unmet by this gap: AC-1..AC-5 are source-route or direct-coordinator criteria, and AC-5's identity refusal is met at `execute_plan`. Unmet: FSpec FR-824-AC-3's "with a plan document of another package `invalid-value` at `/document` naming both identities", the package-route paragraph of FSpec FR-824 "Selection", and FR-1038's selection of the plan for a selected package. FND-001 separately leaves FSpec FR-824-AC-1, FR-1038-AC-3's run and FR-1038-AC-4's Sized run unmet.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | medium | Two tests carry `#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]`, and neither shows that AC holding. The execute test supplies an `initial` the AC does not have. The new no-`initial` test asserts `tested` `unsupported`, where the AC requires `tested` `tested`. The matrix therefore reports FSpec FR-824-AC-1 as covered while the PR body says it is unmet. Fix: drop the `FSpec-FR-824-AC-1` tag from both tests, and keep the no-`initial` test untagged or tagged to the gap's ticket. | tests/it/request_surface_s1_16.rs:404, tests/it/request_surface_s1_16.rs:456 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 at a1e1cfdd: a state-subject `model_based_test` step with an empty `initial` settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, member `initial` (fsl-analyze/src/plan.rs:532-547), and never `failed`. That is acceptable as an interim settlement: it satisfies no `requires` edge, is not in `failed_steps`, and exits 21, not 30. The PR body states plainly that FSpec FR-824-AC-1 is not met. The underlying gap (the FR-752 entry cannot enumerate a domain's initial states) still needs a tracked follow-up ticket. Test a_model_based_test_step_with_no_initial_settles_unsupported_not_failed and the native-run no-`initial` test. |
+| FND-002 | fixed | Round 1: `simulate` maps Success to `inconclusive`, Refusal to `declined`, InternalFailure to `failed` and other stops to `incomplete` (plan.rs:952-957), and a simulation Binding failure settles the step `declined`. The test is inverted to an_exhausted_simulation_proves_nothing_and_blocks_its_dependents: the dependent is `blocked` by `runs` and never negotiated. |
+| FND-003 | fixed | Round 1: an entry refusal settles `declined` with the entry's own code and cause through `refusal_catalog` (plan.rs:593), and cancellation settles `incomplete`. The PR body records that the FR-752 entry itself reports accounting-limit stops as a generic `clause` refusal. |
+| FND-004 | fixed | Round 1: `ClaimItem::new` refusal settles `unsupported` `invalid_capability`/`inapplicable-kind` (plan.rs:760). An analyze `Refused` settles `declined`, and a simulation Binding failure settles `declined`. Only true internal faults abort. Test an_inapplicable_method_settles_its_step_and_siblings_still_run shows the sibling negotiated and settled. |
+| FND-005 | fixed | Round 1: the test asserts `PlanStatus::Refuted` alone. |
+| FND-006 | rejected | The finding was wrong. The native-run request's `limits` holds only `supplied` (FR-323 supplied-value ceilings, wire.rs:550-557), and the request has no `deadline_ms` member. FSpec FR-824 says no plan member sets a step's limits. So no caller-supplied analysis limit exists to ignore, and `analyze_limits(&AnalyzeLimits::default(), None)` (fsl-command/src/command/plan.rs:223) builds the same limits the analyze route builds over an empty member. |
+| FND-007 | fixed | Round 1: the execute test asserts `tested` `tested` and the full `inputs` `{"initial": "initial.json", "seed": 7, "max_trace_length": 8, "max_value_bits": null}`, and FR-1038-AC-1 now names `initial.json`. |

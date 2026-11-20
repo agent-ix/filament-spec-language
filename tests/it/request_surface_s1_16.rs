@@ -401,7 +401,6 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[test]
 #[trace("TC-2103", "FR-753-AC-4")]
 #[trace("TC-3018", "FR-1038-AC-1")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     // FSpec FR-824: `initial` is the state each consuming step starts from,
     // so it is a snapshot anchored at an initialization (FR-120).
@@ -453,7 +452,6 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
 /// want of an initial state. FSpec expects `tested` to run from every state
 /// its domain admits; the FR-752 entry cannot enumerate them yet.
 #[test]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
 fn a_step_consuming_initial_with_none_is_unsupported_never_failed() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
