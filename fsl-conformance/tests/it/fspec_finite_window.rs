@@ -313,10 +313,22 @@ fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String>
         }
         ClauseDisposition::Temporal(TemporalVerdict::Indeterminate { at, reason }) => {
             let (name, position) = match reason {
-                TemporalIndeterminateReason::MissingValuation { position, .. } => {
+                TemporalIndeterminateReason::MissingValuation { position, atom, .. } => {
+                    if atom != "r.p" {
+                        return Err(format!(
+                            "{}: missing valuation names {atom:?}, expected r.p",
+                            case.id
+                        ));
+                    }
                     ("MissingValuation", Some(*position))
                 }
-                TemporalIndeterminateReason::ConflictingValuation { position, .. } => {
+                TemporalIndeterminateReason::ConflictingValuation { position, atom } => {
+                    if atom != "r.p" {
+                        return Err(format!(
+                            "{}: conflicting valuation names {atom:?}, expected r.p",
+                            case.id
+                        ));
+                    }
                     ("ConflictingValuation", Some(*position))
                 }
                 TemporalIndeterminateReason::IncompleteInput => ("IncompleteInput", None),
