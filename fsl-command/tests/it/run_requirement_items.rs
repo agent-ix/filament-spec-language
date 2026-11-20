@@ -728,8 +728,10 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
     );
     assert!(provider_error.cause.is_incomplete());
     assert_eq!(provider_error.category().exit_code(), 22);
-    let outcome = serde_json::to_value(provider_error.outcome_document(Operation::Run)).unwrap();
-    let plain_outcome = serde_json::to_value(plain_error.outcome_document(Operation::Run)).unwrap();
+    let outcome =
+        serde_json::to_value(provider_error.outcome_document(Operation::Execute)).unwrap();
+    let plain_outcome =
+        serde_json::to_value(plain_error.outcome_document(Operation::Execute)).unwrap();
     assert_eq!(
         outcome, plain_outcome,
         "the typed limit outcome matches plain run"
