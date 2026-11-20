@@ -2597,7 +2597,9 @@ fn form_collection_value(
                         );
                     }
                     filament_exact::Outcome::Completed(false) => {}
-                    filament_exact::Outcome::Refused(_) | filament_exact::Outcome::Incomplete(_) => {
+                    filament_exact::Outcome::Undefined(_)
+                    | filament_exact::Outcome::Refused(_)
+                    | filament_exact::Outcome::Incomplete(_) => {
                         return Err(refuse("invalid-value"));
                     }
                 }
