@@ -4,8 +4,8 @@
 use serde_json::Value;
 
 use super::{
-    package_name, wire, FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result,
-    RunCause,
+    FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result, RunCause, package_name,
+    wire,
 };
 
 /// Limits and selection admitted by the direct model-based test member.
@@ -132,26 +132,226 @@ fn route_error(error: impl std::fmt::Debug) -> RunCause {
     invalid("clause", format!("{error:?}"))
 }
 
-fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestError) -> RunCause {
-    use fsl_eval::simulation::model::ModelBasedTestError;
+fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestRefusal) -> RunCause {
+    invalid(error.member, error.cause)
+}
 
-    match error {
-        ModelBasedTestError::EmptyCaseBound => invalid("max_cases", "must be a positive integer"),
-        ModelBasedTestError::EmptyTraceBound => {
-            invalid("max_trace_length", "must be a positive integer")
-        }
-        ModelBasedTestError::InvalidValueBits => {
-            invalid("max_value_bits", "must be between 1 and 64")
-        }
-        ModelBasedTestError::MissingValueBits => invalid(
-            "max_value_bits",
-            "required for an unbounded integer parameter",
-        ),
-        ModelBasedTestError::EmptyValueRoots => {
-            invalid("clause", "value-clause request has no parameter roots")
-        }
-        other => route_error(other),
+fn evidence_name(evidence: fsl_eval::simulation::model::ModelBasedTestEvidence) -> &'static str {
+    use fsl_eval::simulation::model::ModelBasedTestEvidence;
+    match evidence {
+        ModelBasedTestEvidence::Tested => "tested",
+        ModelBasedTestEvidence::Refuted => "refuted",
+        ModelBasedTestEvidence::Inconclusive => "inconclusive",
+        ModelBasedTestEvidence::Incomplete => "incomplete",
+        ModelBasedTestEvidence::Failed => "failed",
+        ModelBasedTestEvidence::Unsupported => "unsupported",
     }
+}
+
+fn boundary_name(kind: fsl_eval::simulation::model::ModelBoundaryKind) -> &'static str {
+    use fsl_eval::simulation::model::ModelBoundaryKind as Kind;
+    match kind {
+        Kind::TextEmpty => "text-empty",
+        Kind::TextLowerEndpoint => "text-lower-endpoint",
+        Kind::TextSingleton => "text-singleton",
+        Kind::TextUpperEndpoint => "text-upper-endpoint",
+        Kind::TextNormalization => "text-normalization",
+        Kind::SizeLeast => "size-least",
+        Kind::SizeUnit => "size-unit",
+        Kind::SizeExtremeLow => "size-extreme-low",
+        Kind::SizeExtremeHigh => "size-extreme-high",
+        Kind::LowerRefusal => "lower-refusal",
+        Kind::LowerEndpoint => "lower-endpoint",
+        Kind::UpperEndpoint => "upper-endpoint",
+        Kind::UpperRefusal => "upper-refusal",
+    }
+}
+
+fn partition_json(partition: &fsl_eval::simulation::model::ModelBoundaryPartition) -> Value {
+    use fsl_eval::simulation::model::ModelPartitionStatus;
+    let status = partition.status.as_ref().map(|status| match status {
+        ModelPartitionStatus::Covered { first_case } => {
+            serde_json::json!({"status": "covered", "first_case": first_case})
+        }
+        ModelPartitionStatus::Refused { first_case } => {
+            serde_json::json!({"status": "refused", "first_case": first_case})
+        }
+        ModelPartitionStatus::Uncovered { bounds, .. } => {
+            serde_json::json!({"status": "uncovered", "bounds": bounds})
+        }
+    });
+    serde_json::json!({
+        "node": partition.node.to_string(),
+        "path": partition.path,
+        "kind": boundary_name(partition.kind),
+        "value": {"type": "integer", "value": partition.value.to_string()},
+        "text_value": partition.text_value,
+        "status": status,
+    })
+}
+
+fn counterexample_json(result: &fsl_eval::simulation::model::ModelBasedTestResult) -> Value {
+    use fsl_eval::simulation::model::ModelBasedCounterexample;
+    let Some(counterexample) = &result.counterexample else {
+        return Value::Null;
+    };
+    match counterexample {
+        ModelBasedCounterexample::Trace(trace) => {
+            let disposition = trace
+                .trace
+                .findings
+                .iter()
+                .flat_map(|finding| finding.findings.iter())
+                .find_map(|finding| match finding {
+                    fsl_eval::simulation::model::ModelFinding::InvariantViolated {
+                        clause, ..
+                    } if clause == &result.clause => Some("invariant-violated"),
+                    _ => None,
+                })
+                .unwrap_or("model-check-failed");
+            serde_json::json!({
+                "minimality": "1-minimal",
+                "replay": "reproduced",
+                "disposition": disposition,
+                "initial": trace.trace.initial.hex(),
+                "invocations": trace.trace.steps.iter().map(|step| serde_json::json!({
+                    "operation": step.transition.operation(),
+                    "receiver": step.transition.receiver(),
+                    "arguments": step.transition.arguments(),
+                })).collect::<Vec<_>>(),
+            })
+        }
+        ModelBasedCounterexample::ValueAssignment(values) => serde_json::json!({
+            "minimality": "1-minimal",
+            "replay": "reproduced",
+            "disposition": "predicate-false",
+            "assignment": values.iter().map(|value| match value {
+                filament_exact::Value::Integer(value) => serde_json::json!({
+                    "type": "integer",
+                    "value": value.to_string(),
+                }),
+                other => serde_json::json!({"debug": format!("{other:?}")}),
+            }).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+fn result_json(result: &fsl_eval::simulation::model::ModelBasedTestResult, domain: &str) -> Value {
+    use fsl_eval::simulation::model::{
+        ModelBasedTestCause, ModelBasedTestDiscardReason, ModelOperationCoverageReasonKind,
+        ModelOperationCoverageSummaryStatus,
+    };
+    let evidence = evidence_name(result.evidence);
+    let discarded_by = result
+        .discarded_by
+        .iter()
+        .map(|(reason, count)| {
+            let name = match reason {
+                ModelBasedTestDiscardReason::DomainRefusal => "domain-refusal",
+                ModelBasedTestDiscardReason::PreconditionFalse => "precondition-false",
+                ModelBasedTestDiscardReason::InvariantFalse => "invariant-false",
+                ModelBasedTestDiscardReason::NoCheckPoint => "no-check-point",
+            };
+            (
+                name.to_owned(),
+                serde_json::json!({
+                    "count": count.count,
+                    "first_case": count.first_case,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<String, Value>>();
+    let cause = result.cause.as_ref().map(|cause| match cause {
+        ModelBasedTestCause::NoEvaluatedCase => serde_json::json!("no-evaluated-case"),
+        ModelBasedTestCause::LimitReached {
+            limit,
+            value,
+            setting,
+        } => serde_json::json!({
+            "kind": "limit-reached",
+            "limit": limit.as_str(),
+            "value": value,
+            "setting": setting,
+        }),
+        ModelBasedTestCause::ToolFailure { defect } => serde_json::json!({
+            "kind": "tool-failure",
+            "defect": format!("{defect:?}"),
+        }),
+        ModelBasedTestCause::NoContractLevelReading => {
+            serde_json::json!("no-contract-level-reading")
+        }
+    });
+    let operations = result
+        .operations
+        .as_ref()
+        .map(|operations| serde_json::to_value(operations).expect("coverage entries serialize"));
+    let coverage = result.coverage.as_ref().map(|coverage| {
+        let status = match coverage.status {
+            ModelOperationCoverageSummaryStatus::Complete => "complete",
+            ModelOperationCoverageSummaryStatus::Partial => "partial",
+        };
+        let uncovered = coverage
+            .uncovered
+            .iter()
+            .map(|(reason, count)| {
+                let name = match reason {
+                    ModelOperationCoverageReasonKind::Unreachable => "unreachable",
+                    ModelOperationCoverageReasonKind::UnreachableWithinBound => {
+                        "unreachable-within-bound"
+                    }
+                    ModelOperationCoverageReasonKind::NotGenerated => "not-generated",
+                    ModelOperationCoverageReasonKind::Undetermined => "undetermined",
+                };
+                (name.to_owned(), serde_json::json!(count))
+            })
+            .collect::<serde_json::Map<String, Value>>();
+        serde_json::json!({"status": status, "uncovered": uncovered})
+    });
+    serde_json::json!({
+        "clause": result.clause,
+        "domain": domain,
+        "status": evidence,
+        "evidence": evidence,
+        "verdict": if evidence == "refuted" { serde_json::json!("refuted") } else { Value::Null },
+        "cause": cause,
+        "cases": {
+            "generated": result.counts.generated,
+            "passed": result.counts.passing,
+            "failed": result.counts.failing,
+            "discarded": result.counts.discarded,
+            "discarded_by": discarded_by,
+        },
+        "checks": {
+            "evaluated": result.checks.evaluated,
+            "skipped": result.checks.skipped.len(),
+        },
+        "limits": {
+            "max_cases": result.max_cases,
+            "max_trace_length": result.max_trace_length,
+            "max_value_bits": result.max_value_bits,
+        },
+        "provenance": {
+            "seed": result.seed,
+            "max_value_bits": result.provenance.max_value_bits,
+            "size_bounded": result.provenance.size_bounded.iter().map(|root| serde_json::json!({
+                "node": root.node.to_string(),
+                "path": root.path,
+                "values": root.values,
+            })).collect::<Vec<_>>(),
+            "value_bound_cuts": {"count": result.provenance.value_bound_cuts.count},
+        },
+        "partitions": result.partitions.iter().map(partition_json).collect::<Vec<_>>(),
+        "partition_coverage": {
+            "status": match result.partition_coverage.status {
+                ModelOperationCoverageSummaryStatus::Complete => "complete",
+                ModelOperationCoverageSummaryStatus::Partial => "partial",
+            },
+            "uncovered": result.partition_coverage.uncovered,
+        },
+        "operations": operations,
+        "coverage": coverage,
+        "counterexample": counterexample_json(result),
+    })
 }
 
 pub(super) fn prepare(
@@ -219,17 +419,20 @@ pub(super) fn prepare(
     )
     .map_err(route_error)?
     .into_value();
-    let input = fsl_eval::simulation::model::ModelCheckInput::source(checked.package());
-    let is_state_clause = input
-        .state_clauses
-        .iter()
-        .any(|clause| clause.name == selection.clause);
+    let package = checked.package();
+    let graph = package.graph();
+    let state_clause = graph.state_clause(&selection.clause);
+    let callable = graph.callable(&selection.clause);
+    let is_state_clause = state_clause.is_some();
+    let clause_identity = if let Some(clause) = state_clause {
+        clause.identity().clone()
+    } else if let Some(callable) = callable.as_ref() {
+        callable.identity.clone()
+    } else {
+        return Err(invalid(&selection.clause, "unknown clause"));
+    };
     if !is_state_clause {
-        let callable = checked
-            .package()
-            .graph()
-            .callable(&selection.clause)
-            .ok_or_else(|| invalid(&selection.clause, "unknown clause"))?;
+        let callable = callable.expect("callable selected above");
         if callable.result != &filament_exact::ValueType::Boolean {
             return Err(invalid(
                 &selection.clause,
@@ -257,178 +460,99 @@ pub(super) fn prepare(
                 "value-clause parameters must have Integer type",
             ));
         }
-        let parameters = callable
-            .parameters
-            .iter()
-            .map(|(name, _)| name.clone())
-            .collect::<Vec<_>>();
-        let package = checked.package();
-        let function =
-            fsl_eval::value::QualifiedName::unqualified(&selection.clause).map_err(route_error)?;
-        let record = fsl_eval::simulation::model::run_model_based_test(
-            fsl_eval::simulation::model::ModelBasedTestRequest::Values {
-                clause: &selection.clause,
-                domain: &package_name(source.source().identity()),
-                parameters: &parameters,
-                max_cases: selection.max_cases,
-                seed: selection.seed,
-                max_value_bits: selection.max_value_bits,
-            },
-            |case| {
-                let fsl_eval::simulation::model::ModelBasedTestCase::Values(arguments) = case
-                else {
-                    return fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
-                        reason: "unexpected-model-case-kind".to_owned(),
-                    };
-                };
-                use fsl_eval::value::CheckedPackageEvaluation;
-
-                let values = arguments.to_vec();
-                let mut meter =
-                    filament_exact::Meter::new(fsl_replay::spine::default_accounting(10_000));
-                match package.call(
-                    &function,
-                    values,
-                    &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-                    &mut meter,
-                ) {
-                    Ok(evaluation) => match evaluation.outcome {
-                        filament_eval::FamilyOutcome::Evaluated(
-                            filament_exact::Outcome::Completed(filament_exact::Value::Boolean(
-                                true,
-                            )),
-                        ) => fsl_eval::simulation::model::ModelBasedTestOutcome::Passed,
-                        filament_eval::FamilyOutcome::Evaluated(
-                            filament_exact::Outcome::Completed(filament_exact::Value::Boolean(
-                                false,
-                            )),
-                        ) => fsl_eval::simulation::model::ModelBasedTestOutcome::Failed {
-                            disposition: "predicate-false".to_owned(),
-                        },
-                        _ => fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
-                            reason: "native-evaluation-incomplete".to_owned(),
-                        },
-                    },
-                    Err(_) => fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
-                        reason: "native-evaluation-refused".to_owned(),
-                    },
-                }
-            },
-        )
-        .map_err(model_test_error)?;
-        let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
-        return Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
-            record,
-            sources,
-        }));
     }
-    let initial_file = selection
-        .initial
-        .as_deref()
-        .ok_or_else(|| invalid("initial", "a state clause requires an initial snapshot"))?;
-    let initial_bytes = intake.file(initial_file, intake.remaining)?;
-    let supplied = fsl_replay::spine::SuppliedObservation::from_document(
-        "model_based_test.initial",
-        initial_bytes.clone(),
-    )
-    .map_err(|error| invalid(&error.member, error.reason))?;
-    let initial = supplied.reference.clone();
-    let snapshot: Snapshot = serde_json::from_slice(&initial_bytes)
-        .map_err(|error| invalid("initial", format!("invalid snapshot: {error}")))?;
-    let universes = snapshot
-        .populations
-        .into_iter()
-        .filter(|population| population.complete)
-        .map(
-            |population| fsl_eval::simulation::model::PopulationUniverse {
-                population: filament_checked::key::DeclarationKey {
-                    package: snapshot.model.identity.clone(),
-                    node: population.population,
-                },
-                keys: population
-                    .objects
-                    .into_iter()
-                    .map(|object| object.key)
-                    .collect(),
-            },
+    if is_state_clause && selection.max_trace_length.is_none() {
+        return Err(invalid(
+            "max_trace_length",
+            "a state clause requires a positive length",
+        ));
+    }
+    if !is_state_clause && selection.max_trace_length.is_some() {
+        return Err(invalid("max_trace_length", "not valid for a value clause"));
+    }
+    if !is_state_clause && selection.initial.is_some() {
+        return Err(invalid("initial", "not valid for a value clause"));
+    }
+
+    let subject = if is_state_clause {
+        let initial_file = selection
+            .initial
+            .as_deref()
+            .ok_or_else(|| invalid("initial", "a state clause requires an initial snapshot"))?;
+        let initial_bytes = intake.file(initial_file, intake.remaining)?;
+        let supplied = fsl_replay::spine::SuppliedObservation::from_document(
+            "model_based_test.initial",
+            initial_bytes.clone(),
         )
-        .collect();
-    let snapshots = fsl_semantics::model::observation::DocumentProvision::from([(
-        initial.clone(),
-        initial_bytes,
-    )]);
-    let model_system = fsl_eval::simulation::model::ModelSystem::new(
-        fsl_eval::simulation::model::ModelSimulationRequest {
-            input,
-            packages: &packages,
-            normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-            snapshots: &snapshots,
-            initial: vec![initial],
-            universes,
-            observation: fsl_semantics::model::observation::ObservationLimits::default(),
-            expansion: fsl_eval::simulation::model::ExpansionLimits {
-                max_candidates: 1_000_000,
-            },
-            meter: fsl_replay::spine::default_accounting(10_000),
-            emit: fsl_replay::spine::SpineLimits::default().package.emit(),
-        },
-    )
-    .map_err(route_error)?;
+        .map_err(|error| invalid(&error.member, error.reason))?;
+        let initial = supplied.reference.clone();
+        let snapshot: Snapshot = serde_json::from_slice(&initial_bytes)
+            .map_err(|error| invalid("initial", format!("invalid snapshot: {error}")))?;
+        let universes: Vec<fsl_eval::simulation::model::PopulationUniverse> = snapshot
+            .populations
+            .into_iter()
+            .filter(|population| population.complete)
+            .map(
+                |population| fsl_eval::simulation::model::PopulationUniverse {
+                    population: filament_checked::key::DeclarationKey {
+                        package: snapshot.model.identity.clone(),
+                        node: population.population,
+                    },
+                    keys: population
+                        .objects
+                        .into_iter()
+                        .map(|object| object.key)
+                        .collect(),
+                },
+            )
+            .collect();
+        let snapshots = fsl_semantics::model::observation::DocumentProvision::from([(
+            initial.clone(),
+            initial_bytes,
+        )]);
+        Some((snapshots, vec![initial], universes))
+    } else {
+        None
+    };
     let sampler =
         fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
             .map_err(route_error)?;
-    let domain = model_system
-        .populations()
-        .first()
-        .map(|population| population.key.package.clone())
-        .unwrap_or_default();
-    let max_trace_length = selection.max_trace_length.unwrap_or(1);
-    let record = fsl_eval::simulation::model::run_model_based_test(
-        fsl_eval::simulation::model::ModelBasedTestRequest::State {
-            system: &model_system,
-            sampler: &sampler,
-            clause: &selection.clause,
-            domain: &domain,
-            max_cases: selection.max_cases,
-            seed: selection.seed,
-            max_trace_length,
-            max_value_bits: selection.max_value_bits,
-            position_limit: 10_000,
-        },
-        |case| {
-            let fsl_eval::simulation::model::ModelBasedTestCase::State(trace) = case else {
-                return fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
-                    reason: "unexpected-model-case-kind".to_owned(),
-                };
-            };
-            let findings = trace
-                .trace
-                .findings
-                .iter()
-                .flat_map(|finding| finding.findings.iter())
-                .collect::<Vec<_>>();
-            if findings.iter().copied().any(|finding| {
-                matches!(finding,
-                    fsl_eval::simulation::model::ModelFinding::InvariantViolated { clause, .. }
-                        if clause == &selection.clause)
-            }) {
-                fsl_eval::simulation::model::ModelBasedTestOutcome::Failed {
-                    disposition: "invariant-violated".to_owned(),
-                }
-            } else if findings.iter().copied().any(|finding| {
-                matches!(finding,
-                    fsl_eval::simulation::model::ModelFinding::InvariantUndetermined { clause, .. }
-                        if clause == &selection.clause)
-            }) {
-                fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
-                    reason: "invariant-undetermined".to_owned(),
-                }
-            } else {
-                fsl_eval::simulation::model::ModelBasedTestOutcome::Passed
+    let observation = _observation_override.unwrap_or_default();
+    let request = fsl_eval::simulation::model::ModelBasedTestRequest {
+        clause: Some(clause_identity),
+        profile: sampler,
+        seed: selection.seed,
+        max_cases: selection.max_cases,
+        max_trace_length: selection
+            .max_trace_length
+            .map(|length| u64::try_from(length).unwrap_or(u64::MAX)),
+        max_value_bits: selection.max_value_bits.map(u64::from),
+        subject: subject.as_ref().map(|(snapshots, initial, universes)| {
+            fsl_eval::simulation::model::ModelBasedTestSubject {
+                packages: &packages,
+                snapshots,
+                initial: initial.clone(),
+                universes: universes.clone(),
             }
+        }),
+        expansion: fsl_eval::simulation::model::ExpansionLimits {
+            max_candidates: 1_000_000,
         },
+        accounting: fsl_replay::spine::default_accounting(10_000),
+        normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        observation,
+        emit: fsl_replay::spine::SpineLimits::default().package.emit(),
+        exploration: fsl_eval::simulation::Limits::default(),
+        position_limit: 10_000,
+    };
+    let record = fsl_eval::simulation::model::run_model_based_test(
+        package,
+        &request,
+        &fsl_eval::simulation::model::NativeAdmission,
+        &cancel,
     )
     .map_err(model_test_error)?;
+    let record = result_json(&record, &package_name(source.source().identity()));
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
         record,
