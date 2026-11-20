@@ -743,8 +743,18 @@ pub(crate) struct ProbabilisticInput<'a> {
     /// Every header profile selection of the unit.
     pub(crate) profiles: &'a [fsl_foundation::selection::ProfileSelection],
     pub(crate) limits: CheckingLimits,
+    /// The source unit each declaration of the unit was written in, by its
+    /// position: a source object type is visible only in the unit that declares
+    /// it (FR-569).
+    pub(crate) declaration_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
+    /// The source unit each task-set declaration was written in, by its position.
+    pub(crate) task_set_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
     pub(crate) cancel: &'a filament_exact::Cancel,
 }
+
+/// The source unit a name is resolved in, `None` when it has none.
+#[derive(Clone, Copy)]
+pub(crate) struct Seen<'o>(Option<&'o fsl_foundation::source::provenance::RawSourceRef>);
 
 /// Why an operation name resolves to no single operation.
 pub(crate) enum Unresolved {
@@ -753,6 +763,35 @@ pub(crate) enum Unresolved {
 }
 
 impl<'a> ProbabilisticInput<'a> {
+    /// The source unit task-set declaration `declaration` was written in.
+    pub(crate) fn seen_by_task_set(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.task_set_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    /// The source unit probabilistic declaration `declaration` was written in.
+    pub(crate) fn seen_by(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.declaration_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    /// Whether the source object type `key` is visible to `seen`: a source model is
+    /// seen only by the unit that declares it (FR-569). Every other key, and a call
+    /// that names no unit, is visible.
+    fn visible(&self, seen: Seen<'_>, key: &DeclarationKey) -> bool {
+        let Seen(owner) = seen;
+        self.models
+            .iter()
+            .filter(|model| model.declares(key))
+            .all(|model| model.visible_in(owner))
+    }
+
     /// The time source of the model of `alias` on the package `package`:
     /// two units may bind one alias to two packages (FR-480 "Selections and
     /// imports"), so the alias alone does not name the model.
@@ -770,6 +809,7 @@ impl<'a> ProbabilisticInput<'a> {
         &self,
         written: &NameForm,
         model: Option<&str>,
+        seen: Seen<'_>,
     ) -> Result<(ProbabilisticOperation, &'a OperationDeclaration), Unresolved> {
         let segments: Vec<&str> = written.name.split("::").collect();
         let (alias, object, operation) = match segments[..] {
@@ -785,7 +825,10 @@ impl<'a> ProbabilisticInput<'a> {
                 alias.is_none_or(|alias| candidate.as_str() == alias)
                     && model.is_none_or(|model| candidate.as_str() == model)
             })
-            .filter_map(|(candidate, objects)| Some((candidate, objects.get(&object)?)))
+            .filter_map(|(candidate, objects)| {
+                let key = objects.get(&object)?;
+                self.visible(seen, key).then_some((candidate, key))
+            })
             .collect();
         let (alias, key) = match candidates[..] {
             [] => return Err(Unresolved::Missing),
@@ -838,7 +881,11 @@ impl<'a> ProbabilisticInput<'a> {
     /// failing that, as an object type of the unit's own source model, whose
     /// operations alone the workload then weighs. The model alias and the
     /// source object type, when one is named.
-    fn workload_target(&self, written: &str) -> Option<(String, Option<DeclarationKey>)> {
+    fn workload_target(
+        &self,
+        written: &str,
+        declaration: usize,
+    ) -> Option<(String, Option<DeclarationKey>)> {
         if self.model_objects.contains_key(written) {
             return Some((written.to_owned(), None));
         }
@@ -847,6 +894,9 @@ impl<'a> ProbabilisticInput<'a> {
             .model_objects
             .get(super::super::source_model::ALIAS)?
             .get(&object)?;
+        if !self.visible(self.seen_by(declaration), key) {
+            return None;
+        }
         Some((
             super::super::source_model::ALIAS.to_owned(),
             Some(key.clone()),
@@ -1112,10 +1162,14 @@ impl Pass<'_, '_> {
         cx: &mut CheckContext<'_, Scope>,
         nodes: &mut u64,
     ) {
-        let (operation, declaration) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
-        };
+        let (operation, declaration) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
+            };
         let parameter = form.parameter.name.as_str();
         let Some((position, (_, value_type))) = declaration
             .parameters()
@@ -1271,13 +1325,17 @@ impl Pass<'_, '_> {
         nodes: &mut u64,
     ) {
         let reads = super::reward(form);
-        let (operation, declaration) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => {
-                self.refusals.extend(reads.into_iter().map(refusal));
-                return self.refuse(unresolved(fault, &form.operation));
-            }
-        };
+        let (operation, declaration) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => {
+                    self.refusals.extend(reads.into_iter().map(refusal));
+                    return self.refuse(unresolved(fault, &form.operation));
+                }
+            };
         let name = form.name.name.as_str();
         let declared = (operation.key.clone(), name.to_owned());
         if self.rewards.contains(&declared) {
@@ -1356,10 +1414,14 @@ impl Pass<'_, '_> {
     /// FR-253: a `delay` declaration, admitted on an operation of a `time
     /// dense` model only, with an exact distribution in the model's unit.
     fn delay(&mut self, index: usize, form: &DelayForm) {
-        let (operation, _) = match self.input.operation(&form.operation, None) {
-            Ok(resolved) => resolved,
-            Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
-        };
+        let (operation, _) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
+            };
         let name = form.operation.name.as_str();
         let Some(source) = self
             .input
@@ -1493,7 +1555,7 @@ impl Pass<'_, '_> {
             });
         }
         self.workloads.push((workload.to_owned(), form.name.span));
-        let Some((alias, only)) = self.input.workload_target(model) else {
+        let Some((alias, only)) = self.input.workload_target(model, index) else {
             return self.refuse(ProbabilisticCause::UnresolvedModel {
                 workload: workload.to_owned(),
                 model: model.to_owned(),
@@ -1518,7 +1580,11 @@ impl Pass<'_, '_> {
                     operation: written.operation.name.clone(),
                 },
             );
-            let operation = match self.input.operation(&written.operation, Some(model)) {
+            let operation = match self.input.operation(
+                &written.operation,
+                Some(model),
+                self.input.seen_by(index),
+            ) {
                 Ok((operation, _))
                     if weighable.as_ref().is_none_or(|weighable| {
                         weighable.iter().any(|(declaring, name, _)| {
@@ -1561,7 +1627,7 @@ impl Pass<'_, '_> {
         for (declaring, name, spelled) in self.input.model_operations(model, only.as_ref()) {
             let covered = form.weights.iter().any(|written| {
                 self.input
-                    .operation(&written.operation, Some(model))
+                    .operation(&written.operation, Some(model), self.input.seen_by(index))
                     .is_ok_and(|(operation, _)| {
                         operation.declaring == declaring && operation.name.as_str() == name
                     })

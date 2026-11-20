@@ -77,6 +77,9 @@ pub struct ModelTimeSource {
     pub model: String,
     /// The complete source `time` declaration, for FR-322 occurrence mapping.
     pub span: Span,
+    /// The source unit that declares the `time` declaration, `None` for a
+    /// package of one unit.
+    pub declared_in: Option<fsl_foundation::source::provenance::RawSourceRef>,
     /// The model node of the selected package's one object type, the state
     /// object: the timed root's and every clock place's `model` (FSpec FR-322
     /// "Timed-model nodes", FR-415-AC-17).
@@ -106,6 +109,7 @@ impl DebugWith for ModelTimeSource {
         let Self {
             model,
             span,
+            declared_in,
             model_node,
             tick_operation_key,
             tick_operation_span,
@@ -119,6 +123,7 @@ impl DebugWith for ModelTimeSource {
         f.debug_struct("ModelTimeSource")
             .field("model", &model)
             .field("span", &span)
+            .field("declared_in", &declared_in)
             .field("model_node", &NodeKeyDebug(model_node, table))
             .field("tick_operation_key", &tick_operation_key)
             .field("tick_operation_span", &tick_operation_span)

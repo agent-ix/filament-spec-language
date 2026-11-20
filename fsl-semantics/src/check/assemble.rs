@@ -4263,8 +4263,32 @@ impl PackageDeclarations {
         let mut state_clause_index = 0usize;
         let mut time_source_index = 0usize;
         let mut equivalence_index = 0usize;
+        let mut probabilistic_index = 0usize;
+        let mut task_set_index = 0usize;
         for (source, unit) in &units {
             for form in unit.forms() {
+                if matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::Taskset(_)
+                        | fsl_forms::DeclarationForm::Schedulable(_)
+                        | fsl_forms::DeclarationForm::Response(_)
+                        | fsl_forms::DeclarationForm::Release(_)
+                ) {
+                    source_owners.insert(format!("task_set {task_set_index}"), source.clone());
+                    task_set_index += 1;
+                }
+                if matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::Random(_)
+                        | fsl_forms::DeclarationForm::Reward(_)
+                        | fsl_forms::DeclarationForm::Delay(_)
+                        | fsl_forms::DeclarationForm::Workload(_)
+                        | fsl_forms::DeclarationForm::Probabilistic(_)
+                ) {
+                    // FR-096: a site of the declaration is located in its own unit.
+                    source_owners.insert(format!("probabilistic {probabilistic_index}"), source.clone());
+                    probabilistic_index += 1;
+                }
                 if matches!(form.form(), fsl_forms::DeclarationForm::StateClause(_)) {
                     source_owners
                         .insert(format!("state_clause:{state_clause_index}"), source.clone());
@@ -4673,6 +4697,9 @@ impl PackageDeclarations {
                 continue;
             };
             let mut declared = AdmittedModel::from_view(&model.view).with_alias(&selection.alias);
+            if super::source_model::is_source_alias(&selection.alias) {
+                declared = declared.of_package(&package_name);
+            }
             // Units scope a source model only when the package has several.
             if super::source_model::is_source_alias(&selection.alias) && !source_owners.is_empty() {
                 declared = declared.declared_in(unit_source);

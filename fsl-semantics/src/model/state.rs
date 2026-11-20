@@ -350,13 +350,7 @@ impl StateModel {
         &self,
         units: &BTreeMap<String, filament_exact::UnitId>,
     ) -> Result<crate::model::operation::OperationTable, crate::check::AssemblyRefusal> {
-        crate::check::model_operation_table(
-            self.views
-                .iter()
-                .filter(|view| !view.is_source())
-                .map(|view| &view.view),
-            units,
-        )
+        crate::check::model_operation_table(self.views.iter().map(|view| &view.view), units)
     }
 
     /// FR-940: the one population domain of the selected domain packages

@@ -356,6 +356,9 @@ pub struct AdmittedModel {
     /// The unit that declares this model, for a source model: its types and
     /// populations are visible in that unit only.
     source_unit: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    /// The name of the checked package this source model belongs to, which its
+    /// object types' node keys are minted under.
+    source_package: Option<String>,
     selection: DomainPackageRef,
     records: BTreeMap<DeclarationKey, DomainPackageRecord>,
     /// FCD dimensions and units retained for FR-230's owner-qualified graph.
@@ -1014,6 +1017,7 @@ impl AdmittedModel {
                 .collect(),
             alias: None,
             source_unit: None,
+            source_package: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
@@ -1066,6 +1070,7 @@ impl AdmittedModel {
             supertypes: BTreeMap::new(),
             alias: None,
             source_unit: None,
+            source_package: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
@@ -1214,6 +1219,13 @@ impl AdmittedModel {
             }
         }
         layouts
+    }
+
+    /// This source model as the source model of the package named `package`.
+    #[must_use]
+    pub(crate) fn of_package(mut self, package: &str) -> Self {
+        self.source_package = Some(package.to_owned());
+        self
     }
 
     /// This source model as declared by `unit`.
@@ -1443,17 +1455,7 @@ impl AdmittedModel {
                 Some(DomainPackageRecord::ObjectType(_))
             )
         {
-            let package_name = self.selection.identity.strip_prefix("source/")?;
-            let name = crate::model::intake::type_identity_segment(
-                &declaration.package,
-                &declaration.node,
-            )?;
-            return crate::check::declared_node_key(
-                package_name.to_owned(),
-                vec![name.to_owned()],
-                0,
-            )
-            .ok();
+            return crate::model::key::source_object_node_key(declaration, self.source_package.as_deref()?);
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
@@ -2465,6 +2467,11 @@ impl AdmittedModel {
     pub(crate) fn clock_field(&self, object: EffectiveId, name: &str) -> Option<&DeclarationKey> {
         self.clock_place(object, &[PlaceStep::Field(name.to_owned())])
             .map(|place| &place.field)
+    }
+
+    /// Whether this package declares the record `key`.
+    pub(crate) fn declares(&self, key: &DeclarationKey) -> bool {
+        self.records.contains_key(key)
     }
 
     /// The key of every declaration record of the package, of any kind.

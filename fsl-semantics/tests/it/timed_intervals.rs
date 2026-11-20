@@ -62,6 +62,7 @@ fn dense_ms() -> ModelTimeSource {
     ModelTimeSource {
         model: "Config".to_owned(),
         span: fsl_foundation::Span { start: 0, end: 1 },
+        declared_in: None,
         // The model node of `Config`'s state object, which names the timed
         // model's package.
         model_node: fsl_semantics::model::key::object_type_node_key(

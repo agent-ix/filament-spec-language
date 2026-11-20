@@ -13,7 +13,7 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{
-    CheckedLiteralValue, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedLiteralValue, CheckedNodeId, CheckedNodeOwner, CheckedOccurrence, CheckedOccurrenceRole,
     CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, LiteralKind,
 };
 
@@ -137,10 +137,11 @@ fn reference(target: CheckedNodeId) -> CheckedTerm {
 /// graph holds its node.
 fn model_node(
     ids: &StructuralIds,
+    package_name: &str,
     nodes: &[CheckedSemanticNodeV2],
     declaration: &DeclarationKey,
 ) -> Option<(NodeKey, CheckedNodeId)> {
-    let key = fsl_semantics::model::key::object_type_node_key(declaration).ok()?;
+    let key = fsl_semantics::model::key::declaring_node_key(declaration, package_name)?;
     let id = node_id(ids, &key);
     nodes
         .iter()
@@ -207,7 +208,7 @@ fn region_of(
         .region(location)
         .ok_or(EmitRefusal::SourceMapInvariant)?;
     Ok(CheckedSourceRegion {
-        source: source_artifact(graph.source()),
+        source: source_artifact(region.source()),
         start: region.start(),
         end: region.end(),
     })
@@ -234,6 +235,7 @@ fn random_parameter_node(
     let region = region_of(graph, &location)?;
     let (_, declaring) = model_node(
         ids,
+        graph.package_name(),
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
@@ -315,7 +317,7 @@ fn workload_node(
     // has no model node to hang from; QSL-2444 tracks emitting it.
     let (_, model) = workload
         .model_key()
-        .and_then(|declaration| model_node(ids, nodes, declaration))
+        .and_then(|declaration| model_node(ids, graph.package_name(), nodes, declaration))
         .ok_or_else(unwritable)?;
     let key = workload
         .node_key(graph.package_name())
@@ -324,6 +326,7 @@ fn workload_node(
     for (operation, weight) in workload.weights() {
         let (_, declaring) = model_node(
             ids,
+            graph.package_name(),
             nodes,
             operation.declaring_key().ok_or_else(unwritable)?,
         )
@@ -331,6 +334,17 @@ fn workload_node(
         weights.push((declaring, operation.name().to_owned(), weight.clone()));
     }
     weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
+    // FSpec FR-640 Reader rule 3 reads a workload's operation names as distinct, so
+    // one that weighs two declarations of a name (a subtype of two parents
+    // that each declare it) is refused here with its locus; the reader rule is
+    // QSL-2707.
+    if weights
+        .iter()
+        .enumerate()
+        .any(|(at, (_, name, _))| weights[..at].iter().any(|(_, earlier, _)| earlier == name))
+    {
+        return Err(unwritable());
+    }
     let rows = weights
         .iter()
         .map(|(declaring, operation, weight)| {
@@ -389,6 +403,41 @@ pub(super) fn dense_unit(
         .flatten()
 }
 
+/// The unit of the `dense` source of the timed model of the source unit that
+/// declares `declaring`: the timed roots over the types of that unit alone
+/// type a delay on any of its types, as FR-230 gives each unit's source model
+/// one time member. `None` when the unit has no such root or its roots
+/// disagree.
+fn source_dense_unit(
+    nodes: &[CheckedSemanticNodeV2],
+    declaring: &CheckedNodeId,
+) -> Option<CheckedNodeId> {
+    let owner = nodes
+        .iter()
+        .find(|node| &node.node_id == declaring)?
+        .owner
+        .as_ref()?;
+    if !matches!(owner, CheckedNodeOwner::Source { .. }) {
+        return None;
+    }
+    let mut units = nodes
+        .iter()
+        .filter(|node| {
+            CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::TimedModel)
+        })
+        .filter_map(|root| {
+            let CheckedTerm::Reference { target } = member(&root.body, 0)? else {
+                return None;
+            };
+            let model = nodes.iter().find(|node| &node.node_id == target)?;
+            (model.owner.as_ref() == Some(owner))
+                .then(|| dense_unit(nodes, target))
+                .flatten()
+        });
+    let unit = units.next()?;
+    units.all(|other| other == unit).then_some(unit)
+}
+
 fn delay_node(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -409,6 +458,7 @@ fn delay_node(
     let region = region_of(graph, &location)?;
     let (_, declaring) = model_node(
         ids,
+        graph.package_name(),
         nodes,
         operation.declaring_key().ok_or_else(unwritable)?,
     )
@@ -418,7 +468,15 @@ fn delay_node(
         .ok_or_else(unwritable)?;
     // IR's reader admits a delay only on a model with a timed root whose
     // source is `dense`, and types every time by that source's unit.
-    let unit = dense_unit(nodes, &declaring).ok_or_else(unwritable)?;
+    let unit = dense_unit(nodes, &declaring)
+        .or_else(|| {
+            operation
+                .model()
+                .is_empty()
+                .then(|| source_dense_unit(nodes, &declaring))
+                .flatten()
+        })
+        .ok_or_else(unwritable)?;
     let text = scalar_type(ids, graph, nodes, source_map, "text", &region)?;
     let rational = scalar_type(ids, graph, nodes, source_map, "rational", &region)?;
     let time = |value: &Rational| literal(&unit, LiteralKind::Quantity, &spelling(value));

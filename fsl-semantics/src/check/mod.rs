@@ -2349,7 +2349,8 @@ impl PackageDeclarations {
                 &self.dimension_equivalences,
                 &self.source,
                 &self.package_name,
-            );
+            )
+            .owned_by(&self.source_owners, &self.package_name);
             // The model a `time invariant` or `urgent` declaration belongs
             // to (FR-230 "Timed facet gate"): the one model the unit's
             // `time` members name, else the unit's one selected model.
@@ -2570,6 +2571,7 @@ impl PackageDeclarations {
                                 self.time_sources.push(ModelTimeSource {
                                     model: source.model.name.clone(),
                                     span: source.span,
+                                    declared_in: self.source_owners.get(owner).cloned(),
                                     model_node: model_node.clone(),
                                     tick_operation_key,
                                     tick_operation_span,
@@ -2651,7 +2653,8 @@ impl PackageDeclarations {
                 &self.dimension_equivalences,
                 &self.source,
                 &self.package_name,
-            );
+            )
+            .owned_by(&self.source_owners, &self.package_name);
             timed_model::prepare(
                 &timed_model::Inputs {
                     models: &self.models,
@@ -5069,6 +5072,12 @@ impl PackageDeclarations {
         // FR-185: the `random`, `reward` and `workload` declarations,
         // resolved, typed and recorded; FR-186: a `probabilistic` claim,
         // resolved, typed and recorded with its obligation identity.
+        let task_set_owners: Vec<_> = (0..self.task_set_forms.len())
+            .map(|index| self.source_owners.get(&format!("task_set {index}")).cloned())
+            .collect();
+        let declaration_owners: Vec<_> = (0..self.probabilistic.len())
+            .map(|index| self.source_owners.get(&format!("probabilistic {index}")).cloned())
+            .collect();
         let probabilistic_input = probabilistic::ProbabilisticInput {
             scope: &scope,
             signatures: &signatures,
@@ -5081,6 +5090,8 @@ impl PackageDeclarations {
             preconditions: &precondition_reads,
             profiles: &self.profile_selections,
             limits,
+            declaration_owners: &declaration_owners,
+            task_set_owners: &task_set_owners,
             cancel,
         };
         let mut probabilistic_cx = crate::family::CheckContext::new(
@@ -8582,8 +8593,13 @@ fn type_tables<'m>(
                 objects.insert(artifact, key.clone());
             }
         }
+        // The source models of a package's several units share one alias (FR-569), so
+        // their declarations join under it instead of the last unit's replacing the rest.
         if let Some(alias) = model.alias() {
-            by_alias.insert(alias.to_owned(), objects);
+            by_alias
+                .entry(alias.to_owned())
+                .or_insert_with(BTreeMap::new)
+                .extend(objects);
         }
     }
     (by_alias, identities)

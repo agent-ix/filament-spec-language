@@ -304,14 +304,14 @@ impl StateModel {
     > {
         self.views
             .iter()
-            .filter(|view| !view.is_source())
             .find_map(|view| {
                 view.view
                     .type_identities()
                     .iter()
                     .find_map(|(key, effective)| {
-                        (crate::model::key::object_type_node_key(key).ok().as_ref() == Some(node))
-                            .then_some((view, key, effective))
+                        (crate::model::key::declaring_node_key(key, node.package()).as_ref()
+                            == Some(node))
+                        .then_some((view, key, effective))
                     })
             })
             .ok_or_else(|| PackageProbabilisticRefusal::UnknownModel(node.clone()))
