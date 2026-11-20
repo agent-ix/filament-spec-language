@@ -336,6 +336,14 @@ fn check_outcome_inner(
             &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
         )?;
+        if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
+            compile_formal_model_unit(&source)?;
+            return Ok(fsl_replay::OutcomeDocument::new(
+                fsl_replay::Operation::Check,
+                Some(fsl_replay::OutcomeStage::I1),
+                filament_semantic_value::catalog::Category::Success,
+            ));
+        }
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
         let cancel = filament_exact::Cancel::new();
         let parsed = match fsl_replay::spine::parse_selecting_extensions(
@@ -388,15 +396,7 @@ fn check_outcome_inner(
             .iter()
             .map(|model| intake.source(&model.source, "models"))
             .collect::<Result<Vec<_>>>()?;
-        let packages = fsl_semantics::model::intake::package_input(
-            model_documents
-                .iter()
-                .map(|document| document.source().text().as_bytes()),
-        )
-        .map_err(|refusal| RunCause::ClauseRequest {
-            member: "models".to_owned(),
-            reason: refusal.detail,
-        })?;
+        let packages = package_input_from_formal_sources(&inputs.models, &model_documents)?;
         let admitted_models =
             match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
                 Ok(models) => models.into_value(),
@@ -805,6 +805,12 @@ pub enum RunCause {
     /// One source refusal retained in native and canonical typed projections.
     #[error("{0}")]
     Source(#[source] Box<SourceFailure>),
+    /// A model-unit compiler refusal at I1, retaining its exact source cause.
+    #[error("{0}")]
+    ModelUnit(#[source] Box<SourceFailure>),
+    /// A package-input refusal while parsing selected Semantic IR documents.
+    #[error("model package input refusal: {0:?}")]
+    ModelPackageInput(Box<fsl_semantics::model::normalize::ModelRefusal>),
     /// A `1-draft` program's request selects what spine compile does not
     /// take.
     #[error("a complete-V1 program compiles alone; the request selects {0}")]
@@ -1096,6 +1102,10 @@ impl RunCause {
             Self::Identifier { .. } => Code::InvalidIdentifier,
             Self::Native(error) => error.code,
             Self::Source(error) => error.diagnostic.code,
+            Self::ModelUnit(error) => {
+                Code::from_code(error.diagnostic.code.as_str()).unwrap_or(Code::InvalidModelBinding)
+            }
+            Self::ModelPackageInput(refusal) => refusal.code,
             Self::CompleteSelection(_)
             | Self::Libraries(_)
             | Self::CompleteRunSelection(_)
@@ -1229,6 +1239,25 @@ impl RunError {
                 .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
                     &failure.diagnostic,
                 )]),
+            RunCause::ModelUnit(failure) => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::I1),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
+                &failure.diagnostic,
+            )]),
+            RunCause::ModelPackageInput(refusal) => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::I1),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                Some(refusal.cause.as_str()),
+                refusal.code.as_str(),
+                None,
+                refusal.detail.clone(),
+            )]),
             RunCause::Native(diagnostic) => {
                 let projected = if let Some(cause) = diagnostic.identity_cause() {
                     let source = fsl_cst::diagnostic::source_refusal(
@@ -2470,9 +2499,10 @@ fn compile_outcome_inner(
             // imports, and counts toward the same file limits (FR-027).
             programs: request
                 .libraries
-                .len()
+                .as_ref()
+                .map_or(0, Vec::len)
                 .saturating_add(request.program.sources.len()),
-            models: request.models.len(),
+            models: request.models.as_ref().map_or(0, Vec::len),
             observations: 0,
             extensions: request.extensions.len(),
         };
@@ -2490,6 +2520,54 @@ fn compile_outcome_inner(
             let source = intake.source(selection, &format!("program.sources[{index}].source"))?;
             require_native_header(source.source())?;
             sources.push(source);
+        }
+        if sources.len() == 1
+            && fsl_semantics::model::intake::is_model_unit_source(
+                sources[0].source().text().as_bytes(),
+            )
+        {
+            for (member, present) in [
+                ("models", request.models.is_some()),
+                ("libraries", request.libraries.is_some()),
+                ("clocks", request.clocks.is_some()),
+                ("handoff", request.handoff.is_some()),
+                (
+                    "refinement_internals",
+                    request.refinement_internals.is_some(),
+                ),
+                ("integer_division", request.integer_division.is_some()),
+            ] {
+                if present {
+                    return Err(RunCause::ClauseRequest {
+                        member: member.to_owned(),
+                        reason: "a model unit compiles only its own declarations".to_owned(),
+                    });
+                }
+            }
+            let compiled = compile_formal_model_unit(&sources[0])?;
+            let document = fsl_replay::OutcomeDocument::new(
+                fsl_replay::Operation::Package,
+                Some(fsl_replay::OutcomeStage::I1),
+                filament_semantic_value::catalog::Category::Success,
+            );
+            let mut outcome = CompileOutcome {
+                package_bytes: compiled.bytes().to_vec(),
+                document,
+                handoff_compiled: None,
+                handoff_temporal_selections: Vec::new(),
+                sources: crate::Sources::default(),
+            };
+            outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+            if let Some(output) = output {
+                output_file::write_new_file(&output, &outcome.package_bytes)?;
+            }
+            return Ok(outcome);
+        }
+        if request.models.is_none() {
+            return Err(RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: "is required for a complete-V1 program".to_owned(),
+            });
         }
         let mut outcome = complete(
             &request,
@@ -2646,11 +2724,15 @@ fn write_compile_handoff(
     let source_path = directory.join(&request.program.sources[0].file);
     let models = request
         .models
+        .as_deref()
+        .unwrap_or_default()
         .iter()
         .map(|model| directory.join(&model.source.file))
         .collect();
     let libraries = request
         .libraries
+        .as_deref()
+        .unwrap_or_default()
         .iter()
         .map(|library| {
             (
@@ -2694,12 +2776,13 @@ fn write_compile_handoff(
     Ok(())
 }
 
-/// Whether a request's selected model declares the one supported domain-package
-/// format (ADR-012 section 9): the one reader of a model selection's wire
-/// `format` field.
+/// Whether a request's selected model uses a supported source or package format.
 #[ix_trace_rs::string_edge]
-fn is_domain_package(model: &wire::Model) -> bool {
-    model.format == DOMAIN_PACKAGE_PROFILE
+fn is_model_input_format(model: &wire::Model) -> bool {
+    matches!(
+        model.format.as_str(),
+        DOMAIN_PACKAGE_PROFILE | "native-model-unit/1"
+    )
 }
 
 /// Refuse a header language or edition the spine does not admit, at the declared literal.
@@ -2739,6 +2822,160 @@ fn require_native_header(source: &Source) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn model_unit_refusal(
+    source: &Source,
+    diagnostic: fsl_cst::diagnostic::CompleteDiagnostic,
+) -> RunCause {
+    let span = diagnostic
+        .byte_span()
+        .unwrap_or(fsl_foundation::Span { start: 0, end: 0 });
+    let code = Code::from_code(diagnostic.code.as_str()).unwrap_or(Code::InvalidModelBinding);
+    let native = fsl_foundation::diagnostic::error(
+        source,
+        code,
+        diagnostic.phase,
+        span.start,
+        span.end,
+        diagnostic.message.clone(),
+    );
+    RunCause::ModelUnit(Box::new(SourceFailure {
+        native,
+        diagnostic: Box::new(diagnostic),
+    }))
+}
+
+fn compile_formal_model_unit(
+    source: &FormalSource,
+) -> std::result::Result<fsl_semantics::model::intake::CompiledModelUnit, RunCause> {
+    let parsed = fsl_cst::parse_source(source.source().clone(), fsl_cst::Limits::default())
+        .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
+    fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .next()
+            .map(|diagnostic| model_unit_refusal(source.source(), diagnostic))
+            .unwrap_or_else(|| RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: "model-unit compilation returned no diagnostic".to_owned(),
+            })
+    })
+}
+
+fn malformed_model_unit_format(source: &Source) -> RunCause {
+    model_unit_format_refusal(
+        source,
+        "a native model unit was selected as a semantic-ir/2.0.0 document",
+    )
+}
+
+fn package_input_from_formal_sources(
+    selections: &[(String, PathBuf)],
+    sources: &[FormalSource],
+) -> Result<fsl_semantics::model::intake::PackageInput> {
+    let mut packages = fsl_semantics::model::intake::PackageInput::new();
+    for ((selected_identity, selected_path), source) in selections.iter().zip(sources) {
+        let bytes = if fsl_semantics::model::intake::is_model_unit_source(
+            source.source().text().as_bytes(),
+        ) {
+            let relative_path = selected_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: "a model-unit source needs a relative file name".to_owned(),
+                })?;
+            let model_source = Source::read_typed(
+                source.source().identity().clone(),
+                relative_path,
+                source.source().text().as_bytes(),
+                fsl_cst::Limits::default().source_bytes,
+            )
+            .map_err(|_refusal| RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: "model-unit source could not be re-read with a relative path".to_owned(),
+            })?;
+            fsl_semantics::model::intake::package_input_from_sources([(
+                selected_identity.as_str(),
+                &model_source,
+            )])
+            .map_err(|refusal| RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: refusal.detail,
+            })?
+        } else {
+            fsl_semantics::model::intake::package_input([source.source().text().as_bytes()])
+                .map_err(|refusal| RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: refusal.detail,
+                })?
+        };
+        for (identity, document) in bytes {
+            if packages.insert(identity.clone(), document).is_some() {
+                return Err(RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: format!("two supplied model documents select {identity:?}"),
+                });
+            }
+        }
+    }
+    Ok(packages)
+}
+
+fn package_input_from_selected_models(
+    models: &[wire::Model],
+    sources: &[FormalSource],
+) -> Result<fsl_semantics::model::intake::PackageInput> {
+    let documents = models
+        .iter()
+        .zip(sources)
+        .map(|(model, source)| {
+            let bytes = source.source().text().as_bytes();
+            match model.format.as_str() {
+                "native-model-unit/1" => {
+                    if !fsl_semantics::model::intake::is_model_unit_source(bytes) {
+                        return Err(model_unit_format_refusal(
+                            source.source(),
+                            "native-model-unit/1 requires a model unit with a domain identity",
+                        ));
+                    }
+                    compile_formal_model_unit(source).map(|compiled| compiled.bytes().to_vec())
+                }
+                DOMAIN_PACKAGE_PROFILE => {
+                    if fsl_semantics::model::intake::is_model_unit_source(bytes) {
+                        return Err(malformed_model_unit_format(source.source()));
+                    }
+                    Ok(bytes.to_vec())
+                }
+                _ => Err(RunCause::CompleteSelection(CompleteSelection::NativeModels)),
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
+        .map_err(|refusal| RunCause::ModelPackageInput(Box::new(refusal)))
+}
+
+fn model_unit_format_refusal(source: &Source, message: &str) -> RunCause {
+    let text = source.text();
+    let start = text.find("domain").unwrap_or(0);
+    let end = text[start..]
+        .find(';')
+        .map_or(start, |offset| start + offset + 1);
+    let diagnostic = *fsl_cst::diagnostic::error(
+        source,
+        fsl_cst::CompleteCode::InvalidModelBinding,
+        fsl_cst::CompleteCause::MalformedDeclaration,
+        fsl_foundation::Phase::Parse,
+        start,
+        end,
+        message,
+    );
+    model_unit_refusal(source, diagnostic)
 }
 
 /// Spine-compile a `1-draft` program. Each selected model is a domain
@@ -2939,24 +3176,19 @@ fn check_sources<T>(
         &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
     ) -> Result<T>,
 ) -> Result<T> {
-    if request.models.iter().any(|model| !is_domain_package(model)) {
+    let selected_models = request.models.as_deref().unwrap_or_default();
+    if selected_models
+        .iter()
+        .any(|model| !is_model_input_format(model))
+    {
         return Err(RunCause::CompleteSelection(CompleteSelection::NativeModels));
     }
-    let documents = request
-        .models
+    let documents = selected_models
         .iter()
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| RunCause::ClauseRequest {
-        member: "models".to_owned(),
-        reason: refusal.detail,
-    })?;
+    let packages = package_input_from_selected_models(selected_models, &documents)?;
     let libraries = library_sources(request, intake)?;
     // FR-660: read definitions after the program and library sources, under
     // the same aggregate dependent-file ceiling.
@@ -3062,9 +3294,11 @@ fn check_sources<T>(
             .map_err(failure)
         })
         .collect::<Result<Vec<_>>>()?;
+    let default_clocks = fsl_replay::spine::RequestClocks::default();
+    let clocks = request.clocks.as_ref().unwrap_or(&default_clocks);
     let check_selections: Vec<_> = parsed
         .iter()
-        .flat_map(|unit| request.clocks.check_selections(unit))
+        .flat_map(|unit| clocks.check_selections(unit))
         .collect();
     let mut handoff_inventory = None;
     let (checked, package_selections) = if unit_list {
@@ -3085,7 +3319,7 @@ fn check_sources<T>(
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
-                clocks: Some(&request.clocks),
+                clocks: Some(clocks),
                 check_mode: Some(request.check_mode),
                 integer_division: integer_division.as_ref(),
             },
@@ -3101,8 +3335,7 @@ fn check_sources<T>(
             .next()
             .ok_or(RunCause::EmptyCompileProgram)?;
         let units: Vec<_> = admitted.units().iter().collect();
-        let selections = request
-            .clocks
+        let selections = clocks
             .package_selections(&checked, &units)
             .map_err(|refusal| spine_failure(*refusal))?;
         (checked, selections)
@@ -3124,7 +3357,7 @@ fn check_sources<T>(
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
-                clocks: Some(&request.clocks),
+                clocks: Some(clocks),
                 check_mode: Some(request.check_mode),
                 integer_division: integer_division.as_ref(),
             },
@@ -3144,10 +3377,12 @@ fn check_sources<T>(
             );
         }
         let checked = checked_result.map_err(failure)?.into_value();
-        let selections = request
-            .clocks
-            .package_selections(&checked, &[&parsed])
-            .map_err(|refusal| spine_failure(*refusal))?;
+        let selections = match &request.clocks {
+            Some(clocks) => clocks
+                .package_selections(&checked, &[&parsed])
+                .map_err(|refusal| spine_failure(*refusal))?,
+            None => Vec::new(),
+        };
         (checked, selections)
     };
     finish(
@@ -3171,13 +3406,13 @@ fn library_sources<'r>(
     request: &'r wire::CompileRequest,
     intake: &mut Intake<'_>,
 ) -> Result<Vec<(&'r wire::Library, FormalSource)>> {
-    for library in &request.libraries {
+    let libraries = request.libraries.as_deref().unwrap_or_default();
+    for library in libraries {
         if library.identity.is_empty() {
             return Err(RunCause::Libraries(LibrarySelection::EmptyIdentity));
         }
     }
-    request
-        .libraries
+    libraries
         .iter()
         .enumerate()
         .map(|(index, library)| {
@@ -3683,7 +3918,7 @@ fn prepare_complete_run(
             sources,
         })));
     }
-    if request.models.iter().any(|model| !is_domain_package(model)) {
+    if request.models.iter().any(|model| !is_model_input_format(model)) {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));
@@ -3704,15 +3939,7 @@ fn prepare_complete_run(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| RunCause::ClauseRequest {
-        member: "models".to_owned(),
-        reason: refusal.detail,
-    })?;
+    let packages = package_input_from_selected_models(&request.models, &documents)?;
     let libraries = request
         .libraries
         .iter()

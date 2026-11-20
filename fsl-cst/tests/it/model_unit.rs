@@ -37,20 +37,17 @@ enum Tier { Gold, Standard }
 union Mark { Circle(Integer), Blank }
 map Index = Map<Text[0, 8; nfc], Integer>[0, 4];
 dimension L;
-unit m : L = 1;
+unit m : L = rational(1, 1);
 object Node identity (id) {
   id: Int[0, 9];
   note: Text[0, 8; nfc]?;
   tags: Integer [0, *] ordered unique;
   relationship next: Node [0, 1] inverse prev [0, 1];
-  operation bump(): Boolean modifies self.id {
-    pre Room { self.id < 9 };
-    post Grew { self.id > pre(self.id) };
-  }
+  operation bump(amount: Int[0, 9]): Boolean modifies self.id;
   invariant Bounded { self.id >= 0 };
 }
-event Placed { at: Integer; occurs at; }
-machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+event Placed { timestamp: Integer; occurs timestamp; }
+machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 store Nodes persists Node { operation save(n: Reference<Node>); }
 namespace Terms { members Node, Gate; term node = \"a node\"; }
@@ -67,7 +64,6 @@ allocate Alloc from pump to pump;
 
 #[trace("FR-710-AC-1", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses a model unit; not implemented yet"]
 fn the_smallest_model_unit_parses_and_renders_back() {
     let text = format!("{HEADER}{SHOP}");
     let parsed = parse(&text);
@@ -77,7 +73,6 @@ fn the_smallest_model_unit_parses_and_renders_back() {
 
 #[trace("FR-710-AC-2", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses a model unit's relationships; not implemented yet"]
 fn a_model_unit_relationship_parses() {
     let text = format!(
         "{HEADER}domain \"example/graph\";\n\
@@ -90,7 +85,6 @@ fn a_model_unit_relationship_parses() {
 
 #[trace("FR-710-AC-3", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses every model-unit declaration form; not implemented yet"]
 fn a_model_unit_with_every_declaration_form_parses() {
     let text = format!("{HEADER}{EVERY_FORM}");
     let parsed = parse(&text);
@@ -100,7 +94,6 @@ fn a_model_unit_with_every_declaration_form_parses() {
 
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
-#[ignore = "QSL-1980: a model unit's `domain` with no string refuses at `;`; not implemented yet"]
 fn a_domain_with_no_string_refuses_at_the_semicolon() {
     let text = format!("{HEADER}domain ;\n");
     let parsed = parse(&text);

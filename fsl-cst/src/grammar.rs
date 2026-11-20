@@ -352,12 +352,26 @@ fn extension_production(production: &ExtensionProduction) -> Rule {
 fn source_and_types(g: &mut Grammar) {
     g.insert(
         P::CompleteUnit,
+        c(vec![
+            s(vec![
+                r(P::Header),
+                star(r(P::Profile)),
+                star(r(P::ImportDeclaration)),
+                star(r(P::Model)),
+                star(r(P::Declaration)),
+                Rule::Terminal(Terminal::End),
+            ]),
+            r(P::ModelUnit),
+        ]),
+    );
+    g.insert(
+        P::ModelUnit,
         s(vec![
             r(P::Header),
-            star(r(P::Profile)),
-            star(r(P::ImportDeclaration)),
-            star(r(P::Model)),
-            star(r(P::Declaration)),
+            x("domain"),
+            text(),
+            x(";"),
+            star(r(P::DomainDeclaration)),
             Rule::Terminal(Terminal::End),
         ]),
     );
@@ -374,6 +388,352 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(P::Profile, selection_rule(P::Profile));
     g.insert(P::ImportDeclaration, selection_rule(P::ImportDeclaration));
     g.insert(P::Model, selection_rule(P::Model));
+    g.insert(
+        P::DomainDeclaration,
+        c(vec![
+            r(P::DomainObject),
+            r(P::DomainRecordDeclaration),
+            r(P::EnumDeclaration),
+            r(P::TupleDeclaration),
+            r(P::UnionDeclaration),
+            r(P::AliasDeclaration),
+            r(P::MapDeclaration),
+            r(P::DimensionDeclaration),
+            r(P::UnitDeclaration),
+            r(P::EventDeclaration),
+            r(P::MachineDeclaration),
+            r(P::ProcessDeclaration),
+            r(P::StoreDeclaration),
+            r(P::NamespaceDeclaration),
+            r(P::DomainPopulation),
+            r(P::InterfaceDeclaration),
+            r(P::PartDeclaration),
+            r(P::PortDeclaration),
+            r(P::ConnectionDeclaration),
+            r(P::AllocationDeclaration),
+        ]),
+    );
+    g.insert(
+        P::DomainObject,
+        s(vec![
+            opt(x("abstract")),
+            x("object"),
+            type_ident(),
+            opt(s(vec![
+                x("extends"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
+            opt(s(vec![
+                x("identity"),
+                x("("),
+                ident(),
+                star(s(vec![x(","), ident()])),
+                x(")"),
+            ])),
+            x("{"),
+            star(c(vec![
+                r(P::DomainField),
+                r(P::DomainRelationship),
+                r(P::DomainOperation),
+                r(P::DomainInvariant),
+            ])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::DomainRecordDeclaration,
+        s(vec![
+            x("record"),
+            type_ident(),
+            x("{"),
+            plus(c(vec![r(P::Field), r(P::DomainOperation)])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::DomainField,
+        s(vec![
+            ident(),
+            x(":"),
+            r(P::TypeReference),
+            opt(x("?")),
+            opt(r(P::DomainMultiplicity)),
+            opt(s(vec![x("subsets"), ident()])),
+            opt(s(vec![x("redefines"), ident(), x("::"), ident()])),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::DomainRelationship,
+        s(vec![
+            x("relationship"),
+            ident(),
+            x(":"),
+            ident(),
+            r(P::DomainMultiplicity),
+            opt(s(vec![x("inverse"), ident(), r(P::DomainMultiplicity)])),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::DomainMultiplicity,
+        s(vec![
+            x("["),
+            uint(),
+            x(","),
+            c(vec![uint(), x("*")]),
+            x("]"),
+            opt(x("ordered")),
+            opt(x("unique")),
+        ]),
+    );
+    g.insert(
+        P::DomainPopulation,
+        s(vec![
+            opt(x("open")),
+            opt(x("symmetric")),
+            x("population"),
+            ident(),
+            x(":"),
+            ident(),
+            star(s(vec![x(","), ident()])),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::DomainOperation,
+        s(vec![
+            x("operation"),
+            ident(),
+            x("("),
+            opt(list(|| r(P::Parameter))),
+            x(")"),
+            opt(s(vec![x(":"), r(P::TypeReference)])),
+            opt(s(vec![x("redefines"), ident(), x("::"), ident()])),
+            star(r(P::FrameClause)),
+            c(vec![
+                x(";"),
+                s(vec![x("{"), star(r(P::DomainContract)), x("}")]),
+            ]),
+        ]),
+    );
+    g.insert(
+        P::DomainContract,
+        s(vec![
+            c(vec![x("pre"), x("post")]),
+            ident(),
+            r(P::Block),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::DomainInvariant,
+        s(vec![x("invariant"), ident(), r(P::Block), x(";")]),
+    );
+    g.insert(
+        P::MapDeclaration,
+        s(vec![
+            x("map"),
+            ident(),
+            x("="),
+            x("Map"),
+            x("<"),
+            r(P::TypeReference),
+            x(","),
+            r(P::TypeReference),
+            x(">"),
+            x("["),
+            uint(),
+            x(","),
+            c(vec![uint(), x("*")]),
+            x("]"),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::EventDeclaration,
+        s(vec![
+            x("event"),
+            ident(),
+            x("{"),
+            star(c(vec![r(P::DomainField), r(P::DomainInvariant)])),
+            x("occurs"),
+            ident(),
+            x(";"),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::MachineDeclaration,
+        s(vec![
+            x("machine"),
+            ident(),
+            opt(s(vec![
+                x("extends"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
+            x("{"),
+            star(c(vec![
+                r(P::DomainField),
+                r(P::DomainOperation),
+                r(P::DomainInvariant),
+            ])),
+            x("states"),
+            x("("),
+            ident(),
+            star(s(vec![x(","), ident()])),
+            x(")"),
+            x(";"),
+            star(r(P::TransitionDeclaration)),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::TransitionDeclaration,
+        s(vec![
+            x("transition"),
+            ident(),
+            x("->"),
+            ident(),
+            x("on"),
+            ident(),
+            opt(s(vec![x("when"), r(P::Block)])),
+            opt(s(vec![x("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::ProcessDeclaration,
+        s(vec![
+            x("process"),
+            ident(),
+            opt(s(vec![
+                x("extends"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
+            x("{"),
+            star(c(vec![
+                r(P::DomainField),
+                r(P::DomainOperation),
+                r(P::DomainInvariant),
+                r(P::StepDeclaration),
+            ])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::StepDeclaration,
+        s(vec![
+            x("step"),
+            ident(),
+            x(":"),
+            ident(),
+            opt(s(vec![
+                x("consumes"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+            ])),
+            opt(s(vec![x("emits"), ident(), star(s(vec![x(","), ident()]))])),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::StoreDeclaration,
+        s(vec![
+            x("store"),
+            ident(),
+            x("persists"),
+            ident(),
+            star(s(vec![x(","), ident()])),
+            x("{"),
+            star(r(P::DomainOperation)),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::NamespaceDeclaration,
+        s(vec![
+            x("namespace"),
+            ident(),
+            x("{"),
+            opt(s(vec![
+                x("members"),
+                ident(),
+                star(s(vec![x(","), ident()])),
+                x(";"),
+            ])),
+            star(s(vec![x("term"), ident(), x("="), text(), x(";")])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::InterfaceDeclaration,
+        s(vec![
+            x("interface"),
+            ident(),
+            x("{"),
+            star(c(vec![r(P::DomainField), r(P::DomainOperation)])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::PartDeclaration,
+        s(vec![
+            x("part"),
+            ident(),
+            x(":"),
+            ident(),
+            r(P::DomainMultiplicity),
+            x("in"),
+            ident(),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::PortDeclaration,
+        s(vec![
+            x("port"),
+            ident(),
+            x(":"),
+            ident(),
+            r(P::DomainMultiplicity),
+            c(vec![x("in"), x("out"), x("inout")]),
+            x("on"),
+            ident(),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::ConnectionDeclaration,
+        s(vec![
+            x("connection"),
+            ident(),
+            ident(),
+            x("."),
+            ident(),
+            c(vec![x("->"), x("<->")]),
+            ident(),
+            x("."),
+            ident(),
+            x(";"),
+        ]),
+    );
+    g.insert(
+        P::AllocationDeclaration,
+        s(vec![
+            x("allocate"),
+            ident(),
+            x("from"),
+            ident(),
+            opt(s(vec![x("::"), ident()])),
+            x("to"),
+            ident(),
+            x(";"),
+        ]),
+    );
     let declarations = vec![
         r(P::DimensionEquivalence),
         r(P::DimensionDeclaration),
@@ -3281,7 +3641,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{parse, Limits};
+    use crate::{Limits, parse};
     use fsl_foundation::SourceIdentity;
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]

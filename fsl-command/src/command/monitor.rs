@@ -635,15 +635,15 @@ fn drive(
     let program = intake.source(&request.program.source, "program.source")?;
     require_native_header(program.source())?;
     let compile = wire::CompileRequest {
-        models: std::mem::take(&mut request.models),
+        models: Some(std::mem::take(&mut request.models)),
         program: wire::CompileProgram {
             sources: Vec::new(),
             extraction: false,
         },
         refinement_internals: None,
-        libraries: std::mem::take(&mut request.libraries),
+        libraries: Some(std::mem::take(&mut request.libraries)),
         extensions: Vec::new(),
-        clocks: std::mem::take(&mut request.clocks),
+        clocks: Some(std::mem::take(&mut request.clocks)),
         output: None,
         handoff: None,
         integer_division: None,

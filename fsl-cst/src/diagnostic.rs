@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
+    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -57,6 +57,11 @@ pub enum CompleteCause {
     UnsupportedFeature,
     /// `invalid_model_binding`: the selected compiled model is absent or stale.
     WrongModelSelection,
+    /// `invalid_model_binding`: a model-unit declaration is malformed under
+    /// FR-154.
+    MalformedDeclaration,
+    /// `missing_declaration`: a model-unit reference names no declaration.
+    MissingDeclaration,
     /// `invalid_model_binding`: one model identity is selected twice with
     /// distinct exact selections.
     ConflictingBinding,
@@ -121,6 +126,8 @@ impl CompleteCause {
             Self::InsufficientNextCharge => "insufficient-next-charge",
             Self::MissingSelection => "missing-selection",
             Self::AmbiguousName => "ambiguous-name",
+            Self::MalformedDeclaration => "malformed-declaration",
+            Self::MissingDeclaration => "missing-name",
             Self::ConflictingAuthority => "conflicting-authority",
             Self::DuplicateMember => "duplicate-member",
             Self::InvalidValue => "invalid-value",
@@ -180,6 +187,8 @@ impl CompleteCause {
             Self::WrongModelSelection | Self::ConflictingBinding => {
                 code == CompleteCode::InvalidModelBinding
             }
+            Self::MalformedDeclaration => code == CompleteCode::InvalidModelBinding,
+            Self::MissingDeclaration => code == CompleteCode::MissingDeclaration,
             Self::CallerCancelled => code == CompleteCode::Cancelled,
             Self::CorrespondenceLoss => code == CompleteCode::InvalidProjectionCorrespondence,
             Self::EstablishedInvariantBroken => code == CompleteCode::RuntimeInvariant,
@@ -412,7 +421,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{resource_exhausted, CompleteCause, CompleteCode, HostCause};
+    use super::{CompleteCause, CompleteCode, HostCause, resource_exhausted};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
@@ -529,6 +538,14 @@ mod tests {
             (
                 CompleteCause::WrongModelSelection,
                 CompleteCode::InvalidModelBinding,
+            ),
+            (
+                CompleteCause::MalformedDeclaration,
+                CompleteCode::InvalidModelBinding,
+            ),
+            (
+                CompleteCause::MissingDeclaration,
+                CompleteCode::MissingDeclaration,
             ),
             (
                 CompleteCause::ConflictingBinding,

@@ -1584,6 +1584,30 @@ impl<'c> Mapping<'c> {
             | Production::AggregateKind
             | Production::PastWindow
             | Production::QuantifiedClockBound
+            | Production::ModelUnit
+            | Production::DomainDeclaration
+            | Production::DomainObject
+            | Production::DomainRecordDeclaration
+            | Production::DomainField
+            | Production::DomainRelationship
+            | Production::DomainMultiplicity
+            | Production::DomainPopulation
+            | Production::DomainOperation
+            | Production::DomainContract
+            | Production::DomainInvariant
+            | Production::MapDeclaration
+            | Production::EventDeclaration
+            | Production::MachineDeclaration
+            | Production::TransitionDeclaration
+            | Production::ProcessDeclaration
+            | Production::StepDeclaration
+            | Production::StoreDeclaration
+            | Production::NamespaceDeclaration
+            | Production::InterfaceDeclaration
+            | Production::PartDeclaration
+            | Production::PortDeclaration
+            | Production::ConnectionDeclaration
+            | Production::AllocationDeclaration
             | Production::ExtensionDeclaration => Err(unexpected(node)),
         }
     }
@@ -2363,6 +2387,30 @@ impl<'c> Mapping<'c> {
             | Production::AggregateKind
             | Production::PastWindow
             | Production::QuantifiedClockBound
+            | Production::ModelUnit
+            | Production::DomainDeclaration
+            | Production::DomainObject
+            | Production::DomainRecordDeclaration
+            | Production::DomainField
+            | Production::DomainRelationship
+            | Production::DomainMultiplicity
+            | Production::DomainPopulation
+            | Production::DomainOperation
+            | Production::DomainContract
+            | Production::DomainInvariant
+            | Production::MapDeclaration
+            | Production::EventDeclaration
+            | Production::MachineDeclaration
+            | Production::TransitionDeclaration
+            | Production::ProcessDeclaration
+            | Production::StepDeclaration
+            | Production::StoreDeclaration
+            | Production::NamespaceDeclaration
+            | Production::InterfaceDeclaration
+            | Production::PartDeclaration
+            | Production::PortDeclaration
+            | Production::ConnectionDeclaration
+            | Production::AllocationDeclaration
             | Production::ExtensionDeclaration => Err(unexpected(child)),
         }
     }

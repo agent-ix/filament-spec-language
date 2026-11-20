@@ -349,15 +349,15 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     } = read_run_members(&request, &mut intake)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
-        models: request.models,
+        models: Some(request.models),
         program: wire::CompileProgram {
             sources: Vec::new(),
             extraction: false,
         },
         refinement_internals: request.refinement_internals,
-        libraries: request.libraries,
+        libraries: Some(request.libraries),
         extensions: Vec::new(),
-        clocks: Default::default(),
+        clocks: None,
         output: None,
         handoff: None,
         integer_division: None,
@@ -727,7 +727,7 @@ fn admit_package<'d>(
     if request
         .models
         .iter()
-        .any(|model| !super::is_domain_package(model))
+        .any(|model| !super::is_model_input_format(model))
     {
         return Err(RunCause::CompleteSelection(
             super::CompleteSelection::NativeModels,
@@ -739,20 +739,14 @@ fn admit_package<'d>(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let supplied = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| match refusal.cause {
-        fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity } => {
-            conflicting_model(&identity)
-        }
-        _ => RunCause::ClauseRequest {
-            member: "models".to_owned(),
-            reason: refusal.detail,
+    let supplied = super::package_input_from_selected_models(&request.models, &documents).map_err(
+        |cause| match cause {
+            RunCause::ClauseRequest { member, reason } if member == "models" => {
+                RunCause::AnalyzeRequest { member, reason }
+            }
+            cause => cause,
         },
-    })?;
+    )?;
     let limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted =

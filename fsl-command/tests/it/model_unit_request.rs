@@ -4,9 +4,12 @@
 //! selections and a compile request that writes the compiled document.
 
 use fsl_command::command::{self, CheckInputs};
-use fsl_semantics::model::intake::package_input;
+use fsl_foundation::SourceIdentity;
+use fsl_replay::Operation;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{compile_model_unit, package_input, package_input_from_sources};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// FR-710-AC-1's model unit.
@@ -32,7 +35,8 @@ fn program(identity: &str) -> String {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile P = \"filament.model.complete/v1\";\n\
          model M = \"{identity}\";\n\
-         invariant I using P on M::Order at current {{ self.total >= 0 }}\n"
+         invariant I using P on M::Order at current {{ self.total >= 0 }}\n\
+         function one using P(): Int[1, 1] pure {{ 1 }}\n"
     )
 }
 
@@ -66,6 +70,25 @@ fn compile_request(
     path
 }
 
+fn run_request(
+    directory: &Path,
+    files: &[(&str, &str)],
+    program_file: &str,
+    models: Value,
+) -> PathBuf {
+    for (name, text) in files {
+        std::fs::write(directory.join(name), text).unwrap();
+    }
+    let request = json!({"format": "native-run/1", "request": {
+        "models": models,
+        "program": {"source": source(program_file)},
+        "call": {"function": "one", "arguments": [], "accounting": {"work_units": 1000}}
+    }});
+    let path = directory.join("run.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    path
+}
+
 fn refusal(error: &command::RunError) -> Value {
     error.value().expect("refusal envelope")
 }
@@ -74,9 +97,67 @@ fn check_document(outcome: &command::CheckOutcome) -> Value {
     serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap()
 }
 
+fn write_route_request(directory: &Path, name: &str, format: &str, request: Value) -> PathBuf {
+    let path = directory.join(name);
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": format, "request": request})).unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+fn format_cases(directory: &Path) -> [(String, String, &'static str); 2] {
+    let compiled = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let json_path = directory.join("model.semantic-ir.json");
+    std::fs::write(&json_path, &compiled["example/shop"]).unwrap();
+    let native_path = directory.join("model.native");
+    std::fs::write(&native_path, SHOP).unwrap();
+    [
+        (
+            "native-model-unit/1".to_owned(),
+            "model.semantic-ir.json".to_owned(),
+            "native-model-unit/1 requires a model unit",
+        ),
+        (
+            "semantic-ir/2.0.0".to_owned(),
+            "model.native".to_owned(),
+            "selected as a semantic-ir/2.0.0 document",
+        ),
+    ]
+}
+
+fn assert_selected_model_format_refusal(
+    error: &command::RunError,
+    operation: Operation,
+    file: &str,
+    reason: &str,
+) {
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(operation)
+            .to_bytes()
+            .expect("model format refusal outcome serializes"),
+    )
+    .expect("model format refusal outcome is JSON");
+    assert_eq!(outcome["last_stage"], "I1", "{outcome}");
+    let diagnostic = &outcome["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "invalid_model_binding", "{outcome}");
+    assert_eq!(diagnostic["cause"], "malformed-declaration", "{outcome}");
+    assert_eq!(diagnostic["locus"]["kind"], "region", "{outcome}");
+    assert_eq!(
+        diagnostic["locus"]["source"]["identity"],
+        format!("test:{file}"),
+        "{outcome}"
+    );
+    assert!(
+        diagnostic["message"].as_str().unwrap().contains(reason),
+        "{outcome}"
+    );
+}
+
 #[test]
 #[trace("TC-2998", "FR-710-AC-6")]
-#[ignore = "QSL-1980: package input compiles a model unit and admits it under its domain identity; not implemented yet"]
 fn a_package_input_compiles_a_model_unit_under_its_domain_identity() {
     let packages = package_input([SHOP.as_bytes()]).expect("a model unit is a package input");
     assert!(
@@ -97,7 +178,6 @@ fn a_package_input_compiles_a_model_unit_under_its_domain_identity() {
 
 #[test]
 #[trace("TC-2998", "FR-710-AC-7")]
-#[ignore = "QSL-1980: a `native-model-unit/1` models entry compiles and admits the model unit; not implemented yet"]
 fn a_native_model_unit_models_entry_compiles_like_its_document() {
     let directory = tempfile::tempdir().unwrap();
     let unit_entry = json!([{"format": "native-model-unit/1", "source": source("shop.fsl")}]);
@@ -108,18 +188,51 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
             ("program.fsl", &program("example/shop")),
         ],
         "program.fsl",
-        unit_entry,
+        unit_entry.clone(),
         &[],
     );
     let from_unit = command::compile_outcome(&path).expect("the model unit route compiles");
-    let document =
-        package_input([SHOP.as_bytes()]).expect("the compiled document")["example/shop"].clone();
+    let model_source = fsl_cst::diagnostic::read_source(
+        SourceIdentity::new("agent-ix", "test:shop.fsl"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("the model source metadata is admitted");
+    let document = package_input_from_sources([("example/shop", &model_source)])
+        .expect("the source compiles to its Semantic IR document")["example/shop"]
+        .clone();
     std::fs::write(directory.path().join("shop.semantic-ir.json"), &document).unwrap();
     let document_entry =
         json!([{"format": "semantic-ir/2.0.0", "source": source("shop.semantic-ir.json")}]);
-    let path = compile_request(directory.path(), &[], "program.fsl", document_entry, &[]);
+    let path = compile_request(
+        directory.path(),
+        &[],
+        "program.fsl",
+        document_entry.clone(),
+        &[],
+    );
     let from_document = command::compile_outcome(&path).expect("the document route compiles");
     assert_eq!(from_unit.package_bytes(), from_document.package_bytes());
+
+    let unit_run = run_request(
+        directory.path(),
+        &[
+            ("shop.fsl", SHOP),
+            ("program.fsl", &program("example/shop")),
+        ],
+        "program.fsl",
+        unit_entry,
+    );
+    let from_unit = command::run(&unit_run, &crate::negotiation::Fr290)
+        .expect("the native model-unit run completes");
+    let document_run = run_request(directory.path(), &[], "program.fsl", document_entry.clone());
+    let from_document = command::run(&document_run, &crate::negotiation::Fr290)
+        .expect("the semantic document run completes");
+    assert_eq!(
+        from_unit.value.as_value()["outcome"],
+        from_document.value.as_value()["outcome"]
+    );
 
     let ghost_entry = json!([{"format": "native-model-unit/1", "source": source("ghost.fsl")}]);
     let path = compile_request(
@@ -129,27 +242,80 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
         ghost_entry,
         &[],
     );
-    let ghost = refusal(
-        &command::compile_outcome(&path)
-            .err()
-            .expect("Ghost refuses"),
-    );
+    let ghost_error = command::compile_outcome(&path)
+        .err()
+        .expect("Ghost refuses");
+    let ghost = refusal(&ghost_error);
+    let ghost_outcome: Value = serde_json::from_slice(
+        &ghost_error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(ghost["code"], "missing_declaration", "{ghost}");
-    assert!(ghost.to_string().contains("ghost.fsl"), "{ghost}");
+    assert_eq!(ghost_outcome["diagnostics"][0]["cause"], "missing-name");
+    assert_eq!(ghost_outcome["last_stage"], "I1");
+    assert!(
+        ghost_outcome["diagnostics"][0]["locus"]["source"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.ends_with("ghost.fsl")),
+        "{ghost_outcome}"
+    );
 
     let program_entry = json!([{"format": "native-model-unit/1", "source": source("program.fsl")}]);
     let path = compile_request(directory.path(), &[], "program.fsl", program_entry, &[]);
-    let not_a_unit = refusal(&command::compile_outcome(&path).err().expect("no domain"));
-    assert_eq!(not_a_unit["code"], "invalid-request", "{not_a_unit}");
+    let not_a_unit_error = command::compile_outcome(&path).err().expect("no domain");
+    let not_a_unit = refusal(&not_a_unit_error);
+    assert_eq!(not_a_unit["code"], "invalid_model_binding", "{not_a_unit}");
     assert!(
         not_a_unit.to_string().contains("native-model-unit/1"),
         "{not_a_unit}"
+    );
+    let not_a_unit_outcome: Value = serde_json::from_slice(
+        &not_a_unit_error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        not_a_unit_outcome["last_stage"], "I1",
+        "{not_a_unit_outcome}"
+    );
+    assert_eq!(
+        not_a_unit_outcome["diagnostics"][0]["cause"], "malformed-declaration",
+        "{not_a_unit_outcome}"
+    );
+
+    let wrong_format = json!([{"format": "semantic-ir/2.0.0", "source": source("shop.fsl")}]);
+    let path = compile_request(
+        directory.path(),
+        &[("shop.fsl", SHOP)],
+        "program.fsl",
+        wrong_format,
+        &[],
+    );
+    let malformed_error = command::compile_outcome(&path)
+        .err()
+        .expect("a model unit is not a semantic-ir document");
+    let malformed = refusal(&malformed_error);
+    assert_eq!(malformed["code"], "invalid_model_binding", "{malformed}");
+    let malformed_outcome: Value = serde_json::from_slice(
+        &malformed_error
+            .outcome_document(Operation::Package)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        malformed_outcome["diagnostics"][0]["cause"],
+        "malformed-declaration"
     );
 }
 
 #[test]
 #[trace("TC-2998", "FR-710-AC-8")]
-#[ignore = "QSL-1980: check takes a model unit as a model selection and as its checked source; not implemented yet"]
 fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
     let directory = tempfile::tempdir().unwrap();
     let shop = directory.path().join("shop.fsl");
@@ -163,6 +329,34 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
     let checked = check_document(&command::check_outcome(&rule, &inputs));
     assert_eq!(checked["category"], "success", "{checked}");
     assert_eq!(checked["last_stage"], "S4", "{checked}");
+    let document = package_input([SHOP.as_bytes()]).expect("the compiled document");
+    let document_path = directory.path().join("shop.semantic-ir.json");
+    std::fs::write(&document_path, &document["example/shop"]).unwrap();
+    let document_inputs = CheckInputs {
+        models: vec![("example/shop".to_owned(), document_path)],
+        ..CheckInputs::default()
+    };
+    let checked_document = check_document(&command::check_outcome(&rule, &document_inputs));
+    assert_eq!(checked["category"], checked_document["category"]);
+    assert_eq!(checked["diagnostics"], checked_document["diagnostics"]);
+    assert_eq!(checked["last_stage"], checked_document["last_stage"]);
+
+    let other_rule = directory.path().join("other-rule.fsl");
+    std::fs::write(&other_rule, program("example/other")).unwrap();
+    let other_inputs = CheckInputs {
+        models: vec![("example/other".to_owned(), shop.clone())],
+        ..CheckInputs::default()
+    };
+    let wrong_selection = check_document(&command::check_outcome(&other_rule, &other_inputs));
+    assert_eq!(wrong_selection["category"], "refusal", "{wrong_selection}");
+    assert_eq!(
+        wrong_selection["diagnostics"][0]["code"], "invalid_model_binding",
+        "{wrong_selection}"
+    );
+    assert_eq!(
+        wrong_selection["diagnostics"][0]["cause"], "wrong-model-selection",
+        "{wrong_selection}"
+    );
 
     let alone = check_document(&command::check_outcome(&shop, &CheckInputs::default()));
     assert_eq!(alone["category"], "success", "{alone}");
@@ -171,15 +365,157 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
     let ghost = directory.path().join("ghost.fsl");
     std::fs::write(&ghost, GHOST).unwrap();
     let refused = check_document(&command::check_outcome(&ghost, &CheckInputs::default()));
+    assert_eq!(
+        refused["diagnostics"][0]["code"], "missing_declaration",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["diagnostics"][0]["cause"], "missing-name",
+        "{refused}"
+    );
+    assert_eq!(refused["last_stage"], "I1", "{refused}");
     assert!(
-        refused.to_string().contains("missing_declaration"),
+        refused["diagnostics"][0]["locus"]["source"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.ends_with("ghost.fsl")),
         "{refused}"
     );
 }
 
 #[test]
+fn clause_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("program.fsl"),
+        program("example/shop"),
+    )
+    .unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "models": [{"format": format, "source": source(&file)}],
+            "program": {"source": source("program.fsl")},
+            "clause": {
+                "selection": {"clause": {
+                    "name": "Q", "observation": "current",
+                    "self": {"population": "ix://example/shop/orders", "key": "order-1"},
+                    "anchor": {"kind": "handler", "name": "validate"}
+                }},
+                "observations": {}
+            }
+        });
+        let path = write_route_request(directory.path(), "clause.json", "native-run/1", request);
+        let error = command::read_clause_run_request(&path)
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, Operation::Execute, &file, reason);
+    }
+}
+
+#[test]
+fn analyze_package_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(
+        handoff.join("checked-package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "package": {"directory": "handoff"},
+            "models": [{"format": format, "source": source(&file)}]
+        });
+        let path = write_route_request(
+            directory.path(),
+            "analyze.json",
+            "native-analyze/1",
+            request,
+        );
+        let error = command::prepare_analyze(&path, command::RunLimits::default())
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, Operation::Analyze, &file, reason);
+    }
+}
+
+#[test]
+fn package_run_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "models": [{"format": format, "source": source(&file)}],
+            "package": {"file": "package.json"},
+            "call": {"function": "one", "arguments": [], "accounting": {"work_units": 1000}}
+        });
+        let path = write_route_request(
+            directory.path(),
+            "package-run.json",
+            "native-run/1",
+            request,
+        );
+        let error = command::prepare_run(&path, command::RunLimits::default())
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, Operation::Execute, &file, reason);
+    }
+}
+
+#[test]
+fn analyze_duplicate_domain_packages_keep_the_typed_conflict_refusal() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(
+        handoff.join("checked-package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    let package = package_input([SHOP.as_bytes()]).expect("the model compiles");
+    let document = &package["example/shop"];
+    std::fs::write(directory.path().join("first.json"), document).unwrap();
+    std::fs::write(directory.path().join("second.json"), document).unwrap();
+    let request = json!({
+        "package": {"directory": "handoff"},
+        "models": [
+            {"format": "semantic-ir/2.0.0", "source": source("first.json")},
+            {"format": "semantic-ir/2.0.0", "source": source("second.json")}
+        ]
+    });
+    let path = write_route_request(
+        directory.path(),
+        "analyze.json",
+        "native-analyze/1",
+        request,
+    );
+    let error = command::prepare_analyze(&path, command::RunLimits::default())
+        .err()
+        .expect("duplicate selected package identities refuse");
+    let outcome: Value = serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Analyze)
+            .to_bytes()
+            .expect("typed package conflict outcome serializes"),
+    )
+    .expect("typed package conflict outcome is JSON");
+    assert_eq!(outcome["last_stage"], "I1", "{outcome}");
+    assert_eq!(
+        outcome["diagnostics"][0]["code"], "invalid_package",
+        "{outcome}"
+    );
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"], "conflicting-definition",
+        "{outcome}"
+    );
+}
+
+#[test]
 #[trace("TC-2998", "FR-710-AC-9")]
-#[ignore = "QSL-1980: a compile request over a model unit writes the compiled document; not implemented yet"]
 fn a_compile_request_over_a_model_unit_writes_its_document() {
     let directory = tempfile::tempdir().unwrap();
     let output = json!({"package": "shop.semantic-ir.json"});
@@ -191,9 +527,26 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         &[("output", output)],
     );
     let outcome = command::compile_outcome(&path).expect("the model unit compiles");
-    let expected =
-        package_input([SHOP.as_bytes()]).expect("the compiled document")["example/shop"].clone();
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("agent-ix", "test:shop.fsl"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the model unit parses");
+    let expected = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect("the model unit compiles")
+        .bytes()
+        .to_vec();
     assert_eq!(outcome.package_bytes(), expected.as_slice());
+    let outcome_document: Value =
+        serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
+    assert_eq!(outcome_document["last_stage"], "I1");
+    assert_eq!(outcome_document["artifacts"], json!([]));
+    assert_eq!(
+        serde_json::from_slice::<Value>(outcome.package_bytes()).unwrap()["contractVersion"],
+        "2.0.0"
+    );
     assert_eq!(
         std::fs::read(directory.path().join("shop.semantic-ir.json")).unwrap(),
         expected
@@ -201,21 +554,30 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
 
     for (member, value) in [
         ("models", json!([])),
+        ("libraries", json!([])),
         (
             "libraries",
             json!([{"identity": "test/geometry", "source": source("shop.fsl")}]),
         ),
         ("clocks", json!({})),
+        (
+            "handoff",
+            json!({"directory": "handoff", "package_name": "shop"}),
+        ),
+        ("refinement_internals", json!({})),
+        ("integer_division", json!("floor")),
     ] {
+        let output_path = format!("refused-{member}.json");
         let path = compile_request(
             directory.path(),
             &[],
             "shop.fsl",
             Value::Null,
-            &[(member, value)],
+            &[(member, value), ("output", json!({"package": output_path}))],
         );
         let refused = refusal(&command::compile_outcome(&path).err().expect("refuses"));
         assert_eq!(refused["code"], "invalid-request", "{member}: {refused}");
         assert!(refused.to_string().contains(member), "{refused}");
+        assert!(!directory.path().join(output_path).exists());
     }
 }

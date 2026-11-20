@@ -105,7 +105,13 @@ macro_rules! productions_impl {
 }
 
 productions! {
-    CompleteUnit, Header, Profile, ImportDeclaration, Model, Declaration,
+    CompleteUnit, ModelUnit, DomainDeclaration, DomainObject, DomainRecordDeclaration, DomainField,
+    DomainRelationship, DomainMultiplicity, DomainPopulation, DomainOperation,
+    DomainContract, DomainInvariant, MapDeclaration, EventDeclaration,
+    MachineDeclaration, TransitionDeclaration, ProcessDeclaration, StepDeclaration,
+    StoreDeclaration, NamespaceDeclaration, InterfaceDeclaration, PartDeclaration,
+    PortDeclaration, ConnectionDeclaration, AllocationDeclaration,
+    Header, Profile, ImportDeclaration, Model, Declaration,
     TypeReference, QualifiedName, ModelName, TypeName, OperationName, ParameterType,
     RoundingMode, TextProfile,
     DimensionDeclaration, DimensionTerm, UnitExpression,
@@ -959,7 +965,7 @@ impl LosslessCst {
 #[cfg(test)]
 mod tests {
     use super::{LosslessCst, Production, SourceChange};
-    use crate::{parse, Limits};
+    use crate::{Limits, parse};
     use fsl_foundation::{SourceIdentity, Span};
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";

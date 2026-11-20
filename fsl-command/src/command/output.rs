@@ -271,6 +271,14 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::Native(error.native.phase),
             types::Details::Native(diagnostic(&error.native)),
         ),
+        RunCause::ModelUnit(error) => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Intake),
+            types::Details::Native(diagnostic(&error.native)),
+        ),
+        RunCause::ModelPackageInput(_) => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Intake),
+            types::Details::None,
+        ),
         RunCause::CompleteSelection(_)
         | RunCause::Libraries(_)
         | RunCause::CompleteRunSelection(_)
@@ -399,6 +407,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             }
             RunCause::ExportOutput { .. } => Some("output-failure"),
             RunCause::TemporalCorrection(_) => Some("invalid-value"),
+            RunCause::ModelPackageInput(refusal) => Some(refusal.cause.as_str()),
             RunCause::TlCorrespondence { .. } | RunCause::IntegerDivisionLaw { .. } => {
                 Some("unsupported-selection")
             }
