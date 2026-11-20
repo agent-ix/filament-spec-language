@@ -7,10 +7,9 @@ fn checked_recipe(condition: &str, declarations: &str) -> Recipe {
     let holder = tempfile::tempdir().unwrap();
     let mut request = request("event_position", Corpus::None);
     let text = std::fs::read_to_string(&request.emit.source).unwrap();
-    let attempt = "as (attempted: M::Notice) { attempted.ready };";
+    let attempt = "as (attempted: Boolean) { attempted };";
     assert_eq!(text.matches(attempt).count(), 1);
     let text = text
-        .replace(attempt, "as (attempted: Boolean) { attempted };")
         .replace(FULL_RECOVER, condition)
         .replace(
             "model M = \"agent-ix/checked-handoff\";",
