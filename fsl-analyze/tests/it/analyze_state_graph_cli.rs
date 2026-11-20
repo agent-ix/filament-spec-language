@@ -6,7 +6,9 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{analyze, counter_request, label, Workspace};
+use crate::analyze_cli_support::{
+    analyze, counter_request, label, staying_counter_request, Workspace,
+};
 
 const CLAIMS: &str = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
     possible NeverAbove using v over (c: M::Counter) { c.value > 3 }\n\
@@ -24,9 +26,8 @@ fn steps(path: &Value) -> usize {
 
 /// FR-628-AC-1: `possible (value = 3)` proves with a three-step witness path
 /// that replays, and `possible (value > 3)` refutes. `value > 3` stands in
-/// for FR-628-AC-1's `possible (value = 4)`, which the checker refuses
-/// (`value` is Int[0,3]; QSL-2296); the W6 spec changes the claim to
-/// `possible (value = 0)`.
+/// for a target the checker would refuse outright: `value` is Int[0,3], so
+/// `value = 4` does not check.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
 fn a_possible_claim_proves_with_a_replayed_witness_path_and_refutes() {
@@ -81,6 +82,12 @@ fn sampled_witnesses_repeat_under_one_seed() {
     let (first, second) = (analyze(&path), analyze(&path));
     let evidence = &first.item(0)["record"]["evidence"];
     assert_eq!(evidence, &second.item(0)["record"]["evidence"]);
+    let sampled = evidence["sampled"].as_array().expect("sampled witnesses");
+    assert_eq!(sampled.len(), 1, "{evidence}");
+    assert!(
+        sampled[0]["source"]["trace"].as_u64().is_some_and(|index| index < 3),
+        "{evidence}"
+    );
     assert_eq!(evidence["sampled"][0]["source"]["type"], "sampled");
     assert_eq!(evidence["sampled"][0]["source"]["seed"], "7");
     assert_eq!(first.item(0)["record"]["seed"], "7");
@@ -130,6 +137,29 @@ fn a_unique_path_claim_is_decided_and_a_budget_stops_it() {
     // A sampled witness found before the budget stops the run does not decide
     // the claim: its well-definedness is unchecked (FR-166, FR-169).
     assert_eq!(label(&run.item(2)), "inconclusive", "{}", run.item(2));
+}
+
+/// FR-628 Outputs: a refuted `unique path` claim carries two distinct paths,
+/// each of which replays. The staying Counter's self-loop at `value = 0`
+/// gives the walk from 0 to 3 a second route.
+#[trace("TC-1588", "FR-628-AC-1")]
+#[test]
+fn a_refuted_unique_path_claim_carries_two_distinct_replaying_paths() {
+    let body = "unique path Twice using v over (c: M::Counter) \
+                from (c.value = 0) to (c.value = 3);\n";
+    let request = staying_counter_request(
+        &Workspace::new("sg-unique-refuted"),
+        body,
+        json!([{"claim": "Twice"}]),
+    );
+    let run = analyze(&request);
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let counterexample = &item["counterexample"];
+    let paths = counterexample["paths"].as_array().expect("two paths");
+    assert_eq!(paths.len(), 2, "{counterexample}");
+    assert_ne!(paths[0], paths[1], "{counterexample}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
 /// FSpec FR-390: negotiation routes a state-graph item only to a backend whose
