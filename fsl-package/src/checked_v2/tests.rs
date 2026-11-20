@@ -14,7 +14,9 @@ use filament_contract_model::{
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
-use super::{Read, V2ReadLimits, V2ReadRefusal, read_checked_package_v2, read_v2};
+use super::{
+    Read, V2ReadLimits, V2ReadRefusal, fixture_artifact_identity, read_checked_package_v2, read_v2,
+};
 use std::collections::BTreeMap;
 
 use filament_exact::{NodeKey, Origin, Role};
@@ -22,7 +24,7 @@ use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
 use fsl_foundation::Setting;
 use fsl_foundation::diagnostic::{Code, LimitExceeded, LimitKind, Locus};
 use fsl_foundation::node_wire::node_key_from_json;
-use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::CheckCause;
 use fsl_semantics::check::imports::ImportedNames;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -309,9 +311,8 @@ fn refuses_when_selected_name_disagrees_with_wire() {
             expected: identity("other"),
             actual: "pkg".into(),
             locus: Box::new(Locus::Artifact {
-                identity: RawSourceRef::new("fsl-package-test", "fixture")
-                    .expect("fixture identity"),
-                pointer: "/package/name".parse().expect("static pointer"),
+                identity: fixture_artifact_identity(),
+                pointer: "/name".parse().expect("static pointer"),
             }),
         })
     );
@@ -3149,7 +3150,7 @@ fn conformance_dependency_selection_vectors() {
 /// `Locus::Artifact` at a JSON pointer into the offered bytes.
 fn artifact_locus(pointer: &str) -> Locus {
     Locus::Artifact {
-        identity: RawSourceRef::new("test", "checked-package").expect("artifact identity"),
+        identity: fixture_artifact_identity(),
         pointer: pointer.parse().unwrap(),
     }
 }

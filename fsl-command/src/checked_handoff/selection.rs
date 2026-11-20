@@ -332,19 +332,6 @@ impl Selection {
         Ok(selection)
     }
 
-    /// The FR-001 identity the sidecar binds to its compiled unit source.
-    pub(super) fn source_ref(
-        &self,
-    ) -> Result<
-        fsl_foundation::source::provenance::RawSourceRef,
-        fsl_foundation::source::provenance::InvalidProvenance,
-    > {
-        fsl_foundation::source::provenance::RawSourceRef::new(
-            self.package.source_identity.authority.clone(),
-            self.package.source_identity.identity.clone(),
-        )
-    }
-
     /// The sidecar's bytes, deterministic.
     pub(super) fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         let mut bytes = serde_json::to_vec_pretty(self).map_err(|source| Error::Encode {

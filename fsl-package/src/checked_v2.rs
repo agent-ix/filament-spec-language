@@ -827,7 +827,7 @@ pub(crate) fn read_checked_package_v2_at(
                     actual: package.name().into(),
                     locus: Box::new(Locus::Artifact {
                         identity: artifact_identity,
-                        pointer: "/package/name".parse().expect("static pointer is valid"),
+                        pointer: "/name".parse().expect("static pointer is valid"),
                     }),
                 });
             }
@@ -930,10 +930,15 @@ pub(crate) fn read_checked_package_v2(
     read_checked_package_v2_at(
         bytes,
         identity,
-        RawSourceRef::new("fsl-package-test", "fixture").expect("static identity is valid"),
+        fixture_artifact_identity(),
         limits,
         evidence,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_artifact_identity() -> RawSourceRef {
+    RawSourceRef::new("fsl-package-test", "fixture").expect("static identity is valid")
 }
 
 /// Why [`read_import_view`] built no import view (ADR-015 D-1 step 6).

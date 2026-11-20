@@ -56,7 +56,6 @@ use filament_contract_model::{
     CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
     CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
-use fsl_foundation::source::provenance::RawSourceRef;
 
 use crate::emit_checked_v2::{self, Compiled};
 
@@ -218,16 +217,6 @@ pub enum Error {
     /// The handoff directory's `selection.json` does not parse.
     #[error("{0}")]
     Sidecar(#[from] SelectionReadError),
-    /// A package defect, located in the package under the sidecar's FR-001 identity.
-    #[error("{source}")]
-    Package {
-        /// The underlying reader or selection error.
-        source: Box<Error>,
-        /// The identity bound by `selection.json` to the unit source.
-        identity: RawSourceRef,
-        /// The RFC 6901 package pointer, or the empty pointer for a package-wide mismatch.
-        pointer: String,
-    },
 }
 
 impl Error {
@@ -249,17 +238,6 @@ impl Error {
             Self::NativeJoinExhausted(_) => ErrorCode::NativeJoinExhausted,
             Self::Read { .. } => ErrorCode::Read,
             Self::Sidecar(_) => ErrorCode::Sidecar,
-            Self::Package { source, .. } => source.code(),
-        }
-    }
-
-    /// The package identity and pointer when this is a package defect.
-    pub fn package_locus(&self) -> Option<(&RawSourceRef, &str)> {
-        match self {
-            Self::Package {
-                identity, pointer, ..
-            } => Some((identity, pointer)),
-            _ => None,
         }
     }
 
@@ -560,36 +538,14 @@ pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     })?;
     let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
     let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
-    let artifact_identity = selection.source_ref().ok();
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
     let inputs = selection
         .inputs(|file| tree::read(directory, file, fsl_foundation::source::MAX_SOURCE_BYTES))?;
     let compiled = emit_checked_v2::compile_inputs(inputs)?;
     let evidence = read_evidence(&compiled)?;
-    let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))
-        .map_err(|error| package_context(error, artifact_identity.as_ref()))?;
+    let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
     selection.check(&admitted).map_err(Error::SelectionMismatch)?;
     Ok(admitted)
-}
-
-fn package_context(error: Error, identity: Option<&RawSourceRef>) -> Error {
-    let Some(identity) = identity else {
-        return error;
-    };
-    let pointer = match &error {
-        Error::ReaderRefused(refusal) => refusal
-            .loci
-            .first()
-            .and_then(|locus| locus.path.as_ref())
-            .map(ToString::to_string)
-            .unwrap_or_default(),
-        _ => String::new(),
-    };
-    Error::Package {
-        source: Box::new(error),
-        identity: identity.clone(),
-        pointer,
-    }
 }
 
 /// `inventory.json` (FR-517 "The inventory file"): `fsl_inventory` over the

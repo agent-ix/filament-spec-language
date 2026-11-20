@@ -76,8 +76,15 @@ pub fn inspect_outcome<'a>(
             }
             (Some(fsl_replay::OutcomeLocus::Artifact { .. }), None)
             | (Some(fsl_replay::OutcomeLocus::Located { .. }), None)
+            | (Some(fsl_replay::OutcomeLocus::Input { .. }), None)
+            | (Some(fsl_replay::OutcomeLocus::Document { .. }), None)
             | (None, None) => Vec::new(),
-            _ => {
+            (Some(fsl_replay::OutcomeLocus::Region { .. }), Some(_))
+            | (Some(fsl_replay::OutcomeLocus::Artifact { .. }), Some(_))
+            | (Some(fsl_replay::OutcomeLocus::Located { .. }), Some(_))
+            | (Some(fsl_replay::OutcomeLocus::Input { .. }), Some(_))
+            | (Some(fsl_replay::OutcomeLocus::Document { .. }), Some(_))
+            | (None, Some(_)) => {
                 return Err(StageFailure::Refused(InspectCause::IncompatibleSelection {
                     selector: String::from("outcome occurrence key does not match its typed locus"),
                 }));
@@ -470,5 +477,50 @@ mod tests {
         };
         assert_eq!(view.loci[0].0, document.diagnostics()[0].locus().cloned());
         assert_eq!(view.loci[0].1, vec![region]);
+    }
+
+    #[trace("TC-782", "FR-267-AC-25")]
+    #[test]
+    fn input_and_document_loci_need_no_occurrence_key() {
+        let loci = [
+            fsl_replay::OutcomeLocus::Input {
+                operand: "model.json".to_owned(),
+                member: Some("checked-package.json".to_owned()),
+                pointer: Some("/name".to_owned()),
+            },
+            fsl_replay::OutcomeLocus::Document {
+                document: None,
+                path: Some("request.json".to_owned()),
+                member: Some("request".to_owned()),
+                pointer: "/request/package/name".to_owned(),
+                object: None,
+            },
+        ];
+        for locus in loci {
+            let document = fsl_replay::OutcomeDocument::new(
+                fsl_replay::Operation::Replay,
+                None,
+                filament_semantic_value::catalog::Category::Refusal,
+            )
+            .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+                None,
+                "invalid_runtime_input",
+                Some(locus.clone()),
+                "fixture",
+            )]);
+            let result = inspect_outcome(
+                &document,
+                &[None],
+                None,
+                InspectLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("input and document loci do not require an occurrence map");
+            let View::Outcome(view) = result.value() else {
+                panic!("outcome request gives outcome view");
+            };
+            assert_eq!(view.loci[0].0.as_ref(), Some(&locus));
+            assert!(view.loci[0].1.is_empty());
+        }
     }
 }

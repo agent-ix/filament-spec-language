@@ -2740,25 +2740,27 @@ impl OutcomeDocument {
         artifact_identity: Option<&fsl_foundation::source::provenance::RawSourceRef>,
     ) -> Self {
         let locus = match refusal {
-            ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
-                refusal.pointer().map(|pointer| OutcomeLocus::Document {
-                    document: None,
-                    path: request_path.map(str::to_owned),
-                    member: pointer_member(&pointer),
-                    pointer: pointer.into_owned(),
-                    object: None,
-                })
-            }
-            ReplayRefusal::Package(_)
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. })
             | ReplayRefusal::PackageSources(_)
             | ReplayRefusal::DependencySources { .. }
-            | ReplayRefusal::DependencySelections(_) => artifact_identity
+            | ReplayRefusal::DependencySelections(_)
+            | ReplayRefusal::RefinementInternals { .. } => refusal
+                .pointer()
+                .map(|pointer| request_document_locus(&pointer, request_path)),
+            ReplayRefusal::Package(_) => artifact_identity
                 .and_then(|identity| refusal.pointer().map(|pointer| (identity, pointer)))
                 .map(|(identity, pointer)| OutcomeLocus::Artifact {
                     identity: identity.clone(),
-                    pointer: pointer.into_owned(),
+                    pointer: package_artifact_pointer(&pointer),
                 }),
-            ReplayRefusal::RefinementInternals { .. } => None,
+            ReplayRefusal::PackageWithIdentity { identity, .. } => {
+                artifact_identity.or(identity.as_ref()).and_then(|identity| {
+                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
+                        identity: identity.clone(),
+                        pointer: package_artifact_pointer(&pointer),
+                    })
+                })
+            }
             _ => None,
         };
         Self::new(
@@ -2964,6 +2966,25 @@ impl OutcomeDocument {
     }
 }
 
+fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeLocus {
+    let pointer = format!("/request{pointer}");
+    OutcomeLocus::Document {
+        document: None,
+        path: request_path.map(str::to_owned),
+        member: pointer_member(&pointer),
+        pointer,
+        object: None,
+    }
+}
+
+fn package_artifact_pointer(pointer: &str) -> String {
+    match pointer.strip_prefix("/package") {
+        Some("") => String::new(),
+        Some(remainder) if remainder.starts_with('/') => remainder.to_owned(),
+        _ => pointer.to_owned(),
+    }
+}
+
 /// The last stage a replay refusal reached: a recompile refusal's own spine
 /// stage, S8 for every other refusal (the replay itself refused), and none
 /// for a fault, whose stage is untyped.
@@ -2992,6 +3013,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => None,
         ReplayRefusal::Request(_)
         | ReplayRefusal::Package(_)
+        | ReplayRefusal::PackageWithIdentity { .. }
         | ReplayRefusal::PackageEvidence(_)
         | ReplayRefusal::DomainPackages(_)
         | ReplayRefusal::LimitAboveReader(_)
