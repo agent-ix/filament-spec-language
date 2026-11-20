@@ -1,8 +1,9 @@
 # QSL-2092 authoring validation
 
-All ten new active functions passed through focused commands. No aggregate gate
-has run; one independent review and one final affected-component gate remain
-with the lead. No passing function was rerun after an unrelated failure.
+All ten new active functions passed through focused commands. Independent
+review and the single final affected-component gate are recorded in
+[the final receipt](final-gate.md). No passing segment or function was rerun
+after an unrelated failure.
 
 Each command used the worktree's single target directory, jobs2, dev/test
 debug0, incremental0, `cargo test --locked -p fsl-analyze --test it`, one test
@@ -42,5 +43,5 @@ matrix, product binary, proof/Kani, benchmark or main-refresh check ran.
 
 Full commands, original logs and captured shell exits are retained outside the
 repository at `/home/peter/dev/.agent/qsl-2092/logs/`. All authoring processes
-exited before handoff. The clean worktree and warm target remain for the lead's
-single reviewed gate and subsequent cleanup.
+exited before each handoff. The clean worktree and warm target remain for the
+lead's merge and subsequent cleanup.

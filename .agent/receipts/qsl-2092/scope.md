@@ -28,7 +28,11 @@ trace is executed through the real timed system to capture its transition keys,
 then replayed against the package's actual clause.
 
 No production, dependency or configuration change is included. No evidence
-producer or successful proof is replaced by a test double. No new product bug
-or ignored case was found in this slice. The broader historical QSL-2092
-families remain unclaimed; previously delivered or pending QSL-2082 and
-QSL-2088 cases were not duplicated for trace tags.
+producer or successful proof is replaced by a test double. The final gate also
+corrected two old Undefined fixtures to call an admitted Kernel remainder
+function, preserving their actual Undefined and exhaustion assertions. The
+gate reached one existing strict-package failure, tracked by QSL-2717; its
+assertion remains strict and its failed result is excluded from accepted
+coverage. The broader historical QSL-2092 families remain unclaimed;
+previously delivered or pending QSL-2082 and QSL-2088 cases were not duplicated
+for trace tags.
