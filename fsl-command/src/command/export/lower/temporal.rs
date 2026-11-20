@@ -8,13 +8,13 @@
 
 mod tla;
 
-pub(super) use self::tla::{tla, Extra};
+pub(super) use self::tla::{Extra, tla};
 use super::{
-    defer_at, define, mangle, parameters, refusal, refuse, Definition, Graph, Input, Lower, E,
+    Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
 };
 use filament_contract_model::CheckedOperationInterval;
 use fsl_package::checked_views::{
-    temporal_subject, Activation, FormulaNodeUse, FormulaOperation, OperatorDirection,
+    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
 };
 use fsl_semantics::check::TemporalProfile;
 

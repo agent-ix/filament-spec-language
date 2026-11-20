@@ -4,7 +4,7 @@
 //! (FR-753); it hands one [`StepDisposition`] per node here.
 
 use filament_semantic_value::catalog::Category;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The decision of a `measured` step (FSpec FR-409).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -22,8 +22,8 @@ pub use analyze::{
     analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
 

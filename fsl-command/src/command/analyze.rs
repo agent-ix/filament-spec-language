@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
-    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
+    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -19,8 +19,9 @@ use fsl_semantics::model::observation::DocumentProvision;
 
 use super::settle::Settle;
 use super::{
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
-    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    wire,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {

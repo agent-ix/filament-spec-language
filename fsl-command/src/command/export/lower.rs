@@ -13,10 +13,10 @@
 mod temporal;
 
 use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
-use super::map::{mangle, Graph};
+use super::map::{Graph, mangle};
 use super::request::Target;
 use fsl_replay::protocol_analysis::node_text;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A construct this build does not lower, and why.
