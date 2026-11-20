@@ -346,6 +346,21 @@ pub fn types() -> BoxedStrategy<Type> {
     .boxed()
 }
 
+#[derive(Clone, Copy, Debug)]
+enum IntegerOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Less,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BooleanOperator {
+    And,
+    Or,
+    Not,
+}
+
 /// Typed identity/conditional expressions over every family, plus integer and Boolean operators.
 pub fn expressions() -> BoxedStrategy<TypedExpression> {
     let constructors = (types(), 0u8..40).prop_map(|(ty, choice)| TypedExpression {
@@ -368,35 +383,52 @@ pub fn expressions() -> BoxedStrategy<TypedExpression> {
             expression,
         }
     });
-    let integers = (-20i64..=20, 0u8..4).prop_map(|(literal, operation)| {
-        let left = Box::new(Expr::Parameter("x".into()));
-        let right = Box::new(Expr::Integer(literal));
-        let (result, expression) = match operation {
-            0 => (Type::Integer, Expr::Add(left, right)),
-            1 => (Type::Integer, Expr::Subtract(left, right)),
-            2 => (Type::Integer, Expr::Multiply(left, right)),
-            _ => (Type::Boolean, Expr::Less(left, right)),
-        };
-        TypedExpression {
-            parameters: vec![("x".into(), Type::Integer)],
-            result,
-            expression,
-        }
-    });
-    let booleans = (proptest::bool::ANY, 0u8..3).prop_map(|(literal, operation)| {
-        let left = Box::new(Expr::Parameter("x".into()));
-        let right = Box::new(Expr::Boolean(literal));
-        let expression = match operation {
-            0 => Expr::And(left, right),
-            1 => Expr::Or(left, right),
-            _ => Expr::Not(left),
-        };
-        TypedExpression {
-            parameters: vec![("x".into(), Type::Boolean)],
-            result: Type::Boolean,
-            expression,
-        }
-    });
+    let integers = (
+        -20i64..=20,
+        proptest::sample::select(vec![
+            IntegerOperator::Add,
+            IntegerOperator::Subtract,
+            IntegerOperator::Multiply,
+            IntegerOperator::Less,
+        ]),
+    )
+        .prop_map(|(literal, operation)| {
+            let left = Box::new(Expr::Parameter("x".into()));
+            let right = Box::new(Expr::Integer(literal));
+            let (result, expression) = match operation {
+                IntegerOperator::Add => (Type::Integer, Expr::Add(left, right)),
+                IntegerOperator::Subtract => (Type::Integer, Expr::Subtract(left, right)),
+                IntegerOperator::Multiply => (Type::Integer, Expr::Multiply(left, right)),
+                IntegerOperator::Less => (Type::Boolean, Expr::Less(left, right)),
+            };
+            TypedExpression {
+                parameters: vec![("x".into(), Type::Integer)],
+                result,
+                expression,
+            }
+        });
+    let booleans = (
+        proptest::bool::ANY,
+        proptest::sample::select(vec![
+            BooleanOperator::And,
+            BooleanOperator::Or,
+            BooleanOperator::Not,
+        ]),
+    )
+        .prop_map(|(literal, operation)| {
+            let left = Box::new(Expr::Parameter("x".into()));
+            let right = Box::new(Expr::Boolean(literal));
+            let expression = match operation {
+                BooleanOperator::And => Expr::And(left, right),
+                BooleanOperator::Or => Expr::Or(left, right),
+                BooleanOperator::Not => Expr::Not(left),
+            };
+            TypedExpression {
+                parameters: vec![("x".into(), Type::Boolean)],
+                result: Type::Boolean,
+                expression,
+            }
+        });
     let aggregates = (
         proptest::sample::select(vec![
             CollectionKind::Sequence,
