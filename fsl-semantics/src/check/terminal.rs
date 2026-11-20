@@ -307,10 +307,9 @@ impl TerminalNode {
 pub struct TerminalKeys(BTreeMap<(String, usize), NodeKey>);
 
 /// A declaration's key in a [`TerminalKeys`]: the model's selection identity
-/// and the declaration's ordinal among that identity's declarations (FR-411):
-/// the order of their aliases on the source route, of their terminal rows on
-/// the package route. A package holds one declaration per identity today, at
-/// ordinal 0.
+/// and the declaration's ordinal among that identity's declarations in
+/// terminal node key order (FR-124-AC-11). A package holds one declaration
+/// per identity today, at ordinal 0.
 fn terminal_name((identity, ordinal): &(String, usize)) -> String {
     if *ordinal == 0 {
         identity.clone()
@@ -384,19 +383,31 @@ impl std::fmt::Display for TerminalMismatch {
 impl CheckedGraph {
     /// FR-411 "Deadlock-freedom verdict join": each selected model's
     /// terminal node key, the node its declaration's `claim` occurrence
-    /// names. A model with no declaration is left out of the map; an absent
-    /// key reads as no declaration.
+    /// names. Its ordinal is within the model identity's declarations sorted
+    /// by terminal node key, independent of alias or source order. A model
+    /// with no declaration is left out of the map; an absent key reads as no
+    /// declaration.
     pub fn terminal_keys(&self) -> TerminalKeys {
-        let mut ordinals = BTreeMap::<&str, usize>::new();
+        let mut nodes = self
+            .terminals()
+            .iter()
+            .filter_map(|terminal| {
+                Some((
+                    terminal.package().to_owned(),
+                    terminal.occurrence()?.node().clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        nodes.sort();
+        let mut ordinals = BTreeMap::<String, usize>::new();
         TerminalKeys(
-            self.terminals()
-                .iter()
-                .filter_map(|terminal| {
-                    let node = terminal.occurrence()?.node().clone();
-                    let ordinal = ordinals.entry(terminal.package()).or_default();
-                    let key = (terminal.package().to_owned(), *ordinal);
+            nodes
+                .into_iter()
+                .map(|(identity, node)| {
+                    let ordinal = ordinals.entry(identity.clone()).or_default();
+                    let key = (identity, *ordinal);
                     *ordinal += 1;
-                    Some((key, node))
+                    (key, node)
                 })
                 .collect(),
         )

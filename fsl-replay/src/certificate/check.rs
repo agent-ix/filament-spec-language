@@ -67,13 +67,25 @@ impl Budgets {
 pub(super) fn admit(
     simulation: ModelSimulationRequest<'_>,
 ) -> Result<ModelSystem<'_>, ClosureRefusal> {
-    let system = ModelSystem::new(simulation)
-        .map_err(|failure| ClosureRefusal::Admission(Box::new(failure)))?;
+    bounded(ModelSystem::new(simulation))
+}
+
+/// [`admit`] for the derived deadlock-freedom item, which reads the
+/// identities its subject's universes cover alone (FR-124-AC-12).
+pub(super) fn admit_read_identities(
+    simulation: ModelSimulationRequest<'_>,
+) -> Result<ModelSystem<'_>, ClosureRefusal> {
+    bounded(ModelSystem::new_over_read_identities(simulation))
+}
+
+fn bounded(
+    system: Result<ModelSystem<'_>, fsl_semantics::model::observation::AdmissionFailure>,
+) -> Result<ModelSystem<'_>, ClosureRefusal> {
+    let system = system.map_err(|failure| ClosureRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS)
         .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
     Ok(system)
 }
-
 /// A finished check: a rejection or a stop, or a refusal.
 pub(super) enum Halt {
     /// A rejection or a stop.

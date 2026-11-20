@@ -47,7 +47,7 @@ pub enum BareTerminalDeclaration {
 /// One `terminal` declaration of a package, read from its node.
 pub struct BareTerminal {
     /// The declaration's ordinal among the declarations of its identity, in
-    /// terminal-row order.
+    /// terminal node key order.
     pub ordinal: usize,
     /// The declaration's `temporal`/`terminal` node.
     pub node: NodeKey,
@@ -167,9 +167,10 @@ impl BarePackage<'_> {
                 declaration,
             });
         }
-        // FR-940: ordered by the model selection's identity, as the source
-        // route orders its declarations.
-        terminals.sort_by(|left, right| left.model.cmp(&right.model));
+        // FR-124-AC-11: every reader derives the ordinal from the same
+        // terminal node key order, independent of package row placement.
+        terminals
+            .sort_by(|left, right| (&left.model, &left.node).cmp(&(&right.model, &right.node)));
         let mut ordinals = std::collections::BTreeMap::<String, usize>::new();
         for terminal in &mut terminals {
             let ordinal = ordinals.entry(terminal.model.clone()).or_default();
