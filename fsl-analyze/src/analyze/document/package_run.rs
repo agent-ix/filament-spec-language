@@ -272,7 +272,7 @@ pub fn settle_package_run(
         limits,
     } = run;
     if let Some(refusal) =
-        probabilistic_source_refusal(package, binding.packages, limits.normalization, items)
+        probabilistic_source_refusal(package, binding.packages, limits.normalization, items)?
     {
         return Err(PackageRunError::Pending(refusal));
     }
@@ -533,51 +533,61 @@ fn sole_model(package: &BarePackage<'_>) -> Option<String> {
 /// [`PendingFamily::ProbabilisticSourceModel`], and one whose model does not
 /// [`PendingFamily::ProbabilisticClaimUnresolved`], each at the claim's node.
 /// `None` for a package with no source objects and for a request that names
-/// no probabilistic claim, whose items settle as every other item does.
+/// no probabilistic claim, whose items settle as every other item does. A
+/// package fault the model-check input would give is the same fault here.
 fn probabilistic_source_refusal(
     package: &BarePackage<'_>,
     packages: &fsl_semantics::model::intake::PackageInput,
     normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
     items: Option<&[ItemSelection]>,
-) -> Option<PendingPackageFamily> {
+) -> Result<Option<PendingPackageFamily>, PackageRunError> {
     if !matches!(
         package.first_unread_model_form(),
         Some((UnreadModelForm::SourceObject, _))
     ) {
-        return None;
+        return Ok(None);
     }
     let view: &dyn AnalysisView = package;
     let declared = view.declared_names();
-    let (index, name, node) = items?.iter().enumerate().find_map(|(position, item)| {
-        let name = item.claim.as_deref()?;
-        let node = declared
-            .iter()
-            .find(|(declared, _)| declared == name)
-            .map(|(_, node)| (*node).clone())
-            .or_else(|| view.claim_name(name).map(|found| found.declaration))?;
-        view.package()
-            .probabilistic_claims()
-            .iter()
-            .any(|claim| same_claim_node(&claim.node, &node))
-            .then(|| (RequestIndex::new(position), name, node))
-    })?;
+    let Some((index, name, node)) = items.and_then(|items| {
+        items.iter().enumerate().find_map(|(position, item)| {
+            let name = item.claim.as_deref()?;
+            let node = declared
+                .iter()
+                .find(|(declared, _)| declared == name)
+                .map(|(_, node)| (*node).clone())
+                .or_else(|| view.claim_name(name).map(|found| found.declaration))?;
+            view.package()
+                .probabilistic_claims()
+                .iter()
+                .any(|claim| same_claim_node(&claim.node, &node))
+                .then(|| (RequestIndex::new(position), name, node))
+        })
+    }) else {
+        return Ok(None);
+    };
     let (family, note) = match PackageModelInput::source_object_probabilistic_model(
         package,
         packages,
         normalization,
     ) {
         Ok(_) => (PendingFamily::ProbabilisticSourceModel, format!("`{name}`")),
-        Err(refusal) => (
-            PendingFamily::ProbabilisticClaimUnresolved,
-            format!("`{name}` ({})", unresolved_reason(&refusal)),
-        ),
+        Err(refusal) => match unresolved_reason(&refusal) {
+            Some(reason) => (
+                PendingFamily::ProbabilisticClaimUnresolved,
+                format!("`{name}` ({reason})"),
+            ),
+            // The same faults `PackageModelInput::of` gives settle as a
+            // fault, not as a gap of the route.
+            None => return Err(PackageRunError::Document(AnalyzeDocumentError::Fault)),
+        },
     };
-    Some(PendingPackageFamily {
+    Ok(Some(PendingPackageFamily {
         request_index: Some(index),
         note: Some(note),
         family,
         node: Some(node),
-    })
+    }))
 }
 
 /// Whether two ids name one claim node: the read of a node's path spells its
@@ -590,29 +600,25 @@ fn same_claim_node(left: &CheckedNodeId, right: &CheckedNodeId) -> bool {
         && left.path.iter().take(3).eq(right.path.iter().take(3))
 }
 
-/// Why a package's probabilistic model does not rebuild, in words.
-fn unresolved_reason(refusal: &PendingPackageForm) -> String {
+/// Why a package's probabilistic model does not rebuild, in words, for a
+/// refusal that is a gap of the route; `None` for a fault of the package
+/// (an unreadable environment, domain packages not admitted as a model,
+/// untyped operations or unreadable probabilistic nodes), which
+/// [`settle_package_run`] settles as a fault as it does for `of`.
+fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
     match refusal {
         PendingPackageForm::Form { .. } => {
-            "the package holds a form its model-check input does not read yet".to_owned()
+            Some("the package holds a form its model-check input does not read yet".to_owned())
         }
-        PendingPackageForm::World(_) => {
-            "the package's declarations do not form a closed environment".to_owned()
-        }
-        PendingPackageForm::Model(_) => {
-            "the selected domain packages are not admitted as a model".to_owned()
-        }
-        PendingPackageForm::Operations(_) => {
-            "the selected domain packages' operations are not typed".to_owned()
-        }
-        PendingPackageForm::SourceModel(fault) => fault.to_string(),
-        PendingPackageForm::ProbabilisticNodes(_) => {
-            "the package's probabilistic nodes are not readable".to_owned()
-        }
-        PendingPackageForm::Probabilistic(_) => {
+        PendingPackageForm::SourceModel(fault) => Some(fault.to_string()),
+        PendingPackageForm::Probabilistic(_) => Some(
             "the package's random parameters and workloads do not rebuild against its model"
-                .to_owned()
-        }
+                .to_owned(),
+        ),
+        PendingPackageForm::World(_)
+        | PendingPackageForm::Model(_)
+        | PendingPackageForm::Operations(_)
+        | PendingPackageForm::ProbabilisticNodes(_) => None,
     }
 }
 
