@@ -37,6 +37,36 @@ fn state_core_refuses_each_division_as_one_function_declaration() {
         let end = usize::try_from(region.end()).unwrap();
         assert_eq!(&source[start..end], declaration, "{body}");
         assert!(diagnostics[0].message().contains("filament.state.core/v1"));
+        let value_source = source.replace(
+            "profile v = \"filament.state.core/v1\";",
+            "profile v = \"filament.value.complete/v1\";\nprofile law = \"filament.value.integer-division.euclidean/v1\";",
+        );
+        let checked = crate::support::front_end::checked(
+            SourceIdentity::new("state-core-tests", "original:value-counterpart"),
+            "value-counterpart.native",
+            value_source.as_bytes(),
+            &packages,
+            &DependencyInput::default(),
+        )
+        .expect("the value profile admits the same function body");
+        use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+        let evaluated = checked
+            .package()
+            .call(
+                &QualifiedName::unqualified("f").unwrap(),
+                vec![filament_exact::Value::Integer(8_i64.into())],
+                &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                &mut filament_exact::Meter::new(filament_exact::ScalarLimits::default()),
+            )
+            .expect("the checked counterpart runs");
+        let filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+            filament_exact::Value::Integer(value),
+        )) = evaluated.outcome
+        else {
+            panic!("the value function must complete: {evaluated:?}");
+        };
+        let expected = if body.starts_with("if") { 1_i64 } else { 2_i64 };
+        assert_eq!(value, expected.into(), "{body}");
     }
 }
 
