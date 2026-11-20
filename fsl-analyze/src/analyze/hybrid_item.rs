@@ -123,12 +123,20 @@ pub(super) fn hybrid_item<'a>(
                     };
                     provider.solve(&request, cancel)
                 } else if let Some(exchange) = engine.hybrid_exchange() {
+                    let Some(dependencies) =
+                        super::request::dependency_packages(package, spelling.emit)
+                    else {
+                        return EngineReport::Refused(Refusal::Failed(CatalogCode::new(
+                            "runtime_invariant",
+                            "established-invariant-broken",
+                        )));
+                    };
                     let call = super::hybrid_process::ProcessCall {
                         exchange,
                         backend: engine.descriptor().id(),
                         candidates: &candidates,
                         manifest: &manifest,
-                        dependencies: &[],
+                        dependencies: &dependencies,
                         package: &emitted,
                         claim,
                         graph,

@@ -248,6 +248,7 @@ pub(super) fn check(
     claim: &CheckedHybridClaim,
     steps: &[WireStep],
     coverage: Option<&ProofCoverage>,
+    initial_containment: bool,
 ) -> Result<(), Fail> {
     let variable_names = names(model);
     let n = mx.n;
@@ -283,7 +284,7 @@ pub(super) fn check(
             return reject(Rule::Initial, step_pointer(dwell.first));
         }
     }
-    for (mode, condition) in &mx.initial {
+    for (mode, condition) in mx.initial.iter().filter(|_| initial_containment) {
         let invariant = &mx.modes[*mode].invariant;
         let dwell = lay
             .dw

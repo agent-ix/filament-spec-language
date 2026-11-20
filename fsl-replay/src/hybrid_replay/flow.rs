@@ -87,6 +87,12 @@ fn as_poly(exp: &Exp, solved: &[Option<Poly>]) -> Option<Poly> {
     }
 }
 
+/// `exp` as a polynomial in time, each variable read as `solved[i]`.
+pub(crate) fn poly_of(exp: &Exp, solved: &[Poly]) -> Option<Poly> {
+    let held: Vec<Option<Poly>> = solved.iter().cloned().map(Some).collect();
+    as_poly(exp, &held)
+}
+
 impl Flow {
     /// The flow of `rates`, `rates[i]` the rate of variable `i`; `None` when
     /// it is not a polynomial flow.

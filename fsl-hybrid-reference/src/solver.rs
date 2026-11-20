@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1019 "Method": the flowpipe and inductive-enclosure construction.
 //!
-//! Data flow: the model's initial entries give start boxes; each start box
-//! is a dwell's first box; a dwell is a list of Picard steps (time, box `X`,
-//! a-priori box `B`, `h`) until it reaches the horizon, empties or closes;
-//! every transition that can fire from a dwell's `B` boxes gives one jump
-//! dwell; the dwells are written as a FSpec FR-652 certificate that the core's
-//! checker reads; the checker's verdict on the claim names the violating
-//! dwell, from which `refute` builds a candidate trace. The solver never
-//! certifies itself: `proved` is returned only when `check_certificate`
+//! Data flow: the model's initial entries give start boxes (one per mode, the
+//! hull of the mode's entries, since a certificate holds one initial dwell per
+//! mode; each entry keeps its own hull as the root box of a refutation); a
+//! start box is a dwell's first box; a dwell is a list of Picard steps (time,
+//! box `X`, a-priori box `B`, `h`) until it reaches the horizon, empties or
+//! closes; every transition that can fire from a dwell's `B` boxes gives one
+//! jump dwell; the dwells are written as a FSpec FR-652 certificate that the
+//! core's checker reads; the checker's verdict on the claim names the
+//! violating step, from which `refute` builds a candidate trace. The solver
+//! never certifies itself: `proved` is returned only when `check_certificate`
 //! accepts the certificate it wrote.
 
 use std::collections::{BTreeSet, VecDeque};
@@ -47,14 +49,46 @@ impl From<HybridReadStop> for Halt {
     }
 }
 
+/// What bounds a flowpipe: seconds under `model-time`, positions under
+/// `model-steps`.
+#[derive(Clone, Debug)]
+pub(crate) enum Cap {
+    /// The claim's horizon in seconds.
+    Time(Rational),
+    /// The claim's horizon in positions.
+    Steps(usize),
+}
+
 /// One dwell as built.
 #[derive(Clone, Debug)]
 pub(crate) struct Dwell {
     pub(crate) first: usize,
     pub(crate) last: usize,
     pub(crate) depth: usize,
-    /// The initial dwell the chain began from.
+    /// The start the chain began from.
     pub(crate) root: usize,
+    /// The dwell and transition a jump dwell leaves.
+    pub(crate) from: Option<(usize, usize)>,
+}
+
+/// The start box of one initial mode.
+#[derive(Clone, Debug)]
+pub(crate) struct Start {
+    pub(crate) mode: usize,
+    /// The hull of the mode's entries, rounded outward: the dwell's first box.
+    pub(crate) bx: HybridBox,
+    /// Each entry's own hull, the root box of a refutation.
+    pub(crate) entries: Vec<(usize, HybridBox)>,
+}
+
+/// The dwells of a flowpipe.
+pub(crate) struct Pipe {
+    pub(crate) steps: Vec<Step>,
+    pub(crate) dwells: Vec<Dwell>,
+    pub(crate) starts: Vec<Start>,
+    /// The covered duration the proof reports.
+    pub(crate) horizon: Rational,
+    pub(crate) jumps: usize,
 }
 
 struct Pending {
@@ -65,13 +99,6 @@ struct Pending {
     from: Option<(usize, usize)>,
     depth: usize,
     root: usize,
-}
-
-/// The dwells of a flowpipe.
-pub(crate) struct Pipe {
-    pub(crate) steps: Vec<Step>,
-    pub(crate) dwells: Vec<Dwell>,
-    pub(crate) roots: Vec<(usize, HybridBox)>,
 }
 
 /// One run of the solver over one request.
@@ -89,7 +116,11 @@ pub(crate) fn half(value: &Rational) -> Rational {
     value.mul(&Rational::new(Integer::one(), Integer::from(2_i64)).expect("2 is nonzero"))
 }
 
-fn unknown() -> HybridAnswer {
+fn zero() -> Rational {
+    Rational::from_integer(Integer::zero())
+}
+
+pub(crate) fn unknown() -> HybridAnswer {
     HybridAnswer::solved(SolverResult {
         method: SolverMethod::Unclassified,
         outcome: SolverOutcome::Unknown(None),
@@ -112,11 +143,12 @@ pub(crate) fn solve(request: &HybridSolveRequest<'_>, cancel: &Cancel) -> Hybrid
         return unknown();
     };
     let seconds = request.budget.time_seconds().map(Duration::from_secs);
+    // A limit too large for the clock to represent is no deadline.
     let deadline = [seconds, request.deadline_ms.map(Duration::from_millis)]
         .into_iter()
         .flatten()
         .min()
-        .map(|limit| Instant::now() + limit);
+        .and_then(|limit| Instant::now().checked_add(limit));
     let mut run = Run {
         req: request,
         reader,
@@ -144,9 +176,7 @@ impl<'a> Run<'a, '_> {
 
     /// One Picard attempt: the unit the step and time budgets count.
     pub(crate) fn attempt(&mut self) -> Result<(), Halt> {
-        if self.cancel.poll() || self.deadline.is_some_and(|limit| Instant::now() >= limit) {
-            return Err(Halt::Stop(SolverStop::Time));
-        }
+        self.tick()?;
         if self.used >= self.steps_max {
             return Err(Halt::Stop(SolverStop::Steps(self.steps_max)));
         }
@@ -184,7 +214,10 @@ impl<'a> Run<'a, '_> {
             let rates = self.reader.rates(mode, &cand)?;
             let region = box_tube(bx, h, &rates);
             let (fits, next) = if witness {
-                (box_within(&region, &cand), box_hull(&cand, &region))
+                (
+                    fsl_replay::box_within(&region, &cand),
+                    box_hull(&cand, &region),
+                )
             } else {
                 match self.reader.contract_invariant(mode, region)? {
                     None => (true, cand.clone()),
@@ -219,7 +252,7 @@ impl<'a> Run<'a, '_> {
 
     fn decide(&mut self) -> Result<HybridAnswer, Halt> {
         let bits = self.set.bits;
-        let mut starts: Vec<(usize, HybridBox)> = Vec::new();
+        let mut starts: Vec<Start> = Vec::new();
         for entry in 0..self.reader.initial_entries() {
             let Some(initial) = self.reader.initial_hull(entry)? else {
                 continue;
@@ -229,9 +262,16 @@ impl<'a> Run<'a, '_> {
             }
             let hull = box_round(&initial.hull, bits);
             let mode = self.reader.initial_mode(entry);
-            match starts.iter_mut().find(|(m, _)| *m == mode) {
-                Some((_, bx)) => *bx = box_round(&box_hull(bx, &hull), bits),
-                None => starts.push((mode, hull)),
+            match starts.iter_mut().find(|start| start.mode == mode) {
+                Some(start) => {
+                    start.bx = box_round(&box_hull(&start.bx, &hull), bits);
+                    start.entries.push((entry, initial.hull));
+                }
+                None => starts.push(Start {
+                    mode,
+                    bx: hull,
+                    entries: vec![(entry, initial.hull)],
+                }),
             }
         }
         if starts.is_empty() {
@@ -243,22 +283,29 @@ impl<'a> Run<'a, '_> {
         }
         let claim = self.req.claim;
         match (&claim.activation, claim.clock, &claim.horizon) {
+            (HybridActivation::Each { .. }, _, _) | (_, _, None) => self.inductive(&starts),
             (HybridActivation::Origin, HybridClock::ModelTime, Some(HybridHorizon::Seconds(h))) => {
-                self.bounded(starts, &h.clone())
+                self.bounded(&starts, Cap::Time(h.clone()))
             }
-            (_, _, None) => self.inductive(starts),
+            (
+                HybridActivation::Origin,
+                HybridClock::ModelSteps,
+                Some(HybridHorizon::Positions(count)),
+            ) => match usize::try_from(*count) {
+                Ok(count) => self.bounded(&starts, Cap::Steps(count)),
+                Err(_) => Err(Halt::Give),
+            },
             _ => Err(Halt::Give),
         }
     }
 
     /// Check `value` as `expect`'s form against the claim with the solver's
     /// own meter; `None` when the reader refuses it.
-    fn check(
+    pub(crate) fn check(
         &self,
         expect: HybridCertificateExpect<'_>,
         value: &Value,
         coverage: Option<&HybridProofCoverage>,
-        trace: Option<&fsl_replay::HybridTrace>,
     ) -> Option<HybridCertificateOutcome> {
         let certificate = read_hybrid_certificate(self.req.model, expect, value).ok()?;
         let mut meter = HybridReplayMeter::new(WORK_UNITS);
@@ -267,27 +314,63 @@ impl<'a> Run<'a, '_> {
             self.req.claim,
             &certificate,
             coverage,
-            trace,
+            None,
             &mut meter,
         )
         .ok()
     }
 
-    /// The flowpipe from `starts` to `horizon` (FR-1019 "Dwells" and
-    /// "Guards and boundary invariants").
-    fn pipe(&mut self, starts: &[(usize, HybridBox)], horizon: &Rational) -> Result<Pipe, Halt> {
+    /// The claim rule of `flowpipe` for a sub-box of the initial states:
+    /// every rule but the first box covering the initial states.
+    pub(crate) fn probe(
+        &self,
+        value: &Value,
+        coverage: &HybridProofCoverage,
+    ) -> Option<HybridCertificateOutcome> {
+        let certificate =
+            read_hybrid_certificate(self.req.model, HybridCertificateExpect::Bounded, value).ok()?;
+        let mut meter = HybridReplayMeter::new(WORK_UNITS);
+        fsl_replay::probe_hybrid_flowpipe_claim(
+            self.req.graph,
+            self.req.claim,
+            &certificate,
+            coverage,
+            &mut meter,
+        )
+        .ok()
+    }
+
+    /// The flowpipe from `starts` under `cap` (FR-1019 "Dwells", "Guards and
+    /// boundary invariants" and "Bounds").
+    ///
+    /// Under `model-time` every dwell runs to the horizon, empties or closes.
+    /// Under `model-steps` with `n` positions only dwells of depth below `n`
+    /// follow transitions; they run until they empty or close on a last step
+    /// that fires nothing; the horizon is then the greatest upper end of the
+    /// covered instants of a step that can fire, or the greatest time
+    /// reached, and the dwells of depth `n` run until they reach it.
+    pub(crate) fn pipe(&mut self, starts: &[Start], cap: &Cap) -> Result<Pipe, Halt> {
         let bits = self.set.bits;
-        let zero = Rational::from_integer(Integer::zero());
         let mut steps: Vec<Step> = Vec::new();
         let mut starts_of: Vec<(Rational, Rational)> = Vec::new();
         let mut dwells: Vec<Dwell> = Vec::new();
+        let mut horizon: Option<Rational> = match cap {
+            Cap::Time(h) => Some(h.clone()),
+            Cap::Steps(_) => None,
+        };
+        let mut fire_upper: Option<Rational> = None;
+        let mut reached = zero();
+        let window = match cap {
+            Cap::Time(h) => h.clone(),
+            Cap::Steps(_) => Rational::from_integer(Integer::one().shifted_left(62)),
+        };
         let mut pending: VecDeque<Pending> = starts
             .iter()
             .enumerate()
-            .map(|(root, (mode, bx))| Pending {
-                mode: *mode,
-                bx: bx.clone(),
-                starts: (zero.clone(), zero.clone()),
+            .map(|(root, start)| Pending {
+                mode: start.mode,
+                bx: start.bx.clone(),
+                starts: (zero(), zero()),
                 stored: None,
                 from: None,
                 depth: 0,
@@ -297,10 +380,15 @@ impl<'a> Run<'a, '_> {
         while let Some(p) = pending.pop_front() {
             let index = dwells.len();
             let first = steps.len();
+            if let Cap::Steps(n) = cap {
+                if p.depth >= *n && horizon.is_none() {
+                    horizon = Some(fire_upper.clone().unwrap_or_else(|| reached.clone()));
+                }
+            }
             let mut bx = p.bx.clone();
             let mut s = p.starts.clone();
             let mut stored = p.stored.clone();
-            let (empties, closes) = loop {
+            let closes = loop {
                 let Some((h, ap)) = self.step_for(p.mode, &bx)? else {
                     return Err(Halt::Give);
                 };
@@ -317,13 +405,21 @@ impl<'a> Run<'a, '_> {
                     from: if steps.len() == first { p.from } else { None },
                 });
                 starts_of.push(s.clone());
-                let reaches = s.0.add(&h) >= *horizon;
+                let end = s.1.add(&h);
+                if end > reached {
+                    reached = end;
+                }
+                let reaches = match (&horizon, cap) {
+                    (Some(limit), Cap::Time(_)) => s.0.add(&h) >= *limit,
+                    (Some(limit), Cap::Steps(n)) => p.depth >= *n && s.0.add(&h) >= *limit,
+                    (None, _) => false,
+                };
                 let (empties, closes) = match &next {
                     None => (true, false),
                     Some(next) => (false, box_within(next, &bx)),
                 };
                 if reaches || empties || closes {
-                    break (empties, closes);
+                    break closes;
                 }
                 bx = box_round(&next.unwrap_or_default(), bits);
                 s = (s.0.add(&h), s.1.add(&h));
@@ -334,15 +430,22 @@ impl<'a> Run<'a, '_> {
                 last,
                 depth: p.depth,
                 root: p.root,
+                from: p.from,
             });
-            let _ = empties;
+            if let Cap::Steps(n) = cap {
+                if p.depth >= *n {
+                    continue;
+                }
+            }
             for t in 0..self.reader.transitions(p.mode) {
                 let mut posts: Vec<HybridBox> = Vec::new();
                 let mut low: Option<Rational> = None;
-                let mut high: Option<Rational> = Some(zero.clone());
+                let mut high: Option<Rational> = Some(zero());
                 for k in first..=last {
-                    if starts_of[k].0 > *horizon {
-                        continue;
+                    if let Cap::Time(limit) = cap {
+                        if starts_of[k].0 > *limit {
+                            continue;
+                        }
                     }
                     let Some(fired) = self.reader.fire(p.mode, t, &steps[k].ap)? else {
                         continue;
@@ -350,25 +453,35 @@ impl<'a> Run<'a, '_> {
                     posts.push(fired.post);
                     let lo = starts_of[k].0.clone();
                     low = Some(low.map_or(lo.clone(), |l| l.min(lo)));
-                    high = if closes && k == last {
-                        None
+                    let covered_end = starts_of[k].1.add(&steps[k].h);
+                    if closes && k == last {
+                        high = None;
                     } else {
-                        high.map(|h0| h0.max(starts_of[k].1.add(&steps[k].h)))
-                    };
+                        high = high.map(|h0| h0.max(covered_end.clone()));
+                        if matches!(cap, Cap::Steps(_)) && fire_upper.as_ref().is_none_or(|u| covered_end > *u)
+                        {
+                            fire_upper = Some(covered_end);
+                        }
+                    }
                 }
                 let Some(seed) = posts.first().cloned() else {
                     continue;
                 };
+                if matches!(cap, Cap::Steps(_)) && high.is_none() {
+                    // A closing dwell whose last step can fire covers every
+                    // later instant: no finite horizon shows the jumps.
+                    return Err(Halt::Give);
+                }
                 let hull = box_round(&posts.iter().fold(seed, |acc, post| box_hull(&acc, post)), bits);
                 let narrowed = self
                     .reader
-                    .narrowed_time(p.mode, t, &p.bx, &p.starts, horizon)?;
+                    .narrowed_time(p.mode, t, &p.bx, &p.starts, &window)?;
                 let fallback = (
-                    low.clone().unwrap_or_else(|| zero.clone()),
-                    high.map_or_else(|| horizon.clone(), |u| u.min(horizon.clone())),
+                    low.clone().unwrap_or_else(zero),
+                    high.map_or_else(|| window.clone(), |u| u.min(window.clone())),
                 );
                 let time = match narrowed {
-                    Some(Some(window)) => match (window.lower, window.upper) {
+                    Some(Some(found)) => match (found.lower, found.upper) {
                         (Some(l), Some(u)) => (l, u),
                         _ => fallback,
                     },
@@ -385,33 +498,43 @@ impl<'a> Run<'a, '_> {
                 });
             }
         }
+        let jumps = match cap {
+            Cap::Time(_) => dwells.iter().map(|d| d.depth).max().unwrap_or(0),
+            Cap::Steps(n) => *n,
+        };
+        let horizon = horizon.unwrap_or_else(|| fire_upper.unwrap_or(reached));
         Ok(Pipe {
             steps,
             dwells,
-            roots: starts.to_vec(),
+            starts: starts.to_vec(),
+            horizon,
+            jumps,
         })
     }
 
-    fn bounded(
-        &mut self,
-        starts: Vec<(usize, HybridBox)>,
-        horizon: &Rational,
-    ) -> Result<HybridAnswer, Halt> {
-        let pipe = self.pipe(&starts, horizon)?;
-        let jumps = pipe.dwells.iter().map(|d| d.depth).max().unwrap_or(0);
-        let coverage = HybridProofCoverage {
-            horizon: horizon.clone(),
-            jumps: jumps as u64,
-            exhaustive: BTreeSet::from([BoundDimension::Time]),
-        };
+    /// The proof coverage a pipe reports.
+    pub(crate) fn coverage(pipe: &Pipe, cap: &Cap) -> HybridProofCoverage {
+        HybridProofCoverage {
+            horizon: pipe.horizon.clone(),
+            jumps: pipe.jumps as u64,
+            exhaustive: match cap {
+                Cap::Time(_) => BTreeSet::from([BoundDimension::Time]),
+                Cap::Steps(_) => BTreeSet::from([BoundDimension::Jumps]),
+            },
+        }
+    }
+
+    fn bounded(&mut self, starts: &[Start], cap: Cap) -> Result<HybridAnswer, Halt> {
+        let pipe = self.pipe(starts, &cap)?;
+        let coverage = Self::coverage(&pipe, &cap);
         let value = wire::flowpipe(self.req.model, &pipe.steps);
-        let Some(outcome) = self.check(HybridCertificateExpect::Bounded, &value, Some(&coverage), None)
+        let Some(outcome) = self.check(HybridCertificateExpect::Bounded, &value, Some(&coverage))
         else {
             return Err(Halt::Give);
         };
         match outcome {
             HybridCertificateOutcome::Accepted(_) => {
-                let Ok(horizon) = SolverHorizon::new(horizon.clone()) else {
+                let Ok(horizon) = SolverHorizon::new(coverage.horizon.clone()) else {
                     return Err(Halt::Give);
                 };
                 Ok(HybridAnswer {
@@ -430,14 +553,13 @@ impl<'a> Run<'a, '_> {
             HybridCertificateOutcome::Rejected(rejection)
                 if rejection.rule == HybridCertificateRule::Claim =>
             {
-                let violating = rejection
+                let step = rejection
                     .at
                     .strip_prefix("/certificate/steps/")
-                    .and_then(|k| k.parse::<usize>().ok())
-                    .and_then(|k| pipe.dwells.iter().find(|d| d.first <= k && k <= d.last));
-                match violating {
-                    Some(dwell) => self.refute(&pipe, dwell.root, horizon),
-                    None => Err(Halt::Give),
+                    .and_then(|k| k.parse::<usize>().ok());
+                match step {
+                    Some(step) if step < pipe.steps.len() => self.refute(&pipe, &cap, step),
+                    _ => Err(Halt::Give),
                 }
             }
             HybridCertificateOutcome::Rejected(_) => Err(Halt::Give),
@@ -446,12 +568,12 @@ impl<'a> Run<'a, '_> {
 
     /// FR-1019 "Claims with no horizon": one box per mode, the hull of the
     /// mode's step boxes, explored until a step adds nothing to its hull.
-    fn inductive(&mut self, starts: Vec<(usize, HybridBox)>) -> Result<HybridAnswer, Halt> {
+    fn inductive(&mut self, starts: &[Start]) -> Result<HybridAnswer, Halt> {
         let bits = self.set.bits;
         let modes = self.reader.modes();
         let mut boxes: Vec<Option<HybridBox>> = vec![None; modes];
-        for (mode, bx) in starts {
-            boxes[mode] = Some(bx);
+        for start in starts {
+            boxes[start.mode] = Some(start.bx.clone());
         }
         loop {
             let mut changed = false;
@@ -507,7 +629,7 @@ impl<'a> Run<'a, '_> {
             all.push(bx);
         }
         let value = wire::inductive(self.req.model, &all);
-        match self.check(HybridCertificateExpect::Inductive, &value, None, None) {
+        match self.check(HybridCertificateExpect::Inductive, &value, None) {
             Some(HybridCertificateOutcome::Accepted(_)) => Ok(HybridAnswer {
                 verdict: fsl_replay::HybridVerdict::Solved(SolverResult {
                     method: SolverMethod::InductiveEnclosure,

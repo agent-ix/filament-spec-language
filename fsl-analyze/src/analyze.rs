@@ -45,6 +45,7 @@ mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 mod request;
+pub(crate) use request::dependency_packages;
 mod schedule_item;
 mod simulation_item;
 mod state_graph_item;

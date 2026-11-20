@@ -40,6 +40,7 @@ use fsl_semantics::check::{
 };
 
 pub use certificate::{
+    probe_flowpipe_claim,
     box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
     ReadStop,
     check_certificate, read_certificate, Acceptance, CertificateOutcome, CertificateRefusal,

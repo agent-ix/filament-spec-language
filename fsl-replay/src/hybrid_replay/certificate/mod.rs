@@ -199,6 +199,37 @@ pub fn check_certificate(
     trace: Option<&HybridTrace>,
     meter: &mut HybridReplayMeter,
 ) -> Result<CertificateOutcome, HybridReplayRefusal> {
+    check_with(graph, claim, certificate, coverage, trace, meter, true)
+}
+
+/// Every rule of `flowpipe` except the containment half of rule `initial`
+/// (the first box covering the initial states), for a provider that wants to
+/// know whether a sub-box of the initial states still meets the claim's
+/// violation. It settles nothing: a core settlement uses
+/// [`check_certificate`] only.
+///
+/// # Errors
+///
+/// As [`check_certificate`].
+pub fn probe_flowpipe_claim(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    certificate: &HybridCertificate,
+    coverage: &ProofCoverage,
+    meter: &mut HybridReplayMeter,
+) -> Result<CertificateOutcome, HybridReplayRefusal> {
+    check_with(graph, claim, certificate, Some(coverage), None, meter, false)
+}
+
+fn check_with(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    certificate: &HybridCertificate,
+    coverage: Option<&ProofCoverage>,
+    trace: Option<&HybridTrace>,
+    meter: &mut HybridReplayMeter,
+    initial_containment: bool,
+) -> Result<CertificateOutcome, HybridReplayRefusal> {
     let model: &CheckedHybridModel = graph
         .hybrid_models()
         .get(claim.model.get())
@@ -219,8 +250,16 @@ pub fn check_certificate(
             inductive::check(&mut machine, &mx, model, claim, boxes).map(|()| Acceptance::Proof)
         }
         wire::Body::Flowpipe(steps) => {
-            flowpipe::check(&mut machine, &mx, model, claim, steps, coverage)
-                .map(|()| Acceptance::Proof)
+            flowpipe::check(
+                &mut machine,
+                &mx,
+                model,
+                claim,
+                steps,
+                coverage,
+                initial_containment,
+            )
+            .map(|()| Acceptance::Proof)
         }
         wire::Body::Witness(dwells) => match trace {
             Some(trace) => witness::check(&mut machine, &mx, model, claim, dwells, trace)

@@ -574,7 +574,7 @@ fn never_proved(name: &str, unit: &str, claim: &str) -> Value {
 /// Soundness (FSpec FR-652-AC-20): a zero-length closing step never proves
 /// the false claim over `Z`, whose behaviour has `x = 2t`.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-1")]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-20")]
 fn a_zero_length_closing_step_never_proves_a_false_claim() {
     let unit = temporal(
         "hybrid Z using p { initial { mode M when { x = 0 }; } \
@@ -590,7 +590,7 @@ fn a_zero_length_closing_step_never_proves_a_false_claim() {
 /// Soundness (FSpec FR-652-AC-21): an atom reading the `on each` subject has
 /// no sound reading over one box, so the false claim is never proved.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-9")]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-21")]
 fn an_atom_reading_the_activation_subject_is_never_proved() {
     let unit = temporal(
         "hybrid Sw using p { initial { mode A when { x = 0 }; } \
@@ -607,7 +607,7 @@ fn an_atom_reading_the_activation_subject_is_never_proved() {
 /// Soundness (FSpec FR-652-AC-22): a jump after a closing dwell's first
 /// step is still followed, so the false claim over `Late` is never proved.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-1")]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-22")]
 fn a_jump_after_the_first_step_of_a_closing_dwell_is_followed() {
     let unit = temporal(
         "hybrid Late using p { initial { mode A when { x = 1 and y = 0 }; } \
@@ -644,4 +644,124 @@ fn a_claim_false_beyond_the_last_step_is_never_proved() {
     assert_eq!(cut["record"]["result"], "incomplete", "{cut}");
     let full = never_proved("ref-far", &unit, "Far");
     assert_eq!(full["record"]["result"], "refuted", "{full}");
+}
+
+const FORK: &str = "hybrid Fork using p { initial { mode A when { x = 0 }; } \
+     mode A invariant { x >= 0 and x <= 10 } flow { x' = 1; } \
+     transition to B when { x >= 5 } reset { x = 100 }; \
+     transition to C when { x >= 7 } reset { x = 0 }; \
+     mode B invariant { x >= 0 and x <= 200 } flow { x' = 0; } \
+     mode C invariant { x >= 0 and x <= 1 } flow { x' = 0; } }";
+
+const DROP: &str = "hybrid Drop using p { initial { mode A when { x = 1 }; } \
+     mode A invariant { x >= 0 and x <= 1 } flow { x' = -1; } \
+     transition to B when { x = 0 } reset { x = 0 }; \
+     mode B invariant { x = 0 } flow { x' = 0; } }";
+
+fn by_steps(unit: &str) -> String {
+    unit.replace("model-time", "model-steps")
+}
+
+/// FR-1019-AC-16: over `Drop` under `clock "model-steps"` the claim is proved
+/// with `jumps` 1 and `exhaustive` holding `jumps`, the certificate holding the
+/// depth-1 `B` dwell's jump step.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-16")]
+fn a_model_steps_claim_over_drop_is_proved_with_its_jump_dwell() {
+    let unit = by_steps(&temporal(DROP, "Held", "on origin", "always [0, 1] holds(h.x <= 1)"));
+    let item = reference("ref-drop", &unit, one("Held"));
+    let record = &item["record"];
+    assert_eq!(record["result"], "proved", "{item}");
+    assert_eq!(record["basis"]["type"], "bounded-solver", "{item}");
+    assert_eq!(record["basis"]["jumps"], 1, "{item}");
+    assert!(
+        record["basis"]["exhaustive"]
+            .as_array()
+            .is_some_and(|dimensions| dimensions.contains(&json!("jumps"))),
+        "{item}"
+    );
+    assert_eq!(record["certification"], "certified", "{item}");
+    let steps = item["certificate"]["form"]["steps"]
+        .as_array()
+        .expect("a flowpipe certificate");
+    let jump = steps
+        .iter()
+        .find(|step| step["mode"] == "B")
+        .expect("the depth-1 dwell");
+    assert_eq!(jump["from"], json!({"dwell": 0, "transition": 0}), "{item}");
+}
+
+/// FR-1019-AC-16: over `Fork`, `always [0, 10] holds(h.x >= 0)` is proved,
+/// certified, with one jump step for each of `A`'s two transitions.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-16")]
+fn a_fork_is_proved_with_a_jump_step_for_each_transition() {
+    let unit = temporal(FORK, "NonNegative", "on origin", "always [0, 10] holds(h.x >= 0)");
+    let item = reference("ref-fork", &unit, one("NonNegative"));
+    assert_eq!(item["record"]["result"], "proved", "{item}");
+    assert_eq!(item["record"]["certification"], "certified", "{item}");
+    let steps = item["certificate"]["form"]["steps"]
+        .as_array()
+        .expect("a flowpipe certificate");
+    let from: Vec<&Value> = steps.iter().filter_map(|step| step.get("from")).collect();
+    assert_eq!(
+        from,
+        [
+            &json!({"dwell": 0, "transition": 0}),
+            &json!({"dwell": 0, "transition": 1})
+        ],
+        "{item}"
+    );
+}
+
+/// FR-1019 "Refutations" step 3: a trace crosses a jump, so the claim `x < 50`
+/// over `Fork` is refuted through the jump at time 5 to `x = 100`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-2")]
+fn a_candidate_trace_crosses_a_jump() {
+    let unit = temporal(FORK, "Low", "on origin", "always [0, 10] holds(h.x < 50)");
+    let item = reference("ref-fork-low", &unit, one("Low"));
+    assert_eq!(item["record"]["result"], "refuted", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    let trace = find(&item["counterexample"], "trace").expect("a hybrid trace");
+    assert_eq!(trace["jumps"].as_array().map(Vec::len), Some(1), "{item}");
+}
+
+/// FR-1019 "Claims with no horizon": an `on each` claim with a horizon is
+/// proved inductively.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-9")]
+fn an_on_each_claim_is_proved_by_the_inductive_enclosure() {
+    let unit = temporal(
+        "hybrid Sw using p { initial { mode A when { x = 0 }; } \
+         mode A invariant { x = 0 } flow { x' = 0; } \
+         transition to B when { x = 0 } reset { x = 0 }; \
+         mode B invariant { x = 0 } flow { x' = 0; } }",
+        "Zero",
+        "on each (q: Sw)",
+        "always [0, 5] holds(h.x = 0)",
+    );
+    let item = reference("ref-each", &unit, one("Zero"));
+    assert_eq!(item["record"]["result"], "proved", "{item}");
+    assert_eq!(item["record"]["basis"]["type"], "inductive-solver", "{item}");
+}
+
+/// FR-1019 "Refutations": the refutation root is one initial entry's box, so
+/// the entries `v = 0` and `v = 10` never try `v = 5`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-2")]
+fn a_refutation_tries_only_points_of_its_own_entry() {
+    let unit = temporal(
+        "hybrid Two using p { initial { mode M when { v = 0 and w = 0 }; mode M when { v = 10 and w = 0 }; } \
+         mode M invariant { v >= 0 and v <= 100 and w = 0 } flow { v' = 1; w' = 0; } }",
+        "Small",
+        "on origin",
+        "always [0, 1] holds(h.v < 5)",
+    );
+    let item = reference("ref-two", &unit, one("Small"));
+    assert_eq!(item["record"]["result"], "refuted", "{item}");
+    let trace = find(&item["counterexample"], "trace").expect("a hybrid trace");
+    let lower = &trace["start"]["enclosure"]["v"]["lower"];
+    assert!(*lower == rational("0") || *lower == rational("10"), "{item}");
+    assert_eq!(*lower, trace["start"]["enclosure"]["v"]["upper"], "{item}");
 }

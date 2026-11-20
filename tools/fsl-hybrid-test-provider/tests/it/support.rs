@@ -227,7 +227,7 @@ pub fn run_with_cancel(
     limits: ProviderLimits,
     cancel: &filament_exact::Cancel,
 ) -> Value {
-    settle(ws, unit, item, engines, limits, cancel)
+    settle(ws, unit, None, item, engines, limits, cancel)
 }
 
 /// The first outcome item of the request over `unit` naming `claim` and
@@ -243,6 +243,7 @@ pub fn run(
     settle(
         ws,
         unit,
+        None,
         item,
         engines,
         limits,
@@ -253,16 +254,24 @@ pub fn run(
 fn settle(
     ws: &Workspace,
     unit: &str,
+    library: Option<(&str, &str)>,
     item: Value,
     engines: Vec<Engine>,
     limits: ProviderLimits,
     cancel: &filament_exact::Cancel,
 ) -> Value {
     ws.write("unit.fsl", unit.as_bytes());
-    let document = json!({"format": "native-analyze/1", "request": {
+    let mut members = json!({
         "program": {"source": {"file": "unit.fsl", "authority": "test",
             "identity": "hybrid-unit", "document": "HybridUnit", "formal_revision": 1}},
-        "items": [item]}});
+        "items": [item]});
+    if let Some((identity, text)) = library {
+        ws.write("library.fsl", text.as_bytes());
+        members["libraries"] = json!([{"identity": identity, "source": {
+            "file": "library.fsl", "authority": "test", "identity": "hybrid-library",
+            "document": "HybridLibrary", "formal_revision": 1}}]);
+    }
+    let document = json!({"format": "native-analyze/1", "request": members});
     let request = ws.write("analyze.json", document.to_string().as_bytes());
     let bytes = match fsl_command::command::analyze_with_providers(
         &request,
@@ -281,4 +290,25 @@ fn settle(
     };
     let document: Value = serde_json::from_slice(&bytes).expect("one JSON document");
     document["items"][0].clone()
+}
+
+/// [`run`] over `unit` importing the library `identity` whose source is
+/// `library`.
+pub fn run_with_library(
+    ws: &Workspace,
+    unit: &str,
+    library: (&str, &str),
+    item: Value,
+    engines: Vec<Engine>,
+    limits: ProviderLimits,
+) -> Value {
+    settle(
+        ws,
+        unit,
+        Some(library),
+        item,
+        engines,
+        limits,
+        &filament_exact::Cancel::new(),
+    )
 }

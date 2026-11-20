@@ -9,7 +9,8 @@
 //! `hang`, `no-hello` or `late-result`), `outcome` (the FSpec FR-331 outcome stage an `answer` returns
 //! as its `result` body), `stderr` (text written to standard error) and
 //! `size` (the length an `oversize` frame announces) and `record_request` (a
-//! path the request body is written to).
+//! path the request body is written to) and `require_dependencies` (identities the request's
+//! `dependencies` must carry, or the provider exits nonzero).
 
 use std::io::{Read, Write};
 use std::process::ExitCode;
@@ -75,6 +76,17 @@ fn run(script: &Value) -> Result<(), String> {
             quire_canonical::to_vec(&request["body"], quire_canonical::Limits::new(u64::MAX))
                 .map_err(|error| format!("{error:?}"))?;
         std::fs::write(path, body).map_err(|error| error.to_string())?;
+    }
+    if let Some(required) = script["require_dependencies"].as_array() {
+        // A request whose dependency closure lacks a required package is
+        // refused the way a provider that cannot read the package refuses.
+        let held: Vec<&str> = request["body"]["request"]["dependencies"]
+            .as_array()
+            .map(|held| held.iter().filter_map(|entry| entry["identity"].as_str()).collect())
+            .unwrap_or_default();
+        if required.iter().filter_map(Value::as_str).any(|identity| !held.contains(&identity)) {
+            return Err("the request lacks a required dependency".to_owned());
+        }
     }
     match mode {
         "answer" => {

@@ -6,10 +6,12 @@
 //! evaluation of an expression over a box is one unit of the meter the
 //! reader was given.
 
-use filament_exact::Rational;
-use fsl_semantics::check::{CheckedGraph, CheckedHybridModel};
+use filament_exact::{Integer, Rational};
+use fsl_semantics::check::{CheckedGraph, CheckedHybridModel, CompareOp};
 
-use super::super::flow::Flow;
+use super::super::expand::Exp;
+use super::super::flow::{poly_of, Flow};
+use super::super::poly::Poly;
 use super::super::interval::{Interval, Tri};
 use super::super::{HybridReplayMeter, HybridReplayRefusal};
 use super::flowpipe::narrowed_over;
@@ -371,4 +373,149 @@ pub fn box_within(a: &[Interval], b: &[Interval]) -> bool {
 /// The interval hull of two boxes.
 pub fn box_hull(a: &[Interval], b: &[Interval]) -> HybridBox {
     machine::hull_boxes(a, b)
+}
+
+fn root_of(value: &Integer) -> Option<Integer> {
+    let root = Integer::from_big(value.as_big().sqrt());
+    (root.mul(&root) == *value).then_some(root)
+}
+
+fn rational_sqrt(value: &Rational) -> Option<Rational> {
+    if value.numerator().is_negative() {
+        return None;
+    }
+    Rational::new(root_of(value.numerator())?, root_of(value.denominator())?).ok()
+}
+
+/// The rational roots of the polynomial with `coefficients` (lowest first):
+/// 0 for the zero polynomial, none for a nonzero constant, and for degree 1
+/// and 2 the roots that are rational; `None` above degree 2.
+fn rational_roots(coefficients: &[Rational]) -> Option<Vec<Rational>> {
+    let mut c = coefficients.to_vec();
+    while c.last().is_some_and(Rational::is_zero) {
+        c.pop();
+    }
+    let zero = Rational::from_integer(Integer::zero());
+    match c.len() {
+        0 => Some(vec![zero]),
+        1 => Some(Vec::new()),
+        2 => Some(vec![c[0].neg().div(&c[1])?]),
+        3 => {
+            let four = Rational::from_integer(Integer::from(4_i64));
+            let two = Rational::from_integer(Integer::from(2_i64));
+            let discriminant = c[1].mul(&c[1]).sub(&four.mul(&c[2]).mul(&c[0]));
+            let Some(root) = rational_sqrt(&discriminant) else {
+                return Some(Vec::new());
+            };
+            let scale = two.mul(&c[2]);
+            let mut roots = vec![c[1].neg().add(&root).div(&scale)?];
+            if !root.is_zero() {
+                roots.push(c[1].neg().sub(&root).div(&scale)?);
+            }
+            Some(roots)
+        }
+        _ => None,
+    }
+}
+
+fn comparisons<'e>(exp: &'e Exp, out: &mut Vec<(&'e Exp, &'e Exp)>) {
+    match exp {
+        Exp::Compare(_, a, b) => out.push((a, b)),
+        Exp::Negate(a) | Exp::Not(a) | Exp::Ranged { value: a, .. } => comparisons(a, out),
+        Exp::Arithmetic(_, a, b, _) | Exp::Logic(_, a, b) => {
+            comparisons(a, out);
+            comparisons(b, out);
+        }
+        Exp::Conditional(c, a, b, _) => {
+            comparisons(c, out);
+            comparisons(a, out);
+            comparisons(b, out);
+        }
+        _ => {}
+    }
+}
+
+impl ModelReader<'_, '_> {
+    /// The rational instants `t >= 0`, sorted, at which a comparison of the
+    /// guard of transition `transition` of `mode` has a zero difference
+    /// along `solution` (one polynomial in time per variable, lowest
+    /// coefficient first): the instants at which the guard can change its
+    /// truth. `None` when a difference has degree above 2 or is not a
+    /// polynomial in time.
+    pub fn guard_instants(
+        &self,
+        mode: usize,
+        transition: usize,
+        solution: &[Vec<Rational>],
+    ) -> Option<Vec<Rational>> {
+        let solved: Vec<Poly> = solution.iter().cloned().map(Poly::new).collect();
+        let guard = &self.mx.modes[mode].transitions[transition].guard;
+        let mut atoms = Vec::new();
+        comparisons(guard, &mut atoms);
+        let mut instants: Vec<Rational> = Vec::new();
+        for (a, b) in atoms {
+            let difference = poly_of(a, &solved)?.sub(&poly_of(b, &solved)?);
+            for root in rational_roots(difference.coefficients())? {
+                if !root.numerator().is_negative() && !instants.contains(&root) {
+                    instants.push(root);
+                }
+            }
+        }
+        instants.sort();
+        Some(instants)
+    }
+
+    /// The state a jump over transition `transition` of `mode` reaches from
+    /// the point `pre`, when every reset conjunct is `x = e` with `e` a point
+    /// over `pre`; `None` otherwise or when a reset is not defined there.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadStop`] when the meter stops the read.
+    pub fn reset_point(
+        &mut self,
+        mode: usize,
+        transition: usize,
+        pre: &[Rational],
+    ) -> Read<Option<Vec<Rational>>> {
+        let bx: HybridBox = pre.iter().cloned().map(Interval::point).collect();
+        let x = &self.mx.modes[mode].transitions[transition];
+        let mut post = pre.to_vec();
+        for (variable, relation, value) in &x.resets {
+            if *relation != CompareOp::Eq || !self.machine.defined(value, &bx)?.is_yes() {
+                return Ok(None);
+            }
+            let found = self.machine.num(value, &bx)?;
+            match (found.lower, found.upper) {
+                (Some(low), Some(high)) if low == high => post[*variable] = low,
+                _ => return Ok(None),
+            }
+        }
+        Ok(Some(post))
+    }
+
+    /// The post-jump box a witness jump from `bx` over transition
+    /// `transition` of `mode` needs: each `x = e` variable takes the value
+    /// of `e` over `bx`, every other variable keeps its interval in `bx`;
+    /// `None` when a reset is not an `=` conjunct or not defined over `bx`.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadStop`] when the meter stops the read.
+    pub fn reset_box(
+        &mut self,
+        mode: usize,
+        transition: usize,
+        bx: &HybridBox,
+    ) -> Read<Option<HybridBox>> {
+        let x = &self.mx.modes[mode].transitions[transition];
+        let mut post = bx.clone();
+        for (variable, relation, value) in &x.resets {
+            if *relation != CompareOp::Eq || !self.machine.defined(value, bx)?.is_yes() {
+                return Ok(None);
+            }
+            post[*variable] = self.machine.num(value, bx)?;
+        }
+        Ok(Some(post))
+    }
 }
