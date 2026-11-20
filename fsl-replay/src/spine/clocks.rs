@@ -228,6 +228,38 @@ impl RequestClocks {
         Ok(selections)
     }
 
+    /// The selections of the declarations of `package` that read their
+    /// binding from a model subject (FR-640 "Behavior"): the configuration is
+    /// derived from the model's binding and the declaration's profile, so no
+    /// `clocks` member serves them. A declaration that reads a named role
+    /// clock takes no selection here.
+    ///
+    /// # Errors
+    ///
+    /// The FR-763 refusal of a declaration whose traces need different
+    /// configurations.
+    pub fn model_selections(
+        package: &pkg::CheckedPackage,
+    ) -> Result<Vec<TemporalClockSelection>, Box<CompileRefusal>> {
+        let mut selections = Vec::new();
+        for declaration in declarations(package) {
+            if configured_kind(declaration.profile).is_none() {
+                continue;
+            }
+            let Some(traces) = &declaration.model else {
+                continue;
+            };
+            if let Some(clock) = derived_configuration(&declaration, traces)? {
+                selections.push(TemporalClockSelection::new(
+                    declaration.source.clone(),
+                    declaration.span,
+                    clock,
+                ));
+            }
+        }
+        Ok(selections)
+    }
+
     /// The selections of one library unit's checked `package` (FR-640, FR-099):
     /// its declarations read the same `clocks` members as the program's.
     /// Whether a member is unused is decided over the whole request, by

@@ -452,7 +452,6 @@ temporal NestedIntervals using tt over (c: M::Call) clock \"model-time\" on orig
 
     #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
-    #[ignore = "QSL-2689: EN-6 faults admitting the nested-interval witness"]
     fn nested_until_with_inner_and_outer_bounds() {
         checked_verdict(&nested(3), true);
         checked_verdict(&nested(4), false);
@@ -533,7 +532,6 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
 
     #[trace("FR-1034", "FR-242", "FR-237")]
     #[test]
-    #[ignore = "QSL-2689: EN-6 faults admitting the unbounded pulse witness"]
     fn unbounded_upper_bound_matches_the_actual_untimed_checker() {
         // All pulse events in this model occur at 2 ms, beyond the 1 ms
         // lower bound. Dropping clocks preserves the same discrete phase path.
