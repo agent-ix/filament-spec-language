@@ -45,41 +45,116 @@ impl Formula {
 #[test]
 #[trace("TC-053")]
 fn accepted_three_variable_guards_never_admit_an_absent_unwrap() {
+    use filament_exact::{Integer, OptionValue, Value, ValueType};
     let atoms = [Formula::Present, Formula::A, Formula::B];
     let mut formulas = Vec::new();
     for x in &atoms {
-        formulas.push(x.clone());
-        formulas.push(Formula::Not(Box::new(x.clone())));
+        let required = matches!(x, Formula::Present).then_some("direct-presence");
+        formulas.push((x.clone(), required));
+        formulas.push((Formula::Not(Box::new(x.clone())), None));
         for y in &atoms {
-            formulas.push(Formula::And(Box::new(x.clone()), Box::new(y.clone())));
-            formulas.push(Formula::Or(Box::new(x.clone()), Box::new(y.clone())));
-            formulas.push(Formula::Implies(Box::new(x.clone()), Box::new(y.clone())));
+            formulas.push((Formula::And(Box::new(x.clone()), Box::new(y.clone())), None));
+            formulas.push((Formula::Or(Box::new(x.clone()), Box::new(y.clone())), None));
+            formulas.push((
+                Formula::Implies(Box::new(x.clone()), Box::new(y.clone())),
+                None,
+            ));
         }
     }
-    formulas.push(Formula::Or(
-        Box::new(Formula::And(
-            Box::new(Formula::Present),
-            Box::new(Formula::A),
-        )),
-        Box::new(Formula::And(
-            Box::new(Formula::Present),
-            Box::new(Formula::B),
-        )),
+    formulas.push((
+        Formula::Or(
+            Box::new(Formula::And(
+                Box::new(Formula::Present),
+                Box::new(Formula::A),
+            )),
+            Box::new(Formula::And(
+                Box::new(Formula::Present),
+                Box::new(Formula::B),
+            )),
+        ),
+        Some("common-fact"),
     ));
-    for formula in formulas {
-        let safe = (0..8).all(|bits| {
-            !formula.holds(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0) || bits & 1 != 0
-        });
-        let body = format!("function guarded using v(x: Option<Integer>, a: Boolean, b: Boolean): Boolean pure {{ ({}) implies (value(x) = value(x)) }}",formula.source());
+    formulas.push((
+        Formula::And(
+            Box::new(Formula::Present),
+            Box::new(Formula::Not(Box::new(Formula::Present))),
+        ),
+        Some("impossible-path"),
+    ));
+    let formula_count = formulas.len();
+    let mut assignment_count = 0;
+    let mut accepted = 0;
+    let mut refused = 0;
+    let mut required_accepts = 0;
+    let mut required_evaluations = 0;
+    for (formula, required) in formulas {
+        let mut safe = true;
+        for bits in 0..8 {
+            assignment_count += 1;
+            if formula.holds(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0) && bits & 1 == 0 {
+                safe = false;
+            }
+        }
+        let body = format!("function guarded using v(x: Option<Integer>, a: Boolean, b: Boolean): Boolean pure {{ ({}) implies (value(x) > 0) }}",formula.source());
         match check(&body, &DependencyInput::default()) {
-            Ok(_) => assert!(safe, "unsound accepted guard {formula:?}"),
-            Err(error) => assert_eq!(
-                error.code(),
-                Code::UndefinedExpression,
-                "{formula:?}: {error:?}"
-            ),
+            Ok(checked) => {
+                accepted += 1;
+                assert!(safe, "unsound accepted guard {formula:?}");
+                if required.is_some() {
+                    required_accepts += 1;
+                    for bits in 0..8 {
+                        let present = bits & 1 != 0;
+                        let a = bits & 2 != 0;
+                        let b = bits & 4 != 0;
+                        let payloads: &[Option<i64>] = if present {
+                            &[Some(-3), Some(5)]
+                        } else {
+                            &[None]
+                        };
+                        for payload in payloads {
+                            let x = match payload {
+                                Some(value) => OptionValue::present(
+                                    ValueType::Integer,
+                                    Value::Integer(Integer::from(*value)),
+                                )
+                                .unwrap(),
+                                None => OptionValue::none(ValueType::Integer),
+                            };
+                            let expected = !formula.holds(present, a, b)
+                                || payload.is_some_and(|value| value > 0);
+                            let result = super::evaluation::call(
+                                &checked,
+                                "guarded",
+                                vec![x, Value::Boolean(a), Value::Boolean(b)],
+                            );
+                            assert!(
+                                matches!(result, Value::Boolean(actual) if actual == expected),
+                                "{required:?}, assignment {bits}, payload {payload:?}: {result:?}"
+                            );
+                            required_evaluations += 1;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                refused += 1;
+                assert!(
+                    required.is_none(),
+                    "mandatory {required:?} control refused: {error:?}"
+                );
+                assert_eq!(
+                    error.code(),
+                    Code::UndefinedExpression,
+                    "{formula:?}: {error:?}"
+                );
+            }
         }
     }
+    assert_eq!(required_accepts, 3);
+    assert_eq!(assignment_count, formula_count * 8);
+    assert_eq!(accepted + refused, formula_count);
+    assert_eq!(required_evaluations, 36);
+    println!("formulas={formula_count}; assignments={assignment_count}; accepted={accepted}; refused={refused}; required_accepts={required_accepts}; required_evaluations={required_evaluations}");
 }
 
 #[test]
