@@ -672,7 +672,13 @@ fn shared_operation_contract_node_keeps_each_named_occurrence() {
     );
     let items = json!([{"claim": "First"}, {"claim": "Second"}]);
     let ws = Workspace::new("package-shared-operation-contract-node");
-    let request = counter_request(&ws, body, items.clone());
+    let request = crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&format!("{}{body}", crate::counter::CONTRACT)),
+        &crate::counter::document_with_ranged_parameter(),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({"items": items.clone()}),
+    );
     let source = analyze(&request);
     let (members, package_bytes) = package_selection(&ws, &request_of(&request));
     let package: Value = serde_json::from_slice(&package_bytes).expect("checked package JSON");
