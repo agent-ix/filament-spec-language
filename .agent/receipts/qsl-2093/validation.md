@@ -38,4 +38,4 @@ The first large-declaration attempt supplied too few lexer tokens. Its corrected
 
 `rustfmt --edition 2021 --check tests/it/lifecycle_boundaries.rs` exited 0. `git diff --check` exited 0. No unrelated module was formatted. Known unchanged root integration lint limitations are accepted by the lead; no lint retry or green Clippy claim is made.
 
-No workspace gate, product binary, matrix, proof/Kani gate, baseline measurement, peer-result recheck or passing-case confidence rerun ran. Independent review and one complete affected `lifecycle_boundaries::` gate remain with the lead. Broader historical QSL-2093 families are unclaimed by this slice.
+No workspace gate, product binary, matrix, proof/Kani gate, baseline measurement, peer-result recheck or passing-case confidence rerun ran. The later independent SR-1505/1506 review passed with no findings, and the one complete affected `lifecycle_boundaries::` gate passed: seven new passes, zero failures, one strict QSL-2720 ignored case. Its exact command, tested head and exit are in `final-gate.md`. Broader historical QSL-2093 families are unclaimed by this slice.
