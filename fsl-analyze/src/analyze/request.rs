@@ -937,7 +937,7 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
                 && form.item_kind == ItemKind::Formula
-                && super::document::timed(package) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             if digital {
                 super::digital_item::digital_clause_item(
@@ -1232,11 +1232,17 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if digital
                 && form.item_kind == ItemKind::Formula
-                && super::document::timed(package) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
-        Some(ItemForm::Temporal(_)) if super::document::timed(package) => {
+        Some(ItemForm::Temporal(form))
+            if if form.item_kind == ItemKind::Formula {
+                super::document::claim_timed(package, &item.claim, binding)
+            } else {
+                super::document::timed(package)
+            } =>
+        {
             Some(crate::zone_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
@@ -1269,7 +1275,13 @@ fn work<'a>(
     // task set in closed form, which has no bound to ask for, so a
     // schedulability item is read in the `unbounded` mode it advertises
     // (FR-247).
-    let zone = matches!(&item.form, Some(ItemForm::Temporal(_))) && super::document::timed(package);
+    let zone = match &item.form {
+        Some(ItemForm::Temporal(form)) if form.item_kind == ItemKind::Formula => {
+            super::document::claim_timed(package, &item.claim, binding)
+        }
+        Some(ItemForm::Temporal(_)) => super::document::timed(package),
+        _ => false,
+    };
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
         _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,

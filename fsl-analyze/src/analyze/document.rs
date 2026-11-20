@@ -1645,7 +1645,11 @@ fn resolve_one(
         // FR-243, FR-635: `options.method` is negotiated against each
         // candidate's published values, so `digital-clocks` over a timed
         // subject reaches EN-1's digital-clock route and `zones` EN-6.
-        registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package))
+        registry.restrict_to_options_and_timing(
+            candidates,
+            &backend_options,
+            claim_timed(package, &claim, binding),
+        )
     } else {
         candidates
     };
@@ -1805,6 +1809,7 @@ fn resolve_one(
                 ItemForm::Temporal(form)
             })
     };
+    let claim_reads_time = claim_timed(package, &claim, binding);
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1854,7 +1859,7 @@ fn resolve_one(
         } else {
             selection.unrouted_routing_options(kind == Capability::TemporalSatisfaction)
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
-            || reads_no_clocks(package, &temporal)
+            || reads_no_clocks(claim_reads_time, &temporal)
             || (!protocol_bound
                 && temporal
                     .limits
@@ -2000,7 +2005,7 @@ fn resolve_derived(
     claim.item.form = Some(ItemForm::Temporal(form));
     claim.claim_name = name.to_owned();
     claim.unrouted = selection.unrouted()
-        || reads_no_clocks(package, temporal)
+        || reads_no_clocks(timed_over(package, &reads), temporal)
         || !own_subject.same_model(subject);
     claim.subject = own_subject;
     Some(ResolvedItem::Claim(claim))
@@ -2223,8 +2228,8 @@ fn resolve_protocol_freedom(
 
 /// Whether the item sets `max_clocks`, which only a timed subject reads
 /// (FSpec FR-415): on an untimed subject no route reads it.
-fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bool {
-    !timed(package)
+fn reads_no_clocks(timed: bool, temporal: &TemporalSelection) -> bool {
+    !timed
         && temporal
             .limits
             .is_some_and(|limits| limits.max_clocks.is_some())
@@ -2234,6 +2239,89 @@ fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bo
 /// (FR-243): a selected model declares a time source.
 pub(super) fn timed(package: &CheckedPackage) -> bool {
     timed_over(package, &model_identities(package))
+}
+
+/// Whether the clause `claim` reads a timed model (FR-243): a model selection
+/// its subject reads (the models its universes cover, every selection when
+/// they cover none, as derived items read them) declares a time source. A
+/// clause over an untimed model whose subject reads no timed model stays on
+/// EN-1 beside a timed model it does not read; one whose subject also reads a
+/// timed model is timed. A clause whose `over` type is no selection of the
+/// package, or that is no clause, reads every selection.
+pub(super) fn claim_timed(
+    package: &CheckedPackage,
+    claim: &OccurrenceKey,
+    binding: &SubjectBinding<'_>,
+) -> bool {
+    let owner = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| &OccurrenceKey::new(clause.identity(), clause.claim().clone()) == claim)
+        .and_then(|clause| match &clause.clause().over().1 {
+            filament_exact::ValueType::Reference(object) => {
+                Some(object.original().package().to_owned())
+            }
+            _ => None,
+        });
+    let selected = owner
+        .as_deref()
+        .is_some_and(|owner| model_identities(package).contains(owner));
+    claim_routing(
+        selected,
+        || timed_over(package, &read_identities(package, binding)),
+        || timed(package),
+    )
+}
+
+/// The routing decision of [`claim_timed`]: a clause over a model the package
+/// selects is timed when a model its subject reads is (`reads_timed`); any
+/// other clause reads every selection, so it is timed when the package is
+/// (`package_timed`).
+fn claim_routing(
+    owner_selected: bool,
+    reads_timed: impl FnOnce() -> bool,
+    package_timed: impl FnOnce() -> bool,
+) -> bool {
+    if owner_selected {
+        reads_timed()
+    } else {
+        package_timed()
+    }
+}
+
+#[cfg(test)]
+mod claim_routing_tests {
+    use super::claim_routing;
+
+    /// QSL-2654, FR-243: a clause over an untimed model whose subject reads a
+    /// timed model is timed, whatever the package says of the models it does
+    /// not read; one whose subject reads only untimed models is not, though
+    /// the package holds a timed one.
+    #[test]
+    fn a_subject_reading_a_timed_model_is_timed_whatever_its_over_model() {
+        assert!(claim_routing(true, || true, || false));
+        assert!(claim_routing(true, || true, || true));
+        assert!(!claim_routing(true, || false, || true));
+        assert!(!claim_routing(true, || false, || false));
+    }
+
+    /// QSL-2654: a clause whose `over` type is no model selection reads every
+    /// selection, so it is timed exactly when the package is, and never reads
+    /// the subject's models.
+    #[test]
+    fn a_clause_over_no_selected_model_falls_back_to_the_package() {
+        assert!(claim_routing(
+            false,
+            || panic!("the subject's reads are not consulted"),
+            || true
+        ));
+        assert!(!claim_routing(
+            false,
+            || panic!("the subject's reads are not consulted"),
+            || false
+        ));
+    }
 }
 
 /// [`timed`] for a subject that reads the model selections `reads` holds:
