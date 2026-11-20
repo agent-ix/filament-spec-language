@@ -38,6 +38,9 @@ use crate::graph_world::{
     REACHES_TWO,
 };
 
+#[path = "state_graph/replay_contracts.rs"]
+mod replay_contracts;
+
 pub(crate) const AB: &[&str] = &["a", "b"];
 
 pub(crate) fn run(request: StateGraphRequest<'_>) -> StateGraphRun {

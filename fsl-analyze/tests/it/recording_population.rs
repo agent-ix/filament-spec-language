@@ -257,6 +257,30 @@ fn an_unknown_population_leaves_closure_scope_incomplete() {
     }
 }
 
+/// FR-990's unknown-population result is independent of the closure state.
+#[trace("TC-2955", "FR-990-AC-9")]
+#[test]
+fn an_unknown_population_with_open_closure_keeps_scope_incomplete() {
+    let run = run(
+        "population-unknown-open",
+        &recording(&["x", "y"], &["x", "y"], "open"),
+        None,
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(
+        item["global"]["cause"], "incomplete-closure-scope",
+        "{item}"
+    );
+    assert_eq!(item["global"]["complete"], false, "{item}");
+    assert_eq!(item["closure"]["state"], "open", "{item}");
+    for node in [LEFT, RIGHT] {
+        for identity in ["x", "y"] {
+            assert_eq!(member_control(&item, node, identity)["verdict"], "pending");
+        }
+    }
+}
+
 /// FR-990-AC-10: defective populations refuse the item or the request.
 #[trace("TC-2955", "FR-990-AC-10")]
 #[test]

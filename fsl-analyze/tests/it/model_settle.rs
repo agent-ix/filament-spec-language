@@ -40,6 +40,9 @@ use crate::counter::{
 };
 use filament_semantic_value::checking::CheckMode;
 
+#[path = "model_settle/replay_contracts.rs"]
+mod replay_contracts;
+
 /// The letters of a replay that reads no atom: the deadlock-freedom item has
 /// none.
 const NO_ATOMS: Letters = Letters { atom: |_| None };

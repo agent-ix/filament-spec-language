@@ -1,0 +1,32 @@
+QSL-2085 / SR1489-SR1490 / FND-001 correction
+
+Changed function:
+checker_value_boundaries::guards::accepted_three_variable_guards_never_admit_an_absent_unwrap
+
+The generated direct-presence and common-fact controls now require actual
+acceptance. An explicit contradictory-presence control also requires
+acceptance, matching TC-053 Test Procedure and Expected Results. Other
+logically safe formulas may still receive conservative UndefinedExpression
+refusals. Every accepted formula remains subject to the independent
+eight-assignment soundness oracle.
+
+The three mandatory controls are independently evaluated with absent input
+and negative/positive present payloads for every Boolean argument assignment.
+The RHS compares the unwrapped integer with zero, so required evaluations
+include both false and true results rather than an identity comparison.
+
+Exact focused command, in the existing luna-qsl-2085 worktree:
+CARGO_BUILD_JOBS=2 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --locked --features checked-handoff --test it checker_value_boundaries::guards::accepted_three_variable_guards_never_admit_an_absent_unwrap -- --exact --nocapture --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated
+
+Actual result:
+formulas=35; assignments=280; accepted=9; refused=26; required_accepts=3; required_evaluations=36
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1231 filtered out
+test duration: 0.17s
+actual Cargo exit: 0
+full original log: /home/peter/dev/.agent/qsl-2085-guard-review-fix.log
+
+Only this changed qualified test ran. No unchanged19-case batch, pending
+owner test, aggregate gate, lint, product build, main refresh or new review
+ran. Existing warm target and profile were retained. The three strict
+pending functions remain excluded from coverage. Final component gate and
+same-reviewer disposition remain pending.
