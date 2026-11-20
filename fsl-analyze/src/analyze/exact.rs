@@ -40,10 +40,10 @@ use fsl_semantics::check::{
 use super::items::{BROKEN, NOT_YET, admission};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective, build_retaining_monitor, decide_always, decide_bounded_event,
-    decide_expected_reward, decide_reachability, decide_until, manifest as en5,
-    settle_product_refusal,
+    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
+    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
+    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
+    manifest as en5, settle_product_refusal,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -317,7 +317,9 @@ fn run_timed(
     };
     let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
-        Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) => return not_yet(),
+        Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) | Err(FhError::Cycle) => {
+            return not_yet();
+        }
         Err(_) => return broken(),
     };
     let Some(value) = values.get(start.index()) else {

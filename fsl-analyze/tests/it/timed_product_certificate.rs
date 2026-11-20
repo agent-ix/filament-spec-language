@@ -774,7 +774,7 @@ fn a_wrong_clock_cap_is_malformed() {
 /// value 0 is rejected.
 #[trace("TC-2493", "FR-924-AC-6")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-7")]
-#[ignore = "QSL-2156: the region product of a reset loop holds a positive-time cycle that bounded backward induction rejects as a cycle"]
+#[ignore = "QSL-2156: the region product of a reset loop holds a positive-time cycle; bounded backward induction rejects it and the claim settles as not yet implemented"]
 #[test]
 fn reset_loop_zeno_values_are_rejected() {
     let world = retx_over(

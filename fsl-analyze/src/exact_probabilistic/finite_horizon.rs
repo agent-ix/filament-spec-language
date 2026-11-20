@@ -10,8 +10,7 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from,
-    policy_iteration,
+    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from, policy_iteration,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
@@ -193,15 +192,13 @@ fn backward_induction_with_policy_limit(
     }
     let evaluation = Evaluation::of(product).map_err(|_| FhError::InvalidProbability)?;
     let terminal = evaluation.extend(terminal).ok_or(FhError::InvalidState)?;
-    if let Some(result) =
-        collapse_zero_time_components(
-            &evaluation.product,
-            &terminal,
-            objective,
-            max_rational_bits,
-            max_policy_iterations,
-        )?
-    {
+    if let Some(result) = collapse_zero_time_components(
+        &evaluation.product,
+        &terminal,
+        objective,
+        max_rational_bits,
+        max_policy_iterations,
+    )? {
         return Ok(FhResult::Exact {
             values: evaluation.restrict(result.0),
             policy: result.1,
@@ -248,6 +245,7 @@ fn collapse_zero_time_components(
 ) -> Result<Option<(Vec<Rational>, Vec<Option<usize>>)>, FhError> {
     let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
         UnboundedError::InvalidState => FhError::InvalidState,
+        UnboundedError::MissingAction => FhError::MissingAction,
         _ => FhError::InvalidProbability,
     })?;
     let zero_choices = graph
@@ -276,6 +274,7 @@ fn collapse_zero_time_components(
         }
         let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
             UnboundedError::InvalidState => FhError::InvalidState,
+            UnboundedError::MissingAction => FhError::MissingAction,
             _ => FhError::InvalidProbability,
         })?;
         let policy = graph
@@ -345,7 +344,9 @@ fn has_cycle(graph: &Graph<'_>) -> Result<bool, FhError> {
     for choices in &graph.choices {
         for choice in choices {
             for edge in &choice.edges {
-                let degree = indegree.get_mut(edge.to.index()).ok_or(FhError::InvalidState)?;
+                let degree = indegree
+                    .get_mut(edge.to.index())
+                    .ok_or(FhError::InvalidState)?;
                 *degree = degree.checked_add(1).ok_or(FhError::InvalidState)?;
             }
         }
@@ -361,7 +362,9 @@ fn has_cycle(graph: &Graph<'_>) -> Result<bool, FhError> {
         visited = visited.checked_add(1).ok_or(FhError::InvalidState)?;
         for choice in graph.choices.get(state).ok_or(FhError::InvalidState)? {
             for edge in &choice.edges {
-                let degree = indegree.get_mut(edge.to.index()).ok_or(FhError::InvalidState)?;
+                let degree = indegree
+                    .get_mut(edge.to.index())
+                    .ok_or(FhError::InvalidState)?;
                 *degree = degree.checked_sub(1).ok_or(FhError::InvalidState)?;
                 if *degree == 0 {
                     ready.push_back(edge.to.index());
@@ -480,7 +483,9 @@ impl ZeroTimeSolver<'_> {
                 if denominator.is_zero() {
                     continue;
                 }
-                let value = exit_value.div(&denominator).ok_or(FhError::InvalidProbability)?;
+                let value = exit_value
+                    .div(&denominator)
+                    .ok_or(FhError::InvalidProbability)?;
                 if !rational_fits(&value, self.max_rational_bits) {
                     return Err(FhError::InvalidProbability);
                 }
