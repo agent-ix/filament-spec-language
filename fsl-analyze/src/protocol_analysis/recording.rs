@@ -539,13 +539,11 @@ pub fn assess_recording_with_population(
         (
             "inconclusive",
             "unsettled",
-            Some(
-                if document.closure.state == "closed" && !closure_scope_complete {
-                    "incomplete-closure-scope"
-                } else {
-                    "open-history"
-                },
-            ),
+            Some(if !closure_scope_complete {
+                "incomplete-closure-scope"
+            } else {
+                "open-history"
+            }),
             false,
         )
     };
