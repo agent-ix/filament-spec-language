@@ -349,7 +349,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     } = read_run_members(&request, &mut intake)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
-        models: request.models,
+        models: Some(request.models),
         program: wire::CompileProgram {
             sources: Vec::new(),
             extraction: false,
@@ -357,7 +357,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         refinement_internals: request.refinement_internals,
         libraries: request.libraries,
         extensions: Vec::new(),
-        clocks: Default::default(),
+        clocks: None,
         output: None,
         handoff: None,
         integer_division: None,

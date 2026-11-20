@@ -205,7 +205,9 @@ pub fn native_budget_setting(
 
 mod model_unit;
 mod unit;
-pub use model_unit::{CompiledModelUnit, compile_model_unit, package_input_from_sources};
+pub use model_unit::{
+    CompiledModelUnit, compile_model_unit, is_model_unit_source, package_input_from_sources,
+};
 pub use unit::{
     admit_unit, admit_unit_with_cancel, admit_units_with_cancel, OperationClauseFailure,
     SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause, UnitIntakeRefusal,

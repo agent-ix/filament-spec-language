@@ -40,6 +40,11 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
     tokens.get(5).is_some_and(|token| *token == b"domain")
 }
 
+/// Whether source bytes are an admitted FSL model unit with a `domain` identity.
+pub fn is_model_unit_source(bytes: &[u8]) -> bool {
+    looks_like_model_unit(bytes)
+}
+
 /// Compile one anonymous model-unit byte source using its domain as the
 /// source identity label.
 pub(super) fn compile_model_unit_bytes(

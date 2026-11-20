@@ -34,8 +34,8 @@ pub(super) struct Envelope<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompileRequest {
-    #[serde(deserialize_with = "deserialize_objects")]
-    pub models: Vec<Model>,
+    #[serde(default, deserialize_with = "optional_objects")]
+    pub models: Option<Vec<Model>>,
     #[serde(deserialize_with = "compile_program")]
     pub program: CompileProgram,
     /// FR-147/FR-099: the unit's unchecked internal-list value.
@@ -49,8 +49,8 @@ pub(super) struct CompileRequest {
     #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,
     /// FR-640: the clock configurations by clock name; empty when absent.
-    #[serde(default, deserialize_with = "clocks")]
-    pub clocks: fsl_replay::spine::RequestClocks,
+    #[serde(default, deserialize_with = "optional_clocks")]
+    pub clocks: Option<fsl_replay::spine::RequestClocks>,
     /// FR-810: the file the checked package is written to; none when absent.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub output: Option<OutputMember>,
@@ -796,8 +796,23 @@ impl ClocksRequest for Request {
 
 impl ClocksRequest for CompileRequest {
     fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
-        &mut self.clocks
+        self.clocks
+            .get_or_insert_with(fsl_replay::spine::RequestClocks::default)
     }
+}
+
+fn optional_objects<'de, D, T>(decoder: D) -> Result<Option<Vec<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    deserialize_objects(decoder).map(Some)
+}
+
+fn optional_clocks<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<fsl_replay::spine::RequestClocks>, D::Error> {
+    clocks(decoder).map(Some)
 }
 
 /// Read a supplied `clocks` value exactly as the request member is read: the
