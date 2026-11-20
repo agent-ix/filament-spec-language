@@ -2,12 +2,13 @@
 //! Independent checked-subject replay of finite probabilistic witnesses.
 
 use super::*;
+use crate::ProductAction;
 use crate::{ExactProbLimits, ModelCheckLimit};
 use filament_exact::Value as SemanticValue;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    same_values, PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem,
-    TransitionId,
+    PredicateReading, ScheduledIdentity, TimedSubjectRefusal, TimedSystem, TransitionId,
+    same_values,
 };
 use fsl_package::CheckedPackage;
 
@@ -16,17 +17,24 @@ mod bounded;
 /// A semantic operation, draw and resulting state in a finite witness.
 #[derive(Clone, Debug)]
 pub struct ProbabilityWitnessStep {
-    /// The scheduled operation, receiver and non-random arguments.
-    pub action: ScheduledIdentity,
-    /// The actual resolved transition, including its random arguments.
-    pub transition: ModelTransition,
-    /// The random argument vector in declaration order.
-    pub draw: Vec<SemanticValue>,
+    /// The complete FR-202 choice, including digital delay and idle-tail
+    /// actions. Identity choices carry the semantic operation below.
+    pub choice: ProductAction,
+    /// The scheduled operation, receiver and non-random arguments, when this
+    /// step is an identity choice.
+    pub action: Option<ScheduledIdentity>,
+    /// The actual resolved transition, including its random arguments, when
+    /// this step is an identity choice.
+    pub transition: Option<ModelTransition>,
+    /// The random argument vector in declaration order, when this step is an
+    /// identity choice.
+    pub draw: Option<Vec<SemanticValue>>,
     /// The actual post-state.
     pub post: ModelSimState,
     /// The complete canonical post-product key.
     pub post_key: ProbabilityProductKey,
-    /// Elapsed time; this untimed entry requires zero.
+    /// Exact time elapsed in the subject's declared time unit. Delay actions
+    /// carry their positive duration; non-delay actions carry zero.
     pub elapsed: Rational,
 }
 
@@ -49,7 +57,7 @@ pub struct ProbabilisticCounterexample {
     /// Complete initial product key.
     pub initial_key: ProbabilityProductKey,
     /// Deterministic scheduler entries in full-key order; empty for a workload.
-    pub scheduler: Vec<(ProbabilityProductKey, ScheduledIdentity)>,
+    pub scheduler: Vec<(ProbabilityProductKey, ProductAction)>,
     /// Prefix-free finite paths.
     pub paths: Vec<ProbabilityWitnessPath>,
 }
@@ -347,12 +355,18 @@ fn replay_probabilistic_witness_impl(
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        if !enabled.iter().any(|enabled| &enabled.identity == action) {
+        let ProductAction::Identity(schedule) = action else {
+            return Err(ProbabilityWitnessError::Refused);
+        };
+        if !enabled
+            .iter()
+            .any(|enabled| crate::Schedule::of(system, &enabled.identity).as_ref() == Ok(schedule))
+        {
             return Err(ProbabilityWitnessError::Refused);
         }
-        let action_bytes = system
-            .scheduled_identity_key(action)
-            .map_err(|stop| cancelled_expansion(stop, cancel))?;
+        let action_bytes = action
+            .to_bytes()
+            .map_err(|_| ProbabilityWitnessError::Refused)?;
         bounded::retain(
             key.as_bytes().len().saturating_add(action_bytes.len()),
             &mut storage,
@@ -397,8 +411,17 @@ fn replay_probabilistic_witness_impl(
             {
                 return Ok(ProbabilityWitnessReplay::Parity);
             }
+            let ProductAction::Identity(schedule) = &step.choice else {
+                return Err(ProbabilityWitnessError::Refused);
+            };
+            let (Some(step_action), Some(step_transition), Some(step_draw)) =
+                (&step.action, &step.transition, &step.draw)
+            else {
+                return Err(ProbabilityWitnessError::Refused);
+            };
             if step.elapsed != rational(0)
-                || workload.is_none() && scheduler.get(&key).copied() != Some(&step.action)
+                || crate::Schedule::of(system, step_action).as_ref() != Ok(schedule)
+                || workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice)
             {
                 return Err(ProbabilityWitnessError::Refused);
             }
@@ -416,9 +439,9 @@ fn replay_probabilistic_witness_impl(
                     .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
                 {
                     poll_cancel(cancel)?;
-                    if candidate.identity.as_ref() == Some(&step.action)
-                        && candidate.transition == TransitionId::Operation(step.transition.clone())
-                        && same_values(&candidate.random, &step.draw)
+                    if candidate.identity.as_ref() == Some(step_action)
+                        && candidate.transition == TransitionId::Operation(step_transition.clone())
+                        && same_values(&candidate.random, step_draw)
                         && key_of(system, reference, &candidate.post, limits, cancel)?
                             == step.post_key
                     {
@@ -439,19 +462,19 @@ fn replay_probabilistic_witness_impl(
                     .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?
                 {
                     poll_cancel(cancel)?;
-                    if action.identity != step.action {
+                    if action.identity != *step_action {
                         continue;
                     }
                     for draw in action.draws {
                         poll_cancel(cancel)?;
-                        if !same_values(&draw.random, &step.draw) {
+                        if !same_values(&draw.random, step_draw) {
                             continue;
                         }
                         if draw.successors.len() != 1 {
                             return Err(ExactProbabilityGraphError::UnsupportedDraw.into());
                         }
                         for (transition, post) in draw.successors {
-                            if transition == step.transition
+                            if transition == *step_transition
                                 && key_of(system, reference, &post, limits, cancel)?
                                     == step.post_key
                             {

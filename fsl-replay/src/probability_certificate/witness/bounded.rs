@@ -117,9 +117,9 @@ pub(super) fn replay(
     let mut cylinders: Vec<&ProbabilityWitnessPath> = Vec::new();
     for (key, action) in &witness.scheduler {
         poll_cancel(cancel)?;
-        let action = system
-            .scheduled_identity_key(action)
-            .map_err(|stop| cancelled_expansion(stop, cancel))?;
+        let action = action
+            .to_bytes()
+            .map_err(|_| ProbabilityWitnessError::Refused)?;
         retain(
             key.as_bytes().len().saturating_add(action.len()),
             &mut storage,
@@ -141,8 +141,17 @@ pub(super) fn replay(
             ) {
                 return Ok(ProbabilityWitnessReplay::Parity);
             }
+            let ProductAction::Identity(schedule) = &step.choice else {
+                return Err(ProbabilityWitnessError::Refused);
+            };
+            let (Some(step_action), Some(step_transition), Some(step_draw)) =
+                (&step.action, &step.transition, &step.draw)
+            else {
+                return Err(ProbabilityWitnessError::Refused);
+            };
             if step.elapsed != rational(0)
-                || workload.is_none() && scheduler.get(&key).copied() != Some(&step.action)
+                || crate::Schedule::of(system, step_action).as_ref() != Ok(schedule)
+                || workload.is_none() && scheduler.get(&key).copied() != Some(&step.choice)
             {
                 return Err(ProbabilityWitnessError::Refused);
             }
@@ -165,9 +174,9 @@ pub(super) fn replay(
                     .map_err(|stop| cancelled_expansion(stop, cancel))?
                     .map_err(|_| ExactProbabilityGraphError::UnsupportedDraw)?
                 {
-                    if candidate.identity.as_ref() == Some(&step.action)
-                        && candidate.transition == TransitionId::Operation(step.transition.clone())
-                        && same_values(&candidate.random, &step.draw)
+                    if candidate.identity.as_ref() == Some(step_action)
+                        && candidate.transition == TransitionId::Operation(step_transition.clone())
+                        && same_values(&candidate.random, step_draw)
                     {
                         candidates.push((candidate.probability, candidate.post));
                     }
@@ -178,15 +187,15 @@ pub(super) fn replay(
                     .map_err(|stop| cancelled_expansion(stop, cancel))?
                     .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?
                 {
-                    if action.identity != step.action {
+                    if action.identity != *step_action {
                         continue;
                     }
                     for draw in action.draws {
-                        if !same_values(&draw.random, &step.draw) {
+                        if !same_values(&draw.random, step_draw) {
                             continue;
                         }
                         for (transition, post) in draw.successors {
-                            if transition == step.transition {
+                            if transition == *step_transition {
                                 candidates.push((draw.probability.clone(), post));
                             }
                         }
@@ -237,10 +246,10 @@ pub(super) fn replay(
             // representations. The transition includes the resolved arguments;
             // a second copy admits the explicit draw vector in the evidence.
             let action_bytes = system
-                .scheduled_identity_key(&step.action)
+                .scheduled_identity_key(step_action)
                 .map_err(|stop| cancelled_expansion(stop, cancel))?;
             let transition_bytes = system
-                .transition_key(&step.transition)
+                .transition_key(step_transition)
                 .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
             retain(
                 post_key

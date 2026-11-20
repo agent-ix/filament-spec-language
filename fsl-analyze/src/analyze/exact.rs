@@ -12,39 +12,38 @@ mod candidate;
 mod long_run;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    check_probability_certificate_document, claim_binding, probability_proof_document,
-    write_probability_certificate, write_probability_proof_document, ExactBinding,
-    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute,
+    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
+    probability_proof_document, write_probability_certificate, write_probability_proof_document,
 };
-use fsl_replay::{
-    replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
-    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
-    ReproducedProbabilityWitness,
-};
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
+use fsl_replay::{
+    ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    replay_probabilistic_witness,
+};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{BROKEN, NOT_YET, admission};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
-    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
-    FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective,
+    ExtRational, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
+    UnboundedObjective, build_retaining_monitor, decide_always, decide_bounded_event,
+    decide_expected_reward, decide_reachability, decide_until, manifest as en5,
+    settle_product_refusal,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -937,7 +936,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget, BudgetedProductError,
+            BudgetedProductError, build_retaining_monitor_with_budget,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -1671,7 +1670,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
+        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
@@ -1902,6 +1901,9 @@ fn replay_refutation(
         return not_yet();
     };
     let key_of = |state: &crate::exact_probabilistic::ProbKey| {
+        if let Some(key) = &state.certificate_state {
+            return Ok(key.clone());
+        }
         if let Some(monitor) = monitor {
             bounded_product_key(state, binding, monitor, limits.document, cancel)
         } else {
@@ -1912,6 +1914,34 @@ fn replay_refutation(
                 cancel,
             )
         }
+    };
+    let replay_choice = |choice: &ProductAction| -> Result<fsl_replay::ProductAction, ()> {
+        use crate::exact_probabilistic::ProductAction as AnalyzerAction;
+        Ok(match choice {
+            AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
+                fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+            ),
+            AnalyzerAction::PostState(target) => {
+                let target = product
+                    .states
+                    .iter()
+                    .find(|state| *state == target.as_ref())
+                    .ok_or(())?;
+                fsl_replay::ProductAction::PostState(key_of(target).map_err(|_| ())?)
+            }
+            AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
+            AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
+            AnalyzerAction::EnterIdleDelay => fsl_replay::ProductAction::EnterIdleDelay,
+            AnalyzerAction::IdleDelay => fsl_replay::ProductAction::IdleDelay,
+            AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
+            AnalyzerAction::WorkloadResolve { identity, delay } => {
+                fsl_replay::ProductAction::WorkloadResolve {
+                    schedule: fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+                    delay: *delay,
+                }
+            }
+            AnalyzerAction::FreeDelays(_) => return Err(()),
+        })
     };
     let Some(initial_state) = product.states.get(initial.index()) else {
         return broken();
@@ -1924,18 +1954,19 @@ fn replay_refutation(
     for (state, action) in produced.entries {
         // Terminal stutter carries no scheduler decision. Evidence paths
         // stop at first hits or independently checked nonreach leaves.
-        if matches!(action, ProductAction::TerminalStutter) {
+        if matches!(&action, ProductAction::TerminalStutter) {
             continue;
         }
-        let ProductAction::Identity(action) = action else {
-            return not_yet();
-        };
         let Some(state) = product.states.get(state.index()) else {
             return broken();
         };
         let key = match key_of(state) {
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),
+        };
+        let action = match replay_choice(&action) {
+            Ok(action) => action,
+            Err(_) => return not_yet(),
         };
         scheduler.push((key, action));
     }
@@ -1950,13 +1981,14 @@ fn replay_refutation(
                     return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
                 }
             }
-            if monitor.is_some() && matches!(step.action, ProductAction::TerminalStutter) {
+            if matches!(&step.action, ProductAction::TerminalStutter) {
                 // Qualified replay derives false extension at an actual leaf;
                 // closure consumes no model step or draw.
                 continue;
             }
-            let ProductAction::Identity(identity) = step.action else {
-                return not_yet();
+            let choice = match replay_choice(&step.action) {
+                Ok(choice) => choice,
+                Err(_) => return not_yet(),
             };
             let Some(to) = product.states.get(step.to.index()) else {
                 return broken();
@@ -1987,6 +2019,30 @@ fn replay_refutation(
                 ) {
                     return settled(&issue, subject);
                 }
+                let ProductAction::Identity(identity) = &step.action else {
+                    if !matches!(
+                        &choice,
+                        fsl_replay::ProductAction::PostState(_)
+                            | fsl_replay::ProductAction::UnitDelay
+                            | fsl_replay::ProductAction::EnterIdleDelay
+                            | fsl_replay::ProductAction::IdleDelay
+                            | fsl_replay::ProductAction::IdleObserve
+                    ) {
+                        return not_yet();
+                    }
+                    let mut extended = steps.clone();
+                    extended.push(ProbabilityWitnessStep {
+                        choice: choice.clone(),
+                        action: None,
+                        transition: None,
+                        draw: None,
+                        post: state.clone(),
+                        post_key: post_key.clone(),
+                        elapsed: step.elapsed.clone(),
+                    });
+                    next.push((state, extended));
+                    continue;
+                };
                 let result = system.actions_with_cancel(&state, cancel);
                 if let Some(cause) = cancel.tripped() {
                     return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -2030,12 +2086,13 @@ fn replay_refutation(
                                     );
                                 }
                                 candidates.push(ProbabilityWitnessStep {
-                                    action: identity.clone(),
-                                    transition,
-                                    draw: draw.random.clone(),
+                                    choice: choice.clone(),
+                                    action: Some(identity.clone()),
+                                    transition: Some(transition),
+                                    draw: Some(draw.random.clone()),
                                     post,
                                     post_key: post_key.clone(),
-                                    elapsed: Rational::from_integer(0_i64.into()),
+                                    elapsed: step.elapsed.clone(),
                                 });
                             }
                         }

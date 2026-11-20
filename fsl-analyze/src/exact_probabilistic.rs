@@ -36,37 +36,37 @@ mod settle;
 mod unbounded;
 mod witness;
 
-pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
+pub use build::build_product;
 #[cfg(feature = "test-support")]
-pub use build::{build_product_with_key_budget, BudgetedProductError};
+pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{build_retaining_monitor, build_retaining_monitor_with_budget};
-pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
+pub(crate) use digital::model_constraints;
 pub use fair::{
+    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
+    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,
-    FairEndComponent, FairExpectedRewardResult, FairLongRunResult, FairProductError,
-    FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, maximal_fair_end_components,
 };
 pub use finite_horizon::{
-    backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
+    Dyadic, FhError, FhObjective, FhResult, backward_induction, decide_bounded_event,
 };
 pub use fsl_replay::FreeDelayRow;
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
-    decide_always, decide_expected_reward, decide_long_run_mdp, decide_long_run_workload,
-    decide_reachability, decide_reachability_threshold, decide_until, decide_until_threshold,
     ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
-    UnboundedOutcome, UnboundedResult,
+    UnboundedOutcome, UnboundedResult, decide_always, decide_expected_reward, decide_long_run_mdp,
+    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
+    decide_until_threshold,
 };
 pub use witness::{
-    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler, EntryChoice,
-    ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler,
 };
-pub(crate) use witness::{produce_witness_stopping, WitnessWork};
+pub(crate) use witness::{WitnessWork, produce_witness_stopping};
 
 pub(crate) fn timed_region_route(
     timed: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
@@ -87,13 +87,13 @@ use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, StateId};
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClauseOutcome, ScheduledIdentity};
 use fsl_eval::simulation::model::{NotMarkov, UndecidedSuccessor};
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionStop, NotSimulated};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::OccurrenceKey;
 pub use fsl_replay::ExactProbLimits;
 use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
