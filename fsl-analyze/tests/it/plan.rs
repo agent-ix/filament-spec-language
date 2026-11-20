@@ -269,7 +269,7 @@ fn value_check_negotiates_value_validity_without_generation_inputs() {
 
 #[trace("FR-753-AC-4", "FR-753-AC-5", "TC-2103", "TC-3028")]
 #[test]
-fn successful_simulation_satisfies_a_prerequisite_without_negotiation() {
+fn an_exhausted_simulation_proves_nothing_and_blocks_its_dependents() {
     let world = world();
     let plan = plan(
         &world,
@@ -288,14 +288,20 @@ fn successful_simulation_satisfies_a_prerequisite_without_negotiation() {
     )
     .expect("simulation prerequisite")
     .into_value();
-    assert_eq!(*negotiate.calls.borrow(), [1]);
-    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Tested);
+    // Simulation never evaluates the step's claim, so an exhausted run is
+    // `inconclusive`: it satisfies no `requires` edge and its dependent is
+    // blocked without being negotiated.
+    assert!(negotiate.calls.borrow().is_empty());
+    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Inconclusive);
     assert_eq!(
         outcome.dispositions[0].1.evidence.as_deref(),
         Some("simulation-runs")
     );
-    assert_eq!(outcome.dispositions[1].1.status, PlanStatus::Unsupported);
-    assert_eq!(outcome.dispositions[1].1.blocked_by, None);
+    assert_eq!(outcome.dispositions[1].1.status, PlanStatus::Blocked);
+    assert_eq!(
+        outcome.dispositions[1].1.blocked_by.as_deref(),
+        Some("runs")
+    );
 }
 
 #[trace("FR-753-AC-4", "TC-2103")]
@@ -700,10 +706,7 @@ fn finite_model_generation_consumes_no_value_size_and_runs_on_the_model_based_te
     assert_eq!(record.seed, 7);
     assert_eq!(record.max_trace_length, 8);
     assert_eq!(record.max_value_bits, None);
-    assert!(matches!(
-        disposition.status,
-        PlanStatus::Tested | PlanStatus::Refuted
-    ));
+    assert_eq!(disposition.status, PlanStatus::Refuted);
     assert!(negotiate.calls.borrow().is_empty(), "never negotiated");
 }
 
@@ -1063,7 +1066,8 @@ fn an_unbounded_model_based_test_step_runs_no_case() {
     assert!(matches!(
         step.result,
         Some(PlanResult::NotRun {
-            cause: "requires-bound",
+            code: "unsupported_projection",
+            cause: "unbounded-extent",
             ..
         })
     ));
@@ -1087,4 +1091,101 @@ fn select_invariant(
     )
     .expect("plan identity");
     node.claim.occurrence.ordinal = clause.claim().ordinal();
+}
+
+/// FSpec FR-824: a step that consumes `initial` and gets none starts from
+/// the states its domain admits; the FR-752 entry cannot enumerate them, so
+/// the step settles `unsupported`, never `failed`.
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn a_model_based_test_step_with_no_initial_settles_unsupported_not_failed() {
+    let world = world();
+    let plan = plan(&world, &[("tested", "model_based_test")], &[]);
+    let mut inputs = inputs(&world, &plan);
+    inputs.max_trace_length = Some(8);
+    for binding in inputs.bindings.values_mut() {
+        binding.initial.clear();
+    }
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &Recording::default(),
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("the plan runs")
+    .into_value();
+    let (_, step) = &outcome.dispositions[0];
+    assert_eq!(step.status, PlanStatus::Unsupported);
+    assert!(matches!(
+        step.result,
+        Some(PlanResult::NotRun {
+            code: "unsupported_projection",
+            cause: "unsupported-requested-capability",
+            member: "initial",
+        })
+    ));
+}
+
+/// FSpec FR-824: a step that runs no engine settles by itself; a method
+/// whose kind does not apply to its claim never stops a sibling.
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn an_inapplicable_method_settles_its_step_and_siblings_still_run() {
+    let world = world();
+    let plan = plan(
+        &world,
+        &[("bad", "schedulability"), ("good", "model_check")],
+        &[],
+    );
+    let negotiate = Recording::default();
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs(&world, &plan),
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("one step's refusal never aborts the run")
+    .into_value();
+    let (_, bad) = &outcome.dispositions[0];
+    assert_eq!(bad.status, PlanStatus::Unsupported);
+    assert!(matches!(
+        bad.result,
+        Some(PlanResult::NotRun {
+            code: "invalid_capability",
+            cause: "inapplicable-kind",
+            ..
+        })
+    ));
+    assert_eq!(*negotiate.calls.borrow(), [1]);
+}
+
+/// FSpec FR-824: a stop by the run's deadline or cancellation settles the
+/// step `incomplete`, as an analyze item's stop does.
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn a_cancelled_run_settles_the_model_based_test_step_incomplete() {
+    let world = world();
+    let plan = plan(&world, &[("tested", "model_based_test")], &[]);
+    let mut inputs = inputs(&world, &plan);
+    inputs.max_trace_length = Some(8);
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &Recording::default(),
+        &AnalyzeLimits::unbounded(),
+        &cancel,
+    )
+    .expect("the plan runs")
+    .into_value();
+    assert_eq!(outcome.dispositions[0].1.status, PlanStatus::Incomplete);
 }

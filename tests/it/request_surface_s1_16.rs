@@ -429,6 +429,7 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     );
     let nodes = &value["verification_plan"]["dispositions"];
     assert_eq!(nodes["safe"]["status"], "refuted", "{value}");
+    assert_eq!(nodes["tested"]["status"], "tested", "{value}");
     assert_eq!(nodes["tested"]["evidence"], "tested", "{value}");
     assert_eq!(nodes["timely"]["status"], "blocked", "{value}");
     assert_eq!(nodes["timely"]["blocked_by"], "safe", "{value}");
@@ -439,9 +440,54 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
         "{value}"
     );
     assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
-    assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
-    assert_eq!(outcome["inputs"]["max_trace_length"], 8, "{value}");
+    assert_eq!(
+        outcome["inputs"],
+        json!({"initial": "initial.json", "seed": 7, "max_trace_length": 8,
+            "max_value_bits": null}),
+        "{value}"
+    );
     assert_eq!(exit, 22, "{value}");
+}
+
+/// FSpec FR-824-AC-1's request, with no `initial`: no step settles `failed` for
+/// want of an initial state. FSpec expects `tested` to run from every state
+/// its domain admits; the FR-752 entry cannot enumerate them yet.
+#[test]
+#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
+fn a_step_consuming_initial_with_none_is_unsupported_never_failed() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{MODEL_HEADER}{RELEASE_PLAN}"),
+    )
+    .unwrap();
+    let (exit, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "verification_plan": {"plan": "Release", "seed": 7, "max_trace_length": 8}}}),
+    );
+    let outcome = &value["verification_plan"];
+    // The FR-752 entry cannot enumerate a domain's initial states, so the step
+    // is `unsupported` with its cause stated, and no step is `failed`.
+    let tested = &outcome["dispositions"]["tested"];
+    assert_eq!(tested["status"], "unsupported", "{value}");
+    assert_eq!(
+        tested["result"]["refusal"],
+        json!({"code": "unsupported_projection",
+            "cause": "unsupported-requested-capability", "member": "initial"}),
+        "{value}"
+    );
+    assert_eq!(outcome["failed_steps"], json!([]), "{value}");
+    assert_ne!(exit, 30, "{value}");
+    assert_eq!(
+        outcome["inputs"],
+        json!({"initial": null, "seed": 7, "max_trace_length": 8, "max_value_bits": null}),
+        "{value}"
+    );
 }
 
 /// The `details.path` of a refused run's document.

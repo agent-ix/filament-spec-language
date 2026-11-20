@@ -11,7 +11,7 @@ pub mod request;
 use std::path::Path;
 
 use fsl_analyze::analyze::document::SubjectSelection;
-use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
+use fsl_analyze::analyze::SourceProvision;
 use fsl_analyze::plan::{execute_plan, plan_consumers, PlanInputs, PlanRefusal};
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::Code;
@@ -207,7 +207,11 @@ pub(super) fn run_bytes(
                 max_trace_length: plan_request.max_trace_length,
                 max_value_bits: plan_request.max_value_bits,
             };
-            let analyze_limits = AnalyzeLimits::unbounded();
+            // The native-run request carries no analysis limits or deadline member
+            // (FSpec FR-824 "no member sets a step's limits"), so the limits are
+            // the analyze route's own over its empty `limits` member.
+            let analyze_limits =
+                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
             let consumers =
                 plan_consumers(package, plan, &inputs, &analyze_limits).map_err(plan_refusal)?;
             plan_request.close_by_plan(&request::Consumers {

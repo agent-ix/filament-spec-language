@@ -508,7 +508,13 @@ fn model_based_test(
     // FSpec FR-192: a step with no `bound` asks for the method's unbounded
     // extent, and FR-190 has no run without `max_cases`.
     let Some(bound) = node.bound.as_deref() else {
-        return Ok(not_run("unsupported_projection", "requires-bound", "bound"));
+        // FSpec FR-290 pairs `unsupported_projection` with `unbounded-extent`;
+        // `requires-bound` is a negotiation outcome a language method never has.
+        return Ok(not_run(
+            "unsupported_projection",
+            "unbounded-extent",
+            "bound",
+        ));
     };
     let max_cases = bound
         .parse::<u64>()
@@ -523,6 +529,22 @@ fn model_based_test(
         .find(|declaration| declaration.function_body().as_ref() == Some(key.node()))
         .map_or_else(|| key.node().clone(), |declaration| declaration.key());
     let state_subject = consumes_initial(package, node);
+    // FSpec FR-824: a step that consumes `initial` and finds none starts from
+    // every state its `domain` admits. The FR-752 entry draws initial states
+    // from admitted snapshots only and cannot enumerate a domain's states, so
+    // such a step settles `unsupported` with a stated cause, never `failed`.
+    if state_subject
+        && inputs
+            .bindings
+            .get(&node.name)
+            .is_some_and(|binding| binding.initial.is_empty())
+    {
+        return Ok(not_run(
+            "unsupported_projection",
+            "unsupported-requested-capability",
+            "initial",
+        ));
+    }
     let consumes = |steps: &[String]| steps.iter().any(|step| *step == node.name);
     let subject = if state_subject {
         let binding = inputs
@@ -566,8 +588,16 @@ fn model_based_test(
     let record = match run_model_based_test(package, &request, &NativeAdmission, cancel) {
         Ok(record) => record,
         Err(refusal) => {
-            let mut settled = not_run("invalid_runtime_input", refusal.cause, refusal.member);
-            settled.status = PlanStatus::Failed;
+            // The entry refused the request before any case ran: a refusal
+            // as it is outside a plan, never an internal failure.
+            let (code, cause) = refusal_catalog(refusal.cause);
+            let mut settled = not_run(code, cause, refusal.member);
+            // A stop by cancellation or the run's deadline is incomplete.
+            settled.status = if refusal.cause == "cancelled" {
+                PlanStatus::Incomplete
+            } else {
+                PlanStatus::Declined
+            };
             return Ok(settled);
         }
     };
@@ -634,6 +664,17 @@ impl Execution<'_> {
         if node.method.name == "simulate" {
             return simulate(package, node, index, binding, bound, limits, cancel);
         }
+        let unsettled = |status, code, cause, member| PlanDisposition {
+            status,
+            method: node.method.name.clone(),
+            evidence: None,
+            blocked_by: None,
+            result: Some(PlanResult::NotRun {
+                code,
+                cause,
+                member,
+            }),
+        };
         let (kind, mut form, evidence) = match node.method.name.as_str() {
             "model_check" => (
                 Capability::TemporalSatisfaction,
@@ -701,7 +742,7 @@ impl Execution<'_> {
         if let Some(ItemForm::Temporal(temporal)) = &mut form {
             temporal.fairness = fairness.clone();
         }
-        let mut item = ClaimItem::new(
+        let item = ClaimItem::new(
             package,
             RequestIndex::new(index),
             key,
@@ -713,8 +754,17 @@ impl Execution<'_> {
                     finite_bound_available: false,
                 }
             },
-        )
-        .map_err(|_| fault("inapplicable-plan-claim"))?;
+        );
+        // A method whose kind does not apply to the claim settles that step
+        // `unsupported`; its siblings still run (FSpec FR-824).
+        let Ok(mut item) = item else {
+            return Ok(unsettled(
+                PlanStatus::Unsupported,
+                "invalid_capability",
+                "inapplicable-kind",
+                "method",
+            ));
+        };
         item.form = form;
         item.options.max_cases = bound.and_then(NonZeroU64::new);
         item.options.required = true;
@@ -745,9 +795,20 @@ impl Execution<'_> {
                 diagnostic,
             }],
         };
-        let outcome = analyze(package, &request, engines, limits, cancel)
-            .map_err(|_| fault("analyze-adapter"))?
-            .into_value();
+        let outcome = match analyze(package, &request, engines, limits, cancel) {
+            Ok(staged) => staged.into_value(),
+            // The item's binding or provision did not admit: that step is
+            // declined, and its siblings still run.
+            Err(StageFailure::Refused(refusal)) => {
+                return Ok(unsettled(
+                    PlanStatus::Declined,
+                    "invalid_runtime_input",
+                    analyze_refusal_cause(&refusal),
+                    "binding",
+                ));
+            }
+            Err(_) => return Err(fault("analyze-adapter")),
+        };
         let mut record = outcome
             .records
             .into_iter()
@@ -862,14 +923,37 @@ fn simulate(
             max_state_key_bytes: None,
         },
     };
+    use crate::analyze::simulation_item::SimulationFault;
+    use filament_semantic_value::catalog::Category;
     let (runs, category) =
-        crate::analyze::simulation_item::simulate(package, binding, limits, &item, cancel)
-            .map_err(|_| fault("simulation-adapter"))?;
+        match crate::analyze::simulation_item::simulate(package, binding, limits, &item, cancel) {
+            Ok(done) => done,
+            // The subject did not admit: that step is declined, and its
+            // siblings still run (FSpec FR-824).
+            Err(SimulationFault::Binding(_)) => {
+                return Ok(PlanDisposition {
+                    status: PlanStatus::Declined,
+                    method: node.method.name.clone(),
+                    evidence: None,
+                    blocked_by: None,
+                    result: Some(PlanResult::NotRun {
+                        code: "invalid_runtime_input",
+                        cause: "invalid-value",
+                        member: "initial",
+                    }),
+                });
+            }
+            Err(SimulationFault::Fault) => return Err(fault("simulation-adapter")),
+        };
+    // FR-634 simulation enumerates or samples states and never evaluates the
+    // step's claim, so an exhausted run is no evidence for it: it settles
+    // `inconclusive`, which satisfies no `requires` edge.
     Ok(PlanDisposition {
-        status: if category == filament_semantic_value::catalog::Category::Success {
-            PlanStatus::Tested
-        } else {
-            PlanStatus::Incomplete
+        status: match category {
+            Category::Success => PlanStatus::Inconclusive,
+            Category::Refusal => PlanStatus::Declined,
+            Category::InternalFailure => PlanStatus::Failed,
+            _ => PlanStatus::Incomplete,
         },
         method: node.method.name.clone(),
         evidence: Some("simulation-runs".into()),
@@ -1120,6 +1204,27 @@ mod tests {
                     PlanStatus::Blocked
                 }
             );
+        }
+    }
+}
+
+/// The catalog `(code, cause)` of an FR-752 entry refusal's `cause`: either
+/// `code/cause`, a bare `invalid_*` code, or a bare cause under
+/// `invalid_runtime_input`.
+fn refusal_catalog(cause: &'static str) -> (&'static str, &'static str) {
+    match cause.split_once('/') {
+        Some(pair) => pair,
+        None if cause.starts_with("invalid_") => (cause, "invalid-value"),
+        None => ("invalid_runtime_input", cause),
+    }
+}
+
+/// The catalog cause of an analyze refusal of a step's item.
+const fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static str {
+    match refusal {
+        crate::analyze::AnalyzeRefusal::Provision(_) => "missing-member",
+        crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
+            "invalid-value"
         }
     }
 }
