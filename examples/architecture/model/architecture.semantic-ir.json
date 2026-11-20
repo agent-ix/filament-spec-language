@@ -1,0 +1,833 @@
+{
+  "contractVersion": "2.0.0",
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "source": {
+    "identity": "ix://example/architecture/spec",
+    "version": "1.0.0",
+    "dialect": "spec-bundle"
+  },
+  "package": {
+    "identity": "example/architecture",
+    "version": "1.0.0",
+    "mappingVersions": [],
+    "profileVersions": []
+  },
+  "occurrences": [],
+  "extensions": [],
+  "constructs": [
+    {
+      "kind": {
+        "module": "example/architecture",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.object-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/architecture",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.population/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/architecture",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/architecture",
+        "name": "variant_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "enumeration",
+        "members": {
+          "variants": "required"
+        },
+        "meaning": "filament.meaning.model.variant-type/v1"
+      }
+    }
+  ],
+  "types": [
+    {
+      "identity": "ix://example/architecture/Count",
+      "displayName": "Count",
+      "kind": {
+        "module": "example/architecture",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Count",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Count"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/architecture/Count/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Count"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Count/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "50"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Count"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/architecture/Tier",
+      "displayName": "Tier",
+      "kind": {
+        "module": "example/architecture",
+        "name": "variant_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Tier",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Tier"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://example/architecture/variant/Tier-Edge",
+          "name": "Edge",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/variant/Tier-Core",
+          "name": "Core",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/variant/Tier-Data",
+          "name": "Data",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/architecture/Classification",
+      "displayName": "Classification",
+      "kind": {
+        "module": "example/architecture",
+        "name": "variant_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Classification",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Classification"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://example/architecture/variant/Classification-Public",
+          "name": "Public",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/variant/Classification-Internal",
+          "name": "Internal",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/variant/Classification-Personal",
+          "name": "Personal",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/architecture/Team",
+      "displayName": "Team",
+      "kind": {
+        "module": "example/architecture",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Team",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Team"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/architecture/Team/size",
+          "name": "size",
+          "typeRef": "ix://example/architecture/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Team/size",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Team/size"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/architecture/Store",
+      "displayName": "Store",
+      "kind": {
+        "module": "example/architecture",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Store",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Store"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/architecture/Store/classification",
+          "name": "classification",
+          "typeRef": "ix://example/architecture/Classification",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Store/classification",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Store/classification"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Store/owner",
+          "name": "owner",
+          "typeRef": "ix://example/architecture/Service",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Store/owner",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Store/owner"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/architecture/Instance",
+      "displayName": "Instance",
+      "kind": {
+        "module": "example/architecture",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Instance",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Instance"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/architecture/Instance/serving",
+          "name": "serving",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Instance/serving",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Instance/serving"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Instance/release",
+          "name": "release",
+          "typeRef": "ix://example/architecture/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Instance/release",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Instance/release"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/architecture/Service",
+      "displayName": "Service",
+      "kind": {
+        "module": "example/architecture",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/Service",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/Service"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/architecture/Service/tier",
+          "name": "tier",
+          "typeRef": "ix://example/architecture/Tier",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/tier",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/tier"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/owner",
+          "name": "owner",
+          "typeRef": "ix://example/architecture/Team",
+          "presence": "optional",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/owner",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/owner"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/dependsOn",
+          "name": "dependsOn",
+          "typeRef": "ix://example/architecture/Service",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 0,
+            "upper": 8,
+            "ordered": true,
+            "unique": false
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/dependsOn",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/dependsOn"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/reads",
+          "name": "reads",
+          "typeRef": "ix://example/architecture/Store",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 0,
+            "upper": 8,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/reads",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/reads"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/handlesPersonalData",
+          "name": "handlesPersonalData",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/handlesPersonalData",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/handlesPersonalData"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/minServing",
+          "name": "minServing",
+          "typeRef": "ix://example/architecture/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/minServing",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/minServing"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/instances",
+          "name": "instances",
+          "typeRef": "ix://example/architecture/Instance",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 0,
+            "upper": 10,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/instances",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/instances"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/architecture/Service/up",
+          "name": "up",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/up",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/up"
+              ]
+            }
+          }
+        }
+      ],
+      "relationships": [
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "source-to-target",
+          "identity": "ix://example/architecture/relationship/Service-calls-Service",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/architecture/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "upper": 8,
+              "ordered": false,
+              "unique": true
+            },
+            "role": "calls",
+            "type": "ix://example/architecture/Service"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "upper": 8,
+              "ordered": false,
+              "unique": true
+            },
+            "role": "calledBy",
+            "type": "ix://example/architecture/Service"
+          }
+        }
+      ],
+      "operations": [
+        {
+          "identity": "ix://example/architecture/Service/call",
+          "name": "call",
+          "params": [
+            {
+              "identity": "ix://example/architecture/Service/call/ok",
+              "name": "ok",
+              "typeRef": "ix://filament/native/Boolean",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/architecture/Service/call/ok",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/architecture/Service/call/ok"
+                  ]
+                }
+              }
+            }
+          ],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/architecture/Service/call",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/architecture/Service/call"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/architecture/Service/up"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        }
+      ]
+    }
+  ],
+  "populations": [
+    {
+      "identity": "ix://example/architecture/teams",
+      "displayName": "teams",
+      "kind": {
+        "module": "example/architecture",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/architecture/Team"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/teams",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/teams"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/architecture/stores",
+      "displayName": "stores",
+      "kind": {
+        "module": "example/architecture",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/architecture/Store"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/stores",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/stores"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/architecture/instances",
+      "displayName": "instances",
+      "kind": {
+        "module": "example/architecture",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/architecture/Instance"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/instances",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/instances"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/architecture/services",
+      "displayName": "services",
+      "kind": {
+        "module": "example/architecture",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/architecture/Service"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/architecture/services",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/architecture/services"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,820 @@
+{
+  "contractVersion": "2.0.0",
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "source": {
+    "identity": "ix://example/rover/spec",
+    "version": "1.0.0",
+    "dialect": "spec-bundle"
+  },
+  "package": {
+    "identity": "example/rover",
+    "version": "1.0.0",
+    "mappingVersions": [],
+    "profileVersions": []
+  },
+  "occurrences": [],
+  "extensions": [],
+  "constructs": [
+    {
+      "kind": {
+        "module": "example/rover",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.object-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/rover",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.population/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/rover",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/rover",
+        "name": "variant_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "enumeration",
+        "members": {
+          "variants": "required"
+        },
+        "meaning": "filament.meaning.model.variant-type/v1"
+      }
+    }
+  ],
+  "types": [
+    {
+      "identity": "ix://example/rover/Speed",
+      "displayName": "Speed",
+      "kind": {
+        "module": "example/rover",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/Speed",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/Speed"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/rover/Speed/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Speed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Speed"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Speed/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "2000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Speed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Speed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/rover/Range",
+      "displayName": "Range",
+      "kind": {
+        "module": "example/rover",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/Range",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/Range"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/rover/Range/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Range",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Range"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Range/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "20000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Range",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Range"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/rover/Millis",
+      "displayName": "Millis",
+      "kind": {
+        "module": "example/rover",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/Millis",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/Millis"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/rover/Millis/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Millis",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Millis"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Millis/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "3600000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Millis",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Millis"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/rover/Mode",
+      "displayName": "Mode",
+      "kind": {
+        "module": "example/rover",
+        "name": "variant_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/Mode",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/Mode"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://example/rover/variant/Mode-Driving",
+          "name": "Driving",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/rover/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/variant/Mode-Degraded",
+          "name": "Degraded",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/rover/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/variant/Mode-SafeStop",
+          "name": "SafeStop",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/rover/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/variant/Mode-Failsafe",
+          "name": "Failsafe",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/rover/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/rover/Rover",
+      "displayName": "Rover",
+      "kind": {
+        "module": "example/rover",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/Rover",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/Rover"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/rover/Rover/mode",
+          "name": "mode",
+          "typeRef": "ix://example/rover/Mode",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/mode",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/mode"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/speed",
+          "name": "speed",
+          "typeRef": "ix://example/rover/Speed",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/speed",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/speed"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/stopped",
+          "name": "stopped",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/stopped",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/stopped"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/lidarOk",
+          "name": "lidarOk",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/lidarOk",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/lidarOk"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/rangeA",
+          "name": "rangeA",
+          "typeRef": "ix://example/rover/Range",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/rangeA",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/rangeA"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/rangeB",
+          "name": "rangeB",
+          "typeRef": "ix://example/rover/Range",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/rangeB",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/rangeB"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/rangeC",
+          "name": "rangeC",
+          "typeRef": "ix://example/rover/Range",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/rangeC",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/rangeC"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/clock",
+          "name": "clock",
+          "typeRef": "ix://example/rover/Millis",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/clock",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/clock"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/voteWrong",
+          "name": "voteWrong",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/voteWrong",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/voteWrong"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": [
+        {
+          "identity": "ix://example/rover/Rover/loseLidar",
+          "name": "loseLidar",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/loseLidar",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/loseLidar"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/rover/Rover/mode",
+              "ix://example/rover/Rover/lidarOk",
+              "ix://example/rover/Rover/speed"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/brake",
+          "name": "brake",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/brake",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/brake"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/rover/Rover/mode",
+              "ix://example/rover/Rover/speed"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/halt",
+          "name": "halt",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/halt",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/halt"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/rover/Rover/speed",
+              "ix://example/rover/Rover/stopped"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/enterFailsafe",
+          "name": "enterFailsafe",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/enterFailsafe",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/enterFailsafe"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/rover/Rover/mode"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/rover/Rover/sample",
+          "name": "sample",
+          "params": [
+            {
+              "identity": "ix://example/rover/Rover/sample/faultA",
+              "name": "faultA",
+              "typeRef": "ix://filament/native/Boolean",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/rover/Rover/sample/faultA",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/rover/Rover/sample/faultA"
+                  ]
+                }
+              }
+            },
+            {
+              "identity": "ix://example/rover/Rover/sample/faultB",
+              "name": "faultB",
+              "typeRef": "ix://filament/native/Boolean",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/rover/Rover/sample/faultB",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/rover/Rover/sample/faultB"
+                  ]
+                }
+              }
+            },
+            {
+              "identity": "ix://example/rover/Rover/sample/faultC",
+              "name": "faultC",
+              "typeRef": "ix://filament/native/Boolean",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/rover/Rover/sample/faultC",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/rover/Rover/sample/faultC"
+                  ]
+                }
+              }
+            }
+          ],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/rover/Rover/sample",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/rover/Rover/sample"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/rover/Rover/voteWrong"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        }
+      ]
+    }
+  ],
+  "populations": [
+    {
+      "identity": "ix://example/rover/rovers",
+      "displayName": "rovers",
+      "kind": {
+        "module": "example/rover",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/rover/Rover"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/rover/rovers",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/rover/rovers"
+          ]
+        }
+      }
+    }
+  ]
+}

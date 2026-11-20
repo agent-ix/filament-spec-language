@@ -1,0 +1,3 @@
+SPDX-FileCopyrightText: 2026 Agent IX
+SPDX-License-Identifier: MIT
+Source: agent-ix/filament-examples examples/rover/model/rover.semantic-ir.json @ b6c0fdc7a074fec4f0a24025cc8bade0a868c705
