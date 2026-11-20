@@ -8,6 +8,7 @@ use fsl_bench::prop::value::{CollectionKind, Expr, Type, TypedExpression};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 
@@ -29,7 +30,7 @@ pub(super) fn compile(source: &str) -> Result<CheckedPackage, Vec<CheckRefusal>>
         parsed.source().reference().clone(),
         "typed-value-properties".into(),
         unit,
-        Vec::new(),
+        SelectedModels::default(),
         Vec::new(),
     )
     .unwrap_or_else(|error| panic!("assembly: {error:?}\n{source}"));

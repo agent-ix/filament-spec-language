@@ -55,7 +55,7 @@ impl IntervalCase {
         }
     }
 
-    fn members(&self) -> impl Iterator<Item = (i64, i64)> {
+    fn members(&self) -> impl Iterator<Item = (i64, i64)> + '_ {
         (self.left.0..=self.left.1)
             .flat_map(move |a| (self.right.0..=self.right.1).map(move |b| (a, b)))
     }
@@ -168,7 +168,10 @@ fn p3_accepted_functions_stay_inside_the_declared_interval() {
                 prop_assert_eq!(
                     evaluated_integer(value),
                     input.result(a, b),
-                    "{source}\na={a},b={b}"
+                    "{}\na={},b={}",
+                    source,
+                    a,
+                    b
                 );
             }
             Ok(())
@@ -298,7 +301,10 @@ fn p4_mod_with_a_zero_free_divisor_stays_in_range() {
                 prop_assert_eq!(
                     evaluated_integer(value),
                     i128::from(numerator).rem_euclid(i128::from(b)),
-                    "{source}\na={numerator},b={b}"
+                    "{}\na={},b={}",
+                    source,
+                    numerator,
+                    b
                 );
             }
             Ok(())
