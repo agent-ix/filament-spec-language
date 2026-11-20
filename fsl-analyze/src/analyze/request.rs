@@ -407,6 +407,16 @@ pub(crate) fn analyze_bound<'a>(
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
+    // The compiled package is read back through the strict reader before any
+    // item runs, so a reader refusal is this typed refusal and never a fault
+    // of a later step.
+    if let Err(crate::provider::NotAdmitted::Refused(refusal)) =
+        crate::provider::read_package(package, binding.packages, limits.emit)
+    {
+        return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+            refusal,
+        )));
+    }
     let items = requested
         .iter()
         .map(|item| work(analysis, binding, provision, item, engines, limits))
@@ -528,15 +538,7 @@ fn checked_v2_package(
     binding: &super::SubjectBinding<'_>,
     limits: &super::AnalyzeLimits,
 ) -> Option<Box<filament_contract_model::CheckedPackageV2>> {
-    let identity = fsl_semantics::library::LibraryName::new(package.graph().package_name()).ok()?;
-    let admitted = fsl_package::read_evaluation_package(
-        package,
-        identity,
-        binding.packages,
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
-        limits.emit,
-    )
-    .ok()?;
+    let admitted = crate::provider::read_package(package, binding.packages, limits.emit).ok()?;
     Some(Box::new(admitted.admitted().clone()))
 }
 

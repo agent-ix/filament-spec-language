@@ -55,6 +55,7 @@ mod deep_bodies;
 mod dimension_base;
 mod envelope_adoption;
 mod equality_budget;
+mod refused_package;
 mod golden;
 mod guarantee;
 mod hybrid;

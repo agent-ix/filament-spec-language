@@ -85,6 +85,10 @@ pub fn run(
                     Some(ProofRefusalCause::IncompleteInput),
                     refusal.catalog_code(),
                 ),
+                StageFailure::Refused(AnalyzeRefusal::Package(refusal)) => (
+                    Some(ProofRefusalCause::InvalidInput),
+                    CatalogCode::new(refusal.code.as_str(), "invalid-value"),
+                ),
                 StageFailure::Refused(AnalyzeRefusal::Binding(failure)) => match failure {
                     fsl_semantics::model::observation::AdmissionFailure::Refused(record) => {
                         (Some(ProofRefusalCause::InvalidInput), record.catalog)
@@ -634,17 +638,41 @@ pub(crate) fn admitted_bytes(
     package: &CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,
-) -> Option<EmittedPackage> {
-    let identity = LibraryName::new(package.graph().package_name()).ok()?;
-    let read = fsl_package::read_evaluation_package(
+) -> Result<EmittedPackage, NotAdmitted> {
+    let read = read_package(package, packages, emit)?;
+    Ok(read.emission().package().clone())
+}
+
+/// Why a compiled package has no admitted read.
+pub(crate) enum NotAdmitted {
+    /// The strict reader refused the package it was given back: the typed
+    /// refusal, with the reader's code, cause and pointer.
+    Refused(fsl_package::PackageAdmissionRefusal),
+    /// The package did not emit, or the read failed for a reason that is no
+    /// admission refusal.
+    Other,
+}
+
+/// `package` emitted and read back through the strict reader against
+/// `packages`.
+pub(crate) fn read_package<'p>(
+    package: &'p CheckedPackage,
+    packages: &PackageInput,
+    emit: EmitLimits,
+) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
+    let identity =
+        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other)?;
+    fsl_package::read_evaluation_package(
         package,
         identity,
         packages,
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
         emit,
     )
-    .ok()?;
-    Some(read.emission().package().clone())
+    .map_err(|refusal| {
+        fsl_package::PackageAdmissionRefusal::of_import_view(&refusal)
+            .map_or(NotAdmitted::Other, NotAdmitted::Refused)
+    })
 }
 
 /// The provider items of one backend over one package, in request order.
@@ -712,7 +740,7 @@ pub(crate) fn settle_items(
         let Some((_, first)) = members.first() else {
             continue;
         };
-        let Some(bytes) = admitted_bytes(package, first.packages, first.emit) else {
+        let Ok(bytes) = admitted_bytes(package, first.packages, first.emit) else {
             for index in indices {
                 settled.insert(index, Err(Refusal::NotEmitted));
             }

@@ -4091,6 +4091,39 @@ mod tests {
         assert_eq!(command["code"], "output-failure");
     }
 
+    /// A package the strict reader refuses, found on the analyze route, stops
+    /// the run with the reader's own code, cause and pointer and that code's
+    /// exit, never as a runtime invariant (exit 30).
+    #[test]
+    fn a_refused_analyze_package_keeps_its_own_code_cause_pointer_and_exit() {
+        let error = RunError {
+            cause: RunCause::AnalyzeRefused(Box::new(
+                fsl_analyze::analyze::AnalyzeRefusal::Package(
+                    fsl_package::PackageAdmissionRefusal {
+                        code: Code::InvalidPackage,
+                        cause: Some("invalid-value".to_owned()),
+                        pointer: Some("/claim_names/2".to_owned()),
+                        identity: None,
+                    },
+                ),
+            )),
+            sources: crate::Sources::default(),
+        };
+        let outcome: serde_json::Value = serde_json::from_slice(
+            &error
+                .outcome_document(fsl_replay::Operation::Analyze)
+                .to_bytes()
+                .expect("refusal outcome JSON"),
+        )
+        .expect("outcome document");
+        assert_eq!(error.cause.code(), Code::InvalidPackage);
+        assert_eq!(error.category().exit_code(), 20);
+        let diagnostic = &outcome["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "invalid_package");
+        assert_eq!(diagnostic["cause"], "invalid-value");
+        assert_eq!(diagnostic["details"]["path"], "/claim_names/2");
+    }
+
     /// FR-100 "Internal failure at S6a" (FND-013): the `CheckedInvariant`
     /// kernel refusal's own fault envelope -- stage `call`, code
     /// `runtime_invariant`, `details {stage, invariant}` naming

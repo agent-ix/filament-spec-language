@@ -252,7 +252,7 @@ fn unsupported_construct(
 /// The graph of the package emitted for this request, whose node ids spell
 /// a `Locus`.
 fn wire_graph(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<WireGraph> {
-    let bytes = crate::provider::admitted_bytes(package, spelling.packages, spelling.emit)?;
+    let bytes = crate::provider::admitted_bytes(package, spelling.packages, spelling.emit).ok()?;
     WireGraph::of_package_bytes(bytes.bytes()).ok()
 }
 

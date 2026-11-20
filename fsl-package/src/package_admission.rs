@@ -8,12 +8,12 @@ use std::collections::BTreeMap;
 
 use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageRefusalCode, CheckedPackageV2,
+    CheckedPackageRefusal, CheckedPackageRefusalCode, CheckedPackageV2,
 };
-use fsl_foundation::diagnostic::Code;
+use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
 
-use crate::checked_v2::V2ReadLimits;
+use crate::checked_v2::{ImportViewRefusal, V2ReadLimits, V2ReadRefusal};
 
 /// A package the strict reader refused.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,34 +64,14 @@ pub fn admit_checked_package(
     match read_checked_package(bytes, limits.for_ir(), &evidence) {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(*package),
         CheckedPackageDispatchResult::Refused(refusal) => {
-            let pointer = refusal
-                .loci
-                .first()
-                .and_then(|locus| locus.path.as_ref())
-                .map(|path| path.as_str().to_owned());
-            let cause = refusal.cause.and_then(|cause| {
-                serde_json::to_value(cause)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
-            });
-            let missing = refusal.code == CheckedPackageRefusalCode::MissingImport;
-            let identity = if missing {
-                pointer
+            let mut refused = of_reader_refusal(&refusal);
+            if refused.code == Code::MissingImport {
+                refused.identity = refused
+                    .pointer
                     .as_deref()
-                    .and_then(|pointer| identity_at(bytes, pointer))
-            } else {
-                None
-            };
-            Err(PackageAdmissionRefusal {
-                code: if missing {
-                    Code::MissingImport
-                } else {
-                    Code::InvalidPackage
-                },
-                cause,
-                pointer,
-                identity,
-            })
+                    .and_then(|pointer| identity_at(bytes, pointer));
+            }
+            Err(refused)
         }
         CheckedPackageDispatchResult::Incomplete(incomplete) => Err(PackageAdmissionRefusal {
             code: Code::ResourceExhausted,
@@ -105,6 +85,82 @@ pub fn admit_checked_package(
             pointer: None,
             identity: None,
         }),
+    }
+}
+
+/// The refusal IR's reader raised, with its pointer and typed cause. The
+/// identity at fault is the caller's to read from the bytes.
+fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal {
+    let pointer = refusal
+        .loci
+        .first()
+        .and_then(|locus| locus.path.as_ref())
+        .map(|path| path.as_str().to_owned());
+    let cause = refusal.cause.as_ref().and_then(|cause| {
+        serde_json::to_value(cause)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+    });
+    let code = if refusal.code == CheckedPackageRefusalCode::MissingImport {
+        Code::MissingImport
+    } else {
+        Code::InvalidPackage
+    };
+    PackageAdmissionRefusal {
+        code,
+        cause,
+        pointer,
+        identity: None,
+    }
+}
+
+impl PackageAdmissionRefusal {
+    /// The refusal spelled `code/cause at pointer`, each part when present.
+    #[must_use]
+    pub fn label(&self) -> String {
+        let mut label = self.code.as_str().to_owned();
+        if let Some(cause) = &self.cause {
+            label.push('/');
+            label.push_str(cause);
+        }
+        if let Some(pointer) = &self.pointer {
+            label.push_str(" at ");
+            label.push_str(pointer);
+        }
+        label
+    }
+
+    /// The strict reader's refusal inside a failed evaluation read of a
+    /// package the run compiled, with the reader's code, cause and pointer.
+    /// `None` for a failure that is no admission refusal: an emission that
+    /// did not complete, a broken invariant, a cancellation.
+    #[must_use]
+    pub fn of_import_view(refusal: &ImportViewRefusal) -> Option<Self> {
+        let ImportViewRefusal::Read { refusal, .. } = refusal else {
+            return None;
+        };
+        let reader = |refusal: &V2ReadRefusal| match refusal {
+            V2ReadRefusal::Envelope { refusal, .. } => Some(of_reader_refusal(refusal)),
+            V2ReadRefusal::Fault(_) => None,
+            other => Some(Self {
+                code: other.code(),
+                cause: None,
+                pointer: None,
+                identity: None,
+            }),
+        };
+        let exhausted = || Self {
+            code: Code::ResourceExhausted,
+            cause: None,
+            pointer: None,
+            identity: None,
+        };
+        match refusal.as_ref() {
+            StageFailure::Refused(refusal) => reader(refusal),
+            StageFailure::RefusedWithPayload(refusal, _) => reader(refusal),
+            StageFailure::Limit(_) | StageFailure::LimitWithPayload(_, _) => Some(exhausted()),
+            StageFailure::Cancelled(_) | StageFailure::Fault(_) => None,
+        }
     }
 }
 
