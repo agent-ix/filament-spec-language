@@ -275,8 +275,7 @@ keys"), and keeps every other name unchanged. The bare route reports a row's
 `name` as written. The source route SHALL report the same spelling: a `Body`
 origin it reports in an `Evaluation.location` or a loss record names a
 function under `P` as `ix://I/<path>`, by the rewrite S4 applies, and every
-other function by the checker's name. It is the source route that changes,
-because the reverse map cannot be made from the bytes: `P` is a check-time
+other function by the checker's name. The source route takes the bytes' spelling because the reverse map cannot be made from the bytes: `P` is a check-time
 name that no package holds, while `I` is the identity every emitted node of
 those declarations carries. The rows add no graph node and change
 no node id, so the package identity `name` and every structural `NodeRef` are

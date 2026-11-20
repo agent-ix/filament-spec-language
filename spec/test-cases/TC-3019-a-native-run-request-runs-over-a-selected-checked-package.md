@@ -83,6 +83,6 @@ FR-1039-AC-7.
   `{file, equality}` and returns the source record over `{directory}`.
 - Step 7: `invalid_package`/`invalid-value` at
   `/request/package/temporal_clause_names` and `unknown_profile`/
-  `unsupported-selection` at the law, each at stage `request`, exit 20, no
+  `unsupported-selection` at `/request/package/semantic_graph/nodes/{n}/body/operation/laws/0/definition`, each at stage `request`, exit 20, no
   record; FR-931-AC-16's package record equals the source record byte for
   byte, its atom `count<ix://I/Small>`.
