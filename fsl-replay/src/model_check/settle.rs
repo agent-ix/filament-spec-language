@@ -411,7 +411,11 @@ fn load_buffering_warnings(
 ) -> Result<Vec<RecordWarning>, Option<ExpansionStop>> {
     let model = ModelSystem::new(subject.model.simulation.clone()).map_err(|_| None)?;
     let input = &subject.model.simulation.input;
-    let shapes = match input.protocol_definition(&subject.protocol).ok_or(None)? {
+    let definition = input.protocol_definition(&subject.protocol).ok_or_else(|| {
+        eprintln!("package warning: protocol definition missing");
+        None
+    })?;
+    let shapes = match definition {
         ProtocolDefinition::Source(protocol) => load_buffering_shapes(
             &model,
             protocol,
@@ -421,14 +425,26 @@ fn load_buffering_warnings(
         ),
         ProtocolDefinition::Package(form) => {
             let package = PackageProtocolProgram::with_memory(input, form, subject.memory.clone())
-                .map_err(|_| None)?;
+                .map_err(|refusal| {
+                    eprintln!("package warning: program refused {refusal:?}");
+                    None
+                })?;
             let ValueType::Reference(object_type) = &package.over_type else {
+                eprintln!("package warning: over is not a reference");
                 return Err(None);
             };
             let reference = model
                 .bound_reference(object_type.clone(), &subject.over)
-                .map_err(|_| None)?;
-            package_load_buffering_shapes(&model, &package, &Value::Reference(reference))
+                .map_err(|refusal| {
+                    eprintln!("package warning: over resolution failed {refusal:?}");
+                    None
+                })?;
+            package_load_buffering_shapes(&model, &package, &Value::Reference(reference)).map_err(
+                |refusal| {
+                    eprintln!("package warning: shape classification failed {refusal:?}");
+                    refusal
+                },
+            )
         }
     }
     .map_err(|refusal| match refusal {
