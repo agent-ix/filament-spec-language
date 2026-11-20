@@ -1640,10 +1640,25 @@ impl Intake<'_> {
         request_member: &str,
         byte_limit: usize,
     ) -> Result<FormalSource> {
-        let bytes = read_file(
-            &self.directory.join(&selected.file),
-            byte_limit.saturating_add(1),
-        )?;
+        let path = self.directory.join(&selected.file);
+        let mut file = File::open(&path).map_err(|error| RunCause::Io {
+            path: path.clone(),
+            error,
+        })?;
+        let read_limit = u64::try_from(byte_limit.saturating_add(1)).map_err(|error| {
+            RunCause::Io {
+                path: path.clone(),
+                error: io::Error::other(error),
+            }
+        })?;
+        let mut bytes = Vec::new();
+        file.by_ref()
+            .take(read_limit)
+            .read_to_end(&mut bytes)
+            .map_err(|error| RunCause::Io {
+                path: path.clone(),
+                error,
+            })?;
         self.admit_source(selected, request_member, bytes, byte_limit)
     }
 
