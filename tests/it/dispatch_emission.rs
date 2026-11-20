@@ -449,20 +449,17 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
         .unwrap()
         .remove("checked_term_data");
     let without_carrier_bytes = serde_json::to_vec(&without_carrier).unwrap();
-    // The clause functions are owned by the selected model's package, so the
-    // package has no local function body with a term and needs no
-    // `body_locations` carrier (FSpec FR-322-AC-490).
-    assert!(
-        matches!(
-            CheckedPackageV2::read(
-                &without_carrier_bytes,
-                CheckedPackageReadLimits::bounded(),
-                &evidence(&without_carrier),
-            ),
-            CheckedPackageV2ReadResult::Admitted(_)
-        ),
-        "a package with no local function body term is admitted without the carrier"
-    );
+    // No local function body holds a term, so no `body_locations` row is
+    // owed and the package reads without the carrier (FSpec FR-322).
+    let without_carrier = match CheckedPackageV2::read(
+        &without_carrier_bytes,
+        CheckedPackageReadLimits::bounded(),
+        &evidence(&without_carrier),
+    ) {
+        CheckedPackageV2ReadResult::Admitted(package) => *package,
+        other => panic!("graph-only package remains admitted: {other:?}"),
+    };
+    assert_eq!(package.graph(), without_carrier.graph());
 
     let (with_precondition, precondition_decisions) = emit_with_capture(
         "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
@@ -708,27 +705,78 @@ fn operation_bodies_of_a_multi_body_model_read_back_through_the_typed_reader() {
     assert_eq!(rows.len(), 7, "one row per operation: {rows:?}");
 }
 
-/// FR-531-AC-39: a clause function belongs to the selected model's package,
-/// not to the package the emitter writes, so its body carries no
-/// `body_locations` row and the package reads without any (the function
-/// bodies of the package itself are covered by `ieee_ordering_route_parity`).
+const SQRT_PRECONDITION_UNIT: &str = "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
+     body sizeB using v on Config::Sub::size() { 2 }\n\
+     body sizeC using v on Config::Leaf::size() { 3 }\n\
+     pre rootCall using v on Config::ConfigVersion::probe { self.size() > 0 }\n\
+     pre sqrtPre using v on Config::ConfigVersion::size { \
+     filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= \
+     filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+
+/// FR-531-AC-39: the clause function of a precondition whose body holds two
+/// `sqrt` terms carries one `body_locations` row per term of its body walk,
+/// the two `sqrt` rows at the paths `[0]` and `[1]`, and the strict reader
+/// refuses the package once the second row is removed.
 #[trace("TC-3133", "FR-531-AC-39")]
 #[test]
-fn a_clause_function_of_the_selected_model_carries_no_location_rows() {
-    let sqrt = "filament::value::ieee::sqrt(float64(bits: 0x4000000000000000))";
-    let (bytes, _) = emit_with_capture(&format!(
-        "body sizeA using v on Config::ConfigVersion::size() {{ 1 }}\n\
-         body sizeB using v on Config::Sub::size() {{ 2 }}\n\
-         body sizeC using v on Config::Leaf::size() {{ 3 }}\n\
-         pre sqrtPre using v on Config::ConfigVersion::probe {{ {sqrt} <= {sqrt} }}\n"
-    ));
-    let package = admitted(&bytes);
+fn a_clause_function_body_carries_its_location_rows() {
+    let (bytes, _) = emit_with_capture(SQRT_PRECONDITION_UNIT);
+    admitted(&bytes);
     let wire: Value = serde_json::from_slice(&bytes).unwrap();
     let rows = wire["checked_term_data"]["body_locations"]
         .as_array()
-        .map_or(0, Vec::len);
-    assert_eq!(rows, 0, "no local function body has a term");
-    assert!(package
-        .checked_term_data()
-        .map_or(true, |data| data.body_locations.is_empty()));
+        .expect("body_locations carrier");
+    let is_sqrt = |row: &Value| row["application"]["path"].to_string().contains("float64.sqrt");
+    let sqrt_paths: Vec<Value> = rows
+        .iter()
+        .filter(|row| is_sqrt(row))
+        .map(|row| row["location"]["path"].clone())
+        .collect();
+    assert_eq!(
+        sqrt_paths,
+        vec![json!([0]), json!([1])],
+        "the two sqrt terms carry the checker's paths: {rows:?}"
+    );
+    let function = rows
+        .iter()
+        .find(|row| is_sqrt(row))
+        .map(|row| row["location"]["origin"].clone())
+        .unwrap();
+    assert!(
+        rows.iter()
+            .filter(|row| is_sqrt(row))
+            .all(|row| row["location"]["origin"] == function),
+        "both rows belong to the clause function"
+    );
+
+    let refused_at = |wire: &Value| {
+        match CheckedPackageV2::read(
+            &serde_json::to_vec(wire).unwrap(),
+            CheckedPackageReadLimits::bounded(),
+            &evidence(wire),
+        ) {
+            CheckedPackageV2ReadResult::Refused(refusal) => refusal.loci[0]
+                .path
+                .as_ref()
+                .map(ToString::to_string)
+                .expect("the refusal has a path"),
+            other => panic!("the package must be refused: {other:?}"),
+        }
+    };
+    let mut without_second = wire.clone();
+    let second = without_second["checked_term_data"]["body_locations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|row| is_sqrt(row) && row["location"]["path"] == json!([1]))
+        .unwrap();
+    without_second["checked_term_data"]["body_locations"]
+        .as_array_mut()
+        .unwrap()
+        .remove(second);
+    assert_eq!(refused_at(&without_second), "/checked_term_data/body_locations");
+
+    let mut without_carrier = wire.clone();
+    without_carrier["checked_term_data"]["body_locations"] = json!([]);
+    assert_eq!(refused_at(&without_carrier), "/checked_term_data/body_locations");
 }
