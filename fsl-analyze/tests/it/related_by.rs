@@ -237,6 +237,12 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
         (refusal.code(), refusal.cause()),
         (Code::InvalidRuntimeInput, "invalid-value")
     );
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "invalid_runtime_input/invalid-value: protocol step {at} at `Main/Pick` fails related-by clause `Owns`"
+        )
+    );
 }
 
 /// FR-731-AC-3: a node constraint refusal is not a relationship refusal.

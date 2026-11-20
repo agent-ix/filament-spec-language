@@ -1229,6 +1229,18 @@ struct ProtocolReplay<'r> {
     meter: ScalarLimits,
 }
 
+fn protocol_related_by_refusal(
+    step: usize,
+    transition: &ProtocolTransition,
+    relationship: String,
+) -> ModelTraceRefusal {
+    ModelTraceRefusal::ProtocolRelatedBy {
+        step,
+        node: transition.node().unwrap_or("<unknown>").to_owned(),
+        relationship,
+    }
+}
+
 impl ProtocolReplay<'_> {
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
@@ -1268,11 +1280,7 @@ impl ProtocolReplay<'_> {
             &PROTOCOL_STEPS,
             |step, state, transition| {
                 if let Some(relationship) = system.related_by_failure(state, transition) {
-                    return ModelTraceRefusal::ProtocolRelatedBy {
-                        step,
-                        node: transition.node().unwrap_or("<unknown>").to_owned(),
-                        relationship,
-                    };
+                    return protocol_related_by_refusal(step, transition, relationship);
                 }
                 protocol_not_enabled(step, transition)
             },
@@ -3177,75 +3185,17 @@ mod automaton_refusal_tests {
 
 #[cfg(test)]
 mod related_by_replay_tests {
-    use super::{
-        protocol_related_by_not_enabled, ModelTraceRefusal,
-    };
-    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use super::{protocol_related_by_refusal, ModelTraceRefusal};
     use fsl_eval::simulation::protocol::{ProtocolTransition, ThreadPath};
-    use fsl_package::CheckedPackage;
-    use fsl_semantics::check::PackageDeclarations;
-    use fsl_semantics::model::accounting::ModelNormalizationLimits;
-    use fsl_semantics::model::intake::{admit_unit, package_input};
-    use super::qsl_2204_tc1070 as tc1070;
-
-    fn checked_package() -> CheckedPackage {
-        let source = r#"
-language "ix:native" edition "1-draft";
-profile P = "filament.protocol.finite-global/v1";
-model M = "test/orders";
-protocol Purchase using P over (view: M::Node) on origin {
-  role Buyer on M::Node;
-  relationship Owns = M::owns;
-  run sequence Main {
-    event Paid by Buyer as (paid: M::Node) related by Owns (paid, view) { true };
-  }
-  finish Closed as (closed: M::Receipt) { true };
-}
-"#;
-        let parsed = fsl_cst::parse(
-            fsl_foundation::SourceIdentity::new("qsl-2204", "related-by-replay.native"),
-            "related-by-replay.native",
-            source.as_bytes(),
-            fsl_cst::Limits::default(),
-        )
-        .expect("S1 reads the source");
-        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-        let model = serde_json::to_vec(&tc1070::document()).expect("model serializes");
-        let packages = package_input([model.as_slice()]).expect("I1 admits the model package");
-        let models = admit_unit(
-            &unit.selections().models,
-            &packages,
-            ModelNormalizationLimits::default(),
-        )
-        .expect("the selected model is admitted");
-        let graph = PackageDeclarations::assemble(
-            parsed.source().reference().clone(),
-            "qsl-2204-replay-test".to_owned(),
-            unit,
-            models,
-            Vec::new(),
-        )
-        .expect("the unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())
-        .unwrap_or_else(|refusals| panic!("protocol checks: {refusals:?}"));
-        CheckedPackage::link(graph)
-    }
 
     /// FR-731-AC-3: replay reports the first related-by clause when its
     /// observed protocol transition is not enabled at that event node.
     #[ix_trace_rs::trace("FR-731-AC-3")]
     #[test]
     fn a_related_event_replay_mismatch_names_its_node_and_relationship() {
-        let package = checked_package();
-        let protocol = package
-            .graph()
-            .protocol("Purchase")
-            .expect("the checked protocol");
         let transition = ProtocolTransition::fork(ThreadPath::root(0), "Main/Paid");
 
-        let refusal = protocol_related_by_not_enabled(protocol, 7, &transition)
-            .expect("the event has a related-by premise");
+        let refusal = protocol_related_by_refusal(7, &transition, "Owns".to_owned());
         assert_eq!(
             refusal,
             ModelTraceRefusal::ProtocolRelatedBy {
