@@ -36,8 +36,6 @@ pub enum UnreadModelForm {
     /// engine reads that record, so a model check over the package would run
     /// without the reward.
     Reward,
-    /// An `object` declaration of the unit's own source package (FR-569).
-    SourceObject,
 }
 
 impl UnreadModelForm {
@@ -51,7 +49,6 @@ impl UnreadModelForm {
             Self::Variant => "variant",
             Self::Enumeration => "enumeration",
             Self::Reward => "reward",
-            Self::SourceObject => "source-object",
         }
     }
 }
@@ -77,21 +74,15 @@ fn unread(node: &CheckedSemanticNodeV2) -> Option<UnreadModelForm> {
 
 impl BarePackage<'_> {
     /// The first node, in the package's node order, of a form the package
-    /// route's model-check input does not read yet; else the first source
-    /// object of the supply's identity rows (FR-940).
+    /// route's model-check input does not read yet (FR-940). The source
+    /// objects of the identity rows are read: as the source model the
+    /// `probabilistic` nodes join to, which holds their types and operations
+    /// but not their fields or effects.
     pub fn first_unread_model_form(&self) -> Option<(UnreadModelForm, &CheckedNodeId)> {
-        let found = self
-            .package()
+        self.package()
             .resolved_graph()
             .nodes
             .iter()
-            .find_map(|node| unread(node).map(|form| (form, &node.node_id)));
-        if found.is_some() {
-            return found;
-        }
-        let rows = self.supply()?.identities;
-        rows.source_objects()
-            .first()
-            .map(|row| (UnreadModelForm::SourceObject, &row.structural_node))
+            .find_map(|node| unread(node).map(|form| (form, &node.node_id)))
     }
 }

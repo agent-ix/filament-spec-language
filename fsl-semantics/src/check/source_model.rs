@@ -898,3 +898,126 @@ fn scalar_type(
         _ => Ok(ValueTypeRef::Native(NativeValueType::Integer)),
     }
 }
+
+/// One parameter of an operation a source object type declares, as a checked
+/// package's source-object identity row states it.
+pub struct SourceRowParameter {
+    /// The parameter's name.
+    pub name: String,
+    /// Whether the parameter may be absent at a call site.
+    pub optional: bool,
+    /// The parameter's value type; `None` for a `Clock` parameter, which has
+    /// no type node.
+    pub value_type: Option<filament_exact::ValueType>,
+}
+
+/// One operation a source object type declares itself, as a checked
+/// package's source-object identity row states it.
+pub struct SourceRowOperation {
+    /// The operation's name.
+    pub name: String,
+    /// The operation's parameters, in declaration order.
+    pub parameters: Vec<SourceRowParameter>,
+}
+
+/// One source object type, as a checked package's source-object identity row
+/// states it: no effect frame, field, result or population, which the row
+/// does not carry.
+pub struct SourceRowObject {
+    /// The type's name.
+    pub name: String,
+    /// Whether the type is abstract.
+    pub abstract_type: bool,
+    /// The names of the type's direct supertypes, in source order.
+    pub supertypes: Vec<String>,
+    /// The operations the type declares itself.
+    pub operations: Vec<SourceRowOperation>,
+}
+
+/// The synthetic source package a checked package's source-object rows
+/// describe, under `identity` (`source/<package name>`): an object type per
+/// row and an operation per row operation, each parameter typed by the exact
+/// value type its type node projects. It is what a reader that holds no
+/// source text rebuilds in place of the package S3 built: the same
+/// declaration keys, so the declarations a package's `probabilistic` nodes
+/// name join to it as they join to S3's.
+#[must_use]
+pub fn package_of_source_rows(identity: &str, objects: &[SourceRowObject]) -> DomainPackage {
+    let mut records = Vec::new();
+    for object in objects {
+        let owner = node_key(identity, &object.name);
+        records.push(DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: owner.clone(),
+            interface_features: None,
+            abstract_type: object.abstract_type,
+            supertypes: object
+                .supertypes
+                .iter()
+                .map(|supertype| node_key(identity, supertype))
+                .collect(),
+        }));
+        for operation in &object.operations {
+            let site = format!("{}/{}", object.name, operation.name);
+            records.push(DomainPackageRecord::OperationMember(
+                OperationMemberRecord {
+                    key: member_key(identity, &object.name, &operation.name),
+                    owner: owner.clone(),
+                    parameters: operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| OperationParameterRecord {
+                            key: member_key(identity, &site, &parameter.name),
+                            value_type: match &parameter.value_type {
+                                Some(value_type) => {
+                                    ValueTypeRef::Resolved(Box::new(value_type.clone()))
+                                }
+                                None => ValueTypeRef::Clock,
+                            },
+                            multiplicity: one(),
+                            presence: if parameter.optional {
+                                Presence::Optional
+                            } else {
+                                Presence::Required
+                            },
+                        })
+                        .collect(),
+                    result: None,
+                    effect: OperationEffect::default(),
+                    requires: Vec::new(),
+                    ensures: Vec::new(),
+                    has_body: false,
+                    redefines: None,
+                },
+            ));
+        }
+    }
+    DomainPackage::new(
+        DomainPackageRef {
+            identity: identity.to_owned(),
+        },
+        records,
+    )
+}
+
+/// The object type declarations of the source package `identity` that
+/// [`package_of_source_rows`] builds for `objects`, keyed by the effective
+/// identity a type with no owner has, so a type environment holding them
+/// resolves the operations of those types. The declarations carry no field.
+#[must_use]
+pub fn object_types_of_source_rows(
+    identity: &str,
+    objects: &[SourceRowObject],
+) -> Vec<filament_semantic_value::declaration::ObjectTypeDeclaration> {
+    let id = |name: &str| crate::model::key::effective_id_of(None, &node_key(identity, name));
+    objects
+        .iter()
+        .map(|object| {
+            filament_semantic_value::declaration::ObjectTypeDeclaration::new(
+                id(&object.name),
+                object.name.clone(),
+                Vec::new(),
+            )
+            .with_supertypes(object.supertypes.iter().map(|name| id(name)).collect())
+        })
+        .collect()
+}

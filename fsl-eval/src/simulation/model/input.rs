@@ -25,10 +25,10 @@ use fsl_package::{
     TerminalResolveRefusal, UnreadModelForm,
 };
 use fsl_semantics::check::footprint::{
-    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation, derive_atom_reads,
-    derive_attempt_footprint_fallback_with_reference_literals, derive_constraint_reads,
-    derive_footprint, derive_guard_reads, derive_node_reads,
+    derive_atom_reads, derive_attempt_footprint_fallback_with_reference_literals,
+    derive_constraint_reads, derive_footprint, derive_guard_reads, derive_node_reads,
     derive_selected_footprint_with_reference_literals, derive_slot_reads, reference_literals_of,
+    FootprintRefusal, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
@@ -327,6 +327,10 @@ pub enum PendingPackageForm {
     /// type (FR-120 "Operations").
     #[error("the selected domain packages' operations are not typed: {0:?}")]
     Operations(fsl_semantics::check::AssemblyRefusal),
+    /// The package's source-object rows do not describe a source model
+    /// (FSL FR-740 "Source objects").
+    #[error("the package's source objects are not readable: {0}")]
+    SourceModel(fsl_package::SourceModelFault),
     /// The package's `probabilistic` nodes do not read (FSL FR-740).
     #[error("the package's probabilistic nodes are not readable: {0}")]
     ProbabilisticNodes(fsl_package::ProbabilisticReadFault),
@@ -397,6 +401,9 @@ impl<'p> PackageModelInput<'p> {
     /// order, of a form the package route does not read yet;
     /// [`PendingPackageForm::World`] when the declarations are not readable
     /// from the nodes and identity rows;
+    /// [`PendingPackageForm::SourceModel`] when the source-object rows do not
+    /// describe a source package (the types and operations of the unit's own
+    /// objects, which the `probabilistic` nodes join to);
     /// [`PendingPackageForm::Model`] when the supplied packages do not re-admit
     /// against the package's types; [`PendingPackageForm::Operations`] when
     /// their operations are not typed. A type that names a unit is typed
@@ -415,8 +422,21 @@ impl<'p> PackageModelInput<'p> {
         }
         let world = package.world().map_err(PendingPackageForm::World)?;
         let model_selections = fsl_package::AnalysisView::model_selections(package);
+        // A source object type has no document: the rows of the package
+        // describe the source model the package's probabilistic nodes join to.
+        let source_packages: Vec<_> = package
+            .source_model_package()
+            .map_err(PendingPackageForm::SourceModel)?
+            .into_iter()
+            .collect();
+        let mut selections = model_selections.clone();
+        selections.extend(
+            source_packages
+                .iter()
+                .map(|source| source.model_selection.clone()),
+        );
         let model = StateModel::new(
-            ModelSelections::new(&model_selections, &[]),
+            ModelSelections::new(&selections, &source_packages),
             world.types(),
             packages,
             normalization,
@@ -627,8 +647,11 @@ impl<'p> PackageModelInput<'p> {
                 .terminals
                 .iter()
                 .map(|terminal| ModelTerminal {
-                    model: super::TerminalModel::new(terminal.model.clone(), terminal.model.clone())
-                        .with_ordinal(terminal.ordinal),
+                    model: super::TerminalModel::new(
+                        terminal.model.clone(),
+                        terminal.model.clone(),
+                    )
+                    .with_ordinal(terminal.ordinal),
                     node: terminal.node.clone(),
                     declaration: match &terminal.declaration {
                         fsl_package::BareTerminalDeclaration::Any => ModelTerminalDeclaration::Any,
@@ -2125,7 +2148,7 @@ fn source_predicate<'p>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClauseBinder, receiver_slots};
+    use super::{receiver_slots, ClauseBinder};
     use ix_trace_rs::trace;
 
     /// FR-940-AC-11, FR-156: a package term gives frame slots to the binders

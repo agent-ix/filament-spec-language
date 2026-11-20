@@ -16,6 +16,7 @@ const TEST_PACKAGE_NAME: &str = "fsl-eval-integration-tests";
 mod tc235_k2;
 
 mod absent_literal;
+mod source_object_probabilistic;
 mod accounting_boundaries;
 mod aggregate_samples;
 mod application_observation;

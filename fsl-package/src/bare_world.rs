@@ -255,7 +255,18 @@ impl BarePackage<'_> {
                 CompositeShape::Union(_) => true,
             });
         }
-        let objects = objects.unwrap_or(&[]).to_vec();
+        let mut objects = objects.unwrap_or(&[]).to_vec();
+        // The unit's own object types are declared by no node: their rows
+        // declare them (FR-569), so an operation of theirs resolves.
+        let shells = self
+            .source_row_shells()
+            .map_err(|_| fault("source-object-rows-are-a-closed-environment"))?;
+        if !shells.is_empty() {
+            objects.extend(fsl_semantics::check::object_types_of_source_rows(
+                &format!("source/{}", package.name()),
+                &shells,
+            ));
+        }
         let types =
             TypeEnvironment::new(closed_composites(self, composites, object_nodes), objects)
                 .map_err(|_| fault("bare-composites-are-a-closed-environment"))?
