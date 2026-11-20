@@ -48,7 +48,7 @@ use super::poly::{midpoint, Poly};
 use super::poly2::Poly2;
 use super::real::ExactReal;
 use super::trace::zero;
-use super::{HybridReplayMeter, HybridReplayRefusal};
+use super::{ExactGap, HybridReplayMeter, HybridReplayRefusal};
 
 fn one() -> Rational {
     Rational::from_integer(1_i64.into())
@@ -493,18 +493,32 @@ impl<'u, 'm> Section<'u, 'm> {
         root: &Root2,
         over: &Poly,
     ) -> Result<ExactReal, HybridReplayRefusal> {
+        self.charge_by(over.gcd_work(over))?;
         let over = over.square_free();
+        if over.degree().unwrap_or(0) == 0 {
+            return Err(ExactGap::IllKindedTerm.into());
+        }
+        // The Sturm sequence is built once for every interval tried.
+        self.charge_by(over.gcd_work(&over))?;
+        let sequence = over.sturm();
         let mut root = root.clone();
         loop {
-            self.charge_by(over.size().saturating_mul(over.size()))?;
+            let ends = 1 + root.low.max_part_bits().max(root.high.max_part_bits()) / 64;
+            let work = sequence
+                .iter()
+                .map(|p| p.horner_work(ends))
+                .fold(0, u64::saturating_add);
+            self.charge_by(work.saturating_mul(4))?;
             let apart = over.sign_at(&root.low) != Ordering::Equal
                 && over.sign_at(&root.high) != Ordering::Equal;
-            if apart && over.roots_between(&root.low, &root.high) == 1 {
-                return Ok(over
-                    .roots_in(&root.low, &root.high)
+            if apart && over.roots_between_by(&sequence, &root.low, &root.high) == 1 {
+                let found =
+                    over.roots_in_by(&root.low, &root.high, &mut |work| self.charge_by(work))?;
+                let one = found
                     .into_iter()
                     .next()
-                    .unwrap_or_else(|| unreachable!("one root lies in the interval")));
+                    .unwrap_or_else(|| unreachable!("one root lies in the interval"));
+                return Ok(one);
             }
             self.refine(&mut root)?;
         }

@@ -9,9 +9,9 @@ use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::fmt;
 
-use filament_exact::Rational;
+use filament_exact::{NonZeroInteger, Rational};
 
-use super::poly::{midpoint, square_of_words, Poly};
+use super::poly::{midpoint, Poly};
 
 /// An exact real number.
 #[derive(Clone, Debug)]
@@ -77,14 +77,80 @@ impl Root {
     }
 }
 
-/// The work of evaluating `p` by Horner's rule at a rational of `ends` words.
-fn evaluation_work(p: &Poly, ends: u64) -> u64 {
-    let length = u64::try_from(p.coefficients().len()).unwrap_or(u64::MAX);
-    let reach = p.words().saturating_add(length.saturating_mul(ends));
-    length.saturating_mul(square_of_words(reach))
+/// The floor of `q`, as a rational.
+fn floor(q: &Rational) -> Rational {
+    let Ok(divisor) = NonZeroInteger::try_from(q.denominator()) else {
+        unreachable!("a denominator is nonzero")
+    };
+    Rational::from_integer(q.numerator().div_mod_floor(divisor).0)
+}
+
+/// The rational of least denominator strictly between `a` and `b`,
+/// `a < b` (the first of a continued fraction that lands between them).
+fn simplest_between(a: &Rational, b: &Rational) -> Rational {
+    let zero = Rational::from_integer(0_i64.into());
+    let unit = Rational::from_integer(1_i64.into());
+    if *a < zero && *b > zero {
+        return zero;
+    }
+    if *b <= zero {
+        return simplest_between(&b.neg(), &a.neg()).neg();
+    }
+    let whole = floor(a);
+    let next = whole.add(&unit);
+    if next < *b {
+        return next;
+    }
+    let inverse = |x: &Rational| unit.div(x).unwrap_or_else(|| unreachable!("above whole"));
+    let fraction = if *a == whole {
+        floor(&inverse(&b.sub(&whole))).add(&unit)
+    } else {
+        simplest_between(&inverse(&b.sub(&whole)), &inverse(&a.sub(&whole)))
+    };
+    whole.add(&inverse(&fraction))
 }
 
 impl ExactReal {
+    /// This number, as a rational when it is one: a root of its polynomial
+    /// that is a rational has a denominator dividing the polynomial's leading
+    /// coefficient (cleared of denominators, which is the product of the
+    /// coefficients' denominators at most), so the isolating interval is
+    /// halved, charging each step before it is taken, until it is narrower
+    /// than the square of the reciprocal of that, with the simplest rational
+    /// in it tried at each power of two of halvings.
+    pub(crate) fn rationalized<E>(
+        self,
+        charge: &mut dyn FnMut(u64) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        let Self::Root(mut root) = self else {
+            return Ok(self);
+        };
+        let reach = root
+            .poly
+            .coefficients()
+            .iter()
+            .map(|c| c.denominator().magnitude_bits())
+            .fold(0_u64, u64::saturating_add);
+        let limit = reach.saturating_mul(2).saturating_add(2);
+        let mut halvings = 0_u64;
+        while halvings <= limit {
+            let ends = 1 + root.lower.max_part_bits().max(root.upper.max_part_bits()) / 64;
+            charge(root.poly.horner_work(ends).saturating_mul(4))?;
+            if let Some(exact) = root.refine() {
+                return Ok(Self::Rational(exact));
+            }
+            halvings += 1;
+            if halvings.is_power_of_two() {
+                let candidate = simplest_between(&root.lower, &root.upper);
+                charge(root.poly.horner_work(ends).saturating_mul(4))?;
+                if root.poly.eval(&candidate).is_zero() {
+                    return Ok(Self::Rational(candidate));
+                }
+            }
+        }
+        Ok(Self::Root(root))
+    }
+
     /// `self + by`.
     pub(crate) fn shifted(&self, by: &Rational) -> Self {
         match self {
@@ -159,9 +225,9 @@ impl ExactReal {
                     // coefficient of `w` words at a point of `e` words, `k`
                     // steps in, costs the square of `w + k * e` words.
                     let ends = 1 + root.lower.max_part_bits().max(root.upper.max_part_bits()) / 64;
-                    let mut work = evaluation_work(&root.poly, ends);
+                    let mut work = root.poly.horner_work(ends);
                     for p in &sequence {
-                        work = work.saturating_add(evaluation_work(p, ends));
+                        work = work.saturating_add(p.horner_work(ends));
                     }
                     charge(work)?;
                     if square_free.roots_between_by(&sequence, &root.lower, &root.upper) == 0 {
@@ -232,6 +298,10 @@ impl Ord for ExactReal {
             (Self::Rational(a), Self::Root(b)) => compare_root_rational(b, a).reverse(),
             (Self::Root(a), Self::Root(b)) => {
                 let (mut a, mut b) = (a.clone(), b.clone());
+                // The roots' common factor does not change as the intervals
+                // shrink, so it is found once.
+                let common = a.poly.gcd(&b.poly);
+                let shared = common.degree().unwrap_or(0) > 0;
                 loop {
                     if a.upper <= b.lower {
                         return Ordering::Less;
@@ -241,7 +311,7 @@ impl Ord for ExactReal {
                     }
                     let lower = a.lower.clone().max(b.lower.clone());
                     let upper = a.upper.clone().min(b.upper.clone());
-                    if a.shares_root(&b.poly, &lower, &upper) {
+                    if shared && lower < upper && common.roots_between(&lower, &upper) > 0 {
                         return Ordering::Equal;
                     }
                     match (a.refine(), b.refine()) {

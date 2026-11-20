@@ -37,10 +37,16 @@
 //! [`super::super::poly2::projection`] by the determinant of each evaluation
 //! point and the interpolation, and every sign at `tau` (see
 //! [`super::super::section::Section`]) down to each bisection of `tau`'s
-//! isolating interval. The curve an instant of no value moves along is
-//! charged by its polynomial's size, each separator it is read between, the
-//! resultant that isolates its limit, and every refinement of that limit's
-//! interval. The sorting of cuts is not charged.
+//! isolating interval. A root isolation ([`Poly::roots_in_by`]) is charged
+//! for its square-free part and Sturm sequence, whose coefficients grow with
+//! the square of the degree, and for the evaluation of the sequence at both
+//! ends of every interval it splits; comparing two algebraic cuts is charged
+//! by the gcd of their polynomials, once per cut already held for each new
+//! one and for the sort of every pass. The curve an instant of no value moves
+//! along is charged by its polynomial's size, each isolation of its roots at
+//! the activation instant and at every separator, the resultant that
+//! isolates its limit, and every refinement of that limit's interval and
+//! test of it for a rational.
 use std::cmp::Ordering;
 
 use filament_exact::Rational;
@@ -116,6 +122,10 @@ struct Atoms<'a, 'u, 'm> {
 }
 
 impl Evaluate for Atoms<'_, '_, '_> {
+    fn charge(&mut self, work: u64) -> Result<(), HybridReplayRefusal> {
+        self.section.charge_by(work)
+    }
+
     fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
         self.section.charge()?;
         let sample = Sample::of(at);
@@ -315,6 +325,22 @@ struct Outcome {
 /// One cell of a dwell's activation instants: the instant `low` when
 /// `point`, else the open interval `(low, high)`.
 type Cell = (ExactReal, ExactReal, bool);
+
+/// The work of comparing `root` with every one of `others`: two algebraic
+/// numbers are told apart by the gcd of their polynomials and bisection.
+fn comparison_work(root: &ExactReal, others: &[ExactReal]) -> u64 {
+    let ExactReal::Root(root) = root else {
+        return 1;
+    };
+    let own = Poly::new(root.coefficients().to_vec());
+    others
+        .iter()
+        .map(|other| match other {
+            ExactReal::Root(other) => own.gcd_work(&Poly::new(other.coefficients().to_vec())),
+            ExactReal::Rational(_) => 1,
+        })
+        .fold(1, u64::saturating_add)
+}
 
 /// What placing an expression with no value over a cell settles.
 enum Over {
@@ -951,9 +977,8 @@ impl<'a, 'c> Decider<'a, 'c> {
             return Ok(Over::Cuts(vec![critical]));
         }
         let rank = {
-            meter.charge_by(g.size().saturating_mul(g.size()))?;
-            g.at_t(tau)
-                .real_roots()
+            let here = g.at_t(tau);
+            here.real_roots_by(&mut |work| meter.charge_by(work))?
                 .iter()
                 .filter(|root| **root < record.time)
                 .count()
@@ -992,8 +1017,10 @@ impl<'a, 'c> Decider<'a, 'c> {
             cell.0.clone()
         };
         for separator in &separators {
-            section.charge_by(g.size().saturating_mul(g.size()))?;
-            for crossing in g.at_x(separator).roots_in(&floor, &ceiling) {
+            for crossing in g
+                .at_x(separator)
+                .roots_in_by(&floor, &ceiling, &mut |work| section.charge_by(work))?
+            {
                 let nearer = if above {
                     crossing > *end && crossing < bound
                 } else {
@@ -1010,8 +1037,10 @@ impl<'a, 'c> Decider<'a, 'c> {
             bound.between(end)
         };
         let at = g.at_t(&near);
-        section.charge_by(at.size().saturating_mul(at.size()))?;
-        let branch = at.real_roots().into_iter().nth(rank);
+        let branch = at
+            .real_roots_by(&mut |work| section.charge_by(work))?
+            .into_iter()
+            .nth(rank);
         let (Some(branch), false) = (branch, roots.is_empty()) else {
             return Err(ExactGap::IllKindedTerm.into());
         };
@@ -1041,6 +1070,12 @@ impl<'a, 'c> Decider<'a, 'c> {
         let (floor, ceiling) = (floor_bound(&span.low), ceiling_bound(&span.high));
         loop {
             meter.charge()?;
+            // Sorting the cuts compares each with about log-many others.
+            let sorting = cuts
+                .iter()
+                .map(|cut| comparison_work(cut, &cuts))
+                .fold(0, u64::saturating_add);
+            meter.charge_by(sorting)?;
             let mut results = Vec::new();
             let mut grew = false;
             for cell in partition(span, cuts.clone()) {
@@ -1061,10 +1096,15 @@ impl<'a, 'c> Decider<'a, 'c> {
                 };
                 for poly in bounds {
                     meter.charge()?;
-                    for root in poly.roots_in(&floor, &ceiling) {
-                        if root > span.low && root < span.high && !cuts.contains(&root) {
-                            cuts.push(root);
-                            grew = true;
+                    let found =
+                        poly.roots_in_by(&floor, &ceiling, &mut |work| meter.charge_by(work))?;
+                    for root in found {
+                        if root > span.low && root < span.high {
+                            meter.charge_by(comparison_work(&root, &cuts))?;
+                            if !cuts.contains(&root) {
+                                cuts.push(root);
+                                grew = true;
+                            }
                         }
                     }
                 }
@@ -1095,13 +1135,17 @@ impl<'a, 'c> Decider<'a, 'c> {
                             Over::Cuts(polys) => {
                                 again = true;
                                 for poly in polys {
-                                    meter.charge_by(poly.size().saturating_mul(poly.size()))?;
-                                    for root in poly.roots_in(&floor, &ceiling) {
-                                        if root > span.low
-                                            && root < span.high
-                                            && !cuts.contains(&root)
-                                        {
-                                            cuts.push(root);
+                                    meter.charge()?;
+                                    let found =
+                                        poly.roots_in_by(&floor, &ceiling, &mut |work| {
+                                            meter.charge_by(work)
+                                        })?;
+                                    for root in found {
+                                        if root > span.low && root < span.high {
+                                            meter.charge_by(comparison_work(&root, &cuts))?;
+                                            if !cuts.contains(&root) {
+                                                cuts.push(root);
+                                            }
                                         }
                                     }
                                     requested.push(poly);

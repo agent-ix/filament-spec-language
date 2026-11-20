@@ -477,3 +477,33 @@ fn a_sign_at_a_rational_sample_is_charged_by_the_polynomial_size() {
     assert_eq!(sign, Ordering::Greater);
     assert_eq!(spent, 30);
 }
+
+/// The isolation of the roots an enablement reads over a dwell is charged to
+/// the meter before it is taken (FR-750-AC-12): a fairness claim spends a
+/// pinned number of units, and one fewer is exhausted.
+#[trace("TC-3037", "FR-750-AC-12")]
+#[test]
+fn the_cells_of_a_fairness_enablement_are_charged_to_the_meter() {
+    let lasso = shuttle_lasso();
+    let always = shuttle("v >= 0");
+    let never = shuttle("v <= 1/2");
+    for (graph, name, expected) in [(&always, "Named", 9052), (&never, "Named", 4623)] {
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let found = super::super::exact_replay(graph, claim(graph, name), &lasso, &mut meter);
+        assert!(found.is_ok(), "{name}");
+        let spent = meter.consumed();
+        assert_eq!(spent, expected, "{name}");
+        assert_eq!(
+            super::super::exact_replay(
+                graph,
+                claim(graph, name),
+                &lasso,
+                &mut HybridReplayMeter::new(spent - 1)
+            ),
+            Err(HybridReplayRefusal::ResourceExhausted {
+                counter: filament_exact::LimitKind::WorkUnits
+            }),
+            "{name}"
+        );
+    }
+}
