@@ -4582,11 +4582,7 @@ impl PackageDeclarations {
                         .iter()
                         .map(|(alias, package)| (alias.as_str(), package))
                         .collect();
-                    let identity = if position == 0 {
-                        format!("source/{package_name}")
-                    } else {
-                        format!("source/{package_name}/{position}")
-                    };
+                    let identity = super::source_model::source_identity(&package_name, position);
                     if let Some((selection, model, identity_fields)) = source_model(
                         objects,
                         &declared_types,

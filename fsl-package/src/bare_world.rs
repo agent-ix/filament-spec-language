@@ -144,6 +144,23 @@ impl BarePackage<'_> {
     /// environment.
     #[ix_trace_rs::string_edge]
     pub fn world(&self) -> Result<BareWorld, BareSelectionFailure> {
+        self.world_of(false)
+    }
+
+    /// [`Self::world`] with the object types of the package's source-object
+    /// rows declared in its type environment, so an operation of a source
+    /// type resolves in it (FR-569). A type declared this way has no field.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::world`]; a fault when the source-object rows do not declare
+    /// a closed set of types.
+    #[ix_trace_rs::string_edge]
+    pub fn world_with_source_objects(&self) -> Result<BareWorld, BareSelectionFailure> {
+        self.world_of(true)
+    }
+
+    fn world_of(&self, source_objects: bool) -> Result<BareWorld, BareSelectionFailure> {
         let package = self.package();
         let (_, identities) = self.witness()?;
         let mut composites = Vec::new();
@@ -256,16 +273,11 @@ impl BarePackage<'_> {
             });
         }
         let mut objects = objects.unwrap_or(&[]).to_vec();
-        // The unit's own object types are declared by no node: their rows
-        // declare them (FR-569), so an operation of theirs resolves.
-        let shells = self
-            .source_row_shells()
-            .map_err(|_| fault("source-object-rows-are-a-closed-environment"))?;
-        if !shells.is_empty() {
-            objects.extend(fsl_semantics::check::object_types_of_source_rows(
-                &format!("source/{}", package.name()),
-                &shells,
-            ));
+        if source_objects {
+            objects.extend(
+                self.source_object_declarations()
+                    .map_err(|_| fault("source-object-rows-are-a-closed-environment"))?,
+            );
         }
         let types =
             TypeEnvironment::new(closed_composites(self, composites, object_nodes), objects)

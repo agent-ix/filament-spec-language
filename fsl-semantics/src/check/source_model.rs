@@ -901,18 +901,21 @@ fn scalar_type(
 
 /// One parameter of an operation a source object type declares, as a checked
 /// package's source-object identity row states it.
+#[derive(Clone, Debug)]
 pub struct SourceRowParameter {
     /// The parameter's name.
     pub name: String,
     /// Whether the parameter may be absent at a call site.
     pub optional: bool,
-    /// The parameter's value type; `None` for a `Clock` parameter, which has
-    /// no type node.
+    /// How many values the parameter takes.
+    pub multiplicity: Multiplicity,
+    /// The parameter's value type; `None` for a `Clock` parameter.
     pub value_type: Option<filament_exact::ValueType>,
 }
 
 /// One operation a source object type declares itself, as a checked
 /// package's source-object identity row states it.
+#[derive(Clone, Debug)]
 pub struct SourceRowOperation {
     /// The operation's name.
     pub name: String,
@@ -921,8 +924,11 @@ pub struct SourceRowOperation {
 }
 
 /// One source object type, as a checked package's source-object identity row
-/// states it: no effect frame, field, result or population, which the row
-/// does not carry.
+/// states it. The row also carries the type's fields, identity fields and
+/// populations, and not an operation's effect frame or result; the rebuilt
+/// source package holds only the types, supertypes, operations and parameters
+/// a `probabilistic` node joins to, so this carries only those.
+#[derive(Clone, Debug)]
 pub struct SourceRowObject {
     /// The type's name.
     pub name: String,
@@ -934,13 +940,13 @@ pub struct SourceRowObject {
     pub operations: Vec<SourceRowOperation>,
 }
 
-/// The synthetic source package a checked package's source-object rows
-/// describe, under `identity` (`source/<package name>`): an object type per
-/// row and an operation per row operation, each parameter typed by the exact
-/// value type its type node projects. It is what a reader that holds no
-/// source text rebuilds in place of the package S3 built: the same
-/// declaration keys, so the declarations a package's `probabilistic` nodes
-/// name join to it as they join to S3's.
+/// The synthetic source package the source-object rows of one declaring unit
+/// describe, under `identity` ([`source_identity`]): an object type per row
+/// and an operation per row operation, each parameter typed by its read value
+/// type. It is what a reader that holds no source text rebuilds in place of
+/// the package S3 built: the same declaration keys, so the declarations a
+/// package's `probabilistic` nodes name join to it as they join to S3's.
+/// It holds no field, population, effect frame or result.
 #[must_use]
 pub fn package_of_source_rows(identity: &str, objects: &[SourceRowObject]) -> DomainPackage {
     let mut records = Vec::new();
@@ -973,7 +979,7 @@ pub fn package_of_source_rows(identity: &str, objects: &[SourceRowObject]) -> Do
                                 }
                                 None => ValueTypeRef::Clock,
                             },
-                            multiplicity: one(),
+                            multiplicity: parameter.multiplicity,
                             presence: if parameter.optional {
                                 Presence::Optional
                             } else {
@@ -1020,4 +1026,25 @@ pub fn object_types_of_source_rows(
             .with_supertypes(object.supertypes.iter().map(|name| id(name)).collect())
         })
         .collect()
+}
+
+/// The identity of the source package of the declaring unit at `position`
+/// among the units of the package `package_name` that declare an object type
+/// (FR-569): `source/<package>` for the first and `source/<package>/<n>` for
+/// the unit at position `n`.
+#[must_use]
+pub fn source_identity(package_name: &str, position: usize) -> String {
+    if position == 0 {
+        format!("source/{package_name}")
+    } else {
+        format!("source/{package_name}/{position}")
+    }
+}
+
+/// The structural node key of the object type `object` the unit of the
+/// package `package_name` declares: the key a `probabilistic` node names it
+/// by. `None` when `object` is no artifact id.
+#[must_use]
+pub fn source_type_node_key(package_name: &str, object: &str) -> Option<filament_exact::NodeKey> {
+    super::declared_node_key(package_name.to_owned(), vec![object.to_owned()], 0).ok()
 }

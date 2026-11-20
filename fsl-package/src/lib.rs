@@ -66,8 +66,10 @@ mod native_row;
 mod obligation_identity;
 #[cfg(feature = "std")]
 mod probabilistic_read;
+mod source_model_read;
 #[cfg(feature = "std")]
-pub use probabilistic_read::{ProbabilisticReadFault, SourceModelFault};
+pub use probabilistic_read::ProbabilisticReadFault;
+pub use source_model_read::{SourceModel, SourceModelFault, UnreadSourceParameter};
 #[cfg(feature = "std")]
 pub mod number;
 #[cfg(feature = "std")]

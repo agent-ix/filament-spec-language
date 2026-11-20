@@ -191,8 +191,8 @@ pub mod test_support {
 mod settings;
 mod source_model;
 pub use source_model::{
-    object_types_of_source_rows, package_of_source_rows, SourceRowObject, SourceRowOperation,
-    SourceRowParameter,
+    object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
+    SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
 pub(crate) mod state_clause;
 mod state_graph_claim;
