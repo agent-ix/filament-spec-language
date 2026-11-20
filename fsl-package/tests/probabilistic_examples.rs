@@ -132,7 +132,7 @@ fn compile_example(request_path: &str) -> EmittedExample {
         panic!("the strict reader admits {}: {read:?}", program.identity);
     };
     EmittedExample {
-        package_identity: program.identity,
+        package_identity: program.identity.clone(),
         wire,
     }
 }
