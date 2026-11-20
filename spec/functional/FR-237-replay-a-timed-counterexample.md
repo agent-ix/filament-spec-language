@@ -23,6 +23,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-249
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-286
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-217
+    type: references
   - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-364
@@ -50,9 +54,9 @@ FR-331 owns incomplete `task_search` evidence. A frontier replay never
 implies absence of an unseen miss.
 
 A task trace has no wire spelling of its own. Its steps are FSpec FR-364
-model-arm steps whose `transition` is one member of the FR-331
-`TransitionIdentity` union, told apart by `type`: `transition`,
-`task-transition` or `terminal-stutter`. The FR-331 contract version covers
+model-arm steps whose `transition` is an FR-331 `TransitionIdentity`
+(`transition` or `task-transition`) or the `terminal-stutter` marker, told
+apart by `type`. The FR-331 contract version covers
 them, and FSL adds no member, discriminator or version. In Rust,
 `TaskProductTransition` holds this task-derived alphabet: `Source`, `Task` and
 `TerminalStutter`. `ModelTransition` holds the plain model alphabet. The
@@ -134,7 +138,10 @@ refutation.
   writer gives back the same JSON value from what the reader read. A step
   whose `type` lies outside `T`'s alphabet is not a shape fault. The reader
   returns it as an alphabet refusal, `invalid_runtime_input`/`invalid-value`
-  at that step's `/transition/type` (FSpec FR-364 "Step alphabet").
+  at that step's `/transition/type` (FSpec FR-364 "Step alphabet"). The
+  reader checks the whole payload's shape first. It returns an alphabet
+  refusal only for a payload with no shape fault, so a shape fault at a later
+  step wins over an alphabet fault at an earlier one.
 - **Document form.** `fsl_replay::replay_model_trace_document` SHALL apply
   FR-128's recompile and item resolution first. It SHALL then take the
   alphabet from the resolved item and never from the payload:
@@ -218,9 +225,9 @@ refutation.
 | FR-237-AC-7 | The existing `ModelTrace` replay entry rebuilds an FR-249 task product and passes its model-trace payload to the FSpec FR-364 reader; an accepted task-derived miss yields the existing FR-072 ModelTrace result, while a rejected payload does not reproduce. No `TaskAutomatonTrace` result arm or parallel FSL trace wire is emitted. | Test (TC-704) |
 | FR-237-AC-8 | The FR-249-AC-9 counterexample with `loop` emptied is refused `malformed_wire` at `/loop` before any exploration, and is never settled by the admitted-endpoint arm, although its last state reaches a positive-delay cycle. | Test (TC-704) |
 | FR-237-AC-9 | The FR-249-AC-14 counterexample replays through `ModelTrace` to `reproduced`. Re-admitted against the same package with the `mode` declaration removed, it refuses `invalid_runtime_input`/`invalid-value` at the `go_hi` step's `/post_state` (`/prefix/10/post_state`), because the recomputed post-state key is in `LO`; with that step's key also rewritten to the `LO` key, it refuses at the first `budget-change` step's `/transition`. With `"mode": "hi"` added to that step, it refuses `malformed_wire` at `/prefix/<i>/mode`, and added to its `transition`, at `/prefix/<i>/transition/mode`. | Test (TC-704) |
-| FR-237-AC-10 | The FR-249-AC-9 refutation's counterexample, written to JSON by FR-286's writer, reads back with `read_temporal_counterexample::<TaskProductTransition>`, and re-writing gives an equal JSON value. Through `replay_model_trace_document` it is `reproduced`. Each mutation refuses `malformed_wire` before any step replays, with the cause and pointer shown: a `phase` member on the miss step's `transition` (`unknown-member`, `/prefix/<miss>/transition/phase`); `action` `"overflow"` (`unknown-variant`, `/prefix/<miss>/transition/action`); `budget_delta` on `activate t1#0` (`budget-delta-presence`, `/prefix/0/transition/budget_delta`); `delay` removed from `activate t1#0` (`missing-member`, `/prefix/0/delay`); `job` as the string `"0"` (`wrong-value-kind`, `/prefix/0/transition/job`). Embedded as `counterexamples[0]` of its FR-331 result, each pointer is prefixed `/counterexamples/0/counterexample`. | Test (TC-704) |
-| FR-237-AC-11 | Each of these refuses `invalid_runtime_input`/`invalid-value`, and none is `reproduced`. Through the document form, the FR-249-AC-9 counterexample with `prefix/0` written as the source identity `M::Call::fire_t1` refuses at `/prefix/0/transition/type` (FSpec FR-364-AC-23). Its source projection (every task step dropped, and each activating move written as its `transition` step) refuses at the first such step's `/transition/type`, although `replay_model_trace` would find each of its steps enabled in the source model alone. The same projection passed as a typed `TemporalCounterexample<ModelTransition>` to `replay_model_trace` for the task item refuses `ModelTraceRefusal::TraceAlphabet` before any step replays. FR-237-AC-1's `Rpc` counterexample with a `task-transition` step inserted refuses at that step's `/transition/type`. Passed to `replay_task_product_trace`, it refuses `TraceAlphabet`. | Test (TC-704) |
-| FR-237-AC-12 | Through the document form, each FSpec FR-364-AC-24 tamper of the FR-249-AC-9 counterexample refuses `invalid_runtime_input`/`invalid-value` at its named member, naming the supplied and the recomputed value. FSpec FR-364-AC-23's model `Tick` (one always-enabled operation `tick` with `release Two.b on M::tick;` declared before `release Two.a on M::tick;`) replays its move as `activate a#0` then `activate b#0`. Each AC-23 mutation of that move refuses at its stated pointer. Declaring the two releases in the other order writes the same steps. | Test (TC-704) |
+| FR-237-AC-10 | The FR-249-AC-9 refutation's counterexample (FSpec FR-364-AC-23's fixture `B`, with `<a>` the index of its `activate t1#0` step), written to JSON by FR-286's writer, reads back with `read_temporal_counterexample::<TaskProductTransition>`, and re-writing gives an equal JSON value. Through `replay_model_trace_document` it is `reproduced`. The analyze run that produced the refutation replays it through `replay_model_trace_document`: a run whose written counterexample fails that reader does not settle `refuted`. Each mutation refuses `malformed_wire` before any step replays, with the cause and pointer shown: a `phase` member on the miss step's `transition` (`unknown-member`, `/prefix/<miss>/transition/phase`); `action` `"overflow"` (`unknown-variant`, `/prefix/<miss>/transition/action`); `budget_delta` on `activate t1#0` (`budget-delta-presence`, `/prefix/<a>/transition/budget_delta`); `delay` removed from `activate t1#0` (`missing-member`, `/prefix/<a>/delay`); its `job` as the string `"0"` (`wrong-value-kind`, `/prefix/<a>/transition/job`). Embedded as `counterexamples[0]` of its FR-331 result, each pointer is prefixed `/counterexamples/0/counterexample`. | Test (TC-704) |
+| FR-237-AC-11 | Each of these refuses `invalid_runtime_input`/`invalid-value`, and none is `reproduced`. Through the document form, the FR-249-AC-9 counterexample with its `activate t1#0` step, at index `<a>`, written as the source identity `M::Call::fire_t1` refuses at `/prefix/<a>/transition/type` (FSpec FR-364-AC-23). Its source projection (every task step dropped, and each activating move written as its `transition` step) refuses at its first step's `/prefix/0/transition/type`, although `replay_model_trace` would find each of its steps enabled in the source model alone. The same projection passed as a typed `TemporalCounterexample<ModelTransition>` to `replay_model_trace` for the task item refuses `ModelTraceRefusal::TraceAlphabet` before any step replays. FR-237-AC-1's `Rpc` counterexample with a `task-transition` step inserted refuses at that step's `/transition/type`. Passed to `replay_task_product_trace`, it refuses `TraceAlphabet`. | Test (TC-704) |
+| FR-237-AC-12 | Through the document form, each FSpec FR-364-AC-24 tamper of the FR-249-AC-9 counterexample refuses `invalid_runtime_input`/`invalid-value` at its named member, naming the supplied and the recomputed value. FSpec FR-364-AC-23's fixture `Tick` is a `time dense` model `M` whose object type `Call` has `fired: Bool`, initially false, and one operation `tick` guarded `not self.fired` with post `self.fired = true`; `taskset Two { task a sporadic 10 ms deadline 2 ms bcet 3 ms wcet 3 ms priority 1 lo; task b sporadic 10 ms deadline 10 ms bcet 1 ms wcet 1 ms priority 2 lo; }`, with `release Two.b on M::Call::tick;` declared before `release Two.a on M::Call::tick;`; and `schedulable TwoFp on Two under fixed_priority;` with `backend` `en-6`. The item is refuted. Its counterexample's prefix is `activate a#0` (0) and `activate b#0` (1) at 0, both with the `tick` move's post-state key, then `dispatch a#0` at 0 (2), then `deadline-miss a#0` at elapsed 2 (3, the `trace_position`) with `demand` 3 and `deadline` 2. The prefix continues to `complete b#0` at elapsed 4, and `loop` is one `terminal-stutter` step with positive delay. Through the document form it is `reproduced`. Each AC-23 mutation of that move refuses at its stated pointer. Declaring the two releases in the other order writes the same steps. | Test (TC-704) |
 
 ## Dependencies
 

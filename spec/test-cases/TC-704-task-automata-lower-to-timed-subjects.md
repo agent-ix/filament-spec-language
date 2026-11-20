@@ -28,9 +28,9 @@ evidence, and release admission. This replaces the former
 `Unsupported(StopwatchRequired)` expectation.
 
 Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11 to FR-249-AC-16,
-FR-237-AC-7 to FR-237-AC-12, FSpec FR-364-AC-21, FSpec FR-364-AC-23,
-FSpec FR-364-AC-24, FSpec FR-364-AC-22 (its
-`queue_growth` cycle case), FR-239-AC-6,
+FR-237-AC-7 to FR-237-AC-12, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
+`queue_growth` cycle case), FSpec FR-364-AC-23, FSpec FR-364-AC-24,
+FR-239-AC-6,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
 
 ## Test Procedure
@@ -164,7 +164,10 @@ evidence that the runtime provider implements the search semantics.
   stated token; the formatted text is `mode MC hi on C::go_hi;`, formatting
   is idempotent, and both sources compile to equal packages.
 - Step 16: the rewritten JSON equals the written JSON, and the document
-  replays `reproduced` with the result EN-6 recorded. Each mutation refuses
+  replays `reproduced` with the result EN-6 recorded. The analyze run that
+  produced the refutation replayed it through `replay_model_trace_document`,
+  and a run whose written counterexample fails that reader does not settle
+  `refuted`. Each mutation refuses
   `malformed_wire` with its FR-237-AC-10 cause and pointer, and, when
   embedded, with the pointer prefixed `/counterexamples/0/counterexample`.
   No mutation replays a step.
