@@ -23,3 +23,9 @@ PARTIAL. `ExactGap::ActivationInfimum` is gone, so the FR-450 :272-275 deviation
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | No test pins FR-450 :252-256 for a decisive instant that is the limit of a curve. The new tests assert the value through `sign_of`, `> 0` or `Rational(q(n, 1))` only where the limit happens to come out as `Rational`. None asserts that a rational limit is reported as a point, which fails for CrossPair, TwoBranch, TwoBranchQ and DipC (code-review FND-002) | fsl-replay/src/hybrid_replay/tests/activation_tests.rs:776-825 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `a_rational_limit_of_a_curved_instant_is_reported_as_a_point` pins CrossPair 1, TwoBranch 0, TwoBranchQ 1/2, DipC 3 and DipA 13/10 as points; my probes confirm the same values |
