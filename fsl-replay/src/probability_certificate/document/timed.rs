@@ -1054,19 +1054,6 @@ fn enumerate_digital_deadline(
             .delay(&current.timed, &delta)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .is_some();
-        if enabled.is_empty() && !can_delay {
-            insert_checker_state(
-                key,
-                CheckerState {
-                    terminal: Some(false),
-                    choices: Vec::new(),
-                },
-                &mut states,
-                storage,
-                limits,
-            )?;
-            continue;
-        }
         let mut given_choices = Vec::with_capacity(actions.len());
         for action in &actions {
             if let Some(support) = discrete_delay(system, &action.identity.operation) {
@@ -1102,6 +1089,22 @@ fn enumerate_digital_deadline(
                     .is_some_and(|rows| rows.iter().any(|edges| !edges.is_empty()))
             })
             .count();
+        let has_free_action = enabled
+            .iter()
+            .any(|action| discrete_delay(system, &action.identity.operation).is_none());
+        if given_actions == 0 && !has_free_action && !can_delay {
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: Some(false),
+                    choices: Vec::new(),
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
         if given_actions > 1 {
             return Err(ProbabilityDocumentError::Unsupported);
         }
