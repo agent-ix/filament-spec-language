@@ -315,6 +315,7 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
     let outcome_document: Value =
         serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
     assert_eq!(outcome_document["last_stage"], "I1");
+    assert_eq!(outcome_document["artifacts"], json!([]));
     assert_eq!(
         serde_json::from_slice::<Value>(outcome.package_bytes()).unwrap()["contractVersion"],
         "2.0.0"
