@@ -246,6 +246,7 @@ pub fn compile_model_unit(
                     )]);
                 }
                 references.extend(object.relationship_targets.iter().cloned());
+                types.extend(object.additional_types);
                 types.push(object.wire);
                 has_object_type = true;
                 index = next;
@@ -714,6 +715,7 @@ pub fn compile_model_unit(
                 if let Some(object) = record.wire.as_object_mut() {
                     object.remove("operations");
                 }
+                types.extend(record.additional_types);
                 types.push(record.wire);
                 has_record_type = true;
                 index = next;
@@ -937,6 +939,7 @@ struct ObjectRead {
     name: String,
     name_span: Span,
     wire: Value,
+    additional_types: Vec<Value>,
     relationship_targets: Vec<(String, Span)>,
 }
 
@@ -977,6 +980,7 @@ fn read_object(
     let mut operations = Vec::new();
     let mut relationships = Vec::new();
     let mut clauses = Vec::new();
+    let mut additional_types = Vec::new();
     let mut relationship_targets = Vec::new();
     while tokens.get(index)?.text != "}" {
         let member_start = tokens.get(index)?.span.start;
@@ -1050,6 +1054,26 @@ fn read_object(
                 index += 1;
                 let mut type_name = tokens.get(index)?.text.clone();
                 index += 1;
+                let mut type_reference = None;
+                if type_name == "Option" && tokens.get(index).is_some_and(|t| t.text == "<") {
+                    index += 1;
+                    let inner = tokens.get(index)?.text.clone();
+                    index += 1;
+                    if tokens.get(index)?.text != ">" {
+                        return None;
+                    }
+                    index += 1;
+                    let option_identity = format!("{package}/Option_{name}_{field_name}");
+                    let option_identity = format!("ix://{option_identity}");
+                    additional_types.push(json!({
+                        "identity": option_identity,
+                        "displayName": format!("Option<{inner}>"),
+                        "kind": "option",
+                        "inner": type_ref(&inner, package),
+                        "origin": source_origin(parsed, Span { start: member_start, end: tokens[index - 1].span.end }),
+                    }));
+                    type_reference = Some(option_identity);
+                }
                 let mut optional = false;
                 let inline_type_bounds =
                     matches!(type_name.as_str(), "Int" | "Rational" | "Decimal" | "Text")
@@ -1111,7 +1135,7 @@ fn read_object(
                 fields.push(json!({
                     "identity": field_identity,
                     "name": field_name,
-                    "typeRef": type_ref(&type_name, package),
+                    "typeRef": type_reference.unwrap_or_else(|| type_ref(&type_name, package)),
                     "presence": if optional {"optional"} else {"required"},
                     "nullable": false,
                     "defaultKind": "none",
@@ -1140,6 +1164,7 @@ fn read_object(
             name,
             name_span,
             wire,
+            additional_types,
             relationship_targets,
         },
         index,

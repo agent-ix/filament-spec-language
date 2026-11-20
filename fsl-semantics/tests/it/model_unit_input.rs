@@ -609,3 +609,26 @@ object Node {
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_an_option_field_type() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/options";
+object Holder { maybe: Option<Integer>; }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("option field model compiles");
+    let (_, document) = admit(
+        "example/options",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the option field");
+    let records = read_records("example/options", &document).expect("option records are read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::OptionType(_)
+        )
+    }));
+}
