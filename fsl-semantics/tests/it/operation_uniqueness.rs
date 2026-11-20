@@ -413,8 +413,18 @@ fn different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type() 
         panic!("{refusal:?}");
     };
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].code.as_str(), "invalid_model_binding");
-    assert_eq!(found[0].cause.as_str(), "conflicting-binding");
+    assert_refusal(
+        &found[0],
+        "invalid_model_binding",
+        "conflicting-binding",
+        &key("advance"),
+        "TypeDefinition.operations[0].frame.modifies_receiver[0]",
+    );
+    assert!(
+        found[0].detail.contains(".frame.modifies_receiver[0]")
+            && found[0].detail.contains(".frame.modifies[0]"),
+        "both differently scoped entries must be named: {found:?}"
+    );
 }
 
 #[trace("TC-1307", "FR-512-AC-1")]
