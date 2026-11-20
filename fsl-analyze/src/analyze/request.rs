@@ -937,7 +937,7 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
                 && form.item_kind == ItemKind::Formula
-                && super::document::claim_timed(package, &item.claim) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             if digital {
                 super::digital_item::digital_clause_item(
@@ -1232,13 +1232,13 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if digital
                 && form.item_kind == ItemKind::Formula
-                && super::document::claim_timed(package, &item.claim) =>
+                && super::document::claim_timed(package, &item.claim, binding) =>
         {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(form))
             if if form.item_kind == ItemKind::Formula {
-                super::document::claim_timed(package, &item.claim)
+                super::document::claim_timed(package, &item.claim, binding)
             } else {
                 super::document::timed(package)
             } =>
@@ -1277,7 +1277,7 @@ fn work<'a>(
     // (FR-247).
     let zone = match &item.form {
         Some(ItemForm::Temporal(form)) if form.item_kind == ItemKind::Formula => {
-            super::document::claim_timed(package, &item.claim)
+            super::document::claim_timed(package, &item.claim, binding)
         }
         Some(ItemForm::Temporal(_)) => super::document::timed(package),
         _ => false,
