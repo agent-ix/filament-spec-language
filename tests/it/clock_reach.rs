@@ -87,6 +87,12 @@ fn an_open_prefix_and_an_incomplete_input_differ() {
 }
 
 fn quantile_unit(quantile: &str) -> String {
+    aggregate_unit(&format!("quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms"))
+}
+
+/// A timestamped-event unit whose clause `P` holds the window-aggregate atom
+/// `atom` at every tick of `[0, 300000]` ms.
+fn aggregate_unit(atom: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile w = \"{STAMPED}\";\n\
@@ -95,7 +101,7 @@ fn quantile_unit(quantile: &str) -> String {
          unit ms : Time = rational(1, 1000) * s;\n\
          record Resp {{ latency: Quantity<ms>; }}\n\
          temporal P using w over (r: Resp) clock \"plant-ms\" on origin \
-         {{ always[0, 300000] (quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms) }}\n"
+         {{ always[0, 300000] ({atom}) }}\n"
     )
 }
 
@@ -121,7 +127,7 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2138: filament-contract-model's strict reader does not admit a source-owned clock unit yet (FSpec FR-778, IR)"]
+#[ignore = "QSL-2338: filament-contract-model's strict reader resolves a source clock unit's owner from the clause's Boolean semantic type, so it refuses missing_declaration/missing-name at /temporal_bindings/0/clock/timestamp_unit (FSpec FR-778, IR)"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
@@ -178,4 +184,51 @@ fn model_subject_aggregate_refusal() -> fsl_semantics::check::TemporalCause {
         ("unsupported_construct".to_owned(), "expression-form")
     );
     cause
+}
+
+/// FR-194-AC-1, AC-2 over source: each window aggregate kind, parsed from
+/// source under the timestamped-event profile, runs through `command::run`
+/// over AC-1's 20 latencies to the verdict its window values give. At the
+/// last tick the window holds 20 responses: 18 of 1 ms, then 6 ms and 7 ms.
+#[test]
+#[trace("TC-629", "FR-194-AC-1", "FR-194-AC-2")]
+#[ignore = "QSL-2338: filament-contract-model's strict reader resolves a source clock unit's owner from the clause's Boolean semantic type, so it refuses missing_declaration/missing-name at /temporal_bindings/0/clock/timestamp_unit (FSpec FR-778, IR)"]
+fn every_window_aggregate_kind_reaches_a_verdict_from_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
+    for (atom, exit, verdict) in [
+        ("count over past[0 ms, 300 s] <= 20", 0, "holds"),
+        ("count over past[0 ms, 300 s] <= 19", 10, "violated"),
+        ("sum of r.latency over past[0 ms, 300 s] <= 31 ms", 0, "holds"),
+        ("sum of r.latency over past[0 ms, 300 s] <= 30 ms", 10, "violated"),
+        ("min of r.latency over past[0 ms, 300 s] >= 1 ms", 0, "holds"),
+        ("min of r.latency over past[0 ms, 300 s] >= 2 ms", 10, "violated"),
+        ("max of r.latency over past[0 ms, 300 s] <= 7 ms", 0, "holds"),
+        ("max of r.latency over past[0 ms, 300 s] <= 6 ms", 10, "violated"),
+        (
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(9, 10)",
+            0,
+            "holds",
+        ),
+        (
+            "fraction holds(r.latency <= 1 ms) over past[0 ms, 300 s] >= rational(19, 20)",
+            10,
+            "violated",
+        ),
+        ("quantile 0.9 of r.latency over past[0 ms, 300 s] <= 5 ms", 0, "holds"),
+        ("quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms", 10, "violated"),
+    ] {
+        let (code, document) = run(
+            directory.path(),
+            &aggregate_unit(atom),
+            clocks.clone(),
+            "P",
+            responses(),
+        );
+        assert_eq!(code, exit, "{atom}: {document}");
+        assert_eq!(
+            document["disposition"]["temporal"]["kind"], verdict,
+            "{atom}: {document}"
+        );
+    }
 }
