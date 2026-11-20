@@ -453,7 +453,10 @@ fn meter_fields(put: (&str, Value)) -> Value {
 }
 
 /// Admits a current snapshot of the golden package holding one `Meter`.
-fn admit_meter(checked: &Checked, fields: Value) -> Result<(), (String, Option<String>)> {
+fn admit_meter(
+    checked: &Checked,
+    fields: Value,
+) -> Result<(), (String, BTreeMap<String, String>)> {
     let reference = DocumentRef {
         authority: "test".to_owned(),
         identity: "decimal-current".to_owned(),
@@ -484,7 +487,7 @@ fn admit_meter(checked: &Checked, fields: Value) -> Result<(), (String, Option<S
         Ok(_) => Ok(()),
         Err(AdmissionFailure::Refused(record)) => Err((
             record.catalog.cause().to_owned(),
-            record.fields.get("field").cloned(),
+            record.fields.clone(),
         )),
         Err(other) => panic!("unexpected admission failure: {other:?}"),
     }
@@ -521,7 +524,15 @@ fn snapshot_decimals_admit_by_membership() {
         let refused = admit_meter(&checked, meter_fields((field, coefficient(c, s))))
             .expect_err("a non-member refuses");
         assert_eq!(refused.0, "invalid-value", "{field} {c}e-{s}");
-        assert_eq!(refused.1.as_deref(), Some(field), "{field} {c}e-{s}");
+        assert_eq!(refused.1.get("field").map(String::as_str), Some(field), "{field} {c}e-{s}");
+        if (field, c, s) == ("soc", "101", "2") {
+            assert_eq!(
+                refused.1.get("expected").map(String::as_str),
+                Some("Decimal[0, 100; 2, 2; exact]")
+            );
+            assert_eq!(refused.1.get("coefficient").map(String::as_str), Some("101"));
+            assert_eq!(refused.1.get("scale").map(String::as_str), Some("2"));
+        }
     }
 }
 
