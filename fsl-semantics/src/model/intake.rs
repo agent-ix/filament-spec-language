@@ -5700,13 +5700,7 @@ fn read_type_node(
     }
     if type_value.get("kind").and_then(Value::as_str) == Some("alias") {
         if let Some(decimal) =
-            decimal_type_for_identity(
-                package,
-                raw_types,
-                type_positions,
-                decimal_type_cache,
-                node,
-            )?
+            decimal_type_for_identity(package, raw_types, type_positions, decimal_type_cache, node)?
         {
             if !ctx.array_field("fields")?.is_empty()
                 || !ctx.array_field("operations")?.is_empty()
@@ -6975,12 +6969,7 @@ fn read_nodes_partial(
         match node {
             DocumentNode::Type(type_value, position, _) => {
                 let at = format!("$.types[{position}]");
-                match read_type_node(
-                    &type_reader,
-                    type_value,
-                    &at,
-                    &mut pending,
-                ) {
+                match read_type_node(&type_reader, type_value, &at, &mut pending) {
                     Ok(mut new_records) => {
                         let mut duplicate = None;
                         for record in &new_records {
@@ -7443,7 +7432,10 @@ mod tests {
         assert_eq!(decimal.upper(), &Integer::from(99_999_i64));
 
         types[ALIASES - 1]["target"] = identity(0).into();
-        types[ALIASES - 1].as_object_mut().expect("alias").remove("decimal");
+        types[ALIASES - 1]
+            .as_object_mut()
+            .expect("alias")
+            .remove("decimal");
         let cyclic_positions = types
             .iter()
             .enumerate()
@@ -7455,17 +7447,15 @@ mod tests {
             })
             .collect();
         let cyclic_cache = std::cell::RefCell::new(HashMap::new());
-        assert!(
-            decimal_type_for_identity(
-                package,
-                &types,
-                &cyclic_positions,
-                &cyclic_cache,
-                &identity(0),
-            )
-                .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
-                .is_none()
-        );
+        assert!(decimal_type_for_identity(
+            package,
+            &types,
+            &cyclic_positions,
+            &cyclic_cache,
+            &identity(0),
+        )
+        .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
+        .is_none());
     }
 
     #[trace("FSpec-FR-154-AC-39", "FSpec-FR-154-AC-40", "FSpec-FR-154-AC-41")]
