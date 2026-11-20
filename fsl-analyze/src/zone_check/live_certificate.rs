@@ -33,7 +33,11 @@ use super::ZoneCheckRefusal;
 impl Run<'_, '_, '_> {
     /// The certificate of a liveness `Holds` over `proofs`, each
     /// instance's product with no fair accepting cycle.
-    pub(super) fn live_certificate(&mut self, proofs: Vec<InstanceProof>) -> Result<Proof, Halt> {
+    pub(super) fn live_certificate(
+        &mut self,
+        proofs: Vec<InstanceProof>,
+        admission: Option<Product>,
+    ) -> Result<Proof, Halt> {
         let non_zeno = if proofs
             .iter()
             .any(|proof| has_accepting_cycle_without_divergence(proof))
@@ -45,7 +49,10 @@ impl Run<'_, '_, '_> {
         let total: usize = proofs
             .iter()
             .map(|proof| proof.product.vertices.len())
-            .sum();
+            .sum::<usize>()
+            + admission
+                .as_ref()
+                .map_or(0, |product| product.vertices.len());
         let mut nodes = Vec::with_capacity(total);
         let mut edges = Vec::new();
         let mut initials = Vec::new();
@@ -54,10 +61,23 @@ impl Run<'_, '_, '_> {
             reasons: Vec::new(),
         };
         // Each instance's product edges as certificate edges, by index.
-        let mut placed: Vec<Vec<usize>> = Vec::with_capacity(proofs.len());
+        let mut placed: Vec<Vec<usize>> = Vec::with_capacity(proofs.len() + 1);
+        let mut offsets: Vec<usize> = Vec::with_capacity(proofs.len() + 1);
         let mut offset = 0;
-        for (instance, proof) in proofs.iter().enumerate() {
-            let product = &proof.product;
+        let count = proofs.len();
+        let admitted_product = admission.as_ref();
+        let products = proofs
+            .iter()
+            .map(Some)
+            .chain(admitted_product.map(|_| None));
+        for (instance, proof) in products.enumerate() {
+            offsets.push(offset);
+            let product = match proof {
+                Some(proof) => &proof.product,
+                None => admission
+                    .as_ref()
+                    .ok_or(ZoneCheckRefusal::Fault("admission"))?,
+            };
             for (index, vertex) in product.vertices.iter().enumerate() {
                 self.poll()?;
                 let (_, state_key) = self
@@ -89,13 +109,39 @@ impl Run<'_, '_, '_> {
                 }
             }
             placed.push(at);
-            self.number(&proof.analyses, proof, offset, &mut components)?;
+            if let Some(proof) = proof {
+                self.number(&proof.analyses, proof, offset, &mut components)?;
+            }
             offset += product.vertices.len();
         }
         let first = proofs
             .first()
             .ok_or(ZoneCheckRefusal::Fault("liveness-instance"))?;
-        let admitted = self.live_admitted(&first.product, &placed[0])?;
+        let admitted = match self.admitted_in(&first.product, &placed[0])? {
+            Some(witness) => witness,
+            None => {
+                let product = admission
+                    .as_ref()
+                    .ok_or(ZoneCheckRefusal::Fault("admitted-witness"))?;
+                let at = placed
+                    .get(count)
+                    .ok_or(ZoneCheckRefusal::Fault("admission"))?;
+                let base = offsets.get(count).copied().unwrap_or(0);
+                let witness = self
+                    .admitted_in(product, at)?
+                    .ok_or(ZoneCheckRefusal::Fault("admitted-witness"))?;
+                // Its nodes follow the instances', shifted to their place.
+                DivergenceWitness {
+                    start: witness.start + base,
+                    path: witness.path,
+                    target: match witness.target {
+                        DivergentTarget::Quiescent(node) => DivergentTarget::Quiescent(node + base),
+                        DivergentTarget::Terminal(node) => DivergentTarget::Terminal(node + base),
+                        DivergentTarget::Cycle(cycle) => DivergentTarget::Cycle(cycle),
+                    },
+                }
+            }
+        };
         let integers = |bounds: &[Option<BigInt>]| -> Vec<Option<Integer>> {
             bounds
                 .iter()
@@ -266,15 +312,16 @@ impl Run<'_, '_, '_> {
         })
     }
 
-    /// TD-6's witness in the first instance's product: a path from an
-    /// initial vertex to a quiescent (dense) or terminal (tick) vertex, or
-    /// else to a cycle through a divergence reset or a tick. `placed` maps
-    /// the product's edges to the certificate's.
-    fn live_admitted(
+    /// TD-6's witness in `product`: a path from an initial vertex to a
+    /// quiescent (dense) or terminal (tick) vertex, or else to a cycle
+    /// through a divergence reset or a tick; `None` when it has neither.
+    /// `placed` maps the product's edges to the certificate's. Its vertex
+    /// numbers are the product's own.
+    pub(super) fn admitted_in(
         &mut self,
         product: &Product,
         placed: &[usize],
-    ) -> Result<DivergenceWitness, Halt> {
+    ) -> Result<Option<DivergenceWitness>, Halt> {
         let dense = self.timed.tick_period().is_none();
         // Breadth first from the initial vertices: each vertex's first edge
         // in and its initial vertex.
@@ -322,9 +369,8 @@ impl Run<'_, '_, '_> {
             };
             if idles {
                 let (start, path) = path_to(at);
-                // The first instance's nodes come first, unshifted.
                 let node = at;
-                return Ok(DivergenceWitness {
+                return Ok(Some(DivergenceWitness {
                     start,
                     path,
                     target: if dense {
@@ -332,7 +378,7 @@ impl Run<'_, '_, '_> {
                     } else {
                         DivergentTarget::Terminal(node)
                     },
-                });
+                }));
             }
         }
         // A cycle through an edge that lets time advance.
@@ -374,14 +420,14 @@ impl Run<'_, '_, '_> {
                 let (start, path) = path_to(edge.from);
                 let mut cycle = vec![placed[index]];
                 cycle.extend(back.into_iter().map(|index| placed[index]));
-                return Ok(DivergenceWitness {
+                return Ok(Some(DivergenceWitness {
                     start,
                     path,
                     target: DivergentTarget::Cycle(cycle),
-                });
+                }));
             }
         }
-        Err(ZoneCheckRefusal::Fault("admitted-witness").into())
+        Ok(None)
     }
 }
 

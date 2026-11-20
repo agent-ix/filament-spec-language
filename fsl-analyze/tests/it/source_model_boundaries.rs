@@ -80,7 +80,7 @@ fn state_value(state: &Value) -> String {
 
 #[test]
 #[trace("FR-126-AC-2")]
-#[ignore = "QSL-2714: bounded source model claims settle failed instead of their EN-1 verdict"]
+#[ignore = "QSL-2714: an `on each` bounded proof has no canonical closure certificate (QSL-878)"]
 fn source_atoms_distinguish_sufficient_and_short_bounded_each_horizons() {
     let ws = OwnedWorkspace::new("qsl2090-each-horizons");
     let body = "temporal Enough using t0 over(c: M::Counter) clock \"model-steps\" on each(q: M::Counter) { eventually[0,3] holds(c.value = 3) }\ntemporal Short using t0 over(c: M::Counter) clock \"model-steps\" on each(q: M::Counter) { eventually[0,1] holds(c.value = 3) }";
@@ -105,7 +105,6 @@ fn source_atoms_distinguish_sufficient_and_short_bounded_each_horizons() {
 
 #[test]
 #[trace("FR-125-AC-2")]
-#[ignore = "QSL-2714: false extension at model closure raises runtime_invariant"]
 fn a_bounded_state_predicate_is_false_past_the_terminal_closure() {
     let bounded_ws = OwnedWorkspace::new("qsl2090-false-extension");
     let body = "temporal ThroughFive using t0 over(c: M::Counter) clock \"model-steps\" on origin { always[0,5] holds(c.value <= 3) }";

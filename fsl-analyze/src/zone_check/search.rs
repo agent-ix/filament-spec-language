@@ -1398,7 +1398,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                                 stats: self.stats(),
                             });
                         }
-                        Liveness::Proved(products) => self.live_certificate(products)?,
+                        Liveness::Proved(products, admission) => {
+                            self.live_certificate(products, admission)?
+                        }
                     };
                     return Ok(Searched::Holds {
                         proof: Box::new(proof),

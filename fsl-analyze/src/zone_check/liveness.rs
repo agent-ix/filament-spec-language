@@ -200,7 +200,11 @@ pub(super) enum Liveness {
     Violated(Box<TemporalCounterexample>),
     /// No instance has a fair accepting cycle: each instance's product and
     /// the fairness kernels' analysis of it, in instance order.
-    Proved(Vec<InstanceProof>),
+    ///
+    /// The subject's product read by no claim, when the first instance's
+    /// own holds no time-divergent behaviour for the certificate's
+    /// `admitted` part to walk.
+    Proved(Vec<InstanceProof>, Option<Product>),
 }
 
 /// One instance's product with no fair accepting cycle, as FR-244's
@@ -367,29 +371,47 @@ impl Run<'_, '_, '_> {
         if not_concretised {
             return Err(self.undecided(ZoneUndecided::LassoNotConcretized));
         }
+        // The certificate's `admitted` part walks the first instance's
+        // product, which holds only the runs the claim's negation keeps: a
+        // claim every run satisfies leaves none that diverges in time. The
+        // subject's own product then stands in, read by no claim.
+        let identity = |product: &Product| (0..product.edges.len()).collect::<Vec<_>>();
+        let needed = match proofs.first() {
+            Some(first) => self
+                .admitted_in(&first.product, &identity(&first.product))?
+                .is_none(),
+            None => false,
+        };
         // FR-240 "Vacuity": a proof needs a fair time-divergent cycle or a
         // quiescent state. FR-239's test before the search found a
         // time-divergent behaviour, which is fair when no constraint
         // applies.
-        if let (false, Some(instance)) = (constrained.is_empty(), instances.first()) {
+        let mut admission = None;
+        if let (true, Some(instance)) = (needed || !constrained.is_empty(), instances.first()) {
             let mut live = Live {
                 instance,
                 automaton: &mut *automaton,
                 universal: true,
                 start,
                 capture: CaptureSite::Never,
-                cells: Cells::new(constrained),
+                cells: Cells::new(constrained.clone()),
                 readings: BTreeMap::new(),
                 dim,
                 lower: most.clone(),
                 upper: most,
                 product: Product::default(),
             };
-            if !self.admits_fair(&mut live)? {
+            if !constrained.is_empty() && !self.admits_fair(&mut live)? {
                 return Err(self.undecided(ZoneUndecided::NoAdmittedBehaviour));
             }
+            if needed {
+                if constrained.is_empty() {
+                    self.build(&mut live)?;
+                }
+                admission = Some(std::mem::take(&mut live.product));
+            }
         }
-        Ok(Liveness::Proved(proofs))
+        Ok(Liveness::Proved(proofs, admission))
     }
 
     /// Whether the subject, read by `live`'s universal automaton, reaches a

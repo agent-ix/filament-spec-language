@@ -114,6 +114,16 @@ impl<O> Checker<'_, '_, O> {
         self.live.as_ref().ok_or(fault(CheckerFault::Automaton))
     }
 
+    /// Whether `node` belongs to the admission instance: a product of the
+    /// subject read by no claim, past the claim's instances, which only
+    /// `admitted` walks and no component or fairness reading counts.
+    pub(super) fn admission(&self, node: usize) -> bool {
+        let count = self.live.as_ref().map_or(0, |live| live.instances.len());
+        self.certificate.nodes[node]
+            .product
+            .is_some_and(|mark| mark.instance >= count)
+    }
+
     /// The divergence clock's index in a zone, under a dense source: the
     /// last, after the clock places and the automaton's clocks.
     pub(super) fn z_clock(&self) -> usize {
@@ -193,9 +203,10 @@ impl<O> Checker<'_, '_, O> {
         if let Some(known) = live.readings.borrow().get(&key) {
             return Ok(*known);
         }
+        // The admission instance reads the letters of the first.
         let binding = live
             .instances
-            .get(instance)
+            .get(instance.min(live.instances.len().saturating_sub(1)))
             .ok_or(fault(CheckerFault::UnreachedNode))?;
         let limits = self.timed.system().meter_limits();
         let mut letter = Letter::default();
@@ -251,9 +262,17 @@ impl<O> Checker<'_, '_, O> {
 
     /// The transitions `q` reads `letter` by; each target is the checker's
     /// index.
-    fn reads(&self, q: usize, letter: Letter) -> Step<Vec<ClockedEdge>, O> {
+    fn reads(&self, instance: usize, q: usize, letter: Letter) -> Step<Vec<ClockedEdge>, O> {
         let live = self.live()?;
         let from = self.state_id(q)?;
+        if instance >= live.instances.len() {
+            // The admission instance reads no claim: every letter keeps `q`.
+            return Ok(vec![ClockedEdge {
+                target: from,
+                guard: Vec::new(),
+                resets: Vec::new(),
+            }]);
+        }
         automaton(live.automaton.borrow_mut().successors(from, letter))
     }
 
@@ -275,11 +294,13 @@ impl<O> Checker<'_, '_, O> {
     ) -> Step<Option<Vec<(usize, usize, ProductMark, Zone)>>, O> {
         let live = self.live()?;
         let mut found = Vec::new();
-        for instance in 0..live.instances.len() {
+        // The admission instance is read only when the certificate has one.
+        let admission = (0..self.certificate.nodes.len()).any(|node| self.admission(node));
+        for instance in 0..live.instances.len() + usize::from(admission) {
             let Some(letter) = self.letter(instance, state, true)? else {
                 return Ok(None);
             };
-            for read in self.reads(live.start.index(), letter)? {
+            for read in self.reads(instance, live.start.index(), letter)? {
                 let mut zero = Zone::zero(self.dim());
                 self.read_at(&mut zero, &read)?;
                 if zero.is_empty() {
@@ -509,7 +530,7 @@ impl<O> Checker<'_, '_, O> {
                     let Some(letter) = self.letter(instance, step.post(), false)? else {
                         return reject(CertificateRule::BadState, at_node(node));
                     };
-                    for read in self.reads(q, letter)? {
+                    for read in self.reads(instance, q, letter)? {
                         let mut read_zone = next.clone();
                         self.read_at(&mut read_zone, &read)?;
                         if read_zone.is_empty() {
@@ -605,7 +626,7 @@ impl<O> Checker<'_, '_, O> {
             let Some(letter) = self.letter(instance, state, false)? else {
                 return reject(CertificateRule::BadState, at_node(node));
             };
-            for read in self.reads(q, letter)? {
+            for read in self.reads(instance, q, letter)? {
                 let mut read_zone = zone.clone();
                 self.read_at(&mut read_zone, &read)?;
                 if read_zone.is_empty() {
@@ -643,7 +664,10 @@ impl<O> Checker<'_, '_, O> {
             return super::malformed(super::CertificateMember::Components);
         };
         for node in 0..self.certificate.nodes.len() {
-            if self.states[node].is_some() && components.numbering[node].is_none() {
+            if self.states[node].is_some()
+                && !self.admission(node)
+                && components.numbering[node].is_none()
+            {
                 return super::malformed(super::CertificateMember::Components);
             }
         }
@@ -706,7 +730,7 @@ impl<O> Checker<'_, '_, O> {
             .map(|enabled| graph.add_vertex(enabled.iter().map(|&index| identities[index])))
             .collect();
         for (index, edge) in self.certificate.edges.iter().enumerate() {
-            if self.covers[index].is_none() {
+            if self.covers[index].is_none() || self.admission(edge.from) {
                 continue;
             }
             let successor = self.covered(index)?;
@@ -730,6 +754,7 @@ impl<O> Checker<'_, '_, O> {
             let mut members = Vec::new();
             for node in 0..count {
                 if self.states[node].is_some()
+                    && !self.admission(node)
                     && self.in_set(node, AcceptanceSet::Automaton(set))?
                 {
                     members.push(vertices[node]);
@@ -741,7 +766,10 @@ impl<O> Checker<'_, '_, O> {
         }
         let mut positioned = Vec::new();
         for node in 0..count {
-            if self.states[node].is_some() && self.in_set(node, AcceptanceSet::Position)? {
+            if self.states[node].is_some()
+                && !self.admission(node)
+                && self.in_set(node, AcceptanceSet::Position)?
+            {
                 positioned.push(vertices[node]);
             }
         }
@@ -775,7 +803,7 @@ impl<O> Checker<'_, '_, O> {
             }
         }
         let within: BTreeSet<_> = (0..count)
-            .filter(|&node| self.states[node].is_some())
+            .filter(|&node| self.states[node].is_some() && !self.admission(node))
             .map(|node| vertices[node])
             .collect();
         let analyses = analyze(&graph, &within, &constraints, self.cancel).map_err(|error| {

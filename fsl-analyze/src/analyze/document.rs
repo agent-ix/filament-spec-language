@@ -1316,6 +1316,7 @@ pub fn resolve_items(
                     RequestIndex::new(position),
                     selection,
                     registry,
+                    binding,
                 )
             })
             .collect(),
@@ -1442,6 +1443,7 @@ fn resolve_one(
     index: RequestIndex,
     selection: &ItemSelection,
     registry: &Registry,
+    binding: &SubjectBinding<'_>,
 ) -> ResolvedItem {
     let name = selection.claim.as_deref();
     let Some(name) = name else {
@@ -1479,7 +1481,7 @@ fn resolve_one(
         return resolved;
     }
     let Some(node) = declarations(package).get(name).cloned() else {
-        return resolve_derived(package, subject, index, selection, registry, name)
+        return resolve_derived(package, subject, index, selection, registry, binding, name)
             .unwrap_or_else(|| unknown_claim(index, name));
     };
     let state_graph = package.graph().state_graph_claim(name).filter(|claim| {
@@ -1882,6 +1884,7 @@ fn resolve_derived(
     index: RequestIndex,
     selection: &ItemSelection,
     registry: &Registry,
+    binding: &SubjectBinding<'_>,
     name: &str,
 ) -> Option<ResolvedItem> {
     let temporal = selection.temporal.as_ref()?;
@@ -1908,7 +1911,24 @@ fn resolve_derived(
             )),
         });
     }
-    let derived = derived_items(package, subject, registry, &[], 0)
+    // FSpec FR-368-AC-22: a subject that reads several selections has no
+    // anchor for its derived items, so the producer settles the item
+    // `unsupported` and writes no request item for it.
+    let reads = read_identities(package, binding);
+    if fsl_route::deadlock::SubjectReading::read(graph, |identity| reads.contains(identity))
+        .anchor()
+        .is_err()
+    {
+        return Some(ResolvedItem::Settled {
+            claim_name: Some(name.to_owned()),
+            record: Box::new(TerminalRecord::disposition_unsupported(
+                index,
+                fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                Map::new(),
+            )),
+        });
+    }
+    let derived = derived_items(package, subject, registry, binding, &[], 0)
         .into_iter()
         .find_map(|resolved| match resolved {
             ResolvedItem::Claim(claim)
@@ -1945,7 +1965,7 @@ fn resolve_derived(
     }
     claim.candidates = registry.restrict_to_timing(
         registry.candidates(claim.item.kind, named.as_ref()),
-        timed(package),
+        timed_over(package, &reads),
     );
     claim.item.candidates = candidate_list(&claim.candidates);
     claim.item.backend = named;
@@ -2196,14 +2216,51 @@ fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bo
 /// Whether the model subject the package's selections give is timed
 /// (FR-243): a selected model declares a time source.
 pub(super) fn timed(package: &CheckedPackage) -> bool {
-    let graph = package.graph();
-    let selections: BTreeSet<&str> = graph
+    timed_over(package, &model_identities(package))
+}
+
+/// [`timed`] for a subject that reads the model selections `reads` holds:
+/// only a model it reads can make it timed (FR-243).
+fn timed_over(package: &CheckedPackage, reads: &BTreeSet<&str>) -> bool {
+    fsl_route::deadlock::SubjectReading::read(package.graph(), |identity| reads.contains(identity))
+        .timed()
+}
+
+/// The identity of every model selection of `package`.
+fn model_identities(package: &CheckedPackage) -> BTreeSet<&str> {
+    package
+        .graph()
         .model_selections()
         .iter()
         .map(|selection| selection.identity.as_str())
+        .collect()
+}
+
+/// The identities of the model selections the subject `binding` reads: those
+/// whose domain package one of its universes covers (FR-124-AC-12, FSpec
+/// FR-368-AC-22). A subject whose universes cover none reads every selection,
+/// as [`fsl_eval::simulation::model::ModelSystem::new_over_read_identities`]
+/// reads it.
+fn read_identities<'p>(
+    package: &'p CheckedPackage,
+    binding: &SubjectBinding<'_>,
+) -> BTreeSet<&'p str> {
+    let all = model_identities(package);
+    let read: BTreeSet<&str> = all
+        .iter()
+        .copied()
+        .filter(|identity| {
+            binding
+                .universes
+                .iter()
+                .any(|universe| universe.population.package == *identity)
+        })
         .collect();
-    fsl_route::deadlock::SubjectReading::read(graph, |identity| selections.contains(identity))
-        .timed()
+    if read.is_empty() {
+        all
+    } else {
+        read
+    }
 }
 
 fn candidate_list(candidates: &CandidateOutcome) -> Vec<fsl_route::Candidate> {
@@ -2369,6 +2426,7 @@ fn default_items(
                 RequestIndex::new(resolved.len()),
                 &selection,
                 registry,
+                binding,
             ));
         }
     }
@@ -2386,6 +2444,7 @@ fn default_items(
             RequestIndex::new(resolved.len()),
             &selection,
             registry,
+            binding,
         ));
     }
     let derived = if subject.protocol.is_some() {
@@ -2398,7 +2457,14 @@ fn default_items(
             resolved.len(),
         )
     } else {
-        derived_items(package, subject, registry, &resolved, resolved.len())
+        derived_items(
+            package,
+            subject,
+            registry,
+            binding,
+            &resolved,
+            resolved.len(),
+        )
     };
     resolved.extend(derived);
     resolved
@@ -2410,15 +2476,15 @@ fn derived_items(
     package: &CheckedPackage,
     subject: &SubjectSelection,
     registry: &Registry,
+    binding: &SubjectBinding<'_>,
     authored: &[ResolvedItem],
     first: usize,
 ) -> Vec<ResolvedItem> {
     let graph = package.graph();
-    let selections: BTreeSet<&str> = graph
-        .model_selections()
-        .iter()
-        .map(|selection| selection.identity.as_str())
-        .collect();
+    // FR-124-AC-12: the subject's items are over the models its universes
+    // read, not over every model the unit selects.
+    let selections = read_identities(package, binding);
+    let timed = timed_over(package, &selections);
     let mut request = fsl_route::model_request::ModelRequest::<()>::new();
     // FSpec FR-368: a model subject has its derived items whether or not the
     // unit authors a clause, so the subject is joined to the derivation
@@ -2481,28 +2547,30 @@ fn derived_items(
                 subject,
                 registry,
                 item,
-                RequestIndex::new(first + offset),
+                (RequestIndex::new(first + offset), timed),
                 None,
             )
         })
         .collect()
 }
 
-/// The resolved claim of the derived request item `item` over `subject`, run
-/// over the protocol subject `protocol` when it has one.
+/// The resolved claim of the derived request item `item` over `subject`, at
+/// the request index and with the timing of the subject the first member of
+/// `(index, timed)` and its second give, run over the protocol subject
+/// `protocol` when it has one.
 fn derived_claim(
     package: &CheckedPackage,
     subject: &SubjectSelection,
     registry: &Registry,
     item: &fsl_route::request::RequestItem,
-    index: RequestIndex,
+    (index, timed): (RequestIndex, bool),
     protocol: Option<&super::request::ProtocolBinding>,
 ) -> ResolvedItem {
     let candidates = registry.restrict_to_timing(
         item.candidates()
             .cloned()
             .unwrap_or_else(|| registry.candidates(item.kind(), None)),
-        timed(package),
+        timed,
     );
     let claim_name = declared_name(package, item.node()).unwrap_or_else(|| {
         protocol
@@ -2618,7 +2686,7 @@ fn protocol_derived_items(
                 subject,
                 registry,
                 item,
-                RequestIndex::new(first + offset),
+                (RequestIndex::new(first + offset), timed(package)),
                 Some(&binding),
             )
         })

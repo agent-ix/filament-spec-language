@@ -107,6 +107,9 @@ pub struct ClauseSubject<'a> {
     run: ClauseLimits,
     proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
     temporal: Option<super::TemporalItem>,
+    /// The run's clock selections of the declarations over a model subject,
+    /// which the checker's S4 emit reads (FR-640).
+    selections: Vec<fsl_package::TemporalClockSelection>,
 }
 
 impl<'a> ClauseSubject<'a> {
@@ -160,6 +163,7 @@ impl<'a> ClauseSubject<'a> {
             run,
             proof_bounds,
             temporal: None,
+            selections: model_selections(package),
         })
     }
 
@@ -204,7 +208,7 @@ impl<'a> ClauseSubject<'a> {
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
-                            temporal_clock_selections: &[],
+                            temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
                             item: item(),
                             max_depth: subject.run.max_depth,
@@ -223,7 +227,7 @@ impl<'a> ClauseSubject<'a> {
                                 .unwrap_or_default(),
                         },
                         certificate: CertificateRequest {
-                            temporal_clock_selections: &[],
+                            temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
                             item: item(),
                             smt_encoding: subject
@@ -433,6 +437,18 @@ pub(super) fn replay_over(
     )
 }
 
+/// The clock selections of the declarations of `package` over a model
+/// subject, which the model's binding and the declaration's profile derive
+/// (FR-640): every S4 emit of the source route reads them, as the compile
+/// does, so an event-position clause is emitted with its clock. A declaration
+/// whose traces need different configurations derives none, and its emit
+/// then refuses as it names.
+pub(super) fn model_selections(
+    package: &CheckedPackage,
+) -> Vec<fsl_package::TemporalClockSelection> {
+    fsl_replay::spine::RequestClocks::model_selections(package).unwrap_or_default()
+}
+
 /// FR-128's replay request and witness envelope for `payload`, the
 /// counterexample of the item `shape` names.
 pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
@@ -447,9 +463,12 @@ pub(super) fn replay_wire<T: Clone + fsl_eval::simulation::SubjectTransition>(
     ReplayRefusal,
 > {
     let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
-    let emission =
-        fsl_package::emit_checked_with_temporal_selections(inputs.package, &[], inputs.limits.emit)
-            .map_err(|_| fault("package-emission"))?;
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        inputs.package,
+        &model_selections(inputs.package),
+        inputs.limits.emit,
+    )
+    .map_err(|_| fault("package-emission"))?;
     let package = ReplayPackage::read(
         emission.package().bytes(),
         ReplayLimits::default().input_bytes,
@@ -594,8 +613,12 @@ pub(crate) fn replay_protocol_over(
         transcript: text,
     } = shape;
     let emission =
-        fsl_package::emit_checked_with_temporal_selections(inputs.package, &[], inputs.limits.emit)
-            .map_err(|_| fault("package-emission"))?;
+        fsl_package::emit_checked_with_temporal_selections(
+            inputs.package,
+            &model_selections(inputs.package),
+            inputs.limits.emit,
+        )
+        .map_err(|_| fault("package-emission"))?;
     let package = ReplayPackage::read(
         emission.package().bytes(),
         ReplayLimits::default().input_bytes,
