@@ -12,6 +12,8 @@ use super::*;
 use filament_contract_model::OperationBody;
 use filament_semantic_value::checking::CheckMode;
 
+mod source_contracts;
+
 const PACKAGE: &str = "example/config-version";
 const EXAMPLE: &str = include_str!("../../../../examples/config-version/model.semantic-ir.json");
 

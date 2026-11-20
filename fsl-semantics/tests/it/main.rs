@@ -91,6 +91,7 @@ mod null_value;
 mod observation_composites;
 mod operation_bodies;
 mod operation_clauses;
+mod operation_uniqueness;
 mod option_values;
 #[cfg(feature = "test-support")]
 mod population_bound;
