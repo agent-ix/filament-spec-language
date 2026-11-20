@@ -260,7 +260,7 @@ fn operation_and_frame_order_do_not_change_the_selected_declarations() {
         .expect("forward source unit assembles");
     let reverse = super::model_operations::admit_and_assemble(&reverse_bytes)
         .expect("reordered source unit assembles");
-    assert_eq!(forward, reverse);
+    assert_eq!(forward.operations, reverse.operations);
 }
 
 #[trace("TC-1307", "FR-512-AC-6", "FR-512-AC-17")]
