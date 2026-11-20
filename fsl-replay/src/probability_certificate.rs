@@ -1240,7 +1240,14 @@ pub(crate) fn check_model_exact_reachability<P: StatePredicate>(
         &mut |_, _| {},
         &mut |_| {},
     )?;
-    check_exact_reachability(&graph, certificate, objective, bound, cancel)
+    check_exact_reachability(
+        &graph,
+        certificate,
+        objective,
+        bound,
+        GraphCycles::Reject,
+        cancel,
+    )
 }
 
 /// Bind `item` to its checked claim by complete obligation identity, then check the
@@ -1464,17 +1471,29 @@ fn topological_order(
     }
 }
 
+/// How a checked graph's cycles are treated.
+#[derive(Clone, Copy)]
+enum GraphCycles {
+    /// The graph must be acyclic; any cycle is an error.
+    Reject,
+    /// Timed deadline graphs: closed nonprogressive action components are
+    /// collapsed to their best exit.
+    CollapseNonprogressive,
+}
+
 /// Check exact reachability values on a checker-owned graph.
 ///
 /// The graph representation and this evaluator are independent of
-/// `fsl-analyze`. Closed nonprogressive action components are reconstructed
-/// here and checked against their best exit values before ordinary Bellman
-/// equations are checked.
+/// `fsl-analyze`. Under [`GraphCycles::Reject`] a cyclic graph is an error.
+/// Under [`GraphCycles::CollapseNonprogressive`] closed nonprogressive action
+/// components are reconstructed here and checked against their best exit
+/// values before ordinary Bellman equations are checked.
 fn check_exact_reachability(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     objective: ProbabilityObjective,
     bound: &Bound,
+    cycles: GraphCycles,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
@@ -1486,7 +1505,13 @@ fn check_exact_reachability(
     };
     let zero = rational(0);
     let one = rational(1);
-    let components = nonprogressive_end_components(graph, cancel, None)?;
+    let components = match cycles {
+        GraphCycles::Reject => {
+            topological_order(graph, cancel)?;
+            Vec::new()
+        }
+        GraphCycles::CollapseNonprogressive => nonprogressive_end_components(graph, cancel, None)?,
+    };
     let mut component_of = BTreeMap::new();
     for (component, members) in components.iter().enumerate() {
         for key in members {
@@ -2104,6 +2129,7 @@ mod tests {
             &zero_time_mec_certificate(0),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(rational(0)),
+            GraphCycles::CollapseNonprogressive,
             &Cancel::new(),
         )
         .expect("checker evaluates the minimum MEC exit");
@@ -2116,6 +2142,7 @@ mod tests {
             &zero_time_mec_certificate(1),
             ProbabilityObjective::Maximum,
             &Bound::AtLeast(rational(1)),
+            GraphCycles::CollapseNonprogressive,
             &Cancel::new(),
         )
         .expect("checker evaluates the maximum MEC exit");
@@ -2128,6 +2155,7 @@ mod tests {
             &zero_time_mec_certificate(1),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(rational(0)),
+            GraphCycles::CollapseNonprogressive,
             &Cancel::new(),
         )
         .expect("a non-optimal MEC value is a typed rejection");
@@ -2174,6 +2202,7 @@ mod tests {
             &certificate,
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(rational(1)),
+            GraphCycles::CollapseNonprogressive,
             &Cancel::new(),
         )
         .expect("the leaky cycle has an exact checker value");
@@ -2383,6 +2412,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(3_i64), Integer::from(4_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -2403,6 +2433,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(3_i64), Integer::from(4_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -2421,6 +2452,7 @@ mod tests {
             &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
             ProbabilityObjective::Minimum,
             &Bound::AtLeast(Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()),
+            GraphCycles::Reject,
             &Cancel::new(),
         )
         .expect("the checker graph is acyclic and closed");
@@ -2429,22 +2461,82 @@ mod tests {
             rejected(ProbabilityCertificateRule::ThresholdMissed, key(0))
         );
 
-        // A closed self-loop is an end component, which a workload claim has no
-        // exit-value rule for.
         let mut cyclic = graph;
         let state = cyclic.states.get_mut(&key(2)).unwrap();
         state.terminal = None;
         state.choices = vec![vec![edge(2, 1, 1)]];
-        assert_eq!(
-            check_exact_reachability(
-                &cyclic,
-                &certificate(Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()),
-                ProbabilityObjective::Workload,
-                &Bound::AtLeast(rational(0)),
-                &Cancel::new(),
-            ),
-            Err(ExactProbabilityGraphError::UnsupportedClaimForm)
+        for objective in [
+            ProbabilityObjective::Minimum,
+            ProbabilityObjective::Maximum,
+            ProbabilityObjective::Workload,
+        ] {
+            assert_eq!(
+                check_exact_reachability(
+                    &cyclic,
+                    &certificate(
+                        Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap()
+                    ),
+                    objective,
+                    &Bound::AtLeast(rational(0)),
+                    GraphCycles::Reject,
+                    &Cancel::new(),
+                ),
+                Err(ExactProbabilityGraphError::Cycle)
+            );
+        }
+    }
+
+    #[trace("TC-636", "FR-201")]
+    #[test]
+    fn an_untimed_wait_loop_cannot_certify_a_scheduler_minimum() {
+        // `wait` loops on the start state, `flip` reaches the target: a
+        // scheduler that waits forever never reaches it, so the value 1 is
+        // forged under either optimization.
+        let initial = key(0);
+        let target = key(1);
+        let mut states = BTreeMap::new();
+        states.insert(
+            initial.clone(),
+            CheckerState {
+                terminal: None,
+                choices: vec![vec![edge(0, 1, 1)], vec![edge(1, 1, 1)]],
+            },
         );
+        states.insert(
+            target,
+            CheckerState {
+                terminal: Some(true),
+                choices: Vec::new(),
+            },
+        );
+        let graph = CheckerGraph { initial, states };
+        let forged = ExactProbabilityCertificate {
+            values: vec![
+                ExactProbabilityValue {
+                    state: key(0),
+                    value: rational(1),
+                },
+                ExactProbabilityValue {
+                    state: key(1),
+                    value: rational(1),
+                },
+            ],
+        };
+        for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
+            assert_eq!(
+                check_exact_reachability(
+                    &graph,
+                    &forged,
+                    objective,
+                    &Bound::AtLeast(
+                        Rational::new(Integer::from(9_i64), Integer::from(10_i64)).unwrap()
+                    ),
+                    GraphCycles::Reject,
+                    &Cancel::new(),
+                ),
+                Err(ExactProbabilityGraphError::Cycle)
+            );
+        }
     }
 
     #[trace("TC-636", "FR-201", "FR-282")]
@@ -2463,6 +2555,7 @@ mod tests {
                 &certificate,
                 ProbabilityObjective::Minimum,
                 &bound,
+                GraphCycles::Reject,
                 cancel,
             )
         };

@@ -125,9 +125,15 @@ pub(super) fn check(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let mut checked =
-        super::super::check_exact_reachability(&graph, &certificate, optimization, &bound, cancel)
-            .map_err(ProbabilityDocumentError::Graph)?;
+    let mut checked = super::super::check_exact_reachability(
+        &graph,
+        &certificate,
+        optimization,
+        &bound,
+        super::super::GraphCycles::CollapseNonprogressive,
+        cancel,
+    )
+    .map_err(ProbabilityDocumentError::Graph)?;
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut checked {
         accepted.document = Some(bytes.into());
     }
