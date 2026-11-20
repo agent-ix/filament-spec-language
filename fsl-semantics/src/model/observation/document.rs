@@ -1706,14 +1706,14 @@ fn admit_native(
         {
             float_payload(native)
                 .map(Value::Float)
-                .ok_or_else(|| invalid_float_bits())
+                .ok_or_else(invalid_float_bits)
         }
         (NativeKind::Float64, filament_exact::ValueType::Float(declared))
             if declared.width() == filament_exact::IeeeWidth::Binary64 =>
         {
             float_payload(native)
                 .map(Value::Float)
-                .ok_or_else(|| invalid_float_bits())
+                .ok_or_else(invalid_float_bits)
         }
         (NativeKind::Rational, filament_exact::ValueType::Rational(domain)) => {
             let value = rational_payload(native)?;
