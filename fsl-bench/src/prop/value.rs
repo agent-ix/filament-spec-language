@@ -115,6 +115,23 @@ pub enum Expr {
     Integer(i64),
     /// Boolean literal.
     Boolean(bool),
+    /// ASCII text literal.
+    Text(String),
+    /// Exact rational numerator and positive denominator.
+    Rational { numerator: i64, denominator: u8 },
+    /// Exact decimal coefficient and scale.
+    Decimal { coefficient: i64, scale: u8 },
+    /// A present optional value.
+    Present(Box<Expr>),
+    /// A one-field record constructor.
+    Record(Box<Expr>),
+    /// A two-member tuple constructor.
+    Tuple(Box<Expr>, bool),
+    /// A finite collection constructor.
+    Collection {
+        kind: CollectionKind,
+        members: Vec<Expr>,
+    },
     /// Arithmetic addition with integer operands.
     Add(Box<Expr>, Box<Expr>),
     /// Boolean conjunction.
@@ -142,6 +159,30 @@ impl Expr {
             Self::Parameter(name) => name.clone(),
             Self::Integer(value) => value.to_string(),
             Self::Boolean(value) => value.to_string(),
+            Self::Text(value) => format!("{value:?}"),
+            Self::Rational {
+                numerator,
+                denominator,
+            } => format!("rational({numerator}, {denominator})"),
+            Self::Decimal { coefficient, scale } => format!("decimal({coefficient}, {scale})"),
+            Self::Present(member) => format!("present({})", member.source()),
+            Self::Record(member) => format!("RecordValue {{ field: {} }}", member.source()),
+            Self::Tuple(member, flag) => format!("TupleValue({}, {flag})", member.source()),
+            Self::Collection { kind, members } => {
+                let constructor = match kind {
+                    CollectionKind::Sequence => "sequence",
+                    CollectionKind::Set => "set",
+                    CollectionKind::Bag => "bag",
+                };
+                format!(
+                    "{constructor}[{}]",
+                    members
+                        .iter()
+                        .map(Self::source)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             Self::Add(left, right) => format!("({} + {})", left.source(), right.source()),
             Self::And(left, right) => format!("({} and {})", left.source(), right.source()),
             Self::Equal(left, right) => format!("({} = {})", left.source(), right.source()),
@@ -161,6 +202,32 @@ impl Expr {
                 no.source()
             ),
         }
+    }
+}
+
+fn inhabit(ty: &Type, choice: u8) -> Expr {
+    match ty {
+        Type::Integer => Expr::Integer(i64::from(choice)),
+        Type::BoundedInt { lower, upper } => {
+            Expr::Integer(lower + i64::from(choice) % (upper - lower + 1))
+        }
+        Type::Boolean => Expr::Boolean(choice % 2 == 0),
+        Type::Rational => Expr::Rational {
+            numerator: i64::from(choice % 10),
+            denominator: choice % 3 + 1,
+        },
+        Type::Decimal { .. } => Expr::Decimal {
+            coefficient: i64::from(choice % 20),
+            scale: choice % 3,
+        },
+        Type::Text => Expr::Text("a".repeat(usize::from(choice % 10))),
+        Type::Option(member) => Expr::Present(Box::new(inhabit(member, choice))),
+        Type::Record(member) => Expr::Record(Box::new(inhabit(member, choice))),
+        Type::Tuple(member) => Expr::Tuple(Box::new(inhabit(member, choice)), choice % 2 == 0),
+        Type::Collection { kind, member } => Expr::Collection {
+            kind: *kind,
+            members: vec![inhabit(member, choice)],
+        },
     }
 }
 
@@ -238,6 +305,11 @@ pub fn types() -> BoxedStrategy<Type> {
 
 /// Typed identity/conditional expressions over every family, plus integer and Boolean operators.
 pub fn expressions() -> BoxedStrategy<TypedExpression> {
+    let constructors = (types(), 0u8..40).prop_map(|(ty, choice)| TypedExpression {
+        expression: inhabit(&ty, choice),
+        parameters: Vec::new(),
+        result: ty,
+    });
     let identity = (types(), 0u8..4).prop_map(|(ty, depth)| {
         let mut expression = Expr::Parameter("x".into());
         for index in 0..depth {
@@ -295,5 +367,6 @@ pub fn expressions() -> BoxedStrategy<TypedExpression> {
                 )),
             },
         });
-    prop_oneof![4 => identity, 1 => integers, 1 => booleans, 1 => aggregates].boxed()
+    prop_oneof![3 => identity, 3 => constructors, 1 => integers, 1 => booleans, 1 => aggregates]
+        .boxed()
 }
