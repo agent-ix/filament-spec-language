@@ -3,7 +3,7 @@ id: SR-1479
 title: "QSL-2082 Rust test review"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; QSL-2082; fsl-analyze/tests/it/{exact_probabilistic_item.rs,hyper.rs,hyper_settle.rs,reduction.rs,reduction_differential.rs}"
+scope: "agent-ix/filament-spec-language; QSL-2082; fsl-analyze/tests/it/{exact_probabilistic_item.rs,hyper.rs,hyper_settle.rs,reduction.rs,reduction_differential.rs,hyper_witness.rs}"
 review_set: subset
 ---
 
@@ -101,6 +101,76 @@ Plan completion: not assessed
     {
       "test_id": "fair_whole_symmetry_preserves_every_counterexample_member_and_replays",
       "ac_id": "FR-161-AC-4",
+      "trace": "correct"
+    }
+  ]
+}
+```
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | The settlement fixture used a bare possibly-zero modulo in a Linked match, so S3 refused before its Undefined and incomplete-match assertions executed. | fsl-analyze/tests/it/hyper_settle.rs:224 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | fixed | The fixture now calls the existing Kernel-checked q from its Linked match; actual runtime assertions and both incomplete controls remain intact. |
+
+## Confined disposition evidence
+
+Confined disposition at reviewed head 599a5a36f69ffe15ec918ab078e65b5db642cb1b, implementation commit 5cae698add0ff5512848e2b220bef96fa719946c. Inspected only the corrected fixture, its documentation/import and the documented pub(crate) visibility of the existing KERNEL_MOD_FUNCTION constant. The Linked match now calls q(value(...)) through World::new_with_kernel_function, matching FR-177-AC-5 and preserving recorded checking mode. All runtime Undefined/refutation/cause/named-variable assertions, FR-182-AC-8 binding and both legitimate incomplete-match controls remain unchanged. No fake model, duplicated fixture, S3 weakening or ignored case was introduced. No further findings.
+
+Accepted coder receipts without repetition: original affected-module gate 83 passed, 1 failed, 2 ignored; corrected qualified test ran once and passed 1/0. Together the affected scope has 84 accepted passes, 0 unresolved failures, 2 existing ignored cases. The original failure remains recorded in reviews/qsl-2082-validation.json; this is not a whole-gate rerun or a claim that the original gate passed. Reviewer ran no tests, builds, lint, matrix or other-module checks. PASS retained for the scoped change; QSL-2082 remains partial under its existing owners.
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "FR-182-AC-8",
+      "path": "spec/functional/FR-182-settle-a-hyper-verdict.md",
+      "role": "examined",
+      "excerpt": "FR-177-AC-5's outcome settles `refuted`, `decisive-counterexample`, cause `UndefinedEvaluation` naming `a` and `b`, after its replay; FR-177-AC-6's and FR-178-AC-6's outcomes settle `inconclusive`, `MatchUndetermined`."
+    },
+    {
+      "id": "FR-177-AC-5",
+      "path": "spec/functional/FR-177-check-a-forall-exists-safety-hyperproperty-by-witness-sets.md",
+      "role": "context_only",
+      "excerpt": "`function q using v(x: Integer): Integer pure { 1 mod x }` is checked under `CheckMode::Kernel` and the clause calls it (the clause is checked Linked and would refuse a bare `mod` as `unproved-nonzero`, FR-495-AC-3, FR-952)"
+    }
+  ],
+  "findings": [
+    {
+      "fnd": "FND-002",
+      "severity": "medium",
+      "confidence": "high",
+      "method": "code-review",
+      "check": "test-intent",
+      "artifact_id": "FR-182-AC-8",
+      "related_ids": [
+        "FR-177-AC-5",
+        "FR-495-AC-3",
+        "FR-952"
+      ],
+      "path": "fsl-analyze/tests/it/hyper_settle.rs",
+      "lines": "224-236",
+      "excerpt": "FR-177-AC-5's outcome settles `refuted`, `decisive-counterexample`, cause `UndefinedEvaluation` naming `a` and `b`, after its replay; FR-177-AC-6's and FR-178-AC-6's outcomes settle `inconclusive`, `MatchUndetermined`.",
+      "finding": "The settlement fixture used a bare possibly-zero modulo in a Linked match, so S3 refused before its Undefined and incomplete-match assertions executed."
+    }
+  ],
+  "dispositions": [
+    {
+      "fnd": "FND-002",
+      "outcome": "fixed",
+      "after_excerpt": "let divided = \" and (if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) \\\n                   else 0) = 0\";\n    let world = World::new_with_kernel_function(\n        Vault::Secure,\n        false,\n        &STARTS,\n        &opaque(divided),\n        KERNEL_MOD_FUNCTION,\n    );"
+    }
+  ],
+  "bindings": [
+    {
+      "test_id": "an_undefined_tuple_refutes_and_an_undetermined_match_is_inconclusive",
+      "ac_id": "FR-182-AC-8",
       "trace": "correct"
     }
   ]
