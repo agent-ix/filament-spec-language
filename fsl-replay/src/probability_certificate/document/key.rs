@@ -271,7 +271,11 @@ fn model_form(node: NodeRef<'_>) -> bool {
 }
 
 fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
-    if parts.len() != 7
+    let boundary = matches!(
+        parts.first().map(|part| part.node()),
+        Some(Node::String("boundary-region"))
+    );
+    if parts.len() != if boundary { 8 } else { 7 }
         || !matches!(
             parts[0].node(),
             Node::String("digital" | "region" | "boundary-region")
@@ -295,7 +299,8 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
     let Node::Array(clocks) = parts[4].node() else {
         return false;
     };
-    for clock in clocks {
+    let clocks = clocks.collect::<Vec<_>>();
+    for clock in &clocks {
         let Node::Array(clock) = clock.node() else {
             return false;
         };
@@ -315,8 +320,8 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
             return false;
         }
     }
-    match parts[5].node() {
-        Node::Null => {}
+    let has_deadline = match parts[5].node() {
+        Node::Null => false,
         Node::Array(deadline) => {
             let deadline = deadline.collect::<Vec<_>>();
             if deadline.len() != if region { 4 } else { 3 }
@@ -327,8 +332,22 @@ fn timed_model_form(parts: Vec<NodeRef<'_>>) -> bool {
             {
                 return false;
             }
+            true
         }
         _ => return false,
+    };
+    if boundary {
+        let Node::Array(corner) = parts[7].node() else {
+            return false;
+        };
+        let corner = corner.collect::<Vec<_>>();
+        if corner.len() != clocks.len() + usize::from(has_deadline)
+            || corner
+                .iter()
+                .any(|coordinate| canonical_count(*coordinate).is_none())
+        {
+            return false;
+        }
     }
     matches!(
         parts[6].node(),

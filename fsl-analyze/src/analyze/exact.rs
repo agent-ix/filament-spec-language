@@ -640,7 +640,7 @@ fn run_timed_mean(
                 subject,
             );
         }
-        Err(error) => {
+        Err(_) => {
             return broken();
         }
     };
