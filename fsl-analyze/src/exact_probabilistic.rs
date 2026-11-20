@@ -572,6 +572,9 @@ pub struct ProbEdge {
     /// (summed over draws merged into the edge) over every scheduler, and 1
     /// at a resolution.
     pub probability: Rational,
+    /// Exact elapsed time on this edge in the subject's declared time unit.
+    /// Untimed edges carry zero.
+    pub elapsed: Rational,
     /// Every reward of the model for the step, in ascending name order. A
     /// resolution edge carries each reward at 0: the draw's rewards are on the
     /// edge that took the draw, once.

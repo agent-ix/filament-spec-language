@@ -2468,6 +2468,7 @@ mod tests {
             draw: None,
             to: ProbStateId(to),
             probability,
+            elapsed: Rational::from_integer(0.into()),
             rewards: Vec::new(),
         }
     }

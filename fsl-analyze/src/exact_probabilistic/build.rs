@@ -862,6 +862,7 @@ impl Builder<'_, '_, '_, '_> {
                 draw: edge.draw,
                 to: ProbStateId(to),
                 probability: edge.probability,
+                elapsed: Rational::from_integer(Integer::from(0_i64)),
                 rewards: edge.rewards,
             });
         }

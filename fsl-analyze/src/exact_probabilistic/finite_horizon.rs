@@ -605,6 +605,7 @@ mod tests {
                     draw: None,
                     to: ProbStateId(1),
                     probability: rational(1, 3),
+                    elapsed: Rational::from_integer(0.into()),
                     rewards: Vec::new(),
                 },
                 ProbEdge {
@@ -614,6 +615,7 @@ mod tests {
                     draw: None,
                     to: ProbStateId(2),
                     probability: rational(2, 3),
+                    elapsed: Rational::from_integer(0.into()),
                     rewards: Vec::new(),
                 },
             ],
@@ -647,6 +649,7 @@ mod tests {
                     draw: None,
                     to: ProbStateId(1),
                     probability: rational(1, 1),
+                    elapsed: Rational::from_integer(0.into()),
                     rewards: Vec::new(),
                 },
                 ProbEdge {
@@ -656,6 +659,7 @@ mod tests {
                     draw: None,
                     to: ProbStateId(2),
                     probability: rational(1, 1),
+                    elapsed: Rational::from_integer(0.into()),
                     rewards: Vec::new(),
                 },
             ],

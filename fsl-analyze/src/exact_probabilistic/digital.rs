@@ -1469,6 +1469,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 draw: edge.draw,
                 to: ProbStateId(to),
                 probability: edge.probability,
+                elapsed: Rational::new(Integer::from(edge.elapsed_ticks), Integer::from(self.scale))
+                    .map_err(|_| fault("elapsed-reward-scale-is-positive"))?,
                 rewards,
             });
             self.zero_delay.push(zero_delay);

@@ -72,6 +72,8 @@ pub struct ProducedStep {
     /// The step's exact probability, merged over the action's rows on a
     /// `FreeDelays` step.
     pub probability: Rational,
+    /// Exact time elapsed on this edge in the subject's declared time unit.
+    pub elapsed: Rational,
     /// The post-state.
     pub to: ProbStateId,
     /// The step's rewards, in ascending name order.
@@ -323,13 +325,18 @@ pub fn action_steps(
                 offered = true;
                 let merged = steps
                     .iter_mut()
-                    .find(|step| step.to == edge.to && same_rewards(&step.rewards, &edge.rewards));
+                    .find(|step| {
+                        step.to == edge.to
+                            && step.elapsed == edge.elapsed
+                            && same_rewards(&step.rewards, &edge.rewards)
+                    });
                 match merged {
                     Some(step) => step.probability = step.probability.add(&edge.probability),
                     None => steps.push(ProducedStep {
                         action: action.clone(),
                         draw: None,
                         probability: edge.probability.clone(),
+                        elapsed: edge.elapsed.clone(),
                         to: edge.to,
                         rewards: edge.rewards.clone(),
                     }),
@@ -349,6 +356,7 @@ pub fn action_steps(
                     action: edge.choice.clone(),
                     draw: edge.draw.clone(),
                     probability: edge.probability.clone(),
+                    elapsed: edge.elapsed.clone(),
                     to: edge.to,
                     rewards: edge.rewards.clone(),
                 }),
@@ -542,6 +550,7 @@ fn native_steps(
             action: edge.choice.clone(),
             draw: edge.draw.clone(),
             probability: edge.probability.clone(),
+            elapsed: edge.elapsed.clone(),
             to: edge.to,
             rewards: edge.rewards.clone(),
         });
@@ -927,6 +936,7 @@ mod tests {
                 draw: None,
                 to: state,
                 probability: rational(1),
+                elapsed: Rational::from_integer(0.into()),
                 rewards: Vec::new(),
             }],
             initial: vec![(0, None, state)],
