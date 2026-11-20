@@ -184,3 +184,26 @@ bindings:
   - {test_id: keyed_collections_of_an_ieee_bearing_union_are_admitted, ac_id: FR-323-AC-3, trace: correct}
   - {test_id: a_returned_counterexample_rejects_a_different_real_post_state_as_content_mismatch, ac_id: FR-128-AC-3, trace: correct}
 ```
+
+## New findings (disposition pass 1)
+
+This pass reviewed head `c1c5bbbe4e7c60c93b4db5e663db9f35259f52c2`, rebased on main `5865aa2ff`. The two reviewed commits are unchanged (`git range-diff` shows `=`), and the fixes are `e1b25db8c` and `e3431ffc5`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | low | The FR-534-AC-1 "more than one possible semantic failure" fixture cannot detect a change in priority: both layers fail with the same cause (`operator-ineligible`) at the same location, so either layer's refusal gives an identical `Err` | fsl-semantics/src/check/check/declared_type_tests.rs:249-256 |
+
+- **FND-007.** Fix: build the fixture from two failures with different causes at different layers, for example an outer collection whose element is ineligible and that holds `Composite(key("Missing"))`. Then assert the refusal that main's priority yields.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `repeat_steps_through_repeat`, its push, the `ProtocolConstruct::RepeatStepsThroughRepeat` variant and its `IR-1100` ticket arm are deleted, and the head has no references left. The stale refinement case is deleted, and the fsl-analyze nested-repeat test now expects admission (FR-880-AC-8). The FR-383-AC-17 test uses a temporal-only refusal (`protocol_requirements.rs:903`). |
+| FND-002 | fixed | All ten cases carry `"flips_with":"none"`. `REQUIRED_FLIPS_BY_CASE` and `EXPECTED_FLIP_COUNTS` drop G-001, G-009, G-022, G-024, G-026 and QSL-2006, and set G-028 to 2. |
+| FND-003 | fixed | One `normalize_view` helper (`observation.rs:1732`) serves both loops. |
+| FND-004 | fixed | The cause is `Some("backend-not-supplied")`. The missing `backend` member is accepted: `OutcomeDiagnostic` has no such field, and the real driver path (`fsl-replay/src/spine/call/execution_tests.rs:1376`) also carries only the cause. |
+| FND-005 | fixed | Set, Bag and OrderedSet of `Float64`, a nested `Bag<Set<Option<Float64>>>` and a `Sequence<Map<Integer, Float64>>` are admitted. Missing declarations keep `type-mismatch`, directly and beneath float-keyed layers. A multi-failure fixture exists, but it cannot discriminate priority (FND-007). |
+| FND-006 | fixed | The duplicate test is deleted. |
+
+The rebase reverts nothing from main: `claim_timed` (#3217) is untouched, and the only PR hunk in `fsl-analyze/src/analyze/document.rs` is the reviewed `ItemSelectionReadError` split. The fix commits edit none of the out-of-scope shape-red tests. Their remaining changes are formatting only.
