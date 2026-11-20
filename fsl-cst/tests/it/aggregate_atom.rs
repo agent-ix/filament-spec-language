@@ -84,3 +84,68 @@ fn a_boolean_connective_never_joins_the_threshold() {
         text.find("and s.ok").expect("the conjunct") + 4
     );
 }
+
+fn paired_atom(valid: &str, invalid: &str, anchor: &str, token: &str, expected: Option<&str>) {
+    let good = format!("temporal NearMiss using v over (s: M::S) on origin {{ {valid} }}");
+    let text = super::claim_syntax::unit(&good);
+    let parsed = super::claim_syntax::admitted(&text);
+    assert_eq!(
+        super::claim_syntax::node_texts(&text, &parsed, Production::AggregateAtom),
+        [valid]
+    );
+    let bad = format!("temporal NearMiss using v over (s: M::S) on origin {{ {invalid} }}");
+    match expected {
+        Some(expected) => super::claim_syntax::refused(&bad, anchor, token, expected),
+        None => {
+            super::claim_syntax::refused_at(&bad, anchor, token);
+        }
+    }
+}
+
+#[trace("FR-002-AC-6")]
+#[test]
+fn aggregate_kind_must_be_one_of_the_grammar_alternatives() {
+    paired_atom(
+        "count where holds(s.ok) over past[0,1] >= 1",
+        "average where holds(s.ok) over past[0,1] >= 1",
+        "average",
+        "average",
+        None,
+    );
+}
+
+#[trace("FR-002-AC-6")]
+#[test]
+fn past_window_requires_its_interval_after_past() {
+    paired_atom(
+        "sum of s.amount over past[0,2] >= 1",
+        "sum of s.amount over past >= 1",
+        ">=",
+        ">=",
+        Some("expected `[`"),
+    );
+}
+
+#[trace("FR-002-AC-6")]
+#[test]
+fn aggregate_atom_requires_a_comparison_after_the_complete_term() {
+    paired_atom(
+        "max of s.amount over past[0,2] >= 1",
+        "max of s.amount over past[0,2] 1",
+        "1 }",
+        "1",
+        Some("expected `<` or `<=` or `=` or `>` or `>=`"),
+    );
+}
+
+#[trace("FR-002-AC-6")]
+#[test]
+fn past_window_requires_a_separator_between_its_two_horizons() {
+    paired_atom(
+        "min of s.amount over past[0,2] >= 1",
+        "min of s.amount over past[0 2] >= 1",
+        "2]",
+        "2",
+        Some("expected `,`"),
+    );
+}
