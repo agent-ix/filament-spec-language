@@ -16,10 +16,10 @@
 //! every step of `Next_<clause>`, which includes the terminal step, so both
 //! targets count FSL's terminal stutter positions.
 
-use super::{CONSTRUCT, ClauseLow, Iv, Tf};
+use super::{ClauseLow, Iv, Tf, CONSTRUCT};
 use crate::command::export::lower::{
-    Definition, Input, Lower, Object, Operation, Target, bullets, defer_at, define, mangle,
-    parameters, refusal, scalars, snapshot_rows, tla_domain,
+    bullets, defer_at, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain,
+    Definition, Input, Lower, Object, Operation, Target,
 };
 use std::collections::BTreeSet;
 
@@ -709,11 +709,14 @@ impl Ctx<'_> {
             }
         })
     }
-
 }
 
 fn boolean(value: bool) -> &'static str {
-    if value { "TRUE" } else { "FALSE" }
+    if value {
+        "TRUE"
+    } else {
+        "FALSE"
+    }
 }
 
 // ---- Deterministic monitors ------------------------------------------------
@@ -823,7 +826,6 @@ pub(in crate::command::export::lower) fn tla(
 ) -> Lower<Extra> {
     let mut extra = Extra::default();
     let mut universes = BTreeSet::new();
-    let mut protocol_specs = BTreeSet::new();
     for clause in input.temporals {
         let object = input
             .objects
@@ -844,17 +846,6 @@ pub(in crate::command::export::lower) fn tla(
                 node: object.node,
                 type_name: Some(object.name.clone()),
             });
-        }
-        for protocol in &clause.protocols {
-            if protocol_specs.insert(protocol.clone()) {
-                let spec = mangle("PSpec_", protocol);
-                out.push(define(
-                    clause.position,
-                    Some(spec.clone()),
-                    format!("{spec} == Init /\\ [][UNCHANGED vars]_vars"),
-                    Some(clause.name.as_str()),
-                ));
-            }
         }
         let ctx = Ctx {
             input,
@@ -1054,16 +1045,7 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             obligation,
         ));
     }
-    let default_premise = if spec_t { names.spec.as_str() } else { "Spec" };
-    let protocol_premises = if clause.protocols.is_empty() {
-        vec![default_premise.to_owned()]
-    } else {
-        clause
-            .protocols
-            .iter()
-            .map(|protocol| mangle("PSpec_", protocol))
-            .collect()
-    };
+    let premise = if spec_t { names.spec.as_str() } else { "Spec" };
     for (name, condition) in &accepts {
         out.push(define(
             clause.position,
@@ -1073,22 +1055,12 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
         ));
     }
     let statement = ctx.guarded(&statements.join(" /\\ "));
-    for (index, premise) in protocol_premises.iter().enumerate() {
-        let theorem = if index == 0 {
-            names.theorem.clone()
-        } else {
-            mangle(
-                "Th_",
-                &format!("{}_{}", clause.name, clause.protocols[index]),
-            )
-        };
-        out.push(define(
-            clause.position,
-            Some(theorem.clone()),
-            format!("THEOREM {theorem} == {premise} => {statement}"),
-            obligation,
-        ));
-    }
+    out.push(define(
+        clause.position,
+        Some(names.theorem.clone()),
+        format!("THEOREM {} == {premise} => {statement}", names.theorem),
+        obligation,
+    ));
     extra
         .variables
         .extend(vars.iter().map(|var| var.name.clone()));

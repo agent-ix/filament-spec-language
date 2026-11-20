@@ -316,7 +316,7 @@ fn protocol_inputs(object: &Map<String, Value>) -> Result<Vec<ProtocolSelection>
         .collect()
 }
 
-fn pointer_token(value: &str) -> String {
+pub(super) fn pointer_token(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
 }
 
@@ -451,6 +451,7 @@ fn limits(object: &Map<String, Value>, given: &fsl_replay::spine::ExportLimits) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
     use serde_json::json;
 
     fn member() -> Value {
@@ -468,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("FSpec-FR-1015-AC-17")]
     fn protocol_and_universe_bindings_use_the_analyze_reader_shapes() {
         let request = read(&member(), &Default::default()).expect("the analyze subject shape");
         assert_eq!(request.protocols.len(), 1);
@@ -483,10 +485,16 @@ mod tests {
     }
 
     #[test]
+    #[trace("FSpec-FR-1015-AC-17")]
     fn protocol_bindings_reject_unknown_nested_members() {
         let mut member = member();
         member["protocols"][0]["over"]["unexpected"] = json!(true);
         let error = read(&member, &Default::default()).expect_err("closed protocol binding");
-        assert!(error.to_string().contains("/request/export/protocols/0"));
+        let message = error.to_string();
+        assert!(
+            message.contains("/request/export/protocols/0/over/unexpected"),
+            "{message}"
+        );
+        assert!(message.contains("unknown-member"), "{message}");
     }
 }

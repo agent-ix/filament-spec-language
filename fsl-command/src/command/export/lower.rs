@@ -14,7 +14,7 @@ mod temporal;
 
 use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
 use super::map::{mangle, Graph};
-use super::request::{Request, Target};
+use super::request::Target;
 use fsl_replay::protocol_analysis::node_text;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -279,7 +279,10 @@ fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
                     id.to_owned(),
                     Kind::Enum {
                         id: id.to_owned(),
-                        name: short_name(id).to_owned(),
+                        // Generated enum names must retain the full source
+                        // identity: two declarations may share a terminal
+                        // name while denoting different types.
+                        name: id.to_owned(),
                         cases,
                     },
                 );
@@ -1098,9 +1101,7 @@ pub(super) fn lower(
     target: Target,
     module: &str,
     wanted: &[(String, usize)],
-    request: &Request,
 ) -> Lower<Lowered> {
-    let _protocol_inputs = (&request.protocols, &request.universes);
     let clauses = state_clauses(graph)?;
     let mut raw = read_models(models)?;
     let mut contexts: BTreeMap<String, (usize, String)> = BTreeMap::new();
@@ -1309,7 +1310,6 @@ pub(super) fn lower(
             cur,
             next,
             fairness,
-            protocols: read.protocols,
         });
     }
 
@@ -1655,7 +1655,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             .collect::<Vec<_>>();
         out.push(define(
             input.first,
-            None,
+            Some(enum_type_name(name)),
             format!(
                 "inductive {} where\n{}\nderiving DecidableEq",
                 enum_type_name(name),

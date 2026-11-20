@@ -383,6 +383,45 @@ fn enum_spec_doc() -> Vec<u8> {
     serde_json::to_vec(&document).expect("the enum model serializes")
 }
 
+fn enum_collision_doc() -> Vec<u8> {
+    let mut document: Value =
+        serde_json::from_slice(&enum_spec_doc()).expect("the enum model is json");
+    let mut second = document["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["identity"] == "ix://example/counter-spec/Tier")
+        .expect("the first enum type")
+        .clone();
+    second["identity"] = json!("ix://example/other/Tier");
+    second["origin"]["generated"]["generatorIdentity"] = json!("ix://example/other/Tier");
+    second["origin"]["generated"]["inputIdentities"] = json!(["ix://example/other/Tier"]);
+    for variant in second["variants"].as_array_mut().unwrap() {
+        let name = variant["name"].as_str().unwrap();
+        variant["identity"] = json!(format!("ix://example/other/variant/Tier-{name}"));
+        variant["origin"]["source"]["sourceIdentity"] = json!("ix://example/other/spec");
+    }
+    document["types"].as_array_mut().unwrap().push(second);
+    let counter = document["types"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| node["identity"] == "ix://example/counter-spec/Counter")
+        .unwrap();
+    counter["fields"].as_array_mut().unwrap().push(json!({
+        "identity": "ix://example/counter-spec/Counter/status",
+        "name": "status",
+        "typeRef": "ix://example/other/Tier",
+        "presence": "required",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"generated": {"generatorIdentity": "ix://example/other/Tier",
+            "generatorVersion": "1.0.0", "inputIdentities": ["ix://example/other/Tier"]}}
+    }));
+    serde_json::to_vec(&document).expect("the enum collision model serializes")
+}
+
 fn spec_models() -> Vec<(&'static str, &'static str, Vec<u8>)> {
     vec![("spec.json", refinement_cas::SPEC, spec_doc())]
 }
@@ -606,7 +645,7 @@ fn two_exported_object_types_frame_each_other() {
 }
 
 #[test]
-#[trace("FSpec-FR-812-AC-1", "FSpec-FR-814-AC-3")]
+#[trace("FSpec-FR-812")]
 fn enum_fields_lower_to_finite_tla_values_and_lean_constructors() {
     let models = enum_spec_models();
     let (exit, tla_value) = exported(
@@ -616,14 +655,16 @@ fn enum_fields_lower_to_finite_tla_values_and_lean_constructors() {
     );
     assert_eq!(exit, 0, "{tla_value}");
     let tla = text(&tla_value);
-    assert!(
-        tla.contains("v_Counter[k].fld_tier \\in {\"e_Tier_Gold\", \"e_Tier_Silver\"}"),
-        "{tla}"
-    );
-    for name in ["e_Tier_Gold", "e_Tier_Silver"] {
-        let entry = tla_value["export"]["name_map"]
-            .as_array()
-            .unwrap()
+    let name_map = tla_value["export"]["name_map"].as_array().unwrap();
+    let enum_cases: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert_eq!(enum_cases.len(), 2, "{name_map:?}");
+    assert!(enum_cases.iter().all(|name| tla.contains(name)), "{tla}");
+    for name in enum_cases {
+        let entry = name_map
             .iter()
             .find(|entry| entry["name"] == name)
             .expect("enum case is in the name map");
@@ -641,13 +682,69 @@ fn enum_fields_lower_to_finite_tla_values_and_lean_constructors() {
     );
     assert_eq!(exit, 0, "{lean_value}");
     let lean = text(&lean_value);
-    assert!(
-        lean.contains(
-            "inductive E_Tier where\n  | e_Tier_Gold\n  | e_Tier_Silver\nderiving DecidableEq"
-        ),
-        "{lean}"
+    let lean_type = lean_value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|entry| {
+            entry["name"]
+                .as_str()
+                .filter(|name| name.starts_with("E_ix_u3A_"))
+        })
+        .expect("Lean enum type is in the name map");
+    let lean_cases: Vec<&str> = lean_value["export"]["name_map"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert!(lean.contains(lean_type), "{lean}");
+    assert!(lean_cases.iter().all(|name| lean.contains(name)), "{lean}");
+    assert!(lean.contains(&format!("fld_tier : {lean_type}")), "{lean}");
+}
+
+#[test]
+#[trace("FSpec-FR-812")]
+fn enum_names_and_name_map_preserve_distinct_declaration_owners() {
+    let models = vec![("spec.json", refinement_cas::SPEC, enum_collision_doc())];
+    let (exit, value) = exported(
+        &models,
+        &spec_unit(),
+        &spec_member("filament.output.lean4/v1"),
     );
-    assert!(lean.contains("fld_tier : E_Tier"), "{lean}");
+    assert_eq!(exit, 0, "{value}");
+    let name_map = value["export"]["name_map"].as_array().unwrap();
+    let enum_types: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("E_ix_u3A_"))
+        .collect();
+    let enum_cases: Vec<&str> = name_map
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .filter(|name| name.starts_with("e_ix_u3A_"))
+        .collect();
+    assert_eq!(enum_types.len(), 2, "{name_map:?}");
+    assert_ne!(enum_types[0], enum_types[1], "{name_map:?}");
+    assert_eq!(enum_cases.len(), 4, "{name_map:?}");
+    assert_eq!(
+        enum_cases
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
+    let target = text(&value);
+    assert!(
+        enum_types.iter().all(|name| target.contains(name)),
+        "{target}"
+    );
+    assert!(
+        enum_cases.iter().all(|name| target.contains(name)),
+        "{target}"
+    );
 }
 
 /// Population bounds (`bound`, FSpec FR-812-AC-6) are not lowered, so an
