@@ -34,8 +34,7 @@ use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
 use filament_eval::{
     LiveContext, PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved,
-    SessionLimits,
-    StateModelUndefined,
+    SessionLimits, StateModelUndefined,
 };
 use filament_exact::{
     admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
