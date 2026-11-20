@@ -8243,11 +8243,15 @@ fn tuple_position_rows(
         .map(|(ordinal, (value_type, key))| {
             Ok(filament_contract_model::SelectedTuplePositionRow {
                 ordinal,
-                type_node: emitted
-                    .get(&key)
-                    .cloned()
-                    .ok_or(EmitRefusal::SourceMapInvariant)?,
-                value_type: value_type.clone(),
+                type_node: Some(
+                    emitted
+                        .get(&key)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                ),
+                value_type: Some(value_type.clone()),
+                member_type: None,
+                collections: Vec::new(),
             })
         })
         .collect()

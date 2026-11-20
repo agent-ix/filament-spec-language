@@ -209,12 +209,12 @@ impl BarePackage<'_> {
             let fields = record
                 .members
                 .iter()
-                .map(|member| {
-                    FieldDeclaration::new(
+                .filter_map(|member| {
+                    Some(FieldDeclaration::new(
                         member.original_member_identity.as_ref(),
-                        member.value_type.clone(),
+                        member.value_type.clone()?,
                         member.presence,
-                    )
+                    ))
                 })
                 .collect();
             composites.push((

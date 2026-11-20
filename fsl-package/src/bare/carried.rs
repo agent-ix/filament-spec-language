@@ -3,12 +3,12 @@
 
 use filament_contract_model::{
     CheckedNodeId, SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SelectedSourceUnionRow,
-    SelectedUnionMemberRow,
+    SelectedUnionClockPayloadRow, SelectedUnionMemberRow,
 };
 use filament_exact::{Presence, UnionMember};
 use serde::{Deserialize, Serialize};
 
-use super::{IdentityFileRefusal, IdentityMember};
+use super::{ClockCollectionLayerJson, IdentityFileRefusal, IdentityMember};
 use crate::equality_file::{OriginalNodeKey, OriginalValueType};
 
 #[derive(Deserialize, Serialize)]
@@ -30,6 +30,17 @@ struct SourceUnionMemberJson {
     identifier: String,
     payload_nodes: Vec<CheckedNodeId>,
     payload: Vec<OriginalValueType>,
+    #[serde(default)]
+    clock_payload: Vec<UnionClockPayloadJson>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct UnionClockPayloadJson {
+    ordinal: u64,
+    presence: PresenceJson,
+    member_type: String,
+    collections: Vec<ClockCollectionLayerJson>,
 }
 
 impl SourceUnionJson {
@@ -62,6 +73,16 @@ impl SourceUnionJson {
                             .iter()
                             .map(|value| OriginalValueType::of(value).map_err(|_| malformed()))
                             .collect::<Result<_, _>>()?,
+                        clock_payload: member
+                            .clock_payload
+                            .iter()
+                            .map(|entry| UnionClockPayloadJson {
+                                ordinal: entry.ordinal,
+                                presence: PresenceJson::of(entry.presence),
+                                member_type: entry.member_type.to_string(),
+                                collections: entry.collections.iter().map(ClockCollectionLayerJson::of).collect(),
+                            })
+                            .collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,
@@ -99,6 +120,16 @@ impl SourceUnionJson {
                             .into_iter()
                             .map(|value| value.value().map_err(|_| malformed()))
                             .collect::<Result<_, _>>()?,
+                        clock_payload: member
+                            .clock_payload
+                            .into_iter()
+                            .map(|entry| SelectedUnionClockPayloadRow {
+                                ordinal: entry.ordinal,
+                                presence: entry.presence.presence(),
+                                member_type: entry.member_type.into(),
+                                collections: entry.collections.into_iter().map(ClockCollectionLayerJson::layer).collect(),
+                            })
+                            .collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,
@@ -123,8 +154,12 @@ struct SourceRecordMemberJson {
     original_member_identity: String,
     admitted_name: String,
     presence: PresenceJson,
-    type_node: CheckedNodeId,
-    value_type: OriginalValueType,
+    type_node: Option<CheckedNodeId>,
+    value_type: Option<OriginalValueType>,
+    #[serde(default)]
+    member_type: Option<String>,
+    #[serde(default)]
+    collections: Vec<ClockCollectionLayerJson>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -132,6 +167,22 @@ struct SourceRecordMemberJson {
 enum PresenceJson {
     Required,
     Optional,
+}
+
+impl PresenceJson {
+    fn of(presence: Presence) -> Self {
+        match presence {
+            Presence::Required => Self::Required,
+            Presence::Optional => Self::Optional,
+        }
+    }
+
+    fn presence(self) -> Presence {
+        match self {
+            Self::Required => Presence::Required,
+            Self::Optional => Presence::Optional,
+        }
+    }
 }
 
 impl SourceRecordJson {
@@ -161,8 +212,14 @@ impl SourceRecordJson {
                             Presence::Optional => PresenceJson::Optional,
                         },
                         type_node: member.type_node.clone(),
-                        value_type: OriginalValueType::of(&member.value_type)
+                        value_type: member
+                            .value_type
+                            .as_ref()
+                            .map(OriginalValueType::of)
+                            .transpose()
                             .map_err(|_| malformed())?,
+                        member_type: member.member_type.as_deref().map(str::to_owned),
+                        collections: member.collections.iter().map(ClockCollectionLayerJson::of).collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,
@@ -195,7 +252,13 @@ impl SourceRecordJson {
                             PresenceJson::Optional => Presence::Optional,
                         },
                         type_node: member.type_node,
-                        value_type: member.value_type.value().map_err(|_| malformed())?,
+                        value_type: member
+                            .value_type
+                            .map(|value| value.value())
+                            .transpose()
+                            .map_err(|_| malformed())?,
+                        member_type: member.member_type.map(Into::into),
+                        collections: member.collections.into_iter().map(ClockCollectionLayerJson::layer).collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,
