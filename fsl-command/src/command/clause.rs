@@ -87,7 +87,7 @@ fn read_with_source(
     if request
         .models
         .iter()
-        .any(|model| !super::is_domain_package(model))
+        .any(|model| !super::is_model_input_format(model))
     {
         return Err(invalid("models", "expected semantic-ir/2.0.0"));
     }

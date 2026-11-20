@@ -2742,11 +2742,9 @@ fn write_compile_handoff(
     Ok(())
 }
 
-/// Whether a request's selected model declares the one supported domain-package
-/// format (ADR-012 section 9): the one reader of a model selection's wire
-/// `format` field.
+/// Whether a request's selected model uses a supported source or package format.
 #[ix_trace_rs::string_edge]
-fn is_domain_package(model: &wire::Model) -> bool {
+fn is_model_input_format(model: &wire::Model) -> bool {
     matches!(
         model.format.as_str(),
         DOMAIN_PACKAGE_PROFILE | "native-model-unit/1"
@@ -3115,7 +3113,7 @@ fn check_sources<T>(
     let selected_models = request.models.as_deref().unwrap_or_default();
     if selected_models
         .iter()
-        .any(|model| !is_domain_package(model))
+        .any(|model| !is_model_input_format(model))
     {
         return Err(RunCause::CompleteSelection(CompleteSelection::NativeModels));
     }
@@ -3849,7 +3847,7 @@ fn prepare_complete_run(
             sources,
         })));
     }
-    if request.models.iter().any(|model| !is_domain_package(model)) {
+    if request.models.iter().any(|model| !is_model_input_format(model)) {
         return Err(RunCause::CompleteRunSelection(
             CompleteRunSelection::NativeModel,
         ));

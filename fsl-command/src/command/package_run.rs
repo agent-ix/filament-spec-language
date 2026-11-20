@@ -302,7 +302,7 @@ pub(super) fn admit(
     if request
         .models
         .iter()
-        .any(|model| !super::is_domain_package(model))
+        .any(|model| !super::is_model_input_format(model))
     {
         return Err(RunCause::CompleteRunSelection(
             super::CompleteRunSelection::NativeModel,
