@@ -2754,7 +2754,7 @@ impl OutcomeDocument {
                     pointer: package_artifact_pointer(&pointer),
                 }),
             ReplayRefusal::PackageWithIdentity { identity, .. } => {
-                artifact_identity.or(identity.as_ref()).and_then(|identity| {
+                identity.as_ref().and_then(|identity| {
                     refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
                         identity: identity.clone(),
                         pointer: package_artifact_pointer(&pointer),
@@ -2967,7 +2967,10 @@ impl OutcomeDocument {
 }
 
 fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeLocus {
-    let pointer = format!("/request{pointer}");
+    let pointer = match request_path {
+        Some(_) => format!("/request{pointer}"),
+        None => pointer.to_owned(),
+    };
     OutcomeLocus::Document {
         document: None,
         path: request_path.map(str::to_owned),

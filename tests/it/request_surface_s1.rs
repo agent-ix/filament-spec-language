@@ -314,6 +314,70 @@ fn run_refusal(directory: &Path, request: &Value) -> (u8, Value) {
     }
 }
 
+fn run_clause_refusal(path: &Path) -> (Value, fsl_replay::spine::ClauseRunRecord) {
+    let output = run_file(path);
+    assert_eq!(output.status.code(), Some(20), "{output:?}");
+    let bytes = if output.stdout.is_empty() {
+        &output.stderr
+    } else {
+        &output.stdout
+    };
+    let wire: Value = serde_json::from_slice(bytes).expect("the refusal is native JSON");
+    let read = fsl_replay::spine::read_native_run_result(bytes)
+        .expect("the refusal reads back through the strict native-result reader");
+    let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
+        panic!("the run writes a clause result: {wire}");
+    };
+    (wire, *record)
+}
+
+fn assert_document_refusal(
+    record: &fsl_replay::spine::ClauseRunRecord,
+    expected_identity: &Value,
+    pointer: &str,
+    field_member: Option<&str>,
+    locus_member: &str,
+    object: Option<(&str, &str)>,
+    cause: &str,
+    field: Option<&str>,
+) {
+    assert_eq!(record.stage(), "admit");
+    assert_eq!(record.code(), Some("invalid_runtime_input"));
+    assert_eq!(record.cause(), Some(cause));
+    let fields = record.fields().expect("the refusal carries fields");
+    assert_eq!(fields.get("member").map(String::as_str), field_member);
+    assert_eq!(fields.get("field").map(String::as_str), field);
+    let Some(fsl_replay::spine::RefusalLocusRead::Document {
+        document: Some(Some(identity)),
+        path: Some(Some(path)),
+        pointer: actual_pointer,
+        object: Some(actual_object),
+        member: Some(Some(actual_member)),
+    }) = record.refusal_locus()
+    else {
+        panic!("the read-back carries a complete document locus");
+    };
+    assert_eq!(
+        identity.authority,
+        expected_identity["authority"].as_str().unwrap()
+    );
+    assert_eq!(
+        identity.identity,
+        expected_identity["identity"].as_str().unwrap()
+    );
+    assert_eq!(path, "spine-snapshot.json");
+    assert_eq!(actual_pointer, pointer);
+    assert_eq!(actual_member, locus_member);
+    match (object, actual_object) {
+        (Some((population, key)), Some(object)) => {
+            assert_eq!(object.population, population);
+            assert_eq!(object.key, key);
+        }
+        (None, None) => {}
+        _ => panic!("object locus does not match the expected population and key"),
+    }
+}
+
 /// FR-664-AC-1 (TC-1747): a `Current` selection carrying `parameters`
 /// refuses `invalid-request` at stage `request` naming `parameters`, with or
 /// without the request's dependent files present.
@@ -1300,6 +1364,123 @@ fn snapshot_refusals_carry_a_document_locus() {
     );
 }
 
+/// FR-267-AC-25/27 (TC-3081): snapshot admissions and model headers written
+/// through `command::run` retain their document locus through strict read-back.
+#[test]
+#[trace("TC-3081", "FR-267-AC-25", "FR-267-AC-27")]
+fn snapshot_and_model_header_refusals_round_trip_document_loci() {
+    let cases = [
+        (
+            "missing-parent",
+            "missing-member",
+            Some("parent"),
+            "parent",
+            "/populations/0/objects/1",
+            Some(("ix://example/config-version/config_history", "child")),
+            Some("parent"),
+        ),
+        (
+            "unknown-field",
+            "unknown-member",
+            Some("extra"),
+            "extra",
+            "/populations/0/objects/1/fields/extra",
+            Some(("ix://example/config-version/config_history", "child")),
+            Some("extra"),
+        ),
+        (
+            "wrong-kind",
+            "wrong-value-kind",
+            Some("kind"),
+            "kind",
+            "/populations/0/objects/1/fields/versionNumber/kind",
+            Some(("ix://example/config-version/config_history", "child")),
+            Some("versionNumber"),
+        ),
+        (
+            "model-version",
+            "unknown-member",
+            Some("version"),
+            "version",
+            "/model/version",
+            None,
+            Some("model.version"),
+        ),
+        (
+            "model-digest",
+            "unknown-member",
+            Some("digest"),
+            "digest",
+            "/model/digest",
+            None,
+            Some("model.digest"),
+        ),
+    ];
+    for (case, cause, field_member, locus_member, pointer, object, field) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        spine::write(directory.path(), Case::Healthy).unwrap();
+        let snapshot_path = directory.path().join("spine-snapshot.json");
+        let mut snapshot: Value =
+            serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+        let labels = snapshot["identity"].clone();
+        match case {
+            "missing-parent" => {
+                snapshot["populations"][0]["objects"][1]["fields"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("parent");
+            }
+            "unknown-field" => {
+                snapshot["populations"][0]["objects"][1]["fields"]["extra"] =
+                    json!({"integer": "1"});
+            }
+            "wrong-kind" => {
+                snapshot["populations"][0]["objects"][1]["fields"]["versionNumber"] =
+                    json!({"kind": 1});
+            }
+            "model-version" => snapshot["model"]["version"] = json!(1),
+            "model-digest" => snapshot["model"]["digest"] = json!("abc"),
+            _ => unreachable!("the case table is exhaustive"),
+        }
+        std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let request_path = directory.path().join("request.json");
+        std::fs::write(
+            &request_path,
+            serde_json::to_vec(&current_clause_request()).unwrap(),
+        )
+        .unwrap();
+        let (wire, record) = run_clause_refusal(&request_path);
+        assert_eq!(wire["disposition"]["stage"], "admit", "{case}: {wire}");
+        assert_document_refusal(
+            &record,
+            &labels,
+            pointer,
+            field_member,
+            locus_member,
+            object,
+            cause,
+            field,
+        );
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let request_path = directory.path().join("request.json");
+    std::fs::write(
+        &request_path,
+        serde_json::to_vec(&current_clause_request()).unwrap(),
+    )
+    .unwrap();
+    let output = run_file(&request_path);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let read = fsl_replay::spine::read_native_run_result(&output.stdout)
+        .expect("the healthy run reads back");
+    let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
+        panic!("the healthy run writes a clause record");
+    };
+    assert!(record.refusal_locus().is_none());
+}
+
 /// FR-664-AC-2 (TC-1747): FR-652's context and value-invariants selections
 /// refuse a `parameters` member before any file is read.
 #[test]
@@ -1397,6 +1578,10 @@ fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
         serde_json::from_slice(&refusal_document.to_bytes().unwrap()).unwrap();
     assert_eq!(refusal_wire["format"], "filament-outcome/1");
     assert_eq!(refusal_wire["category"], "refusal");
+    assert!(
+        refusal_wire["diagnostics"][0]["locus"]["pointer"].is_null(),
+        "a reader refusal without a position has a null pointer: {refusal_wire}"
+    );
     let refusal = fsl_command::checked_handoff::verify(&directory.path().join("handoff"))
         .expect_err("an altered package is refused");
     assert!(

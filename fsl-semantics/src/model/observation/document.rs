@@ -575,9 +575,16 @@ fn read_model(object: Object<'_>, has_domain: bool) -> Result<ModelHeader, Admis
     }
     let model = member.as_object().ok_or_else(|| wrong_kind("model"))?;
     if let Some((unknown, _)) = model.iter().find(|(name, _)| *name != "identity") {
+        let pointer = format!("/model/{}", json_pointer_segment(unknown));
         return Err(refuse(
             admission_record(Code::InvalidRuntimeInput, "unknown-member")
-                .with("field", format!("model.{unknown}")),
+                .with("field", format!("model.{unknown}"))
+                .with("member", unknown.to_owned())
+                .with("path", pointer)
+                .at(vec![
+                    PathStep::Field("model".to_owned()),
+                    PathStep::Field(unknown.to_owned()),
+                ]),
         ));
     }
     let missing_member = |field: &'static str| {
@@ -3197,15 +3204,32 @@ pub(super) fn admit_population_values<'t>(
                 };
                 let field_value =
                     admit_object_field(&mut references, raw, value_type, presence, witness)
-                        .map_err(|record| {
+                        .map_err(|mut record| {
+                            let field_path =
+                                snapshot_field_path(population_index, object_index, name);
+                            let mut path = vec![
+                                PathStep::Field("populations".to_owned()),
+                                PathStep::Index(population_index),
+                                PathStep::Field("objects".to_owned()),
+                                PathStep::Index(object_index),
+                                PathStep::Field("fields".to_owned()),
+                                PathStep::Field(name.to_owned()),
+                            ];
+                            let member = record.fields.get("member").cloned();
+                            let refusal_path = member.as_ref().map_or_else(
+                                || field_path.clone(),
+                                |member| {
+                                    path.push(PathStep::Field(member.clone()));
+                                    format!("{field_path}/{}", json_pointer_segment(member))
+                                },
+                            );
+                            record.path = path;
                             refuse(
                                 record
                                     .with("object", object.key.clone())
+                                    .with("population", entry.population.clone())
                                     .with("field", name.to_owned())
-                                    .with(
-                                        "path",
-                                        snapshot_field_path(population_index, object_index, name),
-                                    ),
+                                    .with("path", refusal_path),
                             )
                         })?;
                 if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &field_value) {

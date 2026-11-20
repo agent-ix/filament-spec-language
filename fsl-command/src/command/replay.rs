@@ -74,7 +74,6 @@ pub(super) fn run_bytes(
         },
         Vec::new(),
     )?;
-    let package_identity = request.package.source_identity();
     let result = fsl_replay::replay(request, limits);
     match result {
         Ok(result) => {
@@ -95,11 +94,8 @@ pub(super) fn run_bytes(
             })
         }
         Err(refusal) => {
-            let outcome = fsl_replay::OutcomeDocument::from_replay_refusal_with_context(
-                &refusal,
-                request_path,
-                package_identity.as_ref(),
-            );
+            let outcome =
+                fsl_replay::OutcomeDocument::from_replay_refusal_at(&refusal, request_path);
             Err(RunCause::Replay(Box::new(ReplayFailure {
                 refusal,
                 outcome,

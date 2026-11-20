@@ -2020,18 +2020,15 @@ fn inspect_handoff_position(
     match error {
         Error::ReaderRefused(refusal) => (
             Some("checked-package.json".to_owned()),
-            Some(
-                refusal
-                    .loci
-                    .first()
-                    .and_then(|locus| locus.path.as_ref())
-                    .map(ToString::to_string)
-                    .unwrap_or_default(),
-            ),
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(ToString::to_string),
         ),
         Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => (
             Some("checked-package.json".to_owned()),
-            Some(String::new()),
+            None,
         ),
         Error::Read { path, .. } => {
             let path = Path::new(path);

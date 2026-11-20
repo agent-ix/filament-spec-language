@@ -152,7 +152,7 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
     let output: serde_json::Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
     assert_eq!(
         output["diagnostics"][0]["locus"]["pointer"],
-        format!("/request{expected_pointer}")
+        expected_pointer
     );
     // Obtain another genuine compiler failure; request-location composition
     // must retain its entire native value and its relative list locus.

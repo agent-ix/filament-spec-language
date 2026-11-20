@@ -479,7 +479,6 @@ mod tests {
         assert_eq!(view.loci[0].1, vec![region]);
     }
 
-    #[trace("TC-782", "FR-267-AC-25")]
     #[test]
     fn input_and_document_loci_need_no_occurrence_key() {
         let loci = [
