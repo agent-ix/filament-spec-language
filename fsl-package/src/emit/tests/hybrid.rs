@@ -1052,4 +1052,3 @@ fn a_hybrid_claim_has_one_name_row_and_no_binding() {
     assert!(wire.get("temporal_bindings").is_none());
     admitted(&emission);
 }
-

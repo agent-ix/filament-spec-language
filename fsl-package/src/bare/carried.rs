@@ -80,7 +80,11 @@ impl SourceUnionJson {
                                 ordinal: entry.ordinal,
                                 presence: PresenceJson::of(entry.presence),
                                 member_type: entry.member_type.to_string(),
-                                collections: entry.collections.iter().map(ClockCollectionLayerJson::of).collect(),
+                                collections: entry
+                                    .collections
+                                    .iter()
+                                    .map(ClockCollectionLayerJson::of)
+                                    .collect(),
                             })
                             .collect(),
                     })
@@ -127,7 +131,11 @@ impl SourceUnionJson {
                                 ordinal: entry.ordinal,
                                 presence: entry.presence.presence(),
                                 member_type: entry.member_type.into(),
-                                collections: entry.collections.into_iter().map(ClockCollectionLayerJson::layer).collect(),
+                                collections: entry
+                                    .collections
+                                    .into_iter()
+                                    .map(ClockCollectionLayerJson::layer)
+                                    .collect(),
                             })
                             .collect(),
                     })
@@ -219,7 +227,11 @@ impl SourceRecordJson {
                             .transpose()
                             .map_err(|_| malformed())?,
                         member_type: member.member_type.as_deref().map(str::to_owned),
-                        collections: member.collections.iter().map(ClockCollectionLayerJson::of).collect(),
+                        collections: member
+                            .collections
+                            .iter()
+                            .map(ClockCollectionLayerJson::of)
+                            .collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,
@@ -258,7 +270,11 @@ impl SourceRecordJson {
                             .transpose()
                             .map_err(|_| malformed())?,
                         member_type: member.member_type.map(Into::into),
-                        collections: member.collections.into_iter().map(ClockCollectionLayerJson::layer).collect(),
+                        collections: member
+                            .collections
+                            .into_iter()
+                            .map(ClockCollectionLayerJson::layer)
+                            .collect(),
                     })
                 })
                 .collect::<Result<_, IdentityFileRefusal>>()?,

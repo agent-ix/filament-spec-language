@@ -591,4 +591,3 @@ fn a_sum_binder_in_a_recovery_predicate_is_a_parameter_named_by_its_source() {
     let read = &capture["members"][1]["value"];
     assert_eq!(parameter(nodes, read), ("saved", "2"), "{capture}");
 }
-

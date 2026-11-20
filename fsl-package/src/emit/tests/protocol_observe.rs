@@ -156,11 +156,9 @@ fn the_package_records_the_observe_boundary() {
         serde_json::from_value(node(&plain, &["Flow", "role", "Auditor"])["node_id"].clone())
             .expect("the unmarked role node has a checked identity");
     assert_eq!(checked_plain.protocol_role_boundary(&plain_role_id), None);
-    assert!(
-        nodes(&plain)
-            .iter()
-            .all(|node| !argument_names(node).contains(&"boundary"))
-    );
+    assert!(nodes(&plain)
+        .iter()
+        .all(|node| !argument_names(node).contains(&"boundary")));
     let ids = |wire: &Value| -> Vec<Value> {
         nodes(wire)
             .iter()
@@ -198,8 +196,14 @@ fn the_package_records_the_observe_boundary() {
         let plain_node = nodes(&plain)
             .iter()
             .find(|candidate| {
-                plain_graph.key_of_value(&candidate["node_id"]).unwrap().to_string()
-                    == marked_graph.key_of_value(&marked_node["node_id"]).unwrap().to_string()
+                plain_graph
+                    .key_of_value(&candidate["node_id"])
+                    .unwrap()
+                    .to_string()
+                    == marked_graph
+                        .key_of_value(&marked_node["node_id"])
+                        .unwrap()
+                        .to_string()
             })
             .expect("the unmarked package has the node");
         let id = marked_graph

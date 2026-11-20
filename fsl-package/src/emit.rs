@@ -2621,7 +2621,8 @@ fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Valu
             json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
         }
         Member::TypeArgument { declaration, alias } => {
-            let mut member = json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
+            let mut member =
+                json!({"kind":"type_argument","declaration":node_id(ids, declaration)});
             if let Some(alias) = alias {
                 member["alias"] = json!({"package": alias.package, "node": alias.node});
             }
@@ -6348,8 +6349,7 @@ pub fn emit_timed_models(
         .first()
         .ok_or(EmitRefusal::SourceMapInvariant)
         .and_then(|source| {
-            crate::checked_v2::raw_source_ref(source)
-                .map_err(|_| EmitRefusal::SourceMapInvariant)
+            crate::checked_v2::raw_source_ref(source).map_err(|_| EmitRefusal::SourceMapInvariant)
         })?;
     let ids = &StructuralIds::default();
     let expected = base
@@ -9845,14 +9845,14 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
-    is_model_binding_name, profile_clock_kind,
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal,
 };
 mod body_locations;
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
+pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;
 
