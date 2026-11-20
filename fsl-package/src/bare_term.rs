@@ -338,10 +338,16 @@ impl<'p> BarePackage<'p> {
         let nodes = &package.resolved_graph().nodes;
         let malformed =
             || BareSelectionFailure::from(fault("protocol-operation-anchor-is-admitted"));
+        let graph = wire_graph(package).map_err(|_| malformed())?;
+        let anchor_key = graph.key(anchor_id).map_err(|_| malformed())?;
         let anchor = nodes
             .iter()
             .find(|node| {
-                node.node_id == *anchor_id && node.semantic_form.as_ref() == "operation_anchor"
+                node.semantic_form.as_ref() == "operation_anchor"
+                    && graph
+                        .key(&node.node_id)
+                        .map(|key| key == anchor_key)
+                        .unwrap_or(false)
             })
             .ok_or_else(malformed)?;
         let context = anchor_member(&anchor.body, "context")
