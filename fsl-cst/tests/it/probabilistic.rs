@@ -363,19 +363,19 @@ fn delay_declaration_refuses_near_misses() {
             "expected `discrete` or `exponential` or `uniform`",
         ),
         (
-            "delay Pump::start ~ uniform[2 ms; 6 ms];",
-            ";",
+            "delay Pump::start ~ uniform[2 ms: 6 ms];",
+            ":",
             "expected `,`",
         ),
         (
             "delay Pump::start ~ discrete { 2 ms: };",
             "}",
-            "expected an exact number or an unsigned integer",
+            "expected `decimal` or `rational` or decimal literal or unsigned integer",
         ),
         (
             "delay Pump::start ~ discrete {};",
             "}",
-            "expected an exact number or an unsigned integer",
+            "expected `decimal` or `rational` or decimal literal or unsigned integer",
         ),
     ] {
         refuses(bad, token, expected);

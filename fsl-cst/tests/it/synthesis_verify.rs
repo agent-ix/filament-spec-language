@@ -24,8 +24,8 @@ fn synthesis_declaration_refuses_near_misses() {
             "expected `grammar`",
         ),
         (
-            "synthesis Controller using p grammar Candidate domain satisfies { valid };",
-            "satisfies",
+            "synthesis Controller using p grammar Candidate domain { valid };",
+            "{",
             "expected identifier",
         ),
         (
@@ -44,7 +44,7 @@ fn synthesis_declaration_refuses_near_misses() {
 fn verification_plan_refuses_near_misses() {
     accepts("verify Safety using p { check Base claim Bounded method Exhaustive domain Inputs; check Next claim Stable method Induction domain Inputs depends [Base] bound 5; }", Production::VerificationPlan);
     for (bad,token,expected) in [
-        ("verify Safety using p { check Base claim method Exhaustive domain Inputs; }", "method", "expected identifier"),
+        ("verify Safety using p { check Base claim ; }", ";", "expected identifier"),
         ("verify Safety using p { check Base claim Bounded domain Inputs method Exhaustive; }", "domain", "expected `method`"),
         ("verify Safety using p { check Base claim Bounded method Exhaustive domain Inputs bound 5 depends [Earlier]; }", "depends", "expected `;`"),
         ("verify Safety using p { check Base claim Bounded method Exhaustive domain Inputs }", "}", "expected `;`"),

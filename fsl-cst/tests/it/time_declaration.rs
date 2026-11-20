@@ -107,7 +107,7 @@ fn time_declaration_refuses_near_misses() {
         (
             "time Chamber tick Chamber::advance period \"slow\" unit ms;",
             "\"slow\"",
-            "expected an exact number or an unsigned integer",
+            "expected `decimal` or `rational` or decimal literal or unsigned integer",
         ),
         ("time Chamber dense unit ms", "", "expected `;`"),
     ] {
