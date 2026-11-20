@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Meter, Value, ValueType};
+use filament_exact::{Meter, Rational, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
     evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
@@ -69,6 +69,19 @@ pub enum TraceInput {
         /// The rest of the finite-window input (FR-330, FR-501 Inputs).
         window: Box<TimestampedWindow>,
     },
+    /// A finite timed prefix or exact timed lasso (FR-642).
+    Timed {
+        /// The stamped positions before the loop.
+        prefix: Vec<TimedObservation>,
+        /// The repeating positions; empty for a finite trace.
+        repeat: Vec<TimedObservation>,
+        /// The timed lasso's period, required when `repeat` is non-empty.
+        period: Option<Rational>,
+        /// The finite recording's completeness boundary.
+        through: Option<Rational>,
+        /// The time binding asserted by the trace.
+        binding: TraceBinding,
+    },
     /// A lasso: `prefix`, then `repeat` forever. Its last position re-enters
     /// the first position of `repeat`.
     Lasso {
@@ -98,6 +111,15 @@ pub enum TraceInput {
     },
 }
 
+/// One snapshot or sample at an exact rational time stamp (FR-642).
+#[derive(Clone, Debug)]
+pub struct TimedObservation {
+    /// The position's admitted observation.
+    pub document: DocumentRef,
+    /// The exact stamp in the bound clock unit.
+    pub stamp: Rational,
+}
+
 impl TraceInput {
     /// The wire member that names this trace's kind (FR-641 "Trace kinds"):
     /// the kind FR-645 reports as `supplied`.
@@ -106,6 +128,7 @@ impl TraceInput {
             Self::Finite(_) => "finite",
             Self::Progressed { .. } => "progressed",
             Self::Timestamped { .. } => "timestamped",
+            Self::Timed { .. } => "timed",
             Self::Lasso { .. } => "lasso",
             Self::Model { .. } => "model",
         }
@@ -134,7 +157,7 @@ impl TraceInput {
     fn carries_progress(&self) -> bool {
         match self {
             Self::Progressed { .. } | Self::Timestamped { .. } => true,
-            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => false,
+            Self::Finite(_) | Self::Timed { .. } | Self::Lasso { .. } | Self::Model { .. } => false,
         }
     }
 
@@ -166,7 +189,7 @@ impl TraceInput {
                     .map(|index| self.position_at(index))
                     .collect::<Option<Vec<_>>>()?,
             )),
-            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
+            Self::Finite(_) | Self::Timed { .. } | Self::Lasso { .. } | Self::Model { .. } => None,
         }
     }
 
@@ -190,7 +213,7 @@ impl TraceInput {
                     fingerprint: document_fingerprint(&observation.document),
                 })
             }
-            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
+            Self::Finite(_) | Self::Timed { .. } | Self::Lasso { .. } | Self::Model { .. } => None,
         }
     }
 
@@ -199,6 +222,7 @@ impl TraceInput {
         match self {
             Self::Progressed { trace, .. } => trace.len(),
             Self::Timestamped { observations, .. } => observations.len(),
+            Self::Timed { prefix, repeat, .. } => prefix.len().saturating_add(repeat.len()),
             Self::Finite(positions) => positions.len(),
             Self::Lasso { prefix, repeat } => prefix.len().saturating_add(repeat.len()),
             Self::Model { .. } => 0,
@@ -225,6 +249,12 @@ impl TraceInput {
                 .into_iter()
                 .map(|(_, observation)| &observation.document),
             ),
+            Self::Timed { prefix, repeat, .. } => Box::new(
+                prefix
+                    .iter()
+                    .chain(repeat)
+                    .map(|observation| &observation.document),
+            ),
             Self::Lasso { prefix, repeat } => Box::new(prefix.iter().chain(repeat)),
             Self::Model {
                 initial, universes, ..
@@ -243,6 +273,15 @@ impl TraceInput {
             }),
             Self::Timestamped { observations, .. } => Some(TemporalTrace::Finite {
                 len: u64::try_from(observations.len()).ok()?,
+            }),
+            Self::Timed { prefix, repeat, .. } if repeat.is_empty() => {
+                Some(TemporalTrace::Finite {
+                    len: u64::try_from(prefix.len()).ok()?,
+                })
+            }
+            Self::Timed { prefix, repeat, .. } => Some(TemporalTrace::Lasso {
+                prefix: u64::try_from(prefix.len()).ok()?,
+                loop_len: u64::try_from(repeat.len()).ok()?,
             }),
             Self::Lasso { prefix, repeat } => Some(TemporalTrace::Lasso {
                 prefix: u64::try_from(prefix.len()).ok()?,
@@ -409,6 +448,7 @@ fn indexed_samples(
             }))
         }
         TraceInput::Finite(_)
+        | TraceInput::Timed { .. }
         | TraceInput::Progressed { .. }
         | TraceInput::Timestamped { .. }
         | TraceInput::Lasso { .. }
@@ -1095,6 +1135,7 @@ fn authenticate_trace(
     let binding = match trace {
         TraceInput::Progressed { binding, .. } => Some(binding),
         TraceInput::Timestamped { window, .. } => window.binding.as_ref(),
+        TraceInput::Timed { binding, .. } => Some(binding),
         TraceInput::Finite(_) | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {
             return Ok(None);
         }
@@ -1531,6 +1572,17 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         | TraceInput::Progressed {
             trace: positions, ..
         } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed {
+            period: Some(_),
+            repeat,
+            ..
+        } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Timed {
+            period: None,
+            prefix,
+            ..
+        } if prefix.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Timed { .. } => None,
         TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
         | TraceInput::Timestamped { .. }
@@ -1805,6 +1857,42 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         | ObservedPositions::ObjectTape { .. } => None,
     };
     let snapshot = tape.and_then(|tape| tape.snapshot);
+
+    if let TraceInput::Timed {
+        prefix,
+        repeat,
+        period,
+        through,
+        ..
+    } = trace
+    {
+        let stamps = prefix
+            .iter()
+            .chain(repeat)
+            .map(|position| position.stamp.clone())
+            .collect();
+        let loop_start = period
+            .as_ref()
+            .map(|period| (u64::try_from(prefix.len()).unwrap_or(u64::MAX), period.clone()));
+        let timed = fsl_eval::temporal::evaluate_observed_timed(
+            run.package,
+            node,
+            observing,
+            stamps,
+            loop_start,
+            through.clone(),
+            &mut meter,
+        );
+        let (disposition, refused_at) =
+            observed_disposition(timed.stopped, timed.result, graph, run.sources);
+        let (disposition, counterexample) =
+            with_counterexample(node, trace, disposition, timed.undefined);
+        let usage = ClauseRunUsage::from_meter(&meter, admitted);
+        let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
+        finished.counterexample = counterexample;
+        finished.refused_at = refused_at;
+        return finished;
+    }
 
     // FR-757 "Cross-evaluation": a valuation run reads every atom and
     // activation of the admitted closed finite trace or lasso through the one

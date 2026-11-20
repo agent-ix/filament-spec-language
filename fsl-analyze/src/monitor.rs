@@ -593,7 +593,9 @@ impl Runs<'_> {
     fn authentication(&self, input: &TraceInput) -> Result<Option<PackageAuthentication>, Failure> {
         if !matches!(
             input,
-            TraceInput::Progressed { .. } | TraceInput::Timestamped { .. }
+            TraceInput::Progressed { .. }
+                | TraceInput::Timestamped { .. }
+                | TraceInput::Timed { .. }
         ) {
             return Ok(None);
         }

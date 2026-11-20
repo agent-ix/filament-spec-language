@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 /// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
-use filament_exact::{CollectionKind, Identifier, ScalarLimits};
+use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits};
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
@@ -21,7 +21,7 @@ use super::{
     sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
     ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
     ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
-    SpineLimits, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 

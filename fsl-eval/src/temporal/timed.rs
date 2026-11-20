@@ -57,6 +57,8 @@ const VISIT: ChargePoint = ChargePoint::TemporalVisit;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimedTrace {
     stamps: Vec<Rational>,
+    /// The latest time through which a finite recording is complete.
+    through: Option<Rational>,
     /// The loop a timed lasso repeats forever; none for a finite prefix.
     looping: Option<TimedLoop>,
 }
@@ -91,8 +93,22 @@ impl TimedTrace {
         }
         Ok(Self {
             stamps,
+            through: None,
             looping: None,
         })
+    }
+
+    /// The finite trace whose recording is complete through `through`.
+    pub fn through(
+        stamps: Vec<Rational>,
+        through: Rational,
+    ) -> Result<Self, TemporalRefusal> {
+        let mut trace = Self::new(stamps)?;
+        if trace.stamps.last().is_some_and(|last| &through < last) {
+            return Err(TemporalRefusal::ThroughBeforeLastStamp);
+        }
+        trace.through = Some(through);
+        Ok(trace)
     }
 
     /// The timed lasso whose represented positions have `stamps` and whose
@@ -125,6 +141,7 @@ impl TimedTrace {
                 start,
                 delay: loop_delay,
             }),
+            through: None,
             ..trace
         })
     }
@@ -233,6 +250,13 @@ impl<'a> Window<'a> {
     fn reaches(self, offset: &Rational) -> bool {
         self.0.is_none_or(|interval| interval.reaches(offset))
     }
+
+    /// Whether `through` closes every possible position in this window.
+    fn complete_by(self, offset: &Rational) -> bool {
+        self.0
+            .and_then(TimedInterval::upper)
+            .is_some_and(|upper| upper <= offset)
+    }
 }
 
 /// The repetition of a timed lasso's last unrolled loop copy (FR-231
@@ -250,6 +274,8 @@ struct Evaluator<'a> {
     stamps: &'a [Rational],
     /// The lasso's repetition past the last stamp; none for a finite prefix.
     tail: Option<Tail<'a>>,
+    /// The finite recording's completeness boundary; none for an open prefix.
+    trace_through: Option<&'a Rational>,
     meter: &'a mut Meter,
     /// The value of each formula node at each position, once computed.
     values: Vec<Vec<Tri>>,
@@ -316,7 +342,15 @@ impl Evaluator<'_> {
             .last()
             .ok_or_else(|| broken("trace-not-empty"))?
             .sub(&here);
-        if window.reaches(&last) {
+        let through_remainder = self
+            .trace_through
+            .as_ref()
+            .map(|through| through.sub(&here));
+        if window.reaches(&last)
+            && through_remainder
+                .as_ref()
+                .is_none_or(|remaining| !window.complete_by(remaining))
+        {
             acc = acc.max(held.min(Tri::Unknown));
         }
         Ok(acc.flip(dual))
@@ -596,6 +630,7 @@ pub fn evaluate_timed_at<L: TemporalLetters>(
             loop_len,
             delay: &looping.delay,
         }),
+        trace_through: trace.through.as_ref(),
         meter,
         values: vec![vec![Tri::Unknown; stamps.len()]; formula.nodes().len()],
     };

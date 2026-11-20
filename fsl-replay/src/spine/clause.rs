@@ -63,7 +63,8 @@ pub use temporal::{
     AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
     FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
     PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
+    TimedObservation, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow,
     TraceBinding, TraceInput, admit_progress, authenticate_package_trace, clause_trace_binding,
     name_clause_atom, run_package_temporal, run_package_temporal_bounded, sample_position,
 };
