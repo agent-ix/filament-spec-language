@@ -90,6 +90,7 @@ mod native_snapshot_values;
 mod null_value;
 mod observation_composites;
 mod operation_bodies;
+mod operation_uniqueness;
 mod operation_clauses;
 mod option_values;
 #[cfg(feature = "test-support")]
