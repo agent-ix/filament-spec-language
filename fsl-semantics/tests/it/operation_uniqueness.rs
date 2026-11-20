@@ -333,3 +333,122 @@ fn different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type() 
     assert_eq!(found[0].code.as_str(), "invalid_model_binding");
     assert_eq!(found[0].cause.as_str(), "conflicting-binding");
 }
+
+#[trace("TC-1307", "FR-512-AC-1")]
+#[test]
+fn a_population_cannot_acquire_an_operations_member() {
+    let mut document: Value = serde_json::from_slice(&input(vec![])).expect("original model");
+    document["populations"][0]["operations"] = json!([query("advance", json!([]))]);
+    let refused = admit(&serde_json::to_vec(&document).expect("model JSON"))
+        .expect_err("population operations are not admitted");
+    let UnitIntakeCause::Refused(found) = refused.cause else {
+        panic!("{refused:?}");
+    };
+    assert!(!found.is_empty());
+    assert!(
+        found
+            .iter()
+            .any(|refusal| refusal.detail.contains("/ir/populations/0")
+                && refusal.detail.contains("operations")),
+        "the semantic-IR reader must retain its rejected member: {found:?}"
+    );
+}
+
+fn extra_owner(kind: &str, meaning: &str, operations: Vec<Value>) -> Vec<u8> {
+    use super::model_operations::{wire_construct, wire_field, wire_type};
+    let mut document: Value = serde_json::from_slice(&input(vec![])).expect("original model");
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(wire_construct(kind, meaning, json!({})));
+    let owner = format!("ix://{PACKAGE_IDENTITY}/Parcel");
+    let mut node = wire_type(
+        &owner,
+        kind,
+        json!({"fields": [], "operations": operations, "supertypes": [], "identityFields": []}),
+    );
+    if kind == "event_type" {
+        let occurred = format!("{owner}/occurred");
+        node["fields"] = json!([wire_field(
+            &occurred,
+            "occurred",
+            "ix://filament/native/Timestamp",
+            "required",
+            1
+        )]);
+        node["occurrenceField"] = json!(occurred);
+        node.as_object_mut()
+            .expect("event node")
+            .remove("identityFields");
+    }
+    document["types"].as_array_mut().expect("types").push(node);
+    serde_json::to_vec(&document).expect("model JSON")
+}
+
+#[trace("TC-1307", "FR-512-AC-2", "FR-512-AC-3", "FR-512-AC-16")]
+#[test]
+fn event_and_record_owners_refuse_before_operation_name_collisions() {
+    use fsl_semantics::model::intake::meaning;
+    for (kind, meaning, code, cause) in [
+        (
+            "event_type",
+            meaning::EVENT_TYPE,
+            "invalid_model_binding",
+            "malformed-declaration",
+        ),
+        (
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+            "unsupported_construct",
+            "declaration-form",
+        ),
+    ] {
+        admit(&extra_owner(kind, meaning, vec![]))
+            .expect("the original non-operation owner admits");
+        let mut first = query("advance", json!([]));
+        first["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"));
+        let mut second = query("other", json!([]));
+        second["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/other"));
+        second["name"] = json!("advance");
+        refusal(
+            &extra_owner(kind, meaning, vec![first, second]),
+            code,
+            cause,
+            &format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"),
+            "TypeDefinition.operations[0]",
+        );
+    }
+}
+
+#[trace("TC-1307", "FR-512-AC-5")]
+#[test]
+fn unrelated_objects_can_declare_the_same_operation_name() {
+    use super::model_operations::wire_type;
+    let mut document: Value =
+        serde_json::from_slice(&input(vec![query("advance", json!([]))])).expect("original model");
+    let mut other = query("advance", json!([]));
+    let other_owner = format!("ix://{PACKAGE_IDENTITY}/Gauge");
+    other["identity"] = json!(format!("{other_owner}/advance"));
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(wire_type(
+            &other_owner,
+            "object_type",
+            json!({"fields": [], "operations": [other], "supertypes": []}),
+        ));
+    let selected = admit(&serde_json::to_vec(&document).expect("model JSON"))
+        .expect("names belong to different owners");
+    let operations: Vec<_> = selected[0]
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::OperationMember(op) => Some(op.key.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(operations.contains(&key("advance").as_str()));
+    assert!(operations.contains(&format!("{other_owner}/advance").as_str()));
+}
