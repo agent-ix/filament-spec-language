@@ -299,14 +299,15 @@ pub enum ProbabilisticCause {
         /// The parameter's span.
         span: Span,
     },
-    /// A workload on a name no `model` declaration binds.
+    /// A workload on a name that is neither a `model` alias of the unit nor an
+    /// object type of its source model.
     /// `missing_declaration`/`missing-name`.
     UnresolvedModel {
         /// The workload.
         workload: String,
-        /// The model alias, as written.
+        /// The `on` name, as written.
         model: String,
-        /// The alias's span.
+        /// The name's span.
         span: Span,
     },
     /// A support value that is not a literal of the parameter's type.

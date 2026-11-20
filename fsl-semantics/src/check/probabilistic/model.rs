@@ -833,13 +833,76 @@ impl<'a> ProbabilisticInput<'a> {
         ))
     }
 
+    /// FR-185 "Workloads": what the `on` name of a workload names, resolved as
+    /// FR-230 resolves a time member: first as a model alias of the unit and,
+    /// failing that, as an object type of the unit's own source model, whose
+    /// operations alone the workload then weighs. The model alias and the
+    /// source object type, when one is named.
+    fn workload_target(&self, written: &str) -> Option<(String, Option<DeclarationKey>)> {
+        if self.model_objects.contains_key(written) {
+            return Some((written.to_owned(), None));
+        }
+        let object = Identifier::new(written).ok()?;
+        let key = self
+            .model_objects
+            .get(super::super::source_model::ALIAS)?
+            .get(&object)?;
+        Some((
+            super::super::source_model::ALIAS.to_owned(),
+            Some(key.clone()),
+        ))
+    }
+
     /// Every operation of the model `alias`, each with its spelling
     /// `Type::op`, in object type then declaration order.
-    fn model_operations(&self, alias: &str) -> Vec<(EffectiveId, &'a str, String)> {
+    fn model_operations(
+        &self,
+        alias: &str,
+        only: Option<&DeclarationKey>,
+    ) -> Vec<(EffectiveId, &'a str, String)> {
         let Some(objects) = self.model_objects.get(alias) else {
             return Vec::new();
         };
         let mut operations = Vec::new();
+        if let Some(only) = only {
+            // A source-object workload weighs the type's effective view: each
+            // operation it declares or inherits, an ancestor's redefined
+            // operation hidden by the type's own. A name several unrelated
+            // ancestors declare keeps every nearest declaration, as the type's
+            // instances carry each (FR-104 refuses only a written `Type::op`
+            // that names several).
+            let Some(of) = self.object_types.get(only) else {
+                return operations;
+            };
+            let types = self.scope.types();
+            let reachable: Vec<(&Identifier, &EffectiveId)> = objects
+                .iter()
+                .filter_map(|(artifact, key)| Some((artifact, self.object_types.get(key)?)))
+                .filter(|(_, declaring)| types.conforms(of.clone(), (*declaring).clone()))
+                .collect();
+            for (artifact, declaring) in &reachable {
+                for operation in self.scope.operations().declared_by((*declaring).clone()) {
+                    let hidden = reachable.iter().any(|(_, other)| {
+                        other != declaring
+                            && types.conforms((*other).clone(), (*declaring).clone())
+                            && self
+                                .scope
+                                .operations()
+                                .declared_by((*other).clone())
+                                .iter()
+                                .any(|redefined| redefined.name() == operation.name())
+                    });
+                    if !hidden {
+                        operations.push((
+                            (*declaring).clone(),
+                            operation.name(),
+                            format!("{}::{}", artifact.as_str(), operation.name()),
+                        ));
+                    }
+                }
+            }
+            return operations;
+        }
         for (artifact, key) in objects {
             let Some(declaring) = self.object_types.get(key).cloned() else {
                 continue;
@@ -860,16 +923,17 @@ impl<'a> ProbabilisticInput<'a> {
     /// names as its model (FSpec FR-640). When several types qualify, the one
     /// conforming to the fewest of the model's types, then the first in key
     /// order. `None` when the model's operations share no such type.
-    fn workload_model(&self, alias: &str) -> Option<DeclarationKey> {
+    fn workload_model(&self, alias: &str, only: Option<&DeclarationKey>) -> Option<DeclarationKey> {
         let objects = self.model_objects.get(alias)?;
         let types = self.scope.types();
         let declaring: Vec<EffectiveId> = self
-            .model_operations(alias)
+            .model_operations(alias, only)
             .into_iter()
             .map(|(declaring, _, _)| declaring)
             .collect();
         let identities: Vec<(&DeclarationKey, EffectiveId)> = objects
             .values()
+            .filter(|key| only.is_none_or(|only| only == *key))
             .filter_map(|key| Some((key, self.object_types.get(key)?.clone())))
             .collect();
         identities
@@ -1429,13 +1493,17 @@ impl Pass<'_, '_> {
             });
         }
         self.workloads.push((workload.to_owned(), form.name.span));
-        if !self.input.model_objects.contains_key(model) {
+        let Some((alias, only)) = self.input.workload_target(model) else {
             return self.refuse(ProbabilisticCause::UnresolvedModel {
                 workload: workload.to_owned(),
                 model: model.to_owned(),
                 span: form.model.span,
             });
-        }
+        };
+        let model = alias.as_str();
+        let weighable = only
+            .as_ref()
+            .map(|only| self.input.model_operations(model, Some(only)));
         let mut refusals: Vec<CheckRefusal> = Vec::new();
         let mut weighted: Vec<DeclarationKey> = Vec::new();
         let mut weights: Vec<(ProbabilisticOperation, Rational)> = Vec::new();
@@ -1451,8 +1519,16 @@ impl Pass<'_, '_> {
                 },
             );
             let operation = match self.input.operation(&written.operation, Some(model)) {
-                Ok((operation, _)) => operation,
-                Err(Unresolved::Missing) => {
+                Ok((operation, _))
+                    if weighable.as_ref().is_none_or(|weighable| {
+                        weighable.iter().any(|(declaring, name, _)| {
+                            *declaring == operation.declaring && *name == operation.name.as_str()
+                        })
+                    }) =>
+                {
+                    operation
+                }
+                Ok(_) | Err(Unresolved::Missing) => {
                     refusals.extend(weight.err());
                     refusals.push(refusal(ProbabilisticCause::UnknownOperation {
                         workload: workload.to_owned(),
@@ -1482,7 +1558,7 @@ impl Pass<'_, '_> {
                 Err(refused) => refusals.push(refused),
             }
         }
-        for (declaring, name, spelled) in self.input.model_operations(model) {
+        for (declaring, name, spelled) in self.input.model_operations(model, only.as_ref()) {
             let covered = form.weights.iter().any(|written| {
                 self.input
                     .operation(&written.operation, Some(model))
@@ -1506,7 +1582,7 @@ impl Pass<'_, '_> {
             declared: index,
             name: workload.to_owned(),
             model: model.to_owned(),
-            model_key: self.input.workload_model(model),
+            model_key: self.input.workload_model(model, only.as_ref()),
             weights,
         });
     }
