@@ -1454,6 +1454,7 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         })
         .collect();
     let mut namespace_forms = std::collections::BTreeSet::new();
+    let mut decimal_roots = std::collections::BTreeSet::new();
     let refusals: Vec<ModelRefusal> = verdict
         .diagnostics
         .iter()
@@ -1523,6 +1524,9 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
                     ));
                 }
                 return Some(refusal);
+            }
+            if decimal_policy_cascade(document, located, &mut decimal_roots) {
+                return None;
             }
             if let Some(refusal) = missing_option_inner_schema_refusal(document, located) {
                 return Some(refusal);
@@ -1852,6 +1856,97 @@ fn rational_value_type_schema_diagnostic(
             }),
         _ => false,
     }
+}
+
+/// The Decimal declaration without a policy that a type reference reaches:
+/// the first node of its alias chain that is a policy-less `decimal` scalar
+/// or a policy-less alias of native Decimal. `None` when the chain carries a
+/// policy, or ends anywhere else.
+fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&'t str> {
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let node = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))?;
+        if node.get("decimal").is_some() {
+            return None;
+        }
+        let identity = node.get("identity").and_then(Value::as_str)?;
+        if node.get("scalar").and_then(Value::as_str) == Some("decimal") {
+            return Some(identity);
+        }
+        if node.get("kind").and_then(Value::as_str) != Some("alias") {
+            return None;
+        }
+        let target = node.get("target").and_then(Value::as_str)?;
+        if target == "ix://filament/native/Decimal" {
+            return Some(identity);
+        }
+        current = target;
+    }
+    None
+}
+
+/// Whether `located` is a consequence of a Decimal declaration that lacks its
+/// policy, for which another diagnostic already stands: the validator walks
+/// every field, parameter, result, alias and bound that reaches the
+/// declaration and reports each, so one missing policy would otherwise refuse
+/// once per use. The first `DECIMAL_POLICY_MISSING` of each root is kept
+/// (`roots` records them), and an `INVALID_OPERAND` on a bound of a
+/// policy-less declaration, which has no scale to read it at, is dropped.
+#[ix_trace_rs::string_edge]
+fn decimal_policy_cascade(
+    document: &PackageDocument,
+    located: &agent_ix_semantic_ir::diag::Located,
+    roots: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    let missing = located.code == agent_ix_semantic_ir::rules::DECIMAL_POLICY_MISSING;
+    if !missing && located.code != agent_ix_semantic_ir::rules::INVALID_OPERAND {
+        return false;
+    }
+    let Some(types) = document.tree.get("types").and_then(Value::as_array) else {
+        return false;
+    };
+    let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
+        return false;
+    };
+    let mut segments = rest.split('/');
+    let Some(node) = segments
+        .next()
+        .and_then(|position| position.parse::<usize>().ok())
+        .and_then(|position| types.get(position))
+    else {
+        return false;
+    };
+    let Some(identity) = node.get("identity").and_then(Value::as_str) else {
+        return false;
+    };
+    // The reference the diagnostic's position carries: a member's, a
+    // parameter's or a result's `typeRef`, else the node's own walk.
+    let mut position = node;
+    for segment in segments {
+        if matches!(segment, "constraints" | "target") {
+            break;
+        }
+        let next = match segment.parse::<usize>() {
+            Ok(index) => position.get(index),
+            Err(_) => position.get(segment),
+        };
+        let Some(next) = next else {
+            break;
+        };
+        position = next;
+    }
+    let reference = position
+        .get("typeRef")
+        .and_then(Value::as_str)
+        .filter(|_| !std::ptr::eq(position, node))
+        .unwrap_or(identity);
+    let root = policy_less_decimal_root(types, reference);
+    if !missing {
+        return root.is_some();
+    }
+    !roots.insert(root.map_or_else(|| located.pointer.clone(), str::to_owned))
 }
 
 /// Whether a shared schema diagnostic is one of the Decimal schema members
@@ -3689,13 +3784,17 @@ fn decimal_coefficient(text: &str, scale: u64) -> Option<Integer> {
     {
         return None;
     }
-    let whole = whole.parse::<Integer>().ok()?;
-    let mut coefficient = whole.mul(&Integer::power_of_ten(scale));
-    if !fraction.is_empty() {
-        let fraction_value = fraction.parse::<Integer>().ok()?;
-        coefficient = coefficient
-            .add(&fraction_value.mul(&Integer::power_of_ten(scale - fraction.len() as u64)));
-    }
+    // The coefficient is the digits of `whole.fraction` padded to `scale`
+    // places. Leading zeros (`0.0001` at scale 4) are not part of an integer
+    // literal, so the digit string is trimmed before it is parsed.
+    let padding = "0".repeat((scale - fraction.len() as u64) as usize);
+    let digits = format!("{whole}{fraction}{padding}");
+    let digits = digits.trim_start_matches('0');
+    let mut coefficient = if digits.is_empty() {
+        Integer::zero()
+    } else {
+        digits.parse::<Integer>().ok()?
+    };
     if negative {
         coefficient = coefficient.neg();
     }

@@ -6,11 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{DecimalType, IllTypedCause, Integer, RoundingMode, ValueType};
+use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -212,6 +212,19 @@ fn field_mut<'a>(document: &'a mut Value, name: &str) -> &'a mut Value {
         .expect("the field is declared")
 }
 
+/// Renames the alias `Rate` to `Amount`, and the `rate` field's reference to it,
+/// so the document names no declaration it does not carry.
+fn rename_rate_to_amount(document: &mut Value) -> &mut Value {
+    let identity = "ix://test/decimal/Amount";
+    field_mut(document, "rate")["typeRef"] = identity.into();
+    let amount = type_mut(document, "Rate");
+    amount["identity"] = identity.into();
+    amount["displayName"] = "Amount".into();
+    amount["origin"]["generated"]["generatorIdentity"] = identity.into();
+    amount["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    amount
+}
+
 /// A bound constraint on the type `owner`, with an identity of its own.
 fn bound(owner: &str, tag: &str, keyword: &str, value: Value) -> Value {
     let owner = format!("ix://test/decimal/{owner}");
@@ -282,19 +295,21 @@ fn amount_decimal_native_alias_has_its_policy_and_checks_equality() {
     assert_eq!(checked.field("amount"), decimal("-99999", "99999", 2));
 }
 
-/// FR-056-AC-63 (TC-3031): a target-bound Decimal value type without policy
-/// remains untyped and cannot be used by equality.
+/// FR-056-AC-63 (TC-3031): an alias of native Decimal that declares no policy,
+/// typing a member that declares none either, refuses once at intake with the
+/// validator's `DECIMAL_POLICY_MISSING`, so no declaration has an untyped Decimal.
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
-fn target_bound_cash_without_policy_is_operator_ineligible() {
+fn policy_less_cash_alias_member_refuses_once() {
     let mut document = golden();
     let cash_identity = "ix://test/decimal/Cash";
-    let mut cash = type_mut(&mut document, "Price").clone();
+    let mut cash = type_mut(&mut document, "Rate").clone();
     cash["identity"] = cash_identity.into();
     cash["displayName"] = "Cash".into();
-    cash.as_object_mut().expect("Cash").remove("scalar");
+    cash["constraints"] = json!([]);
     cash.as_object_mut().expect("Cash").remove("decimal");
-    cash["target"] = "ix://filament/native/Decimal".into();
+    cash["origin"]["generated"]["generatorIdentity"] = cash_identity.into();
+    cash["origin"]["generated"]["inputIdentities"] = json!([cash_identity]);
     document["types"].as_array_mut().expect("types").push(cash);
 
     let mut cash_field = field_mut(&mut document, "price").clone();
@@ -306,61 +321,28 @@ fn target_bound_cash_without_policy_is_operator_ineligible() {
         .expect("Meter fields")
         .push(cash_field);
 
-    let bytes = serde_json::to_vec(&document).expect("Cash fixture encoding");
-    let packages = package_input([bytes.as_slice()]).expect("Cash package bytes");
-    let body = "invariant CashEquality using v on Config::Meter at current { self.cash = self.cash }\n";
-    let unit = unit_text(PACKAGE, "Config", body);
-    let parsed = fsl_cst::parse(
-        SourceIdentity::new("test", "decimal-cash"),
-        "cash.native",
-        unit.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 reads the unit");
-    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
-    let built = build_unit(&parsed).expect("S2 builds the unit");
-    let selected = admit_unit(
-        &built.selections().models,
-        &packages,
-        ModelNormalizationLimits::default(),
-    )
-    .unwrap_or_else(|refusal| panic!("I1 admits Cash: {refusal:?}"));
-    let declarations = PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        crate::TEST_PACKAGE_NAME.to_owned(),
-        built,
-        selected,
-        Vec::new(),
-    )
-    .unwrap_or_else(|refusal| panic!("Cash unit assembles: {refusal:?}"));
-    let refusals = declarations
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &crate::reward_evaluator::ZeroRewardEvaluator,
-        )
-        .expect_err("Cash has no Decimal policy and no checked value type");
+    let refusals = intake_refusals(&document);
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(
-        refusals[0].cause,
-        CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+        (refusals[0].code.as_str(), refusals[0].cause.as_str()),
+        ("invalid_model_binding", "malformed-declaration")
+    );
+    assert!(
+        refusals[0].detail.contains("DECIMAL_POLICY_MISSING"),
         "{refusals:?}"
     );
 }
 
+/// FR-056-AC-63 (TC-3031): an alias chain that closes on itself refuses once at
+/// intake, at its `target`.
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
 fn cyclic_decimal_alias_refuses_at_intake() {
     let mut document = golden();
-    let amount_identity = "ix://test/decimal/Amount";
-    let amount = type_mut(&mut document, "Rate");
-    amount["identity"] = amount_identity.into();
-    amount["displayName"] = "Amount".into();
-    amount["target"] = amount_identity.into();
+    let amount = rename_rate_to_amount(&mut document);
+    amount["target"] = "ix://test/decimal/Amount".into();
     amount["constraints"] = json!([]);
     amount["decimal"] = json!({"precision": 5, "scale": 2});
-    amount["origin"]["generated"]["generatorIdentity"] = amount_identity.into();
-    amount["origin"]["generated"]["inputIdentities"] = json!([amount_identity]);
 
     let refusals = intake_refusals(&document);
     assert_eq!(refusals.len(), 1, "{refusals:?}");
@@ -571,13 +553,9 @@ fn decimal_policy_defects_refuse_once() {
         true,
     ));
     let mut document = golden();
-    let amount = type_mut(&mut document, "Rate");
-    amount["identity"] = "ix://test/decimal/Amount".into();
-    amount["displayName"] = "Amount".into();
+    let amount = rename_rate_to_amount(&mut document);
     amount["constraints"] = json!([]);
     amount.as_object_mut().expect("Amount").remove("decimal");
-    amount["origin"]["generated"]["generatorIdentity"] = "ix://test/decimal/Amount".into();
-    amount["origin"]["generated"]["inputIdentities"] = json!(["ix://test/decimal/Amount"]);
     cases.push((
         "Amount without a policy",
         document,
@@ -606,7 +584,7 @@ fn decimal_policy_defects_refuse_once() {
         "policy on a target-bound value type",
         document,
         "malformed-declaration",
-        "DECIMAL_POLICY_CONFLICT",
+        "SCHEMA_VIOLATION",
         true,
     ));
     for (precision, scale) in [(39, 2), (0, 0), (2, 3)] {
