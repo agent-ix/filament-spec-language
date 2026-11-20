@@ -6,7 +6,7 @@ mod clause;
 mod export;
 mod flow;
 mod items;
-mod monitor;
+pub mod monitor;
 mod output;
 mod output_file;
 mod package_run;
@@ -19,13 +19,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
 pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -1722,7 +1722,7 @@ fn run_configured(
             monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
-            replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+            replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
             plan::check_member(bytes)?;
             if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
@@ -1978,20 +1978,78 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
 /// Inspect a checked-package handoff and return the command's successful
 /// `inspect` outcome. A refusal retains the handoff reader's typed error.
 pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
+    inspect_handoff_with_operand(directory, &directory.to_string_lossy())
+}
+
+/// Inspect a checked-package handoff while retaining the caller's exact
+/// directory operand for refusal loci.
+pub fn inspect_handoff_with_operand(
+    directory: &Path,
+    operand: &str,
+) -> fsl_replay::OutcomeDocument {
     use filament_semantic_value::catalog::Category;
     use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
     match crate::checked_handoff::verify(directory) {
         Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
-        Err(error) => OutcomeDocument::new(Operation::Inspect, None, Category::Refusal)
-            .with_diagnostics(vec![OutcomeDiagnostic::new(
-                None,
-                error.code_name(),
-                Some(OutcomeLocus::Artifact {
-                    pointer: "/".to_owned(),
-                }),
-                error.to_string(),
-            )]),
+        Err(error) => {
+            let (member, pointer) = inspect_handoff_position(directory, &error);
+            let locus = Some(OutcomeLocus::Input {
+                operand: operand.to_owned(),
+                member,
+                pointer,
+            });
+            OutcomeDocument::new(Operation::Inspect, None, Category::Refusal).with_diagnostics(
+                vec![OutcomeDiagnostic::new(
+                    None,
+                    error.code_name(),
+                    locus,
+                    error.to_string(),
+                )],
+            )
+        }
+    }
+}
+
+fn inspect_handoff_position(
+    directory: &Path,
+    error: &crate::checked_handoff::Error,
+) -> (Option<String>, Option<String>) {
+    use crate::checked_handoff::{Error, SelectionReadError};
+
+    match error {
+        Error::ReaderRefused(refusal) => (
+            Some("checked-package.json".to_owned()),
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(ToString::to_string),
+        ),
+        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => (
+            Some("checked-package.json".to_owned()),
+            None,
+        ),
+        Error::Read { path, .. } => {
+            let path = Path::new(path);
+            if path == directory {
+                return (None, None);
+            }
+            let member = path
+                .strip_prefix(directory)
+                .ok()
+                .map(|member| member.to_string_lossy().replace('\\', "/"));
+            (member, None)
+        }
+        Error::Label { label } => (Some(label.clone()), None),
+        Error::Sidecar(SelectionReadError::Format(_)) => {
+            (Some("selection.json".to_owned()), Some("/format".to_owned()))
+        }
+        Error::Sidecar(SelectionReadError::Malformed(_)) => {
+            (Some("selection.json".to_owned()), None)
+        }
+        Error::SelectionMismatch(_) => (Some("selection.json".to_owned()), None),
+        _ => (None, None),
     }
 }
 

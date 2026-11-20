@@ -7,6 +7,7 @@ mod compile_limits;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
 mod extraction_request_refusals;
+mod inspect_handoff_locus;
 mod integer_division_request;
 mod model_unit_request;
 mod native_source_projection;
@@ -21,3 +22,4 @@ mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;
 mod short_circuit_integer_division;
+mod wire_schema;

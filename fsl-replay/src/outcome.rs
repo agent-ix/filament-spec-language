@@ -24,9 +24,10 @@
 //! non-proof evaluation outcome such as `execute`.
 
 mod counterexample;
+pub mod hint;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -84,6 +85,9 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 
 /// The document's `format` member.
 pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+/// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
+pub const OUTCOME_SCHEMA_1: &str =
+    include_str!("../schemas/filament-outcome-1.schema.json");
 
 /// The library operation that produced the document (ADR-029 LC-1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -1816,8 +1820,19 @@ pub enum OutcomeLocus {
     },
     /// An artifact and a JSON pointer into it.
     Artifact {
+        /// The FR-001 identity of the artifact.
+        identity: RawSourceRef,
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
+    },
+    /// A position in an input named by the caller, not an FR-001 artifact.
+    Input {
+        /// The operand exactly as the caller wrote it.
+        operand: String,
+        /// The member file relative to a directory operand, when present.
+        member: Option<String>,
+        /// The RFC 6901 pointer into the input, when present.
+        pointer: Option<String>,
     },
     /// A refusal located in a snapshot or invocation document.
     Document {
@@ -1834,6 +1849,7 @@ pub enum OutcomeLocus {
     },
 }
 
+/// The population and snapshot object key named by a document locus.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DocumentObjectLocus {
     /// The model population.
@@ -1847,9 +1863,6 @@ pub(crate) fn snapshot_admission_locus(
     document: &fsl_semantics::model::observation::DocumentRef,
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
-    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
-        return None;
-    }
     use filament_semantic_value::admission::PathStep;
     let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
         match step {
@@ -1887,6 +1900,14 @@ pub(crate) fn snapshot_admission_locus(
     })
 }
 
+fn pointer_member(pointer: &str) -> Option<String> {
+    let token = pointer.rsplit('/').next()?;
+    if token.is_empty() && pointer.is_empty() {
+        return None;
+    }
+    Some(token.replace("~1", "/").replace("~0", "~"))
+}
+
 impl From<&Locus> for OutcomeLocus {
     fn from(locus: &Locus) -> Self {
         match locus {
@@ -1898,8 +1919,18 @@ impl From<&Locus> for OutcomeLocus {
             Locus::Occurrence(location) => Self::Occurrence {
                 occurrence: OccurrenceKey::from(location).to_string(),
             },
-            Locus::Artifact { pointer } => Self::Artifact {
+            Locus::Artifact { identity, pointer } => Self::Artifact {
+                identity: identity.clone(),
                 pointer: pointer.to_string(),
+            },
+            Locus::Input {
+                operand,
+                member,
+                pointer,
+            } => Self::Input {
+                operand: operand.clone(),
+                member: member.clone(),
+                pointer: pointer.as_ref().map(ToString::to_string),
             },
         }
     }
@@ -1911,24 +1942,27 @@ impl From<&Locus> for OutcomeLocus {
 pub struct OutcomeDiagnostic {
     cause: Option<Box<str>>,
     code: String,
-    locus: Option<OutcomeLocus>,
-    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     construct: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     declaration: Option<String>,
+    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
+    /// the refusal inside the request and the call.
+    details: Option<serde_json::Map<String, serde_json::Value>>,
+    /// FR-286's catalog hint for the diagnostic's code and cause.
     #[serde(skip_serializing_if = "Option::is_none")]
-    profile: Option<String>,
+    hint: Option<&'static str>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
     )]
     label: Option<SourceLabel>,
-    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
-    /// the refusal inside the request and the call.
-    details: Option<serde_json::Map<String, serde_json::Value>>,
+    locus: Option<OutcomeLocus>,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
 
 /// FSpec FR-331's `U64String`: an unsigned 64-bit integer as its canonical
@@ -1956,16 +1990,19 @@ impl OutcomeDiagnostic {
         locus: Option<OutcomeLocus>,
         message: impl Into<String>,
     ) -> Self {
+        let code = code.into();
+        let hint = Code::from_code(&code).and_then(|code| hint::hint_for(code, cause));
         Self {
             cause: cause.map(Into::into),
-            code: code.into(),
+            code,
+            construct: None,
+            declaration: None,
+            hint,
+            label: None,
             locus,
             message: message.into(),
-            construct: None,
-            text: None,
-            declaration: None,
             profile: None,
-            label: None,
+            text: None,
             details: None,
         }
     }
@@ -2310,7 +2347,7 @@ impl Serialize for OutcomeDocument {
 /// Why a document could not be written.
 #[derive(Debug, thiserror::Error)]
 #[error("the outcome document could not be encoded: {0}")]
-pub struct OutcomeWriteError(#[from] serde_json::Error);
+pub struct OutcomeWriteError(#[from] fsl_foundation::canonical_json::CanonicalJsonError);
 
 impl OutcomeDocument {
     /// This document with `last_stage` (FR-286): the greatest stage it entered.
@@ -2688,6 +2725,44 @@ impl OutcomeDocument {
 
     /// The document of a refused replay.
     pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
+        Self::from_replay_refusal_at(refusal, None)
+    }
+
+    /// The document of a refused replay, with the caller's request path when known.
+    pub fn from_replay_refusal_at(refusal: &ReplayRefusal, request_path: Option<&str>) -> Self {
+        Self::from_replay_refusal_with_context(refusal, request_path, None)
+    }
+
+    /// The document of a refused replay with its request path and package binding.
+    pub fn from_replay_refusal_with_context(
+        refusal: &ReplayRefusal,
+        request_path: Option<&str>,
+        artifact_identity: Option<&fsl_foundation::source::provenance::RawSourceRef>,
+    ) -> Self {
+        let locus = match refusal {
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. })
+            | ReplayRefusal::PackageSources(_)
+            | ReplayRefusal::DependencySources { .. }
+            | ReplayRefusal::DependencySelections(_)
+            | ReplayRefusal::RefinementInternals { .. } => refusal
+                .pointer()
+                .map(|pointer| request_document_locus(&pointer, request_path)),
+            ReplayRefusal::Package(_) => artifact_identity
+                .and_then(|identity| refusal.pointer().map(|pointer| (identity, pointer)))
+                .map(|(identity, pointer)| OutcomeLocus::Artifact {
+                    identity: identity.clone(),
+                    pointer: package_artifact_pointer(&pointer),
+                }),
+            ReplayRefusal::PackageWithIdentity { identity, .. } => {
+                identity.as_ref().and_then(|identity| {
+                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
+                        identity: identity.clone(),
+                        pointer: package_artifact_pointer(&pointer),
+                    })
+                })
+            }
+            _ => None,
+        };
         Self::new(
             Operation::Replay,
             replay_stage(refusal),
@@ -2696,19 +2771,7 @@ impl OutcomeDocument {
         .with_diagnostics(vec![OutcomeDiagnostic::new(
             refusal.cause(),
             refusal.code().as_str(),
-            match refusal {
-                ReplayRefusal::Package(_)
-                | ReplayRefusal::RefinementInternals { .. }
-                | ReplayRefusal::PackageSources(_)
-                | ReplayRefusal::DependencySources { .. }
-                | ReplayRefusal::DependencySelections(_)
-                | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
-                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
-                        pointer: pointer.into_owned(),
-                    })
-                }
-                _ => None,
-            },
+            locus,
             refusal.to_string(),
         )])
     }
@@ -2899,7 +2962,29 @@ impl OutcomeDocument {
 
     /// The document's bytes: the same document gives the same bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, OutcomeWriteError> {
-        Ok(serde_json::to_vec(self)?)
+        Ok(fsl_foundation::canonical_json::encode(self)?)
+    }
+}
+
+fn request_document_locus(pointer: &str, request_path: Option<&str>) -> OutcomeLocus {
+    let pointer = match request_path {
+        Some(_) => format!("/request{pointer}"),
+        None => pointer.to_owned(),
+    };
+    OutcomeLocus::Document {
+        document: None,
+        path: request_path.map(str::to_owned),
+        member: pointer_member(&pointer),
+        pointer,
+        object: None,
+    }
+}
+
+fn package_artifact_pointer(pointer: &str) -> String {
+    match pointer.strip_prefix("/package") {
+        Some("") => String::new(),
+        Some(remainder) if remainder.starts_with('/') => remainder.to_owned(),
+        _ => pointer.to_owned(),
     }
 }
 
@@ -2931,6 +3016,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => None,
         ReplayRefusal::Request(_)
         | ReplayRefusal::Package(_)
+        | ReplayRefusal::PackageWithIdentity { .. }
         | ReplayRefusal::PackageEvidence(_)
         | ReplayRefusal::DomainPackages(_)
         | ReplayRefusal::LimitAboveReader(_)
@@ -3008,6 +3094,29 @@ mod tests {
 
     use super::*;
     use crate::identity::QualifiedName;
+
+    /// FR-286-AC-28: each diagnostic constructor attaches the exact catalog hint.
+    #[trace("TC-3112", "FR-286-AC-28")]
+    #[test]
+    fn outcome_diagnostic_construction_looks_up_hints_by_exact_pair() {
+        let typed = OutcomeDiagnostic::new(
+            Some("type-mismatch"),
+            Code::IllTyped.as_str(),
+            None,
+            "types differ",
+        );
+        assert_eq!(
+            typed.hint,
+            hint::hint_for(Code::IllTyped, Some("type-mismatch"))
+        );
+
+        let io = OutcomeDiagnostic::new(None, Code::IoError.as_str(), None, "cannot read file");
+        assert_eq!(io.hint, hint::hint_for(Code::IoError, None));
+
+        let generic =
+            OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
+        assert_eq!(generic.hint, None);
+    }
 
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
     #[trace("TC-931", "FR-255-AC-3")]
@@ -4469,6 +4578,42 @@ mod tests {
                 "kind": "located",
                 "file": "fixture.native",
                 "span": serde_json::to_value(span).expect("a span"),
+            })
+        );
+    }
+
+    /// FR-095-AC-7 (TC-422): caller-named input loci preserve operand text
+    /// and always write nullable `member` and `pointer` members.
+    #[trace("TC-422", "FR-095-AC-7")]
+    #[test]
+    fn input_loci_preserve_operand_and_nullable_members_on_the_wire() {
+        let first = OutcomeLocus::from(&Locus::Input {
+            operand: "./out/handoff".to_owned(),
+            member: Some("selection.json".to_owned()),
+            pointer: None,
+        });
+        assert_eq!(
+            serde_json::to_value(first).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": "selection.json",
+                "operand": "./out/handoff",
+                "pointer": null
+            })
+        );
+
+        let second = OutcomeLocus::from(&Locus::Input {
+            operand: "pkg.json".to_owned(),
+            member: None,
+            pointer: Some("/lock".parse().expect("valid pointer")),
+        });
+        assert_eq!(
+            serde_json::to_value(second).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": null,
+                "operand": "pkg.json",
+                "pointer": "/lock"
             })
         );
     }

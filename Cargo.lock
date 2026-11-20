@@ -865,6 +865,7 @@ dependencies = [
  "fsl-semantics",
  "fsl-source",
  "ix-trace-rs",
+ "jsonschema 0.17.1",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -968,6 +969,7 @@ name = "fsl-hybrid-reference"
 version = "0.1.0"
 dependencies = [
  "filament-exact",
+ "fsl-foundation",
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",

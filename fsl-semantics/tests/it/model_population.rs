@@ -1455,6 +1455,163 @@ fn l05_duplicate_collapses_and_recovers_l01() {
     assert_eq!(meter.consumed(LimitKind::ResultUnits), 4);
 }
 
+/// Raw document records consume admission capacity even when their identities
+/// collapse. A denied final record must not expose its foreign-type error.
+#[test]
+#[trace("NFR-012-AC-8", "FR-084-AC-4")]
+fn duplicate_records_use_member_capacity_before_a_foreign_tail_is_inspected() {
+    let view = view_of(&fixture_f1());
+    let mut document = p1("test/orders");
+    document.members.push(member("a1", "model.A"));
+    let admit = |document: &PopulationDocument, population_members| {
+        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits {
+            population_members,
+            ..PopulationAdmissionLimits::UNLIMITED
+        });
+        let outcome = admit_binding(
+            &view,
+            document,
+            &p1_population_key(),
+            GeneralizationClosure::Closed,
+            Some(3),
+            &mut meter,
+        );
+        (outcome, meter)
+    };
+
+    // The fourth raw record is a duplicate, so the completed result still
+    // contains exactly the three original object identities.
+    let (AdmissionOutcome::Admitted(binding), meter) = admit(&document, 4) else {
+        panic!("four raw records must fit an inclusive capacity of four");
+    };
+    assert_eq!(binding.members().len(), 3);
+    assert_eq!(meter.consumed(AdmissionLimitKind::PopulationMembers), 4);
+    let actual: BTreeSet<_> = binding
+        .members()
+        .keys()
+        .map(|key| key.object.as_str())
+        .collect();
+    assert_eq!(actual, BTreeSet::from(["a1", "a2", "b1"]));
+
+    for foreign_tail in [false, true] {
+        let mut input = document.clone();
+        if foreign_tail {
+            input.members[3] = member("foreign", "model.Missing");
+        }
+        let (outcome, meter) = admit(&input, 3);
+        let AdmissionOutcome::Incomplete(incomplete) = outcome else {
+            panic!("the fourth raw record must be denied before inspection: {outcome:?}");
+        };
+        assert_eq!(
+            incomplete,
+            AdmissionIncomplete {
+                limit_kind: AdmissionLimitKind::PopulationMembers,
+                limit: 3,
+                consumed: 3,
+                next_charge: 4,
+                charge_point: AdmissionChargePoint::BindingMember,
+            }
+        );
+        assert_eq!(meter.admission_count(), 3);
+        if foreign_tail {
+            let (AdmissionOutcome::Refused(refusal), _) = admit(&input, 4) else {
+                panic!("admitting the final charge must expose the foreign member");
+            };
+            assert_eq!(refusal.code, Code::ForeignReference);
+            assert_eq!(
+                refusal.cause,
+                ModelRefusalCause::ForeignType {
+                    member: "foreign".to_owned(),
+                    type_name: DeclarationKey::fixture("model.Missing"),
+                }
+            );
+        }
+    }
+}
+
+/// Each of three subset values scans three candidate values: nine work units,
+/// following three member admissions. The last scan costs three units even
+/// when the matching value happens to occur first in the candidate list.
+#[test]
+#[trace("NFR-012-AC-9")]
+fn subset_scans_charge_the_candidate_width_before_a_semantic_verdict() {
+    let view = view_of(&r06_bundle());
+    let document = |invalid: bool| PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![
+            member_with_fields(
+                "a1",
+                "model.B",
+                vec![
+                    ("model.A.all", vec!["a1", "a2", "a3"]),
+                    (
+                        "model.A.some",
+                        vec!["a3", "a2", if invalid { "missing" } else { "a1" }],
+                    ),
+                ],
+            ),
+            member("a2", "model.B"),
+            member("a3", "model.B"),
+        ],
+    };
+    for invalid in [false, true] {
+        for work_units in [11, 12] {
+            let mut meter = AdmissionMeter::new(PopulationAdmissionLimits {
+                population_members: 3,
+                work_units,
+                ..PopulationAdmissionLimits::UNLIMITED
+            });
+            let outcome = admit_binding(
+                &view,
+                &document(invalid),
+                &p1_population_key(),
+                GeneralizationClosure::Closed,
+                Some(3),
+                &mut meter,
+            );
+            if work_units == 11 {
+                let AdmissionOutcome::Incomplete(incomplete) = outcome else {
+                    panic!("the final three-unit scan must be denied: {outcome:?}");
+                };
+                assert_eq!(
+                    incomplete,
+                    AdmissionIncomplete {
+                        limit_kind: AdmissionLimitKind::WorkUnits,
+                        limit: 11,
+                        consumed: 9,
+                        next_charge: 3,
+                        charge_point: AdmissionChargePoint::BindingSubsetValue,
+                    }
+                );
+                assert_eq!(meter.admission_count(), 5);
+                assert_eq!(meter.consumed(AdmissionLimitKind::WorkUnits), 9);
+            } else {
+                assert_eq!(meter.consumed(AdmissionLimitKind::WorkUnits), 12);
+                assert_eq!(meter.admission_count(), 6);
+                if invalid {
+                    let AdmissionOutcome::Refused(refusal) = outcome else {
+                        panic!("the funded final scan must reject the invalid subset: {outcome:?}");
+                    };
+                    assert_eq!(refusal.code, Code::InvalidRuntimeInput);
+                    assert_eq!(
+                        refusal.cause,
+                        ModelRefusalCause::SubsettingViolation {
+                            object: "a1".to_owned(),
+                            subsetting: DeclarationKey::fixture("model.A.some"),
+                            subsetted: DeclarationKey::fixture("model.A.all"),
+                        }
+                    );
+                } else {
+                    let AdmissionOutcome::Admitted(binding) = outcome else {
+                        panic!("all twelve units must complete admission: {outcome:?}");
+                    };
+                    assert_eq!(binding.members().len(), 3);
+                }
+            }
+        }
+    }
+}
+
 /// TC-198 L05: a member naming a type absent from the effective view refuses
 /// `foreign_reference`/`foreign-type`.
 ///

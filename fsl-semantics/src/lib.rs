@@ -26,6 +26,24 @@ pub mod library;
 pub mod model;
 pub mod value;
 
+/// FR-286: the typed refusal pairs produced by semantic checking.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "ambiguous-backend"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "unknown-backend"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "type-mismatch"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "unit-mismatch"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "operator-ineligible"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "non-boolean-root"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("ambiguous_declaration", "ambiguous-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "node-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "declaration-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "unsupported-requested-capability"),
+];
+
 // Private declared-type tests must reach Typer; the owner's allocator keeps
 // denial thread-local so other library tests continue using System normally.
 #[cfg(test)]

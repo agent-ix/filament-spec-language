@@ -27,6 +27,9 @@ pub use options::OPTION_DEFAULTS;
 /// The provider's backend identity.
 pub const BACKEND: &str = "fsl-hybrid-reference";
 
+/// FR-286: this provider produces no diagnostic cause pairs of its own.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[];
+
 /// The published `hybrid.max_solver_steps` default (FR-255).
 pub const MAX_SOLVER_STEPS: u64 = 1_000_000;
 

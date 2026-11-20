@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:filament:monitor-event:1",
+  "title": "filament.monitor-event/1",
+  "type": "object",
+  "required": ["format", "record", "position", "clause", "settled", "category", "basis", "disposition"],
+  "properties": {
+    "format": {"const": "filament.monitor-event/1"},
+    "record": {"type": "integer", "minimum": 0},
+    "position": {"type": ["integer", "null"], "minimum": 0},
+    "clause": {"type": ["string", "null"]},
+    "settled": {"type": "boolean"},
+    "category": {"type": "string"},
+    "basis": {"type": ["string", "object"]},
+    "disposition": {"type": "object"},
+    "settlement": {"$ref": "#/$defs/settlement"}
+  },
+  "allOf": [
+    {"if": {"properties": {"settled": {"const": true}}, "required": ["settled"]}, "then": {"required": ["settlement"]}, "else": {"not": {"required": ["settlement"]}}},
+    {"if": {"properties": {"clause": {"type": "null"}}, "required": ["clause"]}, "then": {"properties": {"settled": {"const": false}, "basis": {"const": "unavailable"}, "disposition": {"oneOf": [{"$ref": "#/$defs/requestRefusal"}, {"$ref": "#/$defs/outcomeRefusal"}]}}}, "else": {"properties": {"disposition": {"type": "object", "not": {"$ref": "#/$defs/requestRefusal"}}}}}
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "settlement": {
+      "type": "object", "required": ["step", "trigger"],
+      "properties": {"step": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"}, "trigger": {"enum": ["decided", "limit", "finish", "cancelled"]}, "cause": {"enum": ["requested", "deadline"]}, "basis": {"type": "string"}, "horizon": {"type": "string"}, "position": {"type": ["string", "null"]}},
+      "allOf": [
+        {"if": {"properties": {"trigger": {"const": "cancelled"}}, "required": ["trigger"]}, "then": {"required": ["cause"]}, "else": {"not": {"required": ["cause"]}}},
+        {"if": {"properties": {"trigger": {"const": "decided"}}, "required": ["trigger"]}, "then": {"required": ["basis", "horizon", "position"]}, "else": {"not": {"anyOf": [{"required": ["basis"]}, {"required": ["horizon"]}, {"required": ["position"]}]}}}
+      ],
+      "unevaluatedProperties": false
+    },
+    "requestRefusal": {
+      "type": "object", "required": ["stage", "category", "cause", "member", "message"],
+      "properties": {"stage": {"const": "request"}, "category": {"const": "refusal"}, "cause": {"const": "invalid-request"}, "member": {"type": "string"}, "message": {"type": "string"}},
+      "unevaluatedProperties": false
+    },
+    "outcomeRefusal": {
+      "type": "object", "required": ["format", "operation", "last_stage", "category", "items", "diagnostics", "artifacts", "result"],
+      "properties": {"format": {"const": "filament-outcome/1"}, "operation": {"type": "string"}, "last_stage": {"type": ["string", "null"]}, "category": {"type": "string"}, "items": {"type": "array"}, "diagnostics": {"type": "array"}, "artifacts": {"type": "array"}, "result": {"type": ["object", "null"]}, "aggregate": {"type": "object"}, "registry": {"type": "array"}},
+      "unevaluatedProperties": false
+    }
+  }
+}

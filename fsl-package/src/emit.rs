@@ -748,6 +748,8 @@ pub struct SelectedSourceCollectionRow {
 pub struct Emission {
     /// The v2 bytes and their manifest package name.
     pub(crate) package: EmittedPackage,
+    /// The FR-001 identity of the source whose checked graph produced these bytes.
+    pub(crate) artifact_identity: RawSourceRef,
     /// Every node of the checked graph the wire omits, ascending by node id.
     pub(crate) omitted: Vec<OmittedNode>,
     /// The lock's required features: the evidence IR's reader needs when
@@ -861,7 +863,6 @@ impl TemporalRows {
     pub fn clauses(&self) -> &[TemporalClauseRef] {
         &self.clauses
     }
-
     /// The lock's `profile_selections` rows.
     pub fn profile_selections(&self) -> &[filament_contract_model::CheckedSelection] {
         &self.profile_selections
@@ -1038,6 +1039,7 @@ impl DebugWith for Emission {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         let Self {
             package,
+            artifact_identity,
             omitted,
             evidence,
             capability_report,
@@ -1069,6 +1071,7 @@ impl DebugWith for Emission {
         } = self;
         f.debug_struct("Emission")
             .field("package", package)
+            .field("artifact_identity", artifact_identity)
             .field("omitted", omitted)
             .field("evidence", evidence)
             .field("capability_report", capability_report)
@@ -1283,6 +1286,11 @@ impl Emission {
     /// The v2 bytes and their manifest package name.
     pub fn package(&self) -> &EmittedPackage {
         &self.package
+    }
+
+    /// The FR-001 source identity under which these package bytes were produced.
+    pub fn artifact_identity(&self) -> &RawSourceRef {
+        &self.artifact_identity
     }
 
     /// The `temporal_bindings` rows of the checked graph's clauses, keyed by
@@ -6300,6 +6308,15 @@ pub fn emit_timed_models(
     models: &[CheckedTimedModel],
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
+    let artifact_identity = base
+        .lock()
+        .sources
+        .first()
+        .ok_or(EmitRefusal::SourceMapInvariant)
+        .and_then(|source| {
+            crate::checked_v2::raw_source_ref(source)
+                .map_err(|_| EmitRefusal::SourceMapInvariant)
+        })?;
     let ids = &StructuralIds::default();
     let expected = base
         .resolved_graph()
@@ -6402,6 +6419,7 @@ pub fn emit_timed_models(
     })?;
     Ok(Emission {
         package,
+        artifact_identity,
         omitted: Vec::new(),
         evidence: own_evidence(&lock),
         capability_report,
@@ -7497,6 +7515,7 @@ fn emit_package_inner(
     supply_extension_definitions(&mut evidence, graph, &order)?;
     Ok(Emission {
         package,
+        artifact_identity: graph.source().clone(),
         omitted,
         evidence,
         capability_report: capability_report.to_vec(),
@@ -9737,13 +9756,13 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
-    ClockSelectionDeclaration, ClockSelectionRefusal,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
+    is_model_binding_name, profile_clock_kind,
 };
 mod body_locations;
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
+pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;

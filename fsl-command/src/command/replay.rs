@@ -7,11 +7,11 @@
 use std::path::Path;
 
 use fsl_foundation::serde_object::Object;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
-    check_file_count, intake_with_bytes, wire, FileCounts, NativeResult, Result, RunCause,
-    RunResult,
+    FileCounts, NativeResult, Result, RunCause, RunResult, check_file_count, intake_with_bytes,
+    wire,
 };
 use crate::replay_request::RequestDefect;
 
@@ -46,6 +46,7 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
 /// resolve against `directory` under `dependent_bytes`, and replay it.
 pub(super) fn run_bytes(
     directory: &Path,
+    request_path: Option<&str>,
     bytes: &[u8],
     dependent_bytes: usize,
 ) -> Result<RunResult> {
@@ -76,10 +77,12 @@ pub(super) fn run_bytes(
     let result = fsl_replay::replay(request, limits);
     match result {
         Ok(result) => {
-            let row = result.to_function_json().map_err(|error| RunCause::ReplayOutput {
-                outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error),
-                error,
-            })?;
+            let row = result
+                .to_function_json()
+                .map_err(|error| RunCause::ReplayOutput {
+                    outcome: fsl_replay::OutcomeDocument::from_replay_output_failure(0, &error),
+                    error,
+                })?;
             let row: Value = serde_json::from_str(&row).map_err(RunCause::Output)?;
             let outcome = fsl_replay::OutcomeDocument::from_replay_with_row(&result, row.clone());
             Ok(RunResult {
@@ -91,7 +94,8 @@ pub(super) fn run_bytes(
             })
         }
         Err(refusal) => {
-            let outcome = fsl_replay::OutcomeDocument::from_replay_refusal(&refusal);
+            let outcome =
+                fsl_replay::OutcomeDocument::from_replay_refusal_at(&refusal, request_path);
             Err(RunCause::Replay(Box::new(ReplayFailure {
                 refusal,
                 outcome,
