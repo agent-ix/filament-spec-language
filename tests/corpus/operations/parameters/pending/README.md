@@ -1,6 +1,6 @@
 # Pending operation parameter programs
 
-`decimal-model/` and `original-decimal-model/` are not pending: `corpus_decimal_model_and_native_parameter_cases` runs both. It runs `decimal-model/` and its `admission/` directory as they stand, and stages `original-decimal-model/` by merging `workflow.decimal.json`'s populations, types and operations into `examples/checked-handoff/model.semantic-ir.json`, then runs `decimal.native` against that complete model.
+`decimal-model/` and `original-decimal-model/` are not pending: `corpus_decimal_model_and_native_parameter_cases` runs both. It runs `decimal-model/` and its `admission/` directory as they stand, and stages `original-decimal-model/` twice, merging each of `workflow.decimal.json` (a Decimal result type) and `workflow.native-decimal.json` (a native Decimal parameter carrying its own policy) into `examples/checked-handoff/model.semantic-ir.json`, then runs `decimal.native` against each complete model.
 
 The cases below are the remaining desired outcomes, excluded from the runnable parameter directory. Evidence was produced from FSL base `f2b6c21a3` with the strict native-run-result reader.
 

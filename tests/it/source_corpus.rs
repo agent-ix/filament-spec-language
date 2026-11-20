@@ -1177,14 +1177,18 @@ fn corpus_operation_parameters() {
 }
 
 /// Materialize QSL-2041's minimal native-Decimal operation model from the
-/// existing checked-handoff fixture and its parameter-only extension.
-fn stage_original_decimal_parameter_model(destination: &Path, source: &Path) -> Result<(), String> {
+/// existing checked-handoff fixture and its parameter-only extension
+/// `source/<extension>`.
+fn stage_original_decimal_parameter_model(
+    destination: &Path,
+    source: &Path,
+    extension: &str,
+) -> Result<(), String> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
     let bytes = std::fs::read(repository.join("examples/checked-handoff/model.semantic-ir.json"))
         .map_err(|error| error.to_string())?;
     let mut model: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-    let bytes = std::fs::read(source.join("workflow.decimal.json"))
-        .map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(source.join(extension)).map_err(|error| error.to_string())?;
     let extension: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     let populations = model
         .get_mut("populations")
@@ -1206,8 +1210,8 @@ fn stage_original_decimal_parameter_model(destination: &Path, source: &Path) -> 
             extension
                 .get("types")
                 .and_then(Value::as_array)
-                .ok_or_else(|| "Decimal extension must declare types".to_owned())?
-                .iter()
+                .into_iter()
+                .flatten()
                 .cloned(),
         );
     for operation in extension
@@ -1260,21 +1264,25 @@ fn corpus_decimal_model_and_native_parameter_cases() {
     }
 
     let original = corpus_root().join("operations/parameters/pending/original-decimal-model");
-    let scratch = tempfile::tempdir().expect("original Decimal parameter request directory");
-    for name in [
-        "decimal.native",
-        "decimal.expected.json",
-        "decimal.request.json",
-        "workflow.decimal.json",
-    ] {
-        std::fs::copy(original.join(name), scratch.path().join(name))
-            .unwrap_or_else(|error| panic!("stage original Decimal case {name}: {error}"));
+    for extension in ["workflow.decimal.json", "workflow.native-decimal.json"] {
+        let scratch = tempfile::tempdir().expect("original Decimal parameter request directory");
+        for name in [
+            "decimal.native",
+            "decimal.expected.json",
+            "decimal.request.json",
+        ] {
+            std::fs::copy(original.join(name), scratch.path().join(name))
+                .unwrap_or_else(|error| panic!("stage original Decimal case {name}: {error}"));
+        }
+        stage_original_decimal_parameter_model(scratch.path(), &original, extension)
+            .unwrap_or_else(|error| {
+                panic!("original Decimal parameter model {extension}: {error}")
+            });
+        let report = run_directory(scratch.path()).unwrap_or_else(|error| {
+            panic!("original native Decimal parameter corpus {extension}: {error}")
+        });
+        println!("{report}");
     }
-    stage_original_decimal_parameter_model(scratch.path(), &original)
-        .unwrap_or_else(|error| panic!("original Decimal parameter model: {error}"));
-    let report = run_directory(scratch.path())
-        .unwrap_or_else(|error| panic!("original native Decimal parameter corpus: {error}"));
-    println!("{report}");
 }
 
 #[test]

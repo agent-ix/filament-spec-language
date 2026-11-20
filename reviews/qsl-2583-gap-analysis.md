@@ -43,3 +43,15 @@ Reverse-gap and stub review covered the changed source and test paths. Decimal p
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | `amount_decimal_native_alias_has_its_policy_and_checks_equality` is an active test tagged to FR-056-AC-63. It checks the named Amount alias's policy-derived field type and evaluates `self.amount = self.amount`; the original ignored test no longer stands as the only AC-63 binder. |
+
+## New findings (disposition pass 2)
+
+Head `d758e24d25e4b9f5f2ae8960755914a9a18438a3`. This is a manual acceptance-criteria-to-tests check, not a full gap audit: the reviewer did not load the `quoin:gap-analysis` skill, and no matrix, coverage census or test run was performed on this head. Examined FR-056-AC-63, AC-66, AC-67, AC-68, AC-71 and AC-72 against `fsl-semantics/tests/it/decimal_value_types.rs`, the `intake.rs` unit tests and `tests/it/source_corpus.rs`.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-002 | medium | No active test covers the FR-056-AC-63 Cash row. That row is a `target`-bound Decimal value type with no policy, admitted, with `self.cash = self.cash` refusing `ill_typed`/`operator-ineligible` (TC-3031 step 2). The only binder for it was replaced by an alias case with the opposite outcome (code-review FND-003). Either AC-63 and TC-3031 are amended to match the FCD contract, or the row is tested | FR-056-AC-63; fsl-semantics/tests/it/decimal_value_types.rs:298-334 | correct-requirement-no-evidence |
+| FND-003 | medium | The FR-056-AC-72 row "a value type with `target` native Decimal carrying a policy" has no test that tells it apart: the bound test passes on the construct's `target` schema finding whatever the policy is (code-review FND-004) | FR-056-AC-72; fsl-semantics/tests/it/decimal_value_types.rs:577-593 | weak-oracle |
+| FND-004 | low | FR-056-AC-71 requires every refusal to name the domain and the supplied coefficient and scale. Only one of the seven refusals is checked for those items | FR-056-AC-71; fsl-semantics/tests/it/decimal_value_types.rs:503-524 | weak-oracle |
+
+AC-66, AC-67 and AC-68 have active binders on this head: `decimal_members_have_the_golden_policy_types`, `bounds_on_every_node_of_the_walk_narrow` and `decimal_members_check_in_clauses`, all un-ignored. AC-72's other rows are covered by `decimal_policy_defects_refuse_once`, which asserts exactly one refusal per row. The corpus test `corpus_decimal_model_and_native_parameter_cases` now stages the extension's types and runs `decimal.native`, which is expected to succeed.

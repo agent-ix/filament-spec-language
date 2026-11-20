@@ -1887,6 +1887,63 @@ fn policy_less_decimal_root<'t>(types: &'t [Value], reference: &str) -> Option<&
     None
 }
 
+/// Whether the type `reference` of `tree` is a Decimal subject: a `decimal`
+/// scalar, a node carrying a policy, or an alias chain that reaches one or
+/// native Decimal.
+fn walks_to_decimal(tree: &Value, reference: &str) -> bool {
+    let Some(types) = tree.get("types").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let Some(node) = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))
+        else {
+            return false;
+        };
+        if node.get("scalar").and_then(Value::as_str) == Some("decimal")
+            || node.get("decimal").is_some()
+        {
+            return true;
+        }
+        let Some(target) = node.get("target").and_then(Value::as_str) else {
+            return false;
+        };
+        if target == "ix://filament/native/Decimal" {
+            return true;
+        }
+        current = target;
+    }
+    false
+}
+
+/// Whether `reference` reaches native Decimal through a value type bound to it
+/// by `target`, with no policy on the way. Such a value type is an untyped
+/// native alias, not a Decimal walk that lacks its policy.
+fn reaches_target_bound_decimal(types: &[Value], reference: &str) -> bool {
+    let mut current = reference;
+    for _ in 0..=types.len() {
+        let Some(node) = types
+            .iter()
+            .find(|node| node.get("identity").and_then(Value::as_str) == Some(current))
+        else {
+            return false;
+        };
+        if node.get("decimal").is_some() {
+            return false;
+        }
+        let Some(target) = node.get("target").and_then(Value::as_str) else {
+            return false;
+        };
+        if target == "ix://filament/native/Decimal" {
+            return node.get("kind").and_then(Value::as_str) != Some("alias");
+        }
+        current = target;
+    }
+    false
+}
+
 /// Whether `located` is a consequence of a Decimal declaration that lacks its
 /// policy, for which another diagnostic already stands: the validator walks
 /// every field, parameter, result, alias and bound that reaches the
@@ -1946,6 +2003,9 @@ fn decimal_policy_cascade(
     if !missing {
         return root.is_some();
     }
+    if reaches_target_bound_decimal(types, reference) {
+        return true;
+    }
     !roots.insert(root.map_or_else(|| located.pointer.clone(), str::to_owned))
 }
 
@@ -1997,10 +2057,13 @@ fn decimal_schema_diagnostic(
     // Decimal's unit is the reader's own refusal.
     let Some(member) = member else {
         return type_value.get("unit").is_some()
-            && located.message.starts_with("the member unit is not one");
+            && located.message == "the member unit is not one this schema admits";
     };
     match member {
-        "scalar" | "unit" | "decimal" => segments.next().is_none(),
+        "scalar" | "unit" => segments.next().is_none(),
+        // A policy member beyond `precision` and `scale` stays the
+        // validator's refusal.
+        "decimal" => segments.next().is_none() && policy.len() == 2,
         "constraints" => {
             let Some(index) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
                 return false;
@@ -3080,8 +3143,7 @@ pub(super) fn read_operation_member(
                         "a result-level Decimal policy types only a native Decimal typeRef",
                     ));
                 }
-                let decimal =
-                    read_decimal_value_type(package, node, &returns_value_ctx, &returns_at, None)?;
+                let decimal = read_decimal_value_type(node, &returns_value_ctx, &returns_at, None)?;
                 value_type = ValueTypeRef::Resolved(Box::new(ValueType::Decimal(decimal)));
             }
             let multiplicity = returns_ctx.multiplicity_of(returns, "returns.multiplicity")?;
@@ -3450,7 +3512,7 @@ fn read_member_value_type_ref(
         ));
     }
     let node = ctx.str_field("identity")?;
-    let decimal = read_decimal_value_type(package, node, ctx, &ctx.at, None)?;
+    let decimal = read_decimal_value_type(node, ctx, &ctx.at, None)?;
     Ok(ValueTypeRef::Resolved(Box::new(ValueType::Decimal(
         decimal,
     ))))
@@ -3648,17 +3710,13 @@ fn canonical_rational(text: &str) -> Option<filament_exact::Rational> {
 /// alias narrows; a policy-carrying node starts from the precision domain.
 #[ix_trace_rs::string_edge]
 fn read_decimal_value_type(
-    _package: &str,
     node: &str,
     ctx: &NodeCtx<'_>,
     at: &str,
     base: Option<&DecimalType>,
 ) -> Result<DecimalType, ModelRefusal> {
     if ctx.value.get("unit").is_some() {
-        return Err(ctx.malformed_in(
-            "unit",
-            "a unit-bearing exact number is a Rational value type",
-        ));
+        return Err(ctx.malformed_in("unit", "unit is supported only by a rational value type"));
     }
 
     let (mut lower, mut upper, scale) = if let Some(base) = base {
@@ -4210,6 +4268,12 @@ fn read_value_type(
         let ValueTypeRef::Native(native) = value_type else {
             return Err(ctx.malformed_in("target", "an FSL value alias names a native value type"));
         };
+        if native == NativeValueType::Decimal && type_value.get("decimal").is_some() {
+            return Err(ctx.malformed_in(
+                "decimal",
+                "DECIMAL_POLICY_CONFLICT: a value type bound to native Decimal by target carries no policy",
+            ));
+        }
         if !ctx.array_field("constraints")?.is_empty() {
             return Err(unsupported_at(
                 type_value,
@@ -4235,9 +4299,7 @@ fn read_value_type(
     if scalar == "decimal" {
         return Ok(ScalarTypeRecord {
             key: declaration_key(package, node),
-            domain: ScalarValueDomain::Decimal(read_decimal_value_type(
-                package, node, &ctx, at, None,
-            )?),
+            domain: ScalarValueDomain::Decimal(read_decimal_value_type(node, &ctx, at, None)?),
         });
     }
     if scalar != "integer" {
@@ -5523,6 +5585,19 @@ struct TypeNodeReader<'a> {
     semantic_members: &'a HashMap<&'a str, &'a agent_ix_semantic_ir::json::Json>,
 }
 
+/// Records that every identity in `visited` reaches no Decimal, so a later
+/// walk through any of them stops at once, and returns that outcome.
+fn cache_no_decimal(
+    cache: &std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
+    visited: Vec<String>,
+) -> Option<DecimalType> {
+    let mut cache = cache.borrow_mut();
+    for identity in visited {
+        cache.insert(identity, None);
+    }
+    None
+}
+
 /// Resolve the Decimal type a package declaration contributes to its alias
 /// walk. Only scalar `decimal` declarations, policy-carrying aliases of native
 /// Decimal, and aliases that reach either form are Decimal subjects; a
@@ -5548,65 +5623,44 @@ fn decimal_type_for_identity(
             if let Some(decimal) = cached {
                 break decimal;
             }
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         }
         if !seen.insert(current.to_owned()) {
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         }
         visited.push(current.to_owned());
         let Some(position) = type_positions.get(current).copied() else {
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         };
         let type_value = &types[position];
         let at = format!("$.types[{position}]");
         let ctx = NodeCtx::new(type_value, &at);
         let node = ctx.str_field("identity")?;
         if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
-            let decimal = read_decimal_value_type(package, node, &ctx, &at, None)?;
+            let decimal = read_decimal_value_type(node, &ctx, &at, None)?;
             cache
                 .borrow_mut()
                 .insert(current.to_owned(), Some(decimal.clone()));
             break decimal;
         }
         if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         }
         let Some(target) = type_value.get("target").and_then(Value::as_str) else {
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         };
         if target == "ix://filament/native/Decimal" {
             if type_value.get("decimal").is_none() {
-                for identity in visited {
-                    cache.borrow_mut().insert(identity, None);
-                }
-                return Ok(None);
+                return Ok(cache_no_decimal(cache, visited));
             }
-            let decimal = read_decimal_value_type(package, node, &ctx, &at, None)?;
+            let decimal = read_decimal_value_type(node, &ctx, &at, None)?;
             cache
                 .borrow_mut()
                 .insert(current.to_owned(), Some(decimal.clone()));
             break decimal;
         }
         if type_identity_segment(package, target).is_none() {
-            for identity in visited {
-                cache.borrow_mut().insert(identity, None);
-            }
-            return Ok(None);
+            return Ok(cache_no_decimal(cache, visited));
         }
         path.push(position);
         current = target;
@@ -5617,7 +5671,7 @@ fn decimal_type_for_identity(
         let at = format!("$.types[{position}]");
         let ctx = NodeCtx::new(type_value, &at);
         let node = ctx.str_field("identity")?;
-        decimal = read_decimal_value_type(package, node, &ctx, &at, Some(&decimal))?;
+        decimal = read_decimal_value_type(node, &ctx, &at, Some(&decimal))?;
         cache
             .borrow_mut()
             .insert(node.to_owned(), Some(decimal.clone()));
@@ -5661,6 +5715,31 @@ fn read_type_node(
                 &constraint_at,
                 MemberPath::from_document_location(&constraint_at).child("appliesTo"),
                 "a Rational value type's constraint cannot be carried by another node",
+            )
+            .into());
+        }
+    }
+    for (position, constraint) in ctx.array_field("constraints")?.iter().enumerate() {
+        let Some(applies_to) = constraint.get("appliesTo").and_then(Value::as_str) else {
+            continue;
+        };
+        if applies_to != node
+            && decimal_type_for_identity(
+                package,
+                raw_types,
+                type_positions,
+                decimal_type_cache,
+                applies_to,
+            )?
+            .is_some()
+        {
+            let constraint_at = format!("{at}.constraints[{position}]");
+            return Err(malformed_on(
+                node,
+                constraint,
+                &constraint_at,
+                MemberPath::from_document_location(&constraint_at).child("appliesTo"),
+                "a Decimal value type's constraint cannot be carried by another node",
             )
             .into());
         }
@@ -6506,7 +6585,8 @@ pub fn read_domain_package(
         // detail: the validator reports an unreadable bound at its owner.
         let constraint_owner = reader_node
             .and_then(|node| node.rsplit_once("/constraints/"))
-            .map(|(owner, _)| owner);
+            .map(|(owner, _)| owner)
+            .filter(|owner| walks_to_decimal(&document.tree, owner));
         if (!distinct_family
             && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node)))
             || constraint_owner.is_some_and(|owner| semantic_refused_nodes.contains(owner))
@@ -7413,6 +7493,7 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
+    #[trace("FR-056-AC-67")]
     #[test]
     fn decimal_alias_walk_handles_long_chains_and_stops_cycles() {
         const ALIASES: usize = 4096;
@@ -13192,7 +13273,7 @@ mod tests {
             ("PM-16", package_key("Shape")),
             ("PM-32", package_key("Price")),
             ("PM-33", ValueTypeRef::Native(NativeValueType::Rational)),
-            ("PM-34", ValueTypeRef::Native(NativeValueType::Decimal)),
+            ("PM-32", ValueTypeRef::Native(NativeValueType::Decimal)),
             ("PM-33", package_key("NativeRatio")),
             ("PM-33", package_key("Ratio")),
         ] {

@@ -6,11 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
+use filament_exact::{DecimalType, IllTypedCause, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -295,6 +295,102 @@ fn amount_decimal_native_alias_has_its_policy_and_checks_equality() {
     assert_eq!(checked.field("amount"), decimal("-99999", "99999", 2));
 }
 
+/// The document with the alias-shaped construct a value type bound to a native
+/// type by `target` is declared under.
+fn with_value_alias_construct(document: &mut Value) {
+    document["constructs"]
+        .as_array_mut()
+        .expect("constructs")
+        .push(json!({
+            "kind": {"module": "test/decimal", "name": "value_alias"},
+            "moduleVersion": "1.0.0",
+            "construct": {
+                "identity": "none", "shape": "alias", "members": {},
+                "meaning": "filament.meaning.model.value-type/v1",
+            },
+        }));
+}
+
+/// A `Cash` value type bound to native Decimal by `target`, declared under the
+/// alias-shaped construct, with no policy.
+fn cash_value_type() -> Value {
+    let identity = "ix://test/decimal/Cash";
+    json!({
+        "identity": identity, "displayName": "Cash",
+        "kind": {"module": "test/decimal", "name": "value_alias"},
+        "roles": [], "constraints": [],
+        "target": "ix://filament/native/Decimal",
+        "origin": {"generated": {
+            "generatorIdentity": identity, "generatorVersion": "1.0.0",
+            "inputIdentities": [identity],
+        }},
+    })
+}
+
+/// FR-056-AC-63 (TC-3031 step 2): the value type `Cash`, bound to native
+/// Decimal by `target` with no policy, is admitted at intake, and a clause
+/// comparing a `Cash` field refuses `ill_typed`/`operator-ineligible`.
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+fn target_bound_cash_without_policy_is_operator_ineligible() {
+    let mut document = golden();
+    with_value_alias_construct(&mut document);
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(cash_value_type());
+    let mut cash_field = field_mut(&mut document, "price").clone();
+    cash_field["identity"] = "ix://test/decimal/Meter/cash".into();
+    cash_field["name"] = "cash".into();
+    cash_field["typeRef"] = "ix://test/decimal/Cash".into();
+    type_mut(&mut document, "Meter")["fields"]
+        .as_array_mut()
+        .expect("Meter fields")
+        .push(cash_field);
+
+    let bytes = serde_json::to_vec(&document).expect("Cash fixture encoding");
+    let packages = package_input([bytes.as_slice()]).expect("Cash package bytes");
+    let body =
+        "invariant CashEquality using v on Config::Meter at current { self.cash = self.cash }\n";
+    let unit = unit_text(PACKAGE, "Config", body);
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("test", "decimal-cash"),
+        "cash.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let built = build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("I1 admits Cash: {refusal:?}"));
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        built,
+        selected,
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("Cash unit assembles: {refusal:?}"));
+    let refusals = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect_err("Cash has no Decimal policy and no checked value type");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(
+        refusals[0].cause,
+        CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+        "{refusals:?}"
+    );
+}
+
 /// FR-056-AC-63 (TC-3031): an alias of native Decimal that declares no policy,
 /// typing a member that declares none either, refuses once at intake with the
 /// validator's `DECIMAL_POLICY_MISSING`, so no declaration has an untyped Decimal.
@@ -333,9 +429,9 @@ fn policy_less_cash_alias_member_refuses_once() {
     );
 }
 
-/// FR-056-AC-63 (TC-3031): an alias chain that closes on itself refuses once at
-/// intake, at its `target`.
-#[trace("TC-3031", "FR-056-AC-63")]
+/// FR-056-AC-72 (TC-3042 step 5): an alias chain that closes on itself refuses
+/// once at intake with the validator's `ALIAS_CYCLE`, at its `target`.
+#[trace("TC-3042", "FR-056-AC-72")]
 #[test]
 fn cyclic_decimal_alias_refuses_at_intake() {
     let mut document = golden();
@@ -350,6 +446,7 @@ fn cyclic_decimal_alias_refuses_at_intake() {
         (refusals[0].code.as_str(), refusals[0].cause.as_str()),
         ("invalid_model_binding", "malformed-declaration")
     );
+    assert!(refusals[0].detail.contains("ALIAS_CYCLE"), "{refusals:?}");
     assert!(refusals[0].detail.contains("target"), "{refusals:?}");
 }
 
@@ -494,13 +591,13 @@ fn snapshot_decimals_admit_by_membership() {
             "{field} {c}e-{s}"
         );
     }
-    for (field, c, s) in [
-        ("soc", "101", "2"),
-        ("soc", "-1", "2"),
-        ("soc", "5", "3"),
-        ("margin", "1", "0"),
-        ("margin", "-1", "0"),
-        ("tax", "124", "3"),
+    for (field, c, s, domain) in [
+        ("soc", "101", "2", "Decimal[0, 100; 2, 2; exact]"),
+        ("soc", "-1", "2", "Decimal[0, 100; 2, 2; exact]"),
+        ("soc", "5", "3", "Decimal[0, 100; 2, 2; exact]"),
+        ("margin", "1", "0", "Decimal[-9, 9; 1, 1; exact]"),
+        ("margin", "-1", "0", "Decimal[-9, 9; 1, 1; exact]"),
+        ("tax", "124", "3", "Decimal[125, 999; 3, 3; exact]"),
     ] {
         let refused = admit_meter(&checked, meter_fields((field, coefficient(c, s))))
             .expect_err("a non-member refuses");
@@ -510,17 +607,21 @@ fn snapshot_decimals_admit_by_membership() {
             Some(field),
             "{field} {c}e-{s}"
         );
-        if (field, c, s) == ("soc", "101", "2") {
-            assert_eq!(
-                refused.1.get("expected").map(String::as_str),
-                Some("Decimal[0, 100; 2, 2; exact]")
-            );
-            assert_eq!(
-                refused.1.get("coefficient").map(String::as_str),
-                Some("101")
-            );
-            assert_eq!(refused.1.get("scale").map(String::as_str), Some("2"));
-        }
+        assert_eq!(
+            refused.1.get("expected").map(String::as_str),
+            Some(domain),
+            "{field} {c}e-{s}"
+        );
+        assert_eq!(
+            refused.1.get("coefficient").map(String::as_str),
+            Some(c),
+            "{field} {c}e-{s}"
+        );
+        assert_eq!(
+            refused.1.get("scale").map(String::as_str),
+            Some(s),
+            "{field} {c}e-{s}"
+        );
     }
 }
 
@@ -579,19 +680,38 @@ fn decimal_policy_defects_refuse_once() {
         true,
     ));
     let mut document = golden();
-    let mut cash = type_mut(&mut document, "Price").clone();
-    let object = cash.as_object_mut().expect("Cash");
-    object.remove("scalar");
-    object.insert("identity".to_owned(), "ix://test/decimal/Cash".into());
-    object.insert("displayName".to_owned(), "Cash".into());
-    object.insert("target".to_owned(), "ix://filament/native/Decimal".into());
+    with_value_alias_construct(&mut document);
+    let mut cash = cash_value_type();
+    cash["decimal"] = json!({"precision": 5, "scale": 2});
     document["types"].as_array_mut().expect("types").push(cash);
     cases.push((
         "policy on a target-bound value type",
         document,
         "malformed-declaration",
-        "SCHEMA_VIOLATION",
+        "DECIMAL_POLICY_CONFLICT",
+        false,
+    ));
+    let mut document = golden();
+    type_mut(&mut document, "Soc")["decimal"] =
+        json!({"precision": 5, "scale": 2, "rounding": "half_up"});
+    cases.push((
+        "policy with an extra member",
+        document,
+        "malformed-declaration",
+        "rounding",
         true,
+    ));
+    let mut document = golden();
+    type_mut(&mut document, "Half")["constraints"]
+        .as_array_mut()
+        .expect("constraints")
+        .push(bound("Soc", "other-node", "min", json!("0.1")));
+    cases.push((
+        "bound held by another node",
+        document,
+        "malformed-declaration",
+        "appliesTo",
+        false,
     ));
     for (precision, scale) in [(39, 2), (0, 0), (2, 3)] {
         let mut document = golden();
