@@ -780,7 +780,23 @@ fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
         V2ReadLimits::fixture(),
         &evidence,
     );
-    assert!(refusal.is_err(), "the I2 reader refuses the unknown trace");
+    let Err(fsl_foundation::diagnostic::StageFailure::Refused(refusal)) = refusal else {
+        panic!("the I2 reader refuses the unknown trace");
+    };
+    let crate::checked_v2::V2ReadRefusal::Envelope { refusal, .. } = &refusal else {
+        panic!("IR's reader refuses the unknown trace: {refusal:?}");
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+    );
+    assert_eq!(
+        refusal.loci[0]
+            .path
+            .as_ref()
+            .map(|pointer| pointer.as_str()),
+        Some("/temporal_bindings/0/trace")
+    );
 }
 
 /// The refusals of the world, with the unit text.

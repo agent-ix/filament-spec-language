@@ -82,12 +82,43 @@ impl Lowering<'_> {
                 .get(index)
                 .ok_or_else(|| super::fault(input.declaration, KeyFault::UnkeyableRequirements))
         };
+        // FSpec FR-342 "Point-bound timed clauses": an operation's guard is
+        // point-bound when any clause it holds is, and then holds every clause
+        // of the operation, so the anchor is decided once for each operation
+        // over all its clauses; likewise for its resets.
+        let mut guard_anchors: Vec<(NodeKey, NodeKey)> = Vec::new();
+        for guard in model.guards() {
+            let location = clause_at(guard.index)?;
+            let operation = self.clause_anchor(guard.operation(), location)?;
+            if guard_anchors.iter().any(|(held, _)| *held == operation) {
+                continue;
+            }
+            if let Some(anchor) = self.point_anchor(guard.operation(), guard.point(), location)? {
+                guard_anchors.push((operation, anchor));
+            }
+        }
+        let mut reset_anchors: Vec<(NodeKey, NodeKey)> = Vec::new();
+        for written in model.resets() {
+            let location = clause_at(written.index)?;
+            let operation = self.clause_anchor(written.operation(), location)?;
+            if reset_anchors.iter().any(|(held, _)| *held == operation) {
+                continue;
+            }
+            if let Some(anchor) =
+                self.point_anchor(written.operation(), written.point(), location)?
+            {
+                reset_anchors.push((operation, anchor));
+            }
+        }
         let mut guards = Vec::with_capacity(model.guards().len());
         for (at, guard) in model.guards().iter().enumerate() {
             let location = clause_at(guard.index)?;
             let context = guard.context.clone();
             let operation = self.clause_anchor(guard.operation(), location)?;
-            let point_anchor = self.point_anchor(guard.operation(), guard.point(), location)?;
+            let point_anchor = guard_anchors
+                .iter()
+                .find(|(held, _)| *held == operation)
+                .map(|(_, anchor)| anchor.clone());
             let mut parts = Vec::with_capacity(guard.parts().len());
             // A covered guard is its always-holding part: the disjuncts that
             // constrain no clock add nothing (FSpec `GJ-03`).
@@ -153,9 +184,10 @@ impl Lowering<'_> {
             // operation conjoins with the first: each part of the one guard
             // is a part of each, its predicate their conjunction and its
             // constraints both lists.
-            match guards.iter_mut().find(|held: &&mut GuardNodes| {
-                held.operation == operation && held.point_anchor == point_anchor
-            }) {
+            match guards
+                .iter_mut()
+                .find(|held: &&mut GuardNodes| held.operation == operation)
+            {
                 Some(held) => {
                     let mut product = Vec::with_capacity(held.parts.len() * parts.len());
                     for left in &held.parts {
@@ -207,7 +239,10 @@ impl Lowering<'_> {
             let location = clause_at(written.index)?;
             let context = written.context.clone();
             let operation = self.clause_anchor(written.operation(), location)?;
-            let point_anchor = self.point_anchor(written.operation(), written.point(), location)?;
+            let point_anchor = reset_anchors
+                .iter()
+                .find(|(held, _)| *held == operation)
+                .map(|(_, anchor)| anchor.clone());
             for reset in written.resets() {
                 let target = match reset.parameter() {
                     Some(position) => ResetTargetNodes::Parameter {

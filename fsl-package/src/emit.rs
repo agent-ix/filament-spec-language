@@ -35,11 +35,11 @@ use serde::Deserialize;
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::Code;
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
+use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
+use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -51,8 +51,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
-    native_diagnostics_catalog,
+    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
+    ModelRole, NodeOwner, TemporalRole,
 };
 use ix_trace_rs::string_edge;
 

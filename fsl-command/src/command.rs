@@ -3107,8 +3107,21 @@ fn handoff_clock_selections(
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Vec<crate::emit_checked_v2::ClockSelection> {
     let graph = checked.package().graph();
+    // A selection the model derives is derived again on read, so it is not
+    // written (FR-640): a hyper clause over two models has one for each trace.
+    let derived =
+        fsl_replay::spine::RequestClocks::model_selections(checked.package()).unwrap_or_default();
     let mut named: Vec<crate::emit_checked_v2::ClockSelection> = Vec::new();
     for selection in selections {
+        if selection.trace.is_some()
+            && derived.iter().any(|held| {
+                held.declaration_span == selection.declaration_span
+                    && held.trace == selection.trace
+                    && held.clock == selection.clock
+            })
+        {
+            continue;
+        }
         let name = graph
             .temporal_clauses()
             .iter()
@@ -3136,8 +3149,6 @@ fn handoff_clock_selections(
             clause: name,
             clock: selection.clock.clone(),
         };
-        // A hyper clause has one selection per quantified trace (FR-640);
-        // its clause-name selection is written once when they agree.
         if !named.contains(&found) {
             named.push(found);
         }

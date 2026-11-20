@@ -1467,51 +1467,12 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
 #[trace("FSpec-TC-1722", "FSpec-FR-322-AC-454")]
 #[test]
 fn a_point_bound_clock_clause_names_its_point_anchor() {
-    use filament_contract_model::{AnchorName, ExecutionPoint};
     let document = document(false);
-    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let unit = clocked_unit(
+    let (emission, wire) = point_bound_emission(
+        &document,
         "pre Late using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms }\n",
+        &[("Late", ExecutionPointKind::Pre)],
     );
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
-        "program.native",
-        unit.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 admits the unit");
-    let raw = parsed.source().reference().clone();
-    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let models = fsl_semantics::model::intake::admit_unit(
-        &built.selections().models,
-        &packages,
-        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-    )
-    .expect("intake admits the package");
-    let point = ExecutionPoint::Pre {
-        operation: AnchorName::new("attemptUpdate").unwrap().into(),
-    };
-    let graph = PackageDeclarations::assemble_with_execution_points_and_cancel(
-        raw,
-        "pkg".to_owned(),
-        built,
-        models,
-        Vec::new(),
-        Default::default(),
-        fsl_semantics::check::AssemblyRun {
-            cancel: &filament_exact::Cancel::new(),
-            execution_points: BTreeMap::from([("Late".to_owned(), point)]),
-        },
-    )
-    .expect("the unit assembles")
-    .check(
-        CheckMode::Linked,
-        CheckingLimits::default(),
-        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-    )
-    .unwrap_or_else(|refusals| panic!("the point-bound clause checks: {refusals:?}"));
-    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
-    let wire = wire(&emission);
     let [guard] = timed(&wire, "clock_guard")[..] else {
         panic!("one guard");
     };
@@ -1531,6 +1492,132 @@ fn a_point_bound_clock_clause_names_its_point_anchor() {
     // The point-bound guard reads back through I2 (FSpec FR-342-AC-13).
     read_presence_package(&document, emission.package.bytes(), &wire)
         .unwrap_or_else(|failure| panic!("the point-bound guard reads back: {failure}"));
+}
+
+/// Which execution point of `attemptUpdate` a clause is bound to.
+#[derive(Clone, Copy)]
+enum ExecutionPointKind {
+    Pre,
+    Post,
+}
+
+/// The emission and wire of the unit over `document` with `body`, each
+/// clause of `points` bound to its execution point of `attemptUpdate`.
+fn point_bound_emission(
+    document: &[u8],
+    body: &str,
+    points: &[(&str, ExecutionPointKind)],
+) -> (crate::emit::Emission, Value) {
+    use filament_contract_model::{AnchorName, ExecutionPoint};
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = clocked_unit(body);
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
+        "program.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 admits the unit");
+    let raw = parsed.source().reference().clone();
+    let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &built.selections().models,
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("intake admits the package");
+    let operation = || AnchorName::new("attemptUpdate").unwrap().into();
+    let execution_points = points
+        .iter()
+        .map(|(clause, kind)| {
+            let point = match kind {
+                ExecutionPointKind::Pre => ExecutionPoint::Pre {
+                    operation: operation(),
+                },
+                ExecutionPointKind::Post => ExecutionPoint::Post {
+                    operation: operation(),
+                },
+            };
+            ((*clause).to_owned(), point)
+        })
+        .collect();
+    let graph = PackageDeclarations::assemble_with_execution_points_and_cancel(
+        raw,
+        "pkg".to_owned(),
+        built,
+        models,
+        Vec::new(),
+        Default::default(),
+        fsl_semantics::check::AssemblyRun {
+            cancel: &filament_exact::Cancel::new(),
+            execution_points,
+        },
+    )
+    .expect("the unit assembles")
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
+    .unwrap_or_else(|refusals| panic!("the point-bound clause checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    (emission, wire)
+}
+
+/// FSpec FR-342 "Point-bound timed clauses": a point-free and a point-bound
+/// `pre` of one operation are one point-bound guard, which holds both and
+/// reads back through I2 (FSpec FR-322-AC-454, FR-342-AC-13).
+#[trace("TC-2393", "FR-230-AC-50")]
+#[trace("FSpec-TC-1721", "FSpec-FR-342-AC-13")]
+#[test]
+fn a_point_free_and_a_point_bound_pre_make_one_guard() {
+    let document = document(false);
+    let (emission, wire) = point_bound_emission(
+        &document,
+        "pre Early using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms }\n\
+         pre Late using v on Config::ConfigVersion::attemptUpdate { self.x <= 9 ms }\n",
+        &[("Late", ExecutionPointKind::Pre)],
+    );
+    let [guard] = timed(&wire, "clock_guard")[..] else {
+        panic!(
+            "one guard for the operation: {:?}",
+            timed(&wire, "clock_guard")
+        );
+    };
+    let anchor = target(&wire, member(&guard["body"], "point_anchor"));
+    assert!(anchor["body"].to_string().contains("execution_point"));
+    assert_eq!(
+        timed(&wire, "clock_constraint").len(),
+        2,
+        "the one guard holds both clauses"
+    );
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the one guard reads back: {failure}"));
+}
+
+/// FSpec FR-342: a point-free and a point-bound `post` reset of one
+/// operation are point-bound resets of the one `post` anchor, which read
+/// back through I2.
+#[trace("TC-2393", "FR-230-AC-50")]
+#[trace("FSpec-TC-1721", "FSpec-FR-342-AC-13")]
+#[test]
+fn a_point_free_and_a_point_bound_reset_share_one_anchor() {
+    let document = document(false);
+    let (emission, wire) = point_bound_emission(
+        &document,
+        "post Early using v on Config::ConfigVersion::attemptUpdate { self.x = 0 ms }\n\
+         post Late using v on Config::ConfigVersion::attemptUpdate { self.x = 0 ms }\n",
+        &[("Late", ExecutionPointKind::Post)],
+    );
+    let resets = timed(&wire, "clock_reset");
+    assert!(!resets.is_empty());
+    for reset in &resets {
+        let anchor = target(&wire, member(&reset["body"], "point_anchor"));
+        assert!(anchor["body"].to_string().contains("execution_point"));
+    }
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the point-bound resets read back: {failure}"));
 }
 
 /// Reads `bytes`, an emitted package over `document`, through I2.

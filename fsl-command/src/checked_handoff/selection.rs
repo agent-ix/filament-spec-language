@@ -444,6 +444,11 @@ impl Selection {
             }
         }
         let mut hyper_rows = Vec::new();
+        let derived =
+            fsl_replay::spine::RequestClocks::model_selections(compiled.checked.package())
+                .map_err(|refusal| Error::Unnameable {
+                    what: format!("model clock selections: {refusal}"),
+                })?;
         let mut hyper_nodes = std::collections::BTreeSet::new();
         let mut hyper_wrappers = std::collections::BTreeSet::new();
         for hyper in graph.hyper_clauses() {
@@ -466,34 +471,56 @@ impl Selection {
                     | TemporalProfile::FixedSampleFalseExtension
                     | TemporalProfile::TimestampedEventFiniteWindow
             );
-            let selected = request
+            let named = request
                 .temporal_selections
                 .iter()
                 .find(|selection| clocked && selection.clause == hyper.name());
-            let binding = selected
+            let clock_name = || {
+                fsl_package::hyper_clock_name(graph, occurrence.node())
+                    .map(text)
+                    .ok_or_else(|| Error::Unnameable {
+                        what: format!("clock of {}", hyper.name()),
+                    })
+            };
+            let named_binding = named
                 .map(|selection| {
-                    fsl_package::hyper_clock_name(graph, occurrence.node())
-                        .map(|clock_name| BindingRow {
-                            clock_name: text(clock_name),
-                            clock: selection.clock.clone(),
-                        })
-                        .ok_or_else(|| Error::Unnameable {
-                            what: format!("clock of {}", hyper.name()),
-                        })
+                    clock_name().map(|clock_name| BindingRow {
+                        clock_name,
+                        clock: selection.clock.clone(),
+                    })
                 })
                 .transpose()?;
+            let mut traces = Vec::with_capacity(hyper.quantifiers().len());
+            for quantifier in hyper.quantifiers() {
+                // A clock the model derives is not named by the request: each
+                // trace's row is the one its model derives (FR-640).
+                let binding = match &named_binding {
+                    Some(binding) => Some(binding.clone()),
+                    None if clocked => derived
+                        .iter()
+                        .find(|held| {
+                            held.declaration_span == hyper.span()
+                                && held.trace.as_deref() == Some(quantifier.variable.as_str())
+                        })
+                        .map(|held| {
+                            clock_name().map(|clock_name| BindingRow {
+                                clock_name,
+                                clock: held.clock.clone(),
+                            })
+                        })
+                        .transpose()?,
+                    None => None,
+                };
+                traces.push(TraceRow {
+                    trace: text(&quantifier.variable),
+                    binding,
+                });
+            }
             hyper_rows.push(HyperRow {
                 node: id(occurrence.node(), "hyperproperty id")?,
                 name: text(hyper.name()),
                 occurrence: occurrence.origin().ordinal(),
-                traces: hyper
-                    .quantifiers()
-                    .iter()
-                    .map(|quantifier| TraceRow {
-                        trace: text(&quantifier.variable),
-                        binding: binding.clone(),
-                    })
-                    .collect(),
+                traces,
             });
         }
         let mut node_counts = BTreeMap::new();
@@ -626,11 +653,15 @@ impl Selection {
                     .iter()
                     .map(|row| (&row.name, &row.binding)),
             )
-            .chain(
-                self.hypers
+            .chain(self.hypers.iter().filter_map(|row| {
+                // Traces whose clocks differ are the model's: the compile
+                // derives them again, so no clause-name selection is read.
+                let first = row.traces.first()?;
+                row.traces
                     .iter()
-                    .filter_map(|row| row.traces.first().map(|first| (&row.name, &first.binding))),
-            )
+                    .all(|trace| trace.binding == first.binding)
+                    .then_some((&row.name, &first.binding))
+            }))
             .filter_map(|(name, binding)| {
                 binding.as_ref().map(|binding| ClockSelection {
                     clause: name.clone(),

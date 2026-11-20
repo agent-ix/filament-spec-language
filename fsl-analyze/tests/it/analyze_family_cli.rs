@@ -873,7 +873,7 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// under the two rows' configurations; it is never `not-yet-implemented`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2277: the analyze half is not reached: native-analyze/1 refuses invalid_capability/unknown-claim for the two-model hyper clause, and check_hyper decides no form (FormNotDecided { form: None }) for a bounded event-position hyper clause"]
+#[ignore = "QSL-2643: the bounded event-position hyper form is not implemented (hyper_clause.rs sets a form only for InfiniteTrace, so model_check/hyper.rs refuses it as FormNotDecided { form: None }); native-analyze/1 also refuses invalid_capability/unknown-claim for the two-model hyper clause (document.rs settles unknown_claim when the name resolves no declaration or claim occurrence; which of the two fails is not confirmed by reading)"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
                        forall trace a of V forall trace b of N \
@@ -917,7 +917,7 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
 /// `fsl_replay` and settles `refuted`.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2277: the analyze half is not reached: native-analyze/1 refuses invalid_capability/unknown-claim for the two-model hyper clause, and check_hyper decides no form (FormNotDecided { form: None }) for a bounded event-position hyper clause"]
+#[ignore = "QSL-2643: the bounded event-position hyper form is not implemented (hyper_clause.rs sets a form only for InfiniteTrace, so model_check/hyper.rs refuses it as FormNotDecided { form: None }); native-analyze/1 also refuses invalid_capability/unknown-claim for the two-model hyper clause (document.rs settles unknown_claim when the name resolves no declaration or claim occurrence; which of the two fails is not confirmed by reading)"]
 fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     use filament_exact::Cancel;
     use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
