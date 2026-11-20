@@ -155,6 +155,7 @@ mod type_decisions;
 mod type_environment_model;
 mod typed_size;
 mod unit_typed_members;
+mod union_payload_widening;
 mod variant_fields;
 mod variant_type;
 

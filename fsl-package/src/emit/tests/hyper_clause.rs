@@ -1236,3 +1236,90 @@ fn lookups_of_what_is_no_hyper_clause_are_unresolved() {
         );
     }
 }
+
+/// IR's strict-reader verdict on the package envelope `wire` read with
+/// `built`'s domain packages: `None` when admitted, else the refusal's code
+/// and the path it is located at.
+fn strict_verdict(built: &Built, wire: &Value) -> Option<(String, String)> {
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("a fresh evidence key");
+    }
+    match filament_contract_model::read_checked_package(
+        &jcs(wire),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_) => None,
+        filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => Some((
+            format!("{:?}", refusal.code),
+            refusal.loci[0]
+                .path
+                .as_ref()
+                .map_or(String::new(), |path| path.as_str().to_owned()),
+        )),
+        other => panic!("not a V2 verdict: {other:?}"),
+    }
+}
+
+/// FR-517-AC-26 (TC-3128): a hyper clause under the event-position
+/// false-extension profile writes one `temporal_bindings` row per quantifier,
+/// in quantifier order, keyed on its `hyperproperty` node at its `claim`
+/// occurrence and none on its body wrapper; the strict reader admits them and
+/// refuses one wrapper-keyed row that has no `trace`.
+#[trace("TC-3128", "FR-517-AC-26")]
+#[test]
+fn a_clocked_hyper_clause_binds_each_quantifier_on_its_hyperproperty_node() {
+    let declarations = format!(
+        "hyper Ordered using t over behaviours (c: V::ConfigVersion) {TWO_FORALL} \
+         {{ always [0, 3] holds(c.versionNumber @ a = c.versionNumber @ b) }}"
+    );
+    let built = build(EVENT, &["V"], &declarations);
+    let hyperproperty = hyper_node(&built.wire);
+    let wrapper = node_via(&built.wire, binding(&hyperproperty["body"], "body"));
+    let claim = hyperproperty["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|occurrence| occurrence["role"] == "claim")
+        .expect("the hyperproperty node's claim occurrence");
+
+    let rows = built.wire["temporal_bindings"]
+        .as_array()
+        .expect("binding rows");
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    for (row, trace) in rows.iter().zip(["a", "b"]) {
+        assert_eq!(row["declaration"], hyperproperty["node_id"], "{row}");
+        assert_eq!(row["occurrence"], claim["ordinal"], "{row}");
+        assert_eq!(row["trace"], trace, "{row}");
+        assert_eq!(row["clock_name"], "model-steps", "{row}");
+        assert_eq!(
+            row["clock"],
+            json!({"kind": "event_position", "sequence_authority": "test-hyper-events"}),
+            "{row}"
+        );
+    }
+    assert!(
+        rows.iter()
+            .all(|row| row["declaration"] != wrapper["node_id"]),
+        "no row is keyed on the body wrapper"
+    );
+    admitted(&built);
+    assert_eq!(strict_verdict(&built, &built.wire), None);
+
+    // One row keyed on the wrapper with no `trace` is refused at its
+    // `declaration`.
+    let mut wrapped = built.wire.clone();
+    let mut row = rows[0].clone();
+    row["declaration"] = wrapper["node_id"].clone();
+    row.as_object_mut().unwrap().remove("trace");
+    wrapped["temporal_bindings"] = json!([row]);
+    let (code, path) = strict_verdict(&built, &wrapped).expect("the wrapper-keyed row is refused");
+    assert_eq!(code, "InvalidPackage", "{path}");
+    assert_eq!(path, "/temporal_bindings/0/declaration");
+}

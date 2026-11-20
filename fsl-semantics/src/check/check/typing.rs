@@ -560,11 +560,12 @@ impl<'r> Callee<'r> {
     }
 
     /// The declared parameter type at `index` of a function or imported
-    /// call, the only calls whose argument type node FR-347 compares.
+    /// call, or a union member's declared payload type (FR-317-AC-7), the
+    /// positions whose argument type node FR-347 and FR-149-AC-30 compare.
     fn call_parameter(&self, index: usize) -> Option<ValueType> {
         match self {
             Self::Value(application) => application.call_parameter(index),
-            Self::Union(_) => None,
+            Self::Union(member) => member.parameter(index).cloned(),
         }
     }
 

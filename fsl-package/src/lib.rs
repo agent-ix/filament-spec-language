@@ -126,7 +126,8 @@ pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
     checked_occurrence, clock_configuration_invalid_field, clock_kind,
-    declaration_less_function_id, emit_checked, emit_checked_with_cancel,
+    declaration_less_function_id, emit_checked, emit_checked_with_cancel, hyper_clock_name,
+    hyper_wrapper,
     emit_checked_with_protocol_results,
     emit_checked_with_protocol_results_and_temporal_selections_and_cancel,
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,

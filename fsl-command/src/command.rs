@@ -2799,6 +2799,15 @@ fn handoff_clock_selections(
                         .flat_map(|protocol| &protocol.obligations.compensations)
                         .find(|template| template.span == selection.declaration_span)
                         .map(|template| template.name.clone())
+                })
+                .or_else(|| {
+                    checked
+                        .package()
+                        .graph()
+                        .hyper_clauses()
+                        .iter()
+                        .find(|hyper| hyper.span() == selection.declaration_span)
+                        .map(|hyper| hyper.name().to_owned())
                 })?;
             Some(crate::emit_checked_v2::ClockSelection {
                 clause: name,
