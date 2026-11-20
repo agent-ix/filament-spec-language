@@ -3155,6 +3155,26 @@ fn assert_field_row_reads_back(field: &str) {
     );
 }
 
+/// The refusals of [`rows_refinement`] over `rows`, which must not check.
+fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::CheckCause> {
+    let (unit, documents) = rows_refinement(rows, operations);
+    let unit = format!("{unit}function marker using v(): Boolean pure {{ true }}\n");
+    let packages =
+        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
+    assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .map(|_| ())
+        .expect_err("the refinement is not emitted")
+        .into_iter()
+        .map(|refusal| refusal.cause)
+        .collect()
+}
+
 /// A whole concrete population read emits an admitted refinement mapping.
 #[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]

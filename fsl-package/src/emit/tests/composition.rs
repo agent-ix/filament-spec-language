@@ -135,8 +135,11 @@ fn unit(declaration: &str) -> String {
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
+         profile q = \"filament.value.complete/v1\";\n\
          import \"test/producer\" as P;\n\
-         import \"test/consumer\" as Q;\n{declaration}\n"
+         import \"test/consumer\" as Q;\n\
+         function marker using q(): Boolean pure {{ true }}\n\
+         {declaration}\n"
     )
 }
 
@@ -667,16 +670,7 @@ fn a_composition_over_dependency_components_is_emitted_and_admitted() {
 fn a_composition_without_its_component_packages_is_not_admitted() {
     let world = World::new();
     let declaration = world.declare("assume-guarantee", CASE_ONE_MEMBERS);
-    let source = unit(&declaration)
-        .replace(
-            "profile v = \"filament.model.complete/v1\";\n",
-            "profile v = \"filament.model.complete/v1\";\n\
-             profile q = \"filament.value.complete/v1\";\n",
-        )
-        .replace(
-            "compose Sys",
-            "function marker using q(): Boolean pure { true }\ncompose Sys",
-        );
+    let source = unit(&declaration);
     let package = compile_with(&source, None, &[&world.producer, &world.consumer])
         .expect("the local marker keeps the composition package nonempty");
     let emission = emit_checked(&package).expect("the composition emits");
