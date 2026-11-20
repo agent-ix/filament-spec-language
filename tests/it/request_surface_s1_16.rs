@@ -622,7 +622,6 @@ fn pick_finds_validates_exhausts_and_optimizes() {
 /// naming the limit, never `no-candidate`.
 #[test]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-10")]
-#[ignore = "QSL-2235: work-limited bounded synthesis not implemented yet"]
 fn a_work_limited_synthesis_is_incomplete() {
     let (_, value) = run(
         &pick("Pick * Pick = 50", ""),
