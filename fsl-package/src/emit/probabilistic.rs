@@ -572,7 +572,6 @@ fn statement_term(
             }
             Ok(claim_aggregate(written))
         }
-        _ => Err(EmitRefusal::UnresolvedNodeReference),
     })
 }
 
@@ -620,7 +619,7 @@ pub(super) fn write_claim_bodies(
                     reward: reward.clone(),
                 });
             }
-            Some(_) => return Err(EmitRefusal::UnresolvedNodeReference),
+            Some(ClaimReadFault::Subject) => return Err(EmitRefusal::UnresolvedNodeReference),
             None => {}
         }
         let region = region_of(graph, &claim.declaration_location())?;
@@ -666,7 +665,7 @@ pub(super) fn write_claim_bodies(
                 }
                 claim_aggregate(vec![claim_binding("fairness", claim_aggregate(members))])
             }
-            Some(_) | None => return Err(missing()),
+            None => return Err(missing()),
         };
         let read_rewards =
             refs(&reads.rewards).ok_or_else(|| EmitRefusal::UnresolvedClaimReward {

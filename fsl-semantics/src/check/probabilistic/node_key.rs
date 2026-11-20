@@ -180,7 +180,6 @@ impl Reward {
 }
 
 /// One fairness constraint a claim `under every scheduler` states.
-#[non_exhaustive]
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct FairnessRead {
     /// The `model` node that declares the constrained operation.
@@ -194,7 +193,6 @@ pub struct FairnessRead {
 }
 
 /// The scheduler a claim reads.
-#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SchedulerRead {
     /// `under W`: `W`'s node.
@@ -204,7 +202,6 @@ pub enum SchedulerRead {
 }
 
 /// What a claim reads, which unresolved declarations a node cannot carry.
-#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClaimReadFault {
     /// The workload the claim is stated under has no node of the subject's
@@ -218,7 +215,6 @@ pub enum ClaimReadFault {
 
 /// The nodes a probabilistic claim reads (FSpec FR-640 "Probabilistic claim
 /// node"), by their keys, each list ascending.
-#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimReads {
     /// The subject's `model_root` node.
@@ -405,7 +401,6 @@ impl CheckedProbabilisticClaim {
 /// the nodes it references are keyed, each exact value is its canonical text.
 /// The claim's path spells it ([`Statement::spell`]) and S4 writes the same
 /// tree as the body's terms, so the path and the body cannot disagree.
-#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Statement {
     /// A text literal.

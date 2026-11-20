@@ -1850,7 +1850,21 @@ impl Pass<'_, '_> {
         horizon: &HorizonForm,
     ) -> Result<(u64, Option<Rational>), CheckRefusal> {
         match horizon {
-            HorizonForm::Steps(steps) => Ok((steps.value, None)),
+            // FSpec FR-640 rule 7.3: a window over a timed subject is a time
+            // quantity, so a step count there has no spelling.
+            HorizonForm::Steps(steps) => {
+                if self
+                    .input
+                    .time_source(&claim.subject.alias, &claim.subject.package.identity)
+                    .is_some()
+                {
+                    return Err(refusal(ProbabilisticCause::TimeTypeMismatch {
+                        claim: claim.claim().to_owned(),
+                        span: steps.span,
+                    }));
+                }
+                Ok((steps.value, None))
+            }
             HorizonForm::Quantity(quantity) => {
                 let source = self
                     .input
@@ -1898,6 +1912,12 @@ impl Pass<'_, '_> {
     ) -> Result<Option<Identifier>, CheckRefusal> {
         weighting
             .map(|weighting| {
+                if weighting.name.name == "delay" {
+                    return Err(refusal(ProbabilisticCause::DelayWeightingUnsupported {
+                        claim: claim.claim().to_owned(),
+                        span: weighting.name.span,
+                    }));
+                }
                 self.reward_named(claim, &weighting.name.name, weighting.name.span)
                     .map(|(name, _)| name)
             })

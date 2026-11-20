@@ -2492,8 +2492,20 @@ fn statement_spelling(wire: &Value, name: &str) -> Vec<String> {
 /// `wire` of `package` with the claim body's binding `name` replaced by
 /// `edit`, read by the strict reader.
 fn read_with_body_edit(package: &CheckedPackage, edit: &dyn Fn(&mut Value)) -> Read {
+    read_document_with_body_edit(
+        package,
+        config_version_unit::DOMAIN_PACKAGE.as_bytes(),
+        edit,
+    )
+}
+
+/// [`read_with_body_edit`] over the domain package `document`.
+fn read_document_with_body_edit(
+    package: &CheckedPackage,
+    document: &[u8],
+    edit: &dyn Fn(&mut Value),
+) -> Read {
     let emission = emit_checked(package).expect("the package emits");
-    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let mut wire = wire(&emission);
     let claim = wire["semantic_graph"]["nodes"]
         .as_array_mut()
@@ -2601,6 +2613,14 @@ fn a_claim_path_moves_with_what_it_states_and_not_with_how_it_is_written() {
         (
             confidence,
             "{ probability <= 0.5 [ always[0,2] holds(true) ] }",
+        ),
+        (
+            confidence,
+            "{ probability >= 0.5 [ always[0,3] holds(true) ] }",
+        ),
+        (
+            confidence,
+            "{ probability >= 0.5 [ always[1,2] holds(true) ] }",
         ),
         (
             confidence,
@@ -2773,6 +2793,11 @@ fn refusal_summary(read: Read) -> (String, String, String) {
 /// The ConfigVersion unit over a dense `ms` time source with `declarations`
 /// appended, unchecked: the timed claims of FSpec FR-640 rule 7.3.
 fn timed_claims_source(declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
+    timed_claims_source_in("time Config dense unit ms;", declarations)
+}
+
+/// [`timed_claims_source`] with the model's `time` declaration `time_clause`.
+fn timed_claims_source_in(time_clause: &str, declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
     let document = super::timed_source::package_units_document();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -2781,7 +2806,7 @@ fn timed_claims_source(declarations: &[&str]) -> (Vec<u8>, Vec<u8>) {
          profile tm = \"filament.temporal.timed/v1\";\n\
          model Config = {:?};\n\
          dimension Time;\nunit ms : Time = rational(1, 1);\n\
-         time Config dense unit ms;\n\
+         {time_clause}\n\
          {STEADY}\n{}\n",
         config_version_unit::PACKAGE_IDENTITY,
         declarations.join("\n"),
@@ -2795,7 +2820,18 @@ fn timed_claims_check(
     Vec<u8>,
     Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>>,
 ) {
-    let (document, unit) = timed_claims_source(declarations);
+    timed_claims_check_in("time Config dense unit ms;", declarations)
+}
+
+/// [`timed_claims_check`] over the model's `time` declaration `time_clause`.
+fn timed_claims_check_in(
+    time_clause: &str,
+    declarations: &[&str],
+) -> (
+    Vec<u8>,
+    Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>>,
+) {
+    let (document, unit) = timed_claims_source_in(time_clause, declarations);
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
     let checked = assemble_with_models(&unit, &packages)
         .expect("the unit assembles")
@@ -2812,7 +2848,6 @@ fn timed_claims_check(
 /// and expected-elapsed forms and every window state a time quantity at the
 /// model's unit node, and a quantity reward's bound is a quantity at the
 /// reward's own unit node.
-#[trace("TC-1288", "FR-498-AC-7")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
 #[test]
 fn a_timed_claim_states_time_quantities_at_the_model_unit() {
@@ -2859,10 +2894,9 @@ fn a_step_horizon_over_a_timed_subject_is_refused_at_the_claim() {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
             };
-            assert!(
-                format!("{refusal:?}").contains("step-window-on-a-timed-subject"),
-                "{refusal:?}"
-            );
+            let text = format!("{refusal:?}");
+            assert!(text.contains("TimeTypeMismatch"), "{text}");
+            assert!(!text.contains("InternalFault"), "{text}");
         }
     }
 }
@@ -2886,6 +2920,20 @@ fn a_quantity_reward_bound_is_spelled_at_the_reward_unit() {
         statement_spelling(&wire, "P95").join(" "),
         "form kind quantile level rational 19/20 measure kind accumulate from <node> until <node> within quantity <node> 10 bound direction at_most value quantity <node> 5 over activation kind origin confidence alpha rational 1/100 beta rational 1/100 indifference rational 1/100"
     );
+    let id_for = |bound: &str| {
+        let (document, checked) = timed_claims_check(&[
+            "reward duration on ConfigVersion::attemptUpdate = 2 ms;",
+            &format!(
+                "probabilistic P95 using tm on Config under Steady on origin \
+                 with alpha 0.01, beta 0.01, indifference 0.01 \
+                 {{ quantile 0.95 of (accumulate duration from holds(true) until holds(true) within 10 ms) <= {bound} }}"
+            ),
+        ]);
+        let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let (wire, _) = emit_and_read(&package, &document);
+        resolved_id(&wire, &claim_named(&wire, "P95")["node_id"], 8)
+    };
+    assert_ne!(id_for("5 ms"), id_for("6 ms"));
 }
 
 /// FR-186 delay weighting is QSL-2551: a measure weighted by `delay` is a
@@ -2901,7 +2949,8 @@ fn weighting_by_delay_is_refused_even_when_a_reward_is_named_delay() {
     match checked {
         Ok(_) => panic!("a delay weighting is written as a reward weighting"),
         Err(refusals) => assert!(
-            format!("{refusals:?}").contains("delay-weighting-is-not-emitted"),
+            format!("{refusals:?}").contains("DelayWeightingUnsupported")
+                && !format!("{refusals:?}").contains("InternalFault"),
             "{refusals:?}"
         ),
     }
@@ -2929,5 +2978,127 @@ fn a_claim_keeps_its_identity_whichever_order_its_workload_weights_are_written()
     assert_eq!(
         claim_id("weight Base::op = 1; weight Leaf::step = 3;"),
         claim_id("weight Leaf::step = 3; weight Base::op = 1;")
+    );
+}
+
+/// TC-1288 (FR-498-AC-7), FSpec FR-322 path order: changing only the
+/// interval of a lone claim's event moves its `node_id`, whether the interval
+/// is another upper end, another lower end or an open end, and rewriting the
+/// same interval with other spacing moves nothing.
+#[trace("TC-1288", "FR-498-AC-7")]
+#[test]
+fn a_lone_claim_path_moves_with_the_interval_of_its_event() {
+    let id_of = |event: &str| {
+        let wire = emit_wire(&claims_package(&[
+            STEADY,
+            &claim_stated(
+                "A",
+                "with alpha 0.01, beta 0.01, indifference 0.01",
+                &format!("{{ probability >= 0.5 [ {event} ] }}"),
+            ),
+        ]));
+        resolved_id(&wire, &claim_named(&wire, "A")["node_id"], 8)
+    };
+    let base = id_of("always[0,2] holds(true)");
+    assert_eq!(base, id_of("always[ 0 , 2 ] holds(true)"));
+    for other in [
+        "always[0,3] holds(true)",
+        "always[1,2] holds(true)",
+        "eventually[0,2] holds(true)",
+    ] {
+        assert_ne!(base, id_of(other), "{other}");
+    }
+}
+
+/// FSpec FR-640-AC-3 and FSL FR-498 reordering: two claims whose events
+/// differ only in an interval keep their identities whichever order they are
+/// declared in.
+#[trace("TC-1288", "FR-498-AC-6")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn claims_that_differ_only_in_an_interval_keep_their_identities_when_reordered() {
+    let confidence = "with alpha 0.01, beta 0.01, indifference 0.01";
+    let narrow = claim_stated(
+        "A",
+        confidence,
+        "{ probability >= 0.5 [ always[0,2] holds(true) ] }",
+    );
+    let wide = claim_stated(
+        "B",
+        confidence,
+        "{ probability >= 0.5 [ always[0,3] holds(true) ] }",
+    );
+    let ids_of = |declarations: &[&str]| {
+        let wire = emit_wire(&claims_package(declarations));
+        ["A", "B"].map(|name| resolved_id(&wire, &claim_named(&wire, name)["node_id"], 8))
+    };
+    let forward = ids_of(&[STEADY, &narrow, &wide]);
+    let reversed = ids_of(&[STEADY, &wide, &narrow]);
+    assert_eq!(forward, reversed);
+    assert_ne!(forward[0], forward[1]);
+}
+
+/// FSpec FR-640-AC-11, rule 7.3: a quantity typed at a node that is not the
+/// model's unit node is refused at the quantity's type, over a timed subject.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-11")]
+#[test]
+fn the_reader_refuses_a_quantity_typed_at_the_wrong_unit() {
+    let (document, checked) =
+        timed_claims_check(
+            &["probabilistic E using tm on Config under Steady on origin \
+         { expected elapsed until holds(true) <= 3 ms }"],
+        );
+    let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let verified = read_document_with_body_edit(&package, &document, &|_| {});
+    assert!(matches!(verified, Read::Verified { .. }), "{verified:?}");
+    fn retype(term: &mut Value, unit: &Value) {
+        match term {
+            Value::Object(object) => {
+                if object
+                    .get("value_kind")
+                    .is_some_and(|kind| kind == "quantity")
+                {
+                    object.insert("type".to_owned(), unit.clone());
+                }
+                for value in object.values_mut() {
+                    retype(value, unit);
+                }
+            }
+            Value::Array(items) => items.iter_mut().for_each(|item| retype(item, unit)),
+            _ => {}
+        }
+    }
+    let refused = refusal_summary(read_document_with_body_edit(&package, &document, &|body| {
+        let subject = body["members"][0]["value"]["target"].clone();
+        retype(body, &subject);
+    }));
+    assert_eq!(
+        refused,
+        (
+            "IllTyped".to_owned(),
+            "Some(OperatorIneligible)".to_owned(),
+            "/semantic_graph/nodes/2/body/members/5/value/members/2/value/members/1/value/type"
+                .to_owned()
+        )
+    );
+}
+
+/// FSpec FR-640-AC-11, rule 7.3, over FSL FR-233-AC-3's tick model: a window
+/// of `5 ms` over `time ... tick ... period 1 ms unit ms` is the quantity 5 at
+/// the unit node of `ms`, and the strict reader admits it.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-11")]
+#[test]
+fn a_time_window_over_a_tick_model_is_a_quantity_at_the_model_unit() {
+    let (document, checked) = timed_claims_check_in(
+        "time Config tick ConfigVersion::attemptUpdate period 1 ms unit ms;",
+        &["probabilistic W using tm on Config under Steady on origin \
+           { probability >= 0.5 [ steps from holds(true) until holds(true) within 5 ms >= 1 ] }"],
+    );
+    let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    assert_eq!(
+        statement_spelling(&wire, "W").join(" "),
+        "form kind probability event kind compare measure kind steps from <node> until <node> within quantity <node> 5 bound direction at_least value integer 1 bound direction at_least value rational 1/2 over activation kind origin confidence"
     );
 }

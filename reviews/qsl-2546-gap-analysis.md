@@ -46,3 +46,21 @@ Wrong or overclaimed tags:
 | FND-005 | medium | The `FSpec-FR-640-AC-9` tag (rule 6 refusals and reader budget) sits on three tests that assert other ACs. `a_claim_states_its_form_over_activation_and_confidence_in_body_and_path` asserts the binding order and statement spelling, which is FR-640-AC-8/AC-10 content. `an_on_each_claim_states_its_trigger_and_guard` asserts activation spelling, which is AC-10 content. `the_reader_refuses_a_claim_statement_that_breaks_rule_7` asserts rule 7 refusals, which are FR-640-AC-11. | fsl-package/src/emit/tests/probabilistic.rs:2505,2609,2658 |
 | FND-006 | medium | No test exercises a timed or quantity statement path. Untested: `elapsed` and `expected_elapsed` forms, `within`/`window` as a time quantity, and a quantity `bound` at the reward's unit node (`reward_unit`). FR-498-AC-7's `P95` `5 ms` bound and FR-640-AC-11's tick-model case are therefore unverified, and the AC-11 tick case is where code-review FND-003 bites. | fsl-semantics/src/check/lowering/probabilistic.rs:603-616,650-670 |
 | FND-007 | low | The FR-498-AC-5 rename clause ("Renaming `A` to `B` gives two claims named `B` with different paths, each at ordinal 0") is unasserted, although the test is tagged AC-5. FR-940-AC-9 refuses a second claim of one name, so this sub-case may conflict with that rule; flag it to spec rather than test around it. | fsl-package/src/emit/tests/probabilistic.rs:1100-1182; spec/functional/FR-498 AC-5 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | FSpec-FR-640-AC-11 is tagged on `the_reader_refuses_a_claim_statement_that_breaks_rule_7`, but two of its stated cases are unasserted: the `quantity` `5` typed at the unit node of `s` refused `invalid-value` (rule 7.3), and the `time tick send period 1 ms unit ms` `Rpc` model admitting `within 5 ms`. The new timed tests use a `dense` source and assert only Verified reads. | fsl-package/src/emit/tests/probabilistic.rs:2672-2770,2775-2790 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Retagged FR-498-AC-7. |
+| FND-002 | fixed | FR-498-AC-6 tag removed; doc says partial. |
+| FND-003 | still-open | The always[0,3] sub-case of FR-498-AC-7 is still unasserted and still fails (code-review FND-001), while two tests keep the FR-498-AC-7 tag. |
+| FND-004 | still-open | Weight-line reorder now tested (a_claim_keeps_its_identity_whichever_order_its_workload_weights_are_written); the reorder of interval-differing claims is still untested and still fails (code-review FND-002). |
+| FND-005 | fixed | Tags moved to FSpec-FR-640-AC-10 and AC-11. |
+| FND-006 | fixed | Added elapsed, expected_elapsed, quantity window and reward-unit bound tests; residual AC-11 cases are FND-008. |
+| FND-007 | deferred | Spec conflict with FR-940-AC-9 named in the PR body; a spec question, out of scope for this code PR. |

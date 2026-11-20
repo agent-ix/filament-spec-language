@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
+use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
+    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
 };
 
 use filament_exact::{
@@ -95,40 +95,40 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
+    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
 };
 pub(crate) use hyper::{
-    HyperClauseInput, LoweredStepRelation, StepRelationInput, finish_step_relation,
+    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
 };
 pub(crate) use model::ParentSlotFailure;
-pub use model::{
-    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
-    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
-    collection_kind, model_root_key,
-};
 pub(crate) use model::{
-    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
-    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
+    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
+    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
+};
+pub use model::{
+    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
+    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
+    SelectedOperationMember,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
-    protocol_location,
+    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
+    ProtocolInput,
 };
-pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
+pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
 pub(crate) use state::{
-    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site,
+    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
+    OperationBinding, StateClauseInput,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
 pub(crate) use temporal::{
-    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
-    temporal_site,
+    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
+    TemporalSite,
 };
-pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
+pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1251,11 +1251,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [
-            filament_exact::PathSegment::Text(kind),
-            filament_exact::PathSegment::Text(form),
-            filament_exact::PathSegment::Text(identity),
-        ] if kind == "model" && form == "variant_type" => Some(identity),
+        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
+            if kind == "model" && form == "variant_type" =>
+        {
+            Some(identity)
+        }
         _ => None,
     }
 }
@@ -5248,7 +5248,9 @@ impl<'a> Lowering<'a> {
                     result_type,
                     Operator::Query,
                     operation,
-                    vec![MemberTerm::Leaf(LeafTerm::reference_node(population.into()))],
+                    vec![MemberTerm::Leaf(LeafTerm::reference_node(
+                        population.into(),
+                    ))],
                 )?;
                 return Ok(LowerStep::Lowered(term));
             }
@@ -5800,15 +5802,13 @@ impl<'a> Lowering<'a> {
                     Operands::Two(collection, item),
                 )
             }
-            NodeKind::AllInstances { population } => {
-                (
-                    Keyed::Application(
-                        Operator::Query,
-                        self.all_instances_operation(node.value_type(), node.location())?,
-                    ),
-                    Operands::One(population),
-                )
-            }
+            NodeKind::AllInstances { population } => (
+                Keyed::Application(
+                    Operator::Query,
+                    self.all_instances_operation(node.value_type(), node.location())?,
+                ),
+                Operands::One(population),
+            ),
             NodeKind::Lookup {
                 population,
                 reference,
@@ -7691,6 +7691,32 @@ fn carried_quantity_operands(aggregate: &AggregateTerm) -> Vec<filament_exact::P
     operands
 }
 
+/// An integer interval in canonical text: `steps:0..2`, `steps:0..*` for an
+/// open end, `steps:unbounded` for none.
+fn interval_spelling(interval: Option<fsl_foundation::bound::TemporalInterval>) -> String {
+    use fsl_foundation::bound::TemporalUpper;
+    let Some(interval) = interval else {
+        return "steps:unbounded".to_owned();
+    };
+    match interval.upper() {
+        TemporalUpper::Finite(upper) => format!("steps:{}..{upper}", interval.lower()),
+        TemporalUpper::Open => format!("steps:{}..*", interval.lower()),
+    }
+}
+
+/// A timed interval in canonical text: exact reduced rational bounds, `[`
+/// and `(` for a closed and an open end.
+fn timed_interval_spelling(timed: &crate::value::member::TimedMember) -> String {
+    let lower = if timed.lower_closed { '[' } else { '(' };
+    match &timed.upper {
+        Some(upper) => {
+            let close = if timed.upper_closed { ']' } else { ')' };
+            format!("time:{lower}{},{upper}{close}", timed.lower)
+        }
+        None => format!("time:{lower}{},*)", timed.lower),
+    }
+}
+
 /// The body-walk operands of [`derived_operands`].
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
@@ -7833,6 +7859,12 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                         walk.push(PathSegment::Node(node.clone()));
                     }
                 },
+                Some(Member::TemporalInterval { interval }) => {
+                    // FSpec FR-498: an operator's interval is part of its
+                    // identity, so `always[0,2]` and `always[0,3]` are two nodes.
+                    walk.text(&interval_spelling(*interval));
+                }
+                Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
                 Some(Member::Field {
                     explicit_deref: Some(explicit_deref),
                     ..

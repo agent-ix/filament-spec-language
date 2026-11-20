@@ -66,3 +66,24 @@ Other checks:
 | FND-008 | low | The public API is widened with no consumer outside the crate: `CheckedProbabilisticClaim::declaration_location` went from pub(crate) to pub, `CheckedPredicate::slot_names` and `CheckedTemporalFormula::conditions` became pub, and `ClaimActivation::Each` gains a pub field (a breaking change for external struct-variant constructors). `Statement`, `ClaimReads` and `SchedulerRead` are exported with pub fields and are not `#[non_exhaustive]`. | fsl-semantics/src/check/probabilistic/claim.rs:466,528; fsl-semantics/src/check/mod.rs:202-210 |
 | FND-009 | medium | The PR body says "two claims differing only in `always[0,2]` vs `always[0,3]` share a path in separate packages", and QSL-2641 adds "within a package the ordinal separates them". It omits that within one package that ordinal follows source order (FND-002) and that FR-498-AC-7's interval case fails (FND-001). The partial framing understates a conformance failure of ACs this PR tags as covered. | PR #3121 body "Not in this PR"; QSL-2641 |
 
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | medium | The FND-003/FND-004 fixes refuse user source through an internal fault. `window_statement` returns `stage_fault(cx.at, "step-window-on-a-timed-subject")` and `weighting_statement` returns `stage_fault(cx.at, "delay-weighting-is-not-emitted")`, and `stage_fault` builds `CheckCause::InternalFault(KeyFault::StageFault)`. Both are reachable from source text that S3 admits (`steps ... within 5` over a `time Config dense` subject; `weighted by delay`), so a user's program is reported as a checker invariant breach. The refusal belongs in S3 as a located `ProbabilisticCause` (for the step horizon, alongside `TimeTypeMismatch` in `steps()`; for delay weighting, an unsupported-construct cause naming QSL-2551). | fsl-semantics/src/check/lowering/probabilistic.rs:613,629; fsl-semantics/src/check/lowering/temporal.rs:801-808; fsl-semantics/src/check/probabilistic/claim.rs:1847-1852 |
+| FND-011 | low | `#[non_exhaustive]` on `Statement`, `SchedulerRead`, `ClaimReadFault`, `ClaimReads` and `FairnessRead`, which are matched in the sibling workspace crate fsl-package, forces wildcard arms there (`_ => Err(EmitRefusal::UnresolvedNodeReference)` in `statement_term`, `Some(_) | None => return Err(missing())` and `Some(_) => ...UnresolvedNodeReference` in `write_claim_bodies`). A new variant now compiles and becomes a runtime refusal instead of a compile error at the writer. `pub(crate)`/exhaustive matching would keep the compiler check. | fsl-package/src/emit/probabilistic.rs:575,623,669; fsl-semantics/src/check/probabilistic/node_key.rs:183-408 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | No code change at 7eec271c4; walked_operands still omits the TemporalInterval member, and FR-498-AC-7 stays tagged on tests that skip the always[0,3] case. Deferred to an arch ruling that is not recorded yet; FR-498-AC-7 as written still fails. |
+| FND-002 | still-open | No code change; formula ordinals still follow minting (source) order, so swapping interval-differing claims moves both node_ids, against FR-498's reorder rule and FR-640-AC-3. Awaiting the same arch ruling. |
+| FND-003 | fixed | window_statement now refuses (None, Some(unit)); see FND-010 for the refusal class. |
+| FND-004 | fixed | weighting_statement refuses a `delay` weight; see FND-010 for the refusal class. |
+| FND-005 | fixed | Rule-7 test asserts code, cause and pointer per edit; dead wire_text removed; malformed-body test asserts exact refusal. |
+| FND-006 | fixed | raw_claim_rows added and compared byte-for-byte. |
+| FND-007 | fixed | ClaimReadFault now maps to UnresolvedNodeReference. |
+| FND-008 | fixed | slot_names/conditions back to pub(crate); new types #[non_exhaustive]; declaration_location stays pub because fsl-package calls it. |
+| FND-009 | fixed | PR body now states the interval gap as open within a package and against FR-498-AC-7. |
