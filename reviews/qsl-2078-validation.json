@@ -1,0 +1,16 @@
+{
+  "ticket": "QSL-2078",
+  "reviewed_feature_head": "0f229970fdb6a89778b8ded28d8baee1c42619b4",
+  "incorporated_accepted_squash": "f38cb49aebd84b3d8ca54bd86e01db7c298c01df",
+  "tested_head": "ef43b628381ccf58a4d6d05f0b6c4a594baaa82e",
+  "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-cst -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "exit_code": 0,
+  "results": {
+    "unit": { "passed": 15, "failed": 0, "ignored": 1 },
+    "integration": { "passed": 279, "failed": 0, "ignored": 18 },
+    "documentation": { "passed": 1, "failed": 0, "ignored": 0 },
+    "total": { "passed": 295, "failed": 0, "ignored": 19 }
+  },
+  "ignored_tests_count_as_coverage": false,
+  "scope": "One final full fsl-cst component gate after independent review; no product binary build or workspace-wide gate."
+}
