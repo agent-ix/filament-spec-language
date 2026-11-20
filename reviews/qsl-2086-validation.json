@@ -1,0 +1,85 @@
+{
+  "ticket": "QSL-2086",
+  "initial_affected_gate": {
+    "tested_head": "fee268ad5c1f9b1cc05e9382e7510e8e999a0bd6",
+    "exit_code": 101,
+    "segments": [
+      {
+        "component": "state_graph",
+        "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-analyze --test it state_graph:: -- --test-threads=1 --skip timed_state_graph:: --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+        "exit_code": 0,
+        "passed": 40,
+        "failed": 0,
+        "ignored": 0,
+        "log": "qsl-2086-final-state_graph.log"
+      },
+      {
+        "component": "model_settle",
+        "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-analyze --test it model_settle:: -- --test-threads=1 --skip model_settle::a_counterexample_the_model_does_not_take_refuses_with_no_result --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+        "exit_code": 101,
+        "passed": 13,
+        "failed": 1,
+        "ignored": 1,
+        "log": "qsl-2086-final-model_settle.log"
+      },
+      {
+        "component": "narrowing_tests",
+        "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-eval --lib simulation::model::frames::narrowing_tests:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+        "exit_code": 0,
+        "passed": 11,
+        "failed": 0,
+        "ignored": 3,
+        "log": "qsl-2086-final-narrowing_tests.log"
+      },
+      {
+        "component": "invariants",
+        "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-eval --lib value::expression::evaluate::invariants:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+        "exit_code": 101,
+        "passed": 33,
+        "failed": 1,
+        "ignored": 0,
+        "log": "qsl-2086-final-invariants.log"
+      }
+    ],
+    "aggregate": {
+      "passed": 97,
+      "failed": 2,
+      "ignored": 4
+    }
+  },
+  "confined_fixture_correction": {
+    "tested_head": "ce15c6117e09d00d5395ca4d948ca03442d5d021",
+    "change": "Supply one false provenance flag for each of the two admitted Boolean frame slots; all runtime and uncharged-prefix assertions retained.",
+    "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-eval --lib value::expression::evaluate::invariants::admitted_stack_values_bound_locals_and_branch_keep_the_uncharged_valid_prefix -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+    "exit_code": 0,
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "log": "qsl-2086-final-invariants-corrected.log"
+  },
+  "accepted_passing_cases": 98,
+  "ignored_cases": 4,
+  "owner_pending_excluded_assertions": [
+    {
+      "test": "model_settle::a_counterexample_the_model_does_not_take_refuses_with_no_result",
+      "owner": "QSL-2702",
+      "execution": "explicitly skipped before gate as known pending"
+    },
+    {
+      "test": "model_settle::a_disagreeing_or_refused_replay_never_settles_refuted",
+      "owner": "QSL-2702",
+      "execution": "original gate failure preserved; excluded from accepted coverage, not rerun"
+    }
+  ],
+  "unresolved_fixture_failures": 0,
+  "full_gate_pass_claimed": false,
+  "whole_gate_repeated": false,
+  "accounting": "Original gate: 97 passed, 2 failed, 4 ignored. One failed positive fixture was corrected and that test alone passed. The remaining initial failure is the existing QSL-2702 implementation defect and is not counted as accepted coverage. Passing segments were not repeated.",
+  "remaining_owners": [
+    "QSL-1833",
+    "QSL-2700",
+    "QSL-2702",
+    "QSL-2703"
+  ],
+  "ignored_or_excluded_is_coverage": false
+}

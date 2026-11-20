@@ -279,6 +279,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             receiver_type: owner.clone(),
             member: "step".to_owned(),
             parameters: vec![],
+            required_arity: 0,
             result: ValueType::Boolean,
             selected_operation_owner: owner.clone(),
             selected_operation: "step".to_owned(),
@@ -1962,7 +1963,7 @@ fn admitted_stack_values_bound_locals_and_branch_keep_the_uncharged_valid_prefix
     ));
     machine.push_frame(
         vec![Some(Value::Boolean(true)), Some(Value::Boolean(false))],
-        vec![],
+        vec![false, false],
     );
     assert!(matches!(
         machine.slot(0).unwrap_or_else(|_| panic!("bound slot")),

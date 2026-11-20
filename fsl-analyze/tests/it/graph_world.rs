@@ -24,7 +24,7 @@ use fsl_foundation::{BackendId, SourceIdentity};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     GraphEvidence, GraphEvidenceEnvelope, GraphReplayResult, ModelCheckLimits, ModelPath,
-    ModelTraceSubject, ReplayLimits, ReplayRequestWire, ReplayResult, ReplaySource,
+    ModelTraceSubject, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
     RequestTargetWire, StateEnvironment, WitnessPath, WitnessSource,
 };
 use fsl_semantics::check::{CheckedStateGraphClaim, PackageDeclarations};
@@ -390,6 +390,27 @@ impl World {
         source: WitnessSource,
         keys: &[&str],
     ) -> GraphReplayResult {
+        self.replay_evidence(
+            claim,
+            GraphEvidence::Witness {
+                paths: vec![(WitnessPath::Path(path), source)],
+                over,
+            },
+            keys,
+            ReplayLimits::default(),
+        )
+        .expect("the state-graph witness replays")
+    }
+
+    /// Recompile and replay returned graph evidence, preserving typed refusals
+    /// and caller-selected replay limits for adverse evidence cases.
+    pub(crate) fn replay_evidence(
+        &self,
+        claim: &CheckedStateGraphClaim,
+        evidence: GraphEvidence,
+        keys: &[&str],
+        limits: ReplayLimits,
+    ) -> Result<GraphReplayResult, ReplayRefusal> {
         let original_source = self.package.graph().source();
         let byte_provision = vec![(
             original_source.authority().to_owned(),
@@ -410,10 +431,7 @@ impl World {
             UNLIMITED,
             Vec::new(),
             BackendId::new("fsl-en-1"),
-            GraphEvidence::Witness {
-                paths: vec![(WitnessPath::Path(path), source)],
-                over,
-            },
+            evidence,
         );
         let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&self.package);
         let emission = fsl_package::emit_checked_with_temporal_selections(
@@ -425,7 +443,7 @@ impl World {
         let wire = ReplayRequestWire {
             package: fsl_replay::ReplayPackage::read(
                 emission.package().bytes(),
-                ReplayLimits::default().input_bytes,
+                limits.input_bytes,
             )
             .expect("the emitted package is bounded JSON"),
             profile_selections: Vec::new(),
@@ -459,13 +477,12 @@ impl World {
                 wire,
                 &subject,
                 &temporal_clock_selections,
-                ReplayLimits::default(),
-            )
-            .expect("the state-graph witness replays")
+                limits,
+            )?
         else {
             panic!("state-graph replay returns its typed result arm")
         };
-        replayed
+        Ok(replayed)
     }
 
     /// The reference of the object `key` of the world's type.
