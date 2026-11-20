@@ -1,0 +1,26 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile ev = "filament.temporal.event-position.false-extension/v1";
+model Rover = "example/rover";
+
+random Rover::sample(faultA) ~ { true: 1, false: 999 };
+random Rover::sample(faultB) ~ { true: 1, false: 999 };
+random Rover::sample(faultC) ~ { true: 1, false: 999 };
+workload Driving on Rover {
+  weight Rover::sample = 1;
+  weight Rover::loseLidar = 1;
+  weight Rover::brake = 1;
+  weight Rover::halt = 1;
+  weight Rover::enterFailsafe = 1;
+}
+
+// The voted reading is wrong only when two sensors fail on the same sample.
+post VoteTracksFaults using v on Rover::Rover::sample {
+  self.voteWrong = ((faultA and faultB) or (faultA and faultC) or (faultB and faultC))
+}
+
+// Over 100 samples, the vote is wrong with probability at most 1 in 1,000,000,
+// which three sensors that each fail 1 time in 1,000 miss.
+probabilistic VoteAlmostNeverWrong using ev on Rover over (r: Rover::Rover) under Driving on origin {
+  probability <= 0.000001 [ eventually[0,100] holds(r.voteWrong) ]
+}
