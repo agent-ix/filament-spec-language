@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":99,"category":"probe","last_stage":null}
+{"verb":"run","exit_code":20,"category":"refusal","last_stage":null,"code":"invalid-request"}

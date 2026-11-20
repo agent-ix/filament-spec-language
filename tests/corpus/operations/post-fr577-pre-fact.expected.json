@@ -1,1 +1,1 @@
-{"verb":"compile","exit_code":99,"category":"probe","last_stage":null}
+{"verb":"compile","exit_code":20,"category":"refusal","last_stage":"S3","code":"undefined_expression","cause":"unproved-range"}

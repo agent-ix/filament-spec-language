@@ -1,1 +1,1 @@
-{"verb":"analyze","exit_code":99,"category":"probe","last_stage":null}
+{"verb":"analyze","exit_code":21,"category":"unsupported","last_stage":"S6b","flips_with":"QSL-2043:deadlock-unbounded-extent"}

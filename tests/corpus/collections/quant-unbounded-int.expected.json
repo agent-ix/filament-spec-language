@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":99,"category":"probe","last_stage":null}
+{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S1","code":"invalid_syntax","cause":"unexpected-token"}

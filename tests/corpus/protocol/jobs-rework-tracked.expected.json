@@ -1,1 +1,1 @@
-{"verb":"run","exit_code":99,"category":"probe","last_stage":null}
+{"verb":"run","exit_code":0,"category":"success","last_stage":"S6a","result":{"kind": "boolean", "value": true}}
