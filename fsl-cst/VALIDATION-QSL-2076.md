@@ -77,3 +77,55 @@ The original unit segment took 39.53 seconds. The doc segment passed its one
 compile-fail example in 0.03 seconds. No failed segment was repeated. The
 existing integration failures and 11 ignored cases remain visible; none is
 changed into passing coverage by this PR.
+
+## Confined failure dispositions
+
+The original gate and its totals above remain unchanged. Only the reported
+failing functions were considered; no component suite or previously passing
+group was repeated.
+
+Four stale tests were corrected and passed exact-name checks:
+
+- Work-budget refusal now selects an explicit `s1.work_units` ceiling on valid
+  source, as FR-255 requires, instead of assuming one malformed expression has
+  quadratic work under default limits.
+- Nested typo recovery now distinguishes FR-762's whole-declaration recovery
+  region from the exact diagnostic token locus required by FSpec FR-302.
+- README fence recognition accepts the current `stage=parse` info-string
+  metadata while continuing to parse the actual authoritative example bytes.
+- The bounded expected-set message case now reaches a genuine expression
+  choice; a brace after an otherwise complete unit expects end of source,
+  rather than a large declaration-alternative set.
+
+Seven required functions preserve their original oracles and are explicitly
+pending under six product owners:
+
+| Owner | Required behavior |
+| --- | --- |
+| QSL-2680 | FR-762-AC-9 malformed record CST after header recovery |
+| QSL-2681 | FR-762-AC-2 dollar-token lexical classification |
+| QSL-2682 | FR-091-AC-58 invalid decimal numeric classification |
+| QSL-2683 | Contextual collection names and their history-literal locus |
+| QSL-2684 | FR-762 single-error recovery without reserved-name cascades |
+| QSL-2685 | FSpec FR-500 unsupported-edition refusal precedence |
+
+The exact pinned FSpec revision is
+`f32bca6c7937e0652742b2bbe27a52419bf5a0ae`. Its complete reserved inventories
+admit lowercase `set`, `bag` and `orderedSet`; an existing implementation test
+that refuses these names supplies no normative authority. The history case
+therefore keeps its original bracket locus and shares QSL-2683. Its temporary
+changed-oracle pass is not accepted coverage.
+
+The production-vector function has a grounded `ReferenceLiteral` inventory
+entry and original executable reference-literal input. Its pre-existing strict
+right-boundary location assertion remains unresolved: targeted receipts name
+`RoundingMode` and `TextProfile`, but did not print actual diagnostics/spans.
+The original strict assertion is retained, and no speculative prefix-span
+alternative or per-production exception remains. No product defect is inferred
+from those omitted data.
+
+Confined logs are `.agent/qsl-2076-disposition-failing-names.log` and
+`.agent/qsl-2076-disposition-production-{exact,mode,token}.log`. The first
+unqualified `--exact` command selected zero tests and supplies no pass evidence.
+No strict pending case was reprobed. This checkpoint awaits a confined review
+of the corrections and unresolved production-vector contract.

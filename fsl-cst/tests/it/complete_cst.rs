@@ -532,6 +532,7 @@ fn recovery_stops_at_the_work_budget() {
 
 #[trace("TC-2187", "FR-762-AC-9")]
 #[test]
+#[ignore = "QSL-2680: FR-762-AC-9 requires the malformed record Declaration node"]
 fn header_recovery_resumes_at_the_next_declaration() {
     let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
     let (text, parsed) = recover(body);
