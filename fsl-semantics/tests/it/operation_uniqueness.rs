@@ -76,6 +76,13 @@ fn assert_refusal(
     }
 }
 
+fn assert_collision_participants(found: &fsl_semantics::model::normalize::ModelRefusal) {
+    assert!(
+        found.detail.contains(&key("advance")) && found.detail.contains(&key("other")),
+        "both distinct colliding operation identities must be retained: {found:?}"
+    );
+}
+
 #[trace("TC-1307", "FR-512-AC-4")]
 #[test]
 fn duplicate_operation_identity_refuses_at_the_second_operation() {
@@ -97,13 +104,14 @@ fn equal_operation_names_with_distinct_identities_refuse_at_the_second_name() {
     let first = query("advance", json!([]));
     let mut second = query("other", json!([]));
     second["name"] = json!("advance");
-    refusal(
+    let found = refusal(
         &input(vec![first, second]),
         "ambiguous_declaration",
         "ambiguous-name",
         &key("other"),
         "TypeDefinition.operations[1].name",
     );
+    assert_collision_participants(&found);
 }
 
 #[trace("TC-1307", "FR-512-AC-7", "FR-512-AC-15")]
@@ -377,13 +385,14 @@ fn repeated_operation_name_preempts_the_second_operations_reserved_parameter() {
         json!([operation_parameter("other", "result", INTEGER)]),
     );
     second["name"] = json!("advance");
-    refusal(
+    let found = refusal(
         &input(vec![first, second]),
         "ambiguous_declaration",
         "ambiguous-name",
         &key("other"),
         "TypeDefinition.operations[1].name",
     );
+    assert_collision_participants(&found);
 }
 
 #[trace("TC-1307", "FR-512-AC-12", "FR-512-AC-14")]
@@ -644,5 +653,217 @@ fn unrelated_record_order_does_not_retarget_a_duplicate_operation_identity() {
             &key("advance"),
             "TypeDefinition.operations[1]",
         );
+    }
+}
+
+/// Move only unrelated type records; operation, parameter and frame order stays authored.
+fn unrelated_record_permutations(document: &[u8]) -> [Vec<u8>; 2] {
+    let mut document: Value = serde_json::from_slice(document).expect("original model input");
+    document["types"].as_array_mut().expect("types").insert(
+        0,
+        super::model_operations::wire_type(
+            &format!("ix://{PACKAGE_IDENTITY}/Unrelated"),
+            "object_type",
+            json!({"fields": [], "operations": [], "supertypes": []}),
+        ),
+    );
+    let first = serde_json::to_vec(&document).expect("model bytes");
+    document["types"].as_array_mut().expect("types").reverse();
+    [
+        first,
+        serde_json::to_vec(&document).expect("reordered model bytes"),
+    ]
+}
+
+#[trace("TC-1307", "FR-512-AC-7", "FR-512-AC-15", "FR-512-AC-17")]
+#[test]
+fn unrelated_record_order_keeps_duplicate_parameter_identity_and_precedence_loci() {
+    for bad_frame in [false, true] {
+        let parameter = operation_parameter("advance", "amount", INTEGER);
+        let mut operation = query("advance", json!([parameter.clone(), parameter]));
+        if bad_frame {
+            operation["frame"]["modifies"] = json!([key("missingField")]);
+        }
+        for document in unrelated_record_permutations(&input(vec![operation])) {
+            let found = refusal(
+                &document,
+                "invalid_model_binding",
+                "conflicting-binding",
+                &key("advance/amount"),
+                "TypeDefinition.operations[0].params[1]",
+            );
+            assert!(found.detail.contains("DUPLICATE_PARAM"), "{found:?}");
+        }
+    }
+}
+
+#[trace("TC-1307", "FR-512-AC-8", "FR-512-AC-17")]
+#[test]
+fn unrelated_record_order_keeps_the_readers_repeated_parameter_name_pointer() {
+    let first = operation_parameter("advance", "amount", INTEGER);
+    let mut second = operation_parameter("advance", "other", INTEGER);
+    second["name"] = json!("amount");
+    for document in
+        unrelated_record_permutations(&input(vec![query("advance", json!([first, second]))]))
+    {
+        let source: Value = serde_json::from_slice(&document).expect("input JSON");
+        let owner_index = source["types"]
+            .as_array()
+            .expect("types")
+            .iter()
+            .position(|node| node["identity"] == format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"))
+            .expect("operation owner in this input");
+        let rejected = admit(&document).expect_err("reader rejects the repeated parameter name");
+        let UnitIntakeCause::Refused(found) = rejected.cause else {
+            panic!("{rejected:?}");
+        };
+        assert_eq!(found.len(), 1, "no additional intake refusal: {found:?}");
+        assert!(found[0].detail.contains("DUPLICATE_PARAM"), "{found:?}");
+        assert!(
+            found[0].detail.contains(&format!(
+                "/ir/types/{owner_index}/operations/0/params/1/name"
+            )),
+            "{found:?}"
+        );
+        let ModelRefusalCause::IntakeMalformedDeclaration { member, .. } = &found[0].cause else {
+            panic!("{found:?}");
+        };
+        assert_eq!(
+            member.to_string(),
+            "TypeDefinition.operations[0].params[1].name"
+        );
+    }
+}
+
+#[trace(
+    "TC-1307",
+    "FR-512-AC-2",
+    "FR-512-AC-3",
+    "FR-512-AC-16",
+    "FR-512-AC-17"
+)]
+#[test]
+fn unrelated_record_order_keeps_owner_refusals_ahead_of_operation_name_collisions() {
+    use fsl_semantics::model::intake::meaning;
+    for (kind, meaning, code, cause) in [
+        (
+            "event_type",
+            meaning::EVENT_TYPE,
+            "invalid_model_binding",
+            "malformed-declaration",
+        ),
+        (
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+            "unsupported_construct",
+            "declaration-form",
+        ),
+    ] {
+        let mut first = query("advance", json!([]));
+        first["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"));
+        let mut second = query("other", json!([]));
+        second["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/other"));
+        second["name"] = json!("advance");
+        for document in
+            unrelated_record_permutations(&extra_owner(kind, meaning, vec![first, second]))
+        {
+            let rejected = admit(&document).expect_err("owner refusals precede namespace checks");
+            let UnitIntakeCause::Refused(found) = rejected.cause else {
+                panic!("{rejected:?}");
+            };
+            assert_eq!(found.len(), 2, "one owner refusal per operation: {found:?}");
+            for (index, name) in ["advance", "other"].iter().enumerate() {
+                assert_refusal(
+                    &found[index],
+                    code,
+                    cause,
+                    &format!("ix://{PACKAGE_IDENTITY}/Parcel/{name}"),
+                    &format!("TypeDefinition.operations[{index}]"),
+                );
+            }
+        }
+    }
+}
+
+#[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16", "FR-512-AC-17")]
+#[ignore = "QSL-2696: operation namespace and precedence refusal must survive record reordering"]
+#[test]
+fn unrelated_record_order_keeps_both_equal_name_collision_participants() {
+    for reserved_parameter in [false, true] {
+        let first = query("advance", json!([]));
+        let parameters = if reserved_parameter {
+            json!([operation_parameter("other", "result", INTEGER)])
+        } else {
+            json!([])
+        };
+        let mut second = query("other", parameters);
+        second["name"] = json!("advance");
+        for document in unrelated_record_permutations(&input(vec![first, second])) {
+            let found = refusal(
+                &document,
+                "ambiguous_declaration",
+                "ambiguous-name",
+                &key("other"),
+                "TypeDefinition.operations[1].name",
+            );
+            assert_collision_participants(&found);
+        }
+    }
+}
+
+#[trace("TC-1307", "FR-512-AC-9", "FR-512-AC-15", "FR-512-AC-17")]
+#[ignore = "QSL-2696: parameter name validation must precede frame resolution after record reordering"]
+#[test]
+fn unrelated_record_order_keeps_mismatched_parameter_name_and_precedence_loci() {
+    for bad_frame in [false, true] {
+        let mut parameter = operation_parameter("advance", "amount", INTEGER);
+        parameter["name"] = json!("distance");
+        let mut operation = query("advance", json!([parameter]));
+        if bad_frame {
+            operation["frame"]["modifies"] = json!([key("missingField")]);
+        }
+        for document in unrelated_record_permutations(&input(vec![operation])) {
+            refusal(
+                &document,
+                "invalid_model_binding",
+                "malformed-declaration",
+                &key("advance/amount"),
+                "TypeDefinition.operations[0].params[0].name",
+            );
+        }
+    }
+}
+
+#[trace(
+    "TC-1307",
+    "FR-512-AC-10",
+    "FR-512-AC-11",
+    "FR-512-AC-15",
+    "FR-512-AC-17"
+)]
+#[ignore = "QSL-2696: reserved result-name and precedence refusal must survive record reordering"]
+#[test]
+fn unrelated_record_order_keeps_reserved_result_name_and_precedence_loci() {
+    for returns in [None, Some(INTEGER)] {
+        for bad_frame in [false, true] {
+            let mut operation = operation(
+                "advance",
+                json!([operation_parameter("advance", "result", INTEGER)]),
+                returns,
+                empty_frame(),
+            );
+            if bad_frame {
+                operation["frame"]["modifies"] = json!([key("missingField")]);
+            }
+            for document in unrelated_record_permutations(&input(vec![operation])) {
+                refusal(
+                    &document,
+                    "ambiguous_declaration",
+                    "ambiguous-name",
+                    &key("advance/result"),
+                    "TypeDefinition.operations[0].params[0].name",
+                );
+            }
+        }
     }
 }

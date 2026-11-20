@@ -277,6 +277,75 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
     };
     assert_eq!(*operator, ApplicationOperator::Conditional);
     assert_eq!(arguments.len(), 3, "condition, then, else");
+    let parameters = members
+        .iter()
+        .find_map(|member| match member {
+            CheckedTerm::Binding { name, value }
+                if matches!(name.kind(), CheckedBindingNameKind::Parameters) =>
+            {
+                Some(value.as_ref())
+            }
+            _ => None,
+        })
+        .expect("the body's declared parameters");
+    let CheckedTerm::Aggregate {
+        members: parameters,
+    } = parameters
+    else {
+        panic!("ordered parameter references");
+    };
+    let ready: Vec<_> = parameters
+        .iter()
+        .filter_map(|parameter| {
+            let CheckedTerm::Reference { target } = parameter else {
+                panic!("parameter reference");
+            };
+            let parameter = graph
+                .nodes
+                .iter()
+                .find(|node| &node.node_id == target)
+                .expect("declared parameter");
+            let CheckedTerm::Aggregate { members } = &parameter.body else {
+                panic!("parameter metadata");
+            };
+            let name = members
+                .iter()
+                .find_map(|member| match member {
+                    CheckedTerm::Binding { name, value }
+                        if matches!(name.kind(), CheckedBindingNameKind::Other("name")) =>
+                    {
+                        Some(value.as_ref())
+                    }
+                    _ => None,
+                })
+                .expect("parameter name");
+            let CheckedTerm::Reference { target: name } = name else {
+                panic!("parameter name reference");
+            };
+            let name = graph
+                .nodes
+                .iter()
+                .find(|node| &node.node_id == name)
+                .expect("parameter name literal");
+            match name
+                .body
+                .literal_read()
+                .expect("parameter name value")
+                .value
+            {
+                CheckedLiteralValue::Text("ready") => Some(target),
+                _ => None,
+            }
+        })
+        .collect();
+    assert_eq!(ready.len(), 1, "one exact authored ready parameter");
+    let CheckedTerm::Reference { target: condition } = &arguments[0] else {
+        panic!("the condition reads a parameter, not an inline Boolean constant");
+    };
+    assert_eq!(
+        condition, ready[0],
+        "the condition must read this function's ready parameter"
+    );
     for (argument, expected) in arguments[1..].iter().zip([31_i64, 47_i64]) {
         let CheckedTerm::Reference { target } = argument else {
             panic!("branch expression reference");
