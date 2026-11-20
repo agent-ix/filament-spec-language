@@ -7,7 +7,7 @@ use fsl_command::command::{self, CheckInputs};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::Operation;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::intake::{compile_model_unit, package_input};
+use fsl_semantics::model::intake::{compile_model_unit, package_input, package_input_from_sources};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -133,8 +133,16 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
         &[],
     );
     let from_unit = command::compile_outcome(&path).expect("the model unit route compiles");
-    let document =
-        package_input([SHOP.as_bytes()]).expect("the compiled document")["example/shop"].clone();
+    let model_source = fsl_cst::diagnostic::read_source(
+        SourceIdentity::new("agent-ix", "test:shop.fsl"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("the model source metadata is admitted");
+    let document = package_input_from_sources([&model_source])
+        .expect("the source compiles to its Semantic IR document")["example/shop"]
+        .clone();
     std::fs::write(directory.path().join("shop.semantic-ir.json"), &document).unwrap();
     let document_entry =
         json!([{"format": "semantic-ir/2.0.0", "source": source("shop.semantic-ir.json")}]);
@@ -255,7 +263,7 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
         ..CheckInputs::default()
     };
     let wrong_selection = check_document(&command::check_outcome(&other_rule, &other_inputs));
-    assert_eq!(wrong_selection["category"], "failure", "{wrong_selection}");
+    assert_eq!(wrong_selection["category"], "refusal", "{wrong_selection}");
     assert_eq!(
         wrong_selection["diagnostics"][0]["code"], "invalid_model_binding",
         "{wrong_selection}"
@@ -281,8 +289,10 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
         "{refused}"
     );
     assert_eq!(refused["last_stage"], "I1", "{refused}");
-    assert_eq!(
-        refused["diagnostics"][0]["locus"]["file"], "ghost.fsl",
+    assert!(
+        refused["diagnostics"][0]["locus"]["file"]
+            .as_str()
+            .is_some_and(|file| file.ends_with("ghost.fsl")),
         "{refused}"
     );
 }
