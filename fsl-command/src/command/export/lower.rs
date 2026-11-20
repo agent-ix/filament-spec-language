@@ -292,17 +292,6 @@ fn defer_at<T>(node: usize, construct: &str, detail: impl Into<String>) -> Lower
     })
 }
 
-/// A typed refusal for a construct the specification covers and this build
-/// has yet to lower.
-fn defer<T>(construct: &str, detail: impl Into<String>) -> Lower<T> {
-    Err(Refusal {
-        construct: construct.to_owned(),
-        detail: detail.into(),
-        node: None,
-        obligation: None,
-    })
-}
-
 fn refusal(construct: &str, detail: &str) -> Refusal {
     Refusal {
         construct: construct.to_owned(),
@@ -332,7 +321,7 @@ enum Op {
     NeBool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum E {
     Int(String),
     Bool(bool),
@@ -425,6 +414,19 @@ impl Lowerer<'_> {
         )
     }
 
+    /// Whether the parameter node at `position` is typed by an object type.
+    fn is_object_typed(&self, position: usize) -> bool {
+        let node = self.graph.node(position);
+        let Some(ty) = self.graph.position(&node.semantic_type) else {
+            return false;
+        };
+        let Ok(body) = serde_json::to_value(&self.graph.node(ty).body) else {
+            return false;
+        };
+        let path = &body["members"][0]["target"]["path"];
+        path[0] == "model" && path[1] == "object_type"
+    }
+
     fn node(&mut self, position: usize, primed: bool) -> Lower<Low> {
         let node = self.graph.node(position);
         let body = serde_json::to_value(&node.body)
@@ -436,8 +438,12 @@ impl Lowerer<'_> {
                 .find(|member| str_of(member, "name") == Some("name"))
                 .and_then(|member| member["value"]["value"].as_str())
                 .ok_or_else(|| refusal(&construct, "a parameter has no name"))?;
+            // The receiver is the operation's object-typed `self` parameter; a
+            // declared parameter spelled `self` is an ordinary `p_` parameter
+            // (FSpec FR-814).
+            let receiver = name == "self" && self.is_object_typed(position);
             return Ok(Low {
-                value: E::Param(if name == "self" {
+                value: E::Param(if receiver {
                     "r_self".to_owned()
                 } else {
                     mangle("p_", name)
@@ -670,9 +676,12 @@ fn fairness_of(graph: &Graph<'_>, position: usize) -> Lower<Vec<FairRead>> {
             declaration: target["declaration"]["path"]
                 .get(2)
                 .and_then(Value::as_str)
-                .unwrap_or_default()
+                .ok_or_else(|| refusal("temporal/fairness", "a fairness names no declaration"))?
                 .to_owned(),
-            operation: str_of(target, "name").unwrap_or_default().to_owned(),
+            operation: str_of(target, "name")
+                .ok_or_else(|| refusal("temporal/fairness", "a fairness names no operation"))?
+                .to_owned(),
+            node,
         });
     }
     Ok(reads)
@@ -1133,11 +1142,30 @@ pub(super) fn lower(
             .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))
             .map_err(attribute)?;
         let (mut cur, mut next) = (Vec::new(), Vec::new());
+        // The binder as the lowerer names it, then as a clause binder (`o_`).
+        let lowered_binder = match lowerer.node(read.over, false).map_err(attribute)?.value {
+            E::Param(name) => name,
+            _ => {
+                return Err(attribute(refusal(
+                    "temporal/temporal_clause",
+                    "the `over` binder does not lower to a parameter",
+                )));
+            }
+        };
         let binder = format!("o_{}", read.binder.trim_start_matches("p_"));
+        let mut defs: Vec<E> = Vec::new();
         for &leaf in &read.atoms {
             for (primed, atoms) in [(false, &mut cur), (true, &mut next)] {
                 let low = lowerer.node(leaf, primed).map_err(attribute)?;
-                atoms.push(rename_param(low.clause(), &read.binder, &binder));
+                if !primed {
+                    for def in low.defined {
+                        let def = rename_param(def, &lowered_binder, &binder);
+                        if !defs.iter().any(|seen| seen == &def) {
+                            defs.push(def);
+                        }
+                    }
+                }
+                atoms.push(rename_param(low.value, &lowered_binder, &binder));
             }
         }
         let mut fairness = Vec::new();
@@ -1153,18 +1181,21 @@ pub(super) fn lower(
                         .position(|operation| operation.name == fair.operation)
                         .map(|operation| (index, operation))
                 });
-            let (object, operation) = found
-                .ok_or_else(|| {
-                    refusal(
-                        "temporal/fairness",
-                        "a fairness over an operation outside the exported state",
+            let (fair_object, operation) = match found {
+                Some((index, operation)) if index == object => (index, operation),
+                _ => {
+                    return defer_at(
+                        fair.node,
+                        "temporal/fairness-target",
+                        "a fairness over an operation of another object type than the clause's subject",
                     )
-                })
-                .map_err(attribute)?;
+                    .map_err(attribute);
+                }
+            };
             fairness.push(FairLow {
                 strong: fair.strong,
                 each: fair.each,
-                object,
+                object: fair_object,
                 operation,
             });
         }
@@ -1174,6 +1205,8 @@ pub(super) fn lower(
             object,
             binder: binder.clone(),
             tf: read.tf,
+            refuse_at: read.refuse_at,
+            defs,
             cur,
             next,
             fairness,

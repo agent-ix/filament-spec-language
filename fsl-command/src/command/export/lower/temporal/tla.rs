@@ -6,19 +6,19 @@
 //! auxiliary variable: a Boolean for an unbounded operator, a saturating
 //! counter or a delay register for a lower-bounded one, a shift register for
 //! a closed interval. `until`, `release` and an interval operator at the
-//! root of a clause become a deterministic monitor. Every other clause is a
-//! nondeterministic Buchi monitor that guesses the truth of its future
-//! subformulas, and its record is `conditional`.
+//! root of a clause become a deterministic monitor. A clause with no
+//! deterministic monitor needs the nondeterministic Buchi monitor, which
+//! this build does not lower: it is the typed refusal naming the operator.
 //!
 //! Every temporal-level range is the model's constant identity universe
-//! `Ids_<T>`, guarded at the origin in the theorem, never `DOMAIN v`, which
-//! varies with the state. The step counter and the histories advance on
+//! `Ids_<T>`, never `DOMAIN v`, which varies with the state; `ok_<clause>`
+//! states that every read is defined. The step counter and the histories advance on
 //! every step of `Next_<clause>`, which includes the terminal step, so both
 //! targets count FSL's terminal stutter positions.
 
 use super::{CONSTRUCT, ClauseLow, Iv, Tf};
 use crate::command::export::lower::{
-    Definition, Input, Lower, Object, Operation, Target, bullets, defer, define, mangle,
+    Definition, Input, Lower, Object, Operation, Target, bullets, defer_at, define, mangle,
     parameters, refusal, scalars, snapshot_rows, tla_domain,
 };
 use std::collections::BTreeSet;
@@ -46,7 +46,8 @@ pub(in crate::command::export::lower) struct Extra {
 
 // ---- Normal form -----------------------------------------------------------
 
-/// `historically` and `triggered` as the duals of `once` and `since`.
+/// `historically` and `triggered` over an interval as the duals of `once`
+/// and `since`; the unbounded forms keep their own history.
 fn normalize(tf: &Tf) -> Tf {
     let go = |inner: &Tf| Box::new(normalize(inner));
     let not = |inner: Tf| Tf::Not(Box::new(inner));
@@ -62,7 +63,8 @@ fn normalize(tf: &Tf) -> Tf {
         Tf::Until(iv, left, right) => Tf::Until(*iv, go(left), go(right)),
         Tf::Release(iv, left, right) => Tf::Release(*iv, go(left), go(right)),
         Tf::Since(iv, left, right) => Tf::Since(*iv, go(left), go(right)),
-        Tf::Next(inner) => Tf::Next(go(inner)),
+        Tf::Historically(iv, inner) if !iv.is_some() => Tf::Historically(*iv, go(inner)),
+        Tf::Triggered(iv, left, right) if !iv.is_some() => Tf::Triggered(*iv, go(left), go(right)),
         Tf::Historically(iv, inner) => not(Tf::Once(*iv, Box::new(not(normalize(inner))))),
         Tf::Triggered(iv, left, right) => not(Tf::Since(
             *iv,
@@ -102,6 +104,10 @@ enum HKind {
     Once { p: Tf },
     /// `p since q`: a Boolean `h`.
     Since { p: Tf, q: Tf },
+    /// `historically p`: a Boolean `h` of `p` at every position so far.
+    Historically { p: Tf },
+    /// `p triggered q`: a Boolean `h`.
+    Triggered { p: Tf, q: Tf },
     /// `once[a,*] p`: a counter `c` of the steps since `p` first held,
     /// saturating at `a`.
     OnceFrom { p: Tf, a: u64 },
@@ -175,7 +181,6 @@ fn extract(tf: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Tf
             go(left, histories, ordinal)?,
             go(right, histories, ordinal)?,
         ),
-        Tf::Next(inner) => Tf::Next(go(inner, histories, ordinal)?),
         Tf::Once(iv, inner) => {
             let ord = *ordinal;
             *ordinal += 1;
@@ -234,8 +239,40 @@ fn extract(tf: &Tf, histories: &mut Vec<History>, ordinal: &mut u64) -> Lower<Tf
             }
             Tf::Hist(histories.len() - 1)
         }
+        Tf::Historically(iv, inner) if !iv.is_some() => {
+            let ord = *ordinal;
+            *ordinal += 1;
+            let p = *go(inner, histories, ordinal)?;
+            past_state(&p)?;
+            let before_p = before_origin(&p, histories);
+            histories.push(History {
+                kind: HKind::Historically { p },
+                ord,
+                before: true,
+                before_p,
+                before_q: false,
+            });
+            Tf::Hist(histories.len() - 1)
+        }
+        Tf::Triggered(iv, left, right) if !iv.is_some() => {
+            let ord = *ordinal;
+            *ordinal += 2;
+            let p = *go(left, histories, ordinal)?;
+            let q = *go(right, histories, ordinal)?;
+            past_state(&p)?;
+            past_state(&q)?;
+            let (before_p, before_q) = (before_origin(&p, histories), before_origin(&q, histories));
+            histories.push(History {
+                kind: HKind::Triggered { p, q },
+                ord,
+                before: true,
+                before_p,
+                before_q,
+            });
+            Tf::Hist(histories.len() - 1)
+        }
         Tf::Historically(..) | Tf::Triggered(..) => {
-            return refuse_internal("a past operator that normalization leaves");
+            return refuse_internal("a bounded past operator that normalization leaves");
         }
     })
 }
@@ -249,10 +286,7 @@ fn past_state(tf: &Tf) -> Lower<()> {
     if is_state(tf) {
         Ok(())
     } else {
-        defer(
-            "temporal/formula",
-            "a past operator over a formula that holds a future operator",
-        )
+        refuse_internal("a past operator over a formula that holds a future operator")
     }
 }
 
@@ -342,134 +376,6 @@ fn shape_of(tf: &Tf) -> Shape {
     Shape::Monitors(parts)
 }
 
-// ---- The tableau -----------------------------------------------------------
-
-/// The widest nested interval, in offsets, the nondeterministic monitor
-/// expands.
-const MAX_EXPANSION: u64 = 32;
-
-fn next_n(tf: Tf, n: u64) -> Tf {
-    (0..n).fold(tf, |inner, _| Tf::Next(Box::new(inner)))
-}
-
-fn fold(items: Vec<Tf>, combine: fn(Box<Tf>, Box<Tf>) -> Tf) -> Tf {
-    let mut items = items.into_iter();
-    let first = items.next().unwrap_or(Tf::Const(true));
-    items.fold(first, |left, right| {
-        combine(Box::new(left), Box::new(right))
-    })
-}
-
-/// Interval operators as offsets, so the nondeterministic monitor needs
-/// only the unbounded operators and the next position.
-fn desugar(tf: &Tf) -> Lower<Tf> {
-    let go = |inner: &Tf| desugar(inner).map(Box::new);
-    let width = |a: u64, b: u64| {
-        if b.saturating_sub(a) > MAX_EXPANSION {
-            defer("temporal/formula", "a nested interval wider than 32 steps")
-        } else {
-            Ok(())
-        }
-    };
-    Ok(match tf {
-        Tf::Const(_) | Tf::Atom(_) | Tf::Hist(_) => tf.clone(),
-        Tf::Not(inner) => Tf::Not(go(inner)?),
-        Tf::And(left, right) => Tf::And(go(left)?, go(right)?),
-        Tf::Or(left, right) => Tf::Or(go(left)?, go(right)?),
-        Tf::Implies(left, right) => Tf::Implies(go(left)?, go(right)?),
-        Tf::Next(inner) => Tf::Next(go(inner)?),
-        Tf::Always(iv, inner) => {
-            let p = desugar(inner)?;
-            match iv.bounds() {
-                (0, None) => Tf::Always(Iv::none(), Box::new(p)),
-                (a, None) => next_n(Tf::Always(Iv::none(), Box::new(p)), a),
-                (a, Some(b)) => {
-                    width(a, b)?;
-                    fold((a..=b).map(|d| next_n(p.clone(), d)).collect(), Tf::And)
-                }
-            }
-        }
-        Tf::Eventually(iv, inner) => {
-            let p = desugar(inner)?;
-            match iv.bounds() {
-                (0, None) => Tf::Eventually(Iv::none(), Box::new(p)),
-                (a, None) => next_n(Tf::Eventually(Iv::none(), Box::new(p)), a),
-                (a, Some(b)) => {
-                    width(a, b)?;
-                    fold((a..=b).map(|d| next_n(p.clone(), d)).collect(), Tf::Or)
-                }
-            }
-        }
-        Tf::Until(iv, left, right) => {
-            let (p, q) = (desugar(left)?, desugar(right)?);
-            match iv.bounds() {
-                (0, None) => Tf::Until(Iv::none(), Box::new(p), Box::new(q)),
-                (a, None) => next_n(Tf::Until(Iv::none(), Box::new(p), Box::new(q)), a),
-                (a, Some(b)) => {
-                    width(a, b)?;
-                    fold(
-                        (a..=b)
-                            .map(|d| {
-                                let mut all = vec![next_n(q.clone(), d)];
-                                all.extend((a..d).map(|e| next_n(p.clone(), e)));
-                                fold(all, Tf::And)
-                            })
-                            .collect(),
-                        Tf::Or,
-                    )
-                }
-            }
-        }
-        Tf::Release(iv, left, right) => desugar(&Tf::Not(Box::new(Tf::Until(
-            *iv,
-            Box::new(Tf::Not(left.clone())),
-            Box::new(Tf::Not(right.clone())),
-        ))))?,
-        Tf::Once(..) | Tf::Historically(..) | Tf::Since(..) | Tf::Triggered(..) => {
-            return refuse_internal("a past operator left in a future formula");
-        }
-    })
-}
-
-/// A guessed subformula of the nondeterministic monitor.
-enum Guess {
-    Next(Tf),
-    Until(Tf, Tf),
-    Release(Tf, Tf),
-    Always(Tf),
-    Eventually(Tf),
-}
-
-#[derive(Default)]
-struct Tableau {
-    guesses: Vec<(Tf, Guess)>,
-}
-
-impl Tableau {
-    /// The index of the guess for `tf`, registering it when it is new.
-    fn register(&mut self, tf: &Tf) -> Lower<usize> {
-        if let Some(index) = self.guesses.iter().position(|(seen, _)| seen == tf) {
-            return Ok(index);
-        }
-        let guess = match tf {
-            Tf::Next(inner) => Guess::Next((**inner).clone()),
-            Tf::Until(_, left, right) => Guess::Until((**left).clone(), (**right).clone()),
-            Tf::Release(_, left, right) => Guess::Release((**left).clone(), (**right).clone()),
-            Tf::Always(_, inner) => Guess::Always((**inner).clone()),
-            Tf::Eventually(_, inner) => Guess::Eventually((**inner).clone()),
-            _ => return refuse_internal("a guess for a formula that is no future operator"),
-        };
-        if self.guesses.len() >= 128 {
-            return defer(
-                "temporal/formula",
-                "a nested formula with more than 128 future subformulas",
-            );
-        }
-        self.guesses.push((tf.clone(), guess));
-        Ok(self.guesses.len() - 1)
-    }
-}
-
 // ---- Rendering -------------------------------------------------------------
 
 struct Names {
@@ -527,14 +433,10 @@ impl Names {
             (self.monitor.clone(), self.accept.clone())
         }
     }
-
-    fn guess(&self, index: usize) -> String {
-        format!("{}_g{index}", self.monitor)
-    }
 }
 
-/// An auxiliary variable of a clause: its type and, unless it is a free
-/// guess, its initial and updated values.
+/// An auxiliary variable of a clause: its type and its initial and updated
+/// values.
 struct Var {
     name: String,
     ty: String,
@@ -622,7 +524,10 @@ impl Ctx<'_> {
     /// register.
     fn variable(&self, history: &History) -> String {
         let letter = match history.kind {
-            HKind::Once { .. } | HKind::Since { .. } => 'h',
+            HKind::Once { .. }
+            | HKind::Since { .. }
+            | HKind::Historically { .. }
+            | HKind::Triggered { .. } => 'h',
             HKind::OnceFrom { .. } => 'c',
             HKind::SinceFrom { .. } | HKind::OnceWithin { .. } | HKind::SinceWithin { .. } => 'r',
         };
@@ -639,7 +544,10 @@ impl Ctx<'_> {
         let tick = if primed { "'" } else { "" };
         let key = self.key();
         Ok(match &history.kind {
-            HKind::Once { .. } | HKind::Since { .. } => format!("{name}{tick}[{key}]"),
+            HKind::Once { .. }
+            | HKind::Since { .. }
+            | HKind::Historically { .. }
+            | HKind::Triggered { .. } => format!("{name}{tick}[{key}]"),
             HKind::OnceFrom { a, .. } => format!("{name}{tick}[{key}] = {a}"),
             HKind::SinceFrom { a, .. } => format!("{name}{tick}[{key}][{a}]"),
             HKind::OnceWithin { p, a, b } => {
@@ -685,6 +593,25 @@ impl Ctx<'_> {
                     init: Some(self.per_key(&self.state(p, false)?)),
                     update: Some(self.per_key(&format!(
                         "({} \\/ {name}[{key}])",
+                        self.state(p, true)?
+                    ))),
+                    name,
+                }),
+                HKind::Historically { p } => vars.push(Var {
+                    ty: function("BOOLEAN"),
+                    init: Some(self.per_key(&self.state(p, false)?)),
+                    update: Some(self.per_key(&format!(
+                        "({} /\\ {name}[{key}])",
+                        self.state(p, true)?
+                    ))),
+                    name,
+                }),
+                HKind::Triggered { p, q } => vars.push(Var {
+                    ty: function("BOOLEAN"),
+                    init: Some(self.per_key(&self.state(q, false)?)),
+                    update: Some(self.per_key(&format!(
+                        "({} /\\ ({} \\/ {name}[{key}]))",
+                        self.state(q, true)?,
                         self.state(p, true)?
                     ))),
                     name,
@@ -902,8 +829,12 @@ pub(in crate::command::export::lower) fn tla(
             .get(clause.object)
             .ok_or_else(|| refusal(CONSTRUCT, "an unexported clause context"))?;
         let names = Names::new(&clause.name, object);
+        let attribute = |mut refusal: super::super::Refusal| {
+            refusal.obligation = Some(clause.name.clone());
+            refusal
+        };
         if universes.insert(clause.object) {
-            universe(input, clause, object, &names, out, &mut extra)?;
+            universe(input, clause, object, &names, out, &mut extra).map_err(attribute)?;
         }
         if input.snapshot.is_none() {
             extra.conditional.push(Cond {
@@ -920,7 +851,7 @@ pub(in crate::command::export::lower) fn tla(
             names,
             histories: Vec::new(),
         };
-        tla_clause(ctx, out, &mut extra)?;
+        tla_clause(ctx, out, &mut extra).map_err(attribute)?;
     }
     Ok(extra)
 }
@@ -968,12 +899,9 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
     let shape = shape_of(&root);
 
     let mut vars = ctx.history_vars()?;
-    let mut extra_init = Vec::new();
-    let mut extra_update = Vec::new();
     // The conjuncts of the theorem after `ok_`.
     let mut statements = Vec::new();
     let mut accepts: Vec<(String, String)> = Vec::new();
-    let mut conditional = false;
     let key = ctx.key().to_owned();
     match &shape {
         Shape::Direct => statements.push(ctx.direct(&root)?),
@@ -1011,12 +939,16 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             }
         }
         Shape::Tableau => {
-            conditional = true;
-            let condition =
-                tableau_vars(&ctx, &root, &mut vars, &mut extra_init, &mut extra_update)?;
-            let accept = ctx.names.accept.clone();
-            statements.push(format!("{accept}({key})"));
-            accepts.push((accept, condition));
+            return defer_at(
+                clause.refuse_at.ok_or_else(|| {
+                    refusal(
+                        CONSTRUCT,
+                        "a clause with no monitor and no operator to name",
+                    )
+                })?,
+                "temporal/nondeterministic-monitor",
+                "a future operator that needs the nondeterministic Buchi monitor",
+            );
         }
     }
 
@@ -1025,14 +957,14 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
     let fair = fairness(&ctx)?;
     let spec_t = composed || !fair.is_empty();
 
+    let mut presence = vec![format!("{key} \\in DOMAIN {}", ctx.object.variable())];
+    for def in &clause.defs {
+        presence.push(ctx.input.show.expr(def)?);
+    }
     out.push(define(
         clause.position,
         Some(names.ok.clone()),
-        format!(
-            "{}({key}) == {key} \\in DOMAIN {}",
-            names.ok,
-            ctx.object.variable()
-        ),
+        format!("{}({key}) == {}", names.ok, presence.join(" /\\ ")),
         obligation,
     ));
     if composed {
@@ -1061,7 +993,6 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
                 .as_ref()
                 .map(|init| format!("{} = {init}", var.name))
         }));
-        init.extend(extra_init);
         init.push(names.type_ok.clone());
         out.push(define(
             clause.position,
@@ -1069,7 +1000,7 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
             format!("{} ==\n{}", names.init, bullets(&init)),
             obligation,
         ));
-        let mut updates: Vec<String> = vars
+        let updates: Vec<String> = vars
             .iter()
             .filter_map(|var| {
                 var.update
@@ -1077,7 +1008,6 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
                     .map(|update| format!("{}' = {update}", var.name))
             })
             .collect();
-        updates.extend(extra_update);
         out.push(define(
             clause.position,
             Some(names.mon.clone()),
@@ -1132,14 +1062,6 @@ fn tla_clause(mut ctx: Ctx<'_>, out: &mut Vec<Definition>, extra: &mut Extra) ->
     extra
         .variables
         .extend(vars.iter().map(|var| var.name.clone()));
-    if conditional {
-        extra.conditional.push(Cond {
-            obligation: clause.name.clone(),
-            kind: "nondeterministic-monitor",
-            node: clause.position,
-            type_name: None,
-        });
-    }
     Ok(())
 }
 
@@ -1199,134 +1121,10 @@ fn monitor_vars(
     Ok(())
 }
 
-/// The guess variables and constraints of the nondeterministic monitor of
-/// `root`; the result is the acceptance condition over its eventualities.
-fn tableau_vars(
-    ctx: &Ctx<'_>,
-    root: &Tf,
-    vars: &mut Vec<Var>,
-    init: &mut Vec<String>,
-    update: &mut Vec<String>,
-) -> Lower<String> {
-    let mut tableau = Tableau::default();
-    let desugared = desugar(root)?;
-    let root_value = value(ctx, &mut tableau, &desugared, false)?;
-    init.push(format!(
-        "\\A {} \\in {} : {root_value}",
-        ctx.key(),
-        ctx.names.ids
-    ));
-    let key = ctx.key();
-    let mut constraints = Vec::new();
-    let mut eventualities = Vec::new();
-    let mut index = 0;
-    while index < tableau.guesses.len() {
-        let g = ctx.names.guess(index);
-        let now = format!("{g}[{key}]");
-        let next = format!("{g}'[{key}]");
-        match tableau.guesses[index].1.clone_guess() {
-            Guess::Next(inner) => {
-                let after = value(ctx, &mut tableau, &inner, true)?;
-                constraints.push(format!("({now} <=> {after})"));
-            }
-            Guess::Until(left, right) => {
-                let l = value(ctx, &mut tableau, &left, false)?;
-                let r = value(ctx, &mut tableau, &right, false)?;
-                constraints.push(format!("({now} <=> ({r} \\/ ({l} /\\ {next})))"));
-                eventualities.push(format!("[]<>(~{now} \\/ {r})"));
-            }
-            Guess::Release(left, right) => {
-                let l = value(ctx, &mut tableau, &left, false)?;
-                let r = value(ctx, &mut tableau, &right, false)?;
-                constraints.push(format!("({now} <=> ({r} /\\ ({l} \\/ {next})))"));
-            }
-            Guess::Always(inner) => {
-                let f = value(ctx, &mut tableau, &inner, false)?;
-                constraints.push(format!("({now} <=> ({f} /\\ {next}))"));
-            }
-            Guess::Eventually(inner) => {
-                let f = value(ctx, &mut tableau, &inner, false)?;
-                constraints.push(format!("({now} <=> ({f} \\/ {next}))"));
-                eventualities.push(format!("[]<>(~{now} \\/ {f})"));
-            }
-        }
-        index += 1;
-    }
-    for index in 0..tableau.guesses.len() {
-        let name = ctx.names.guess(index);
-        update.push(format!("{name}' \\in [{} -> BOOLEAN]", ctx.names.ids));
-        vars.push(Var {
-            name,
-            ty: format!("[{} -> BOOLEAN]", ctx.names.ids),
-            init: None,
-            update: None,
-        });
-    }
-    if !constraints.is_empty() {
-        update.push(format!(
-            "\\A {key} \\in {} : {}",
-            ctx.names.ids,
-            constraints.join(" /\\ ")
-        ));
-    }
-    Ok(if eventualities.is_empty() {
-        "TRUE".to_owned()
-    } else {
-        eventualities.join(" /\\ ")
-    })
-}
-
-impl Guess {
-    fn clone_guess(&self) -> Self {
-        match self {
-            Self::Next(inner) => Self::Next(inner.clone()),
-            Self::Until(left, right) => Self::Until(left.clone(), right.clone()),
-            Self::Release(left, right) => Self::Release(left.clone(), right.clone()),
-            Self::Always(inner) => Self::Always(inner.clone()),
-            Self::Eventually(inner) => Self::Eventually(inner.clone()),
-        }
-    }
-}
-
-/// The value of `tf` at the current or the next position, with a guess
-/// variable for each future operator.
-fn value(ctx: &Ctx<'_>, tableau: &mut Tableau, tf: &Tf, primed: bool) -> Lower<String> {
-    let tick = if primed { "'" } else { "" };
-    Ok(match tf {
-        _ if is_state(tf) => ctx.state(tf, primed)?,
-        Tf::Not(inner) => format!("~({})", value(ctx, tableau, inner, primed)?),
-        Tf::And(left, right) => format!(
-            "({} /\\ {})",
-            value(ctx, tableau, left, primed)?,
-            value(ctx, tableau, right, primed)?
-        ),
-        Tf::Or(left, right) => format!(
-            "({} \\/ {})",
-            value(ctx, tableau, left, primed)?,
-            value(ctx, tableau, right, primed)?
-        ),
-        Tf::Implies(left, right) => format!(
-            "({} => {})",
-            value(ctx, tableau, left, primed)?,
-            value(ctx, tableau, right, primed)?
-        ),
-        other => {
-            let index = tableau.register(other)?;
-            format!("{}{tick}[{}]", ctx.names.guess(index), ctx.key())
-        }
-    })
-}
-
 /// The fairness conjuncts of the clause's composed specification.
 fn fairness(ctx: &Ctx<'_>) -> Lower<Vec<String>> {
     let mut fair = Vec::new();
     for constraint in &ctx.clause.fairness {
-        if constraint.object != ctx.clause.object {
-            return defer(
-                "temporal/fairness-target",
-                "a fairness over an operation of another object type than the clause's subject",
-            );
-        }
         let operation = ctx
             .object
             .operations
@@ -1335,7 +1133,12 @@ fn fairness(ctx: &Ctx<'_>) -> Lower<Vec<String>> {
         let kind = if constraint.strong { "SF" } else { "WF" };
         let text = if constraint.each {
             let action = operation_action(ctx.object, operation, &ctx.names.ids, true);
-            format!("\\A r_self \\in {} : {kind}_vars({action})", ctx.names.ids)
+            let range = if ctx.input.snapshot.is_none() {
+                mangle("Keys_", &ctx.object.name)
+            } else {
+                ctx.names.ids.clone()
+            };
+            format!("\\A r_self \\in {range} : {kind}_vars({action})")
         } else {
             let action = operation_action(ctx.object, operation, &ctx.names.ids, false);
             format!("{kind}_vars({action})")

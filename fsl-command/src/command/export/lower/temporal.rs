@@ -13,7 +13,9 @@ use super::{
     Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
 };
 use filament_contract_model::CheckedOperationInterval;
-use fsl_package::checked_views::{Activation, FormulaNodeUse, FormulaOperation, temporal_subject};
+use fsl_package::checked_views::{
+    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
+};
 use fsl_semantics::check::TemporalProfile;
 
 const CONSTRUCT: &str = "temporal/temporal_clause";
@@ -62,8 +64,6 @@ pub(super) enum Tf {
     Release(Iv, Box<Tf>, Box<Tf>),
     Since(Iv, Box<Tf>, Box<Tf>),
     Triggered(Iv, Box<Tf>, Box<Tf>),
-    /// The next position (a desugared interval offset).
-    Next(Box<Tf>),
 }
 
 /// One fairness constraint of a clause, as read from the package.
@@ -73,6 +73,8 @@ pub(super) struct FairRead {
     /// The object type that declares the operation.
     pub(super) declaration: String,
     pub(super) operation: String,
+    /// The fairness node.
+    pub(super) node: usize,
 }
 
 /// A temporal clause as read from the package.
@@ -84,7 +86,12 @@ pub(super) struct ClauseRead {
     pub(super) context_node: usize,
     /// The mangled name of the `over` binder.
     pub(super) binder: String,
+    /// The `over` binder node.
+    pub(super) over: usize,
     pub(super) tf: Tf,
+    /// The first future operator the clause's TLA+ text has no deterministic
+    /// monitor for, when one exists.
+    pub(super) refuse_at: Option<usize>,
     /// The node of each atom's Boolean operand, in formula order.
     pub(super) atoms: Vec<usize>,
     pub(super) fairness: Vec<FairRead>,
@@ -97,6 +104,11 @@ pub(super) struct ClauseLow {
     pub(super) object: usize,
     pub(super) binder: String,
     pub(super) tf: Tf,
+    /// The node a clause without a deterministic monitor is refused at.
+    pub(super) refuse_at: Option<usize>,
+    /// The FR-812 definedness conditions of the atoms, which `ok_<clause>`
+    /// states.
+    pub(super) defs: Vec<E>,
     /// Each atom in the current state and in the next state.
     pub(super) cur: Vec<E>,
     pub(super) next: Vec<E>,
@@ -112,6 +124,16 @@ pub(super) struct FairLow {
 }
 
 // ---- Reading -------------------------------------------------------------
+
+/// The position of the package node `id` names.
+fn at_node(graph: &Graph<'_>, id: &filament_contract_model::CheckedNodeId) -> Lower<usize> {
+    graph.position(id).ok_or_else(|| {
+        refusal(
+            "checked package",
+            "a node of the clause is not in the package",
+        )
+    })
+}
 
 fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
     let bound = |text: String| {
@@ -133,7 +155,7 @@ fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
             })
         }
         Some(CheckedOperationInterval::Timed { .. }) => defer_at(
-            graph.position(node.node).unwrap_or_default(),
+            at_node(graph, node.node)?,
             "temporal/timed-interval",
             "an interval over time stamps needs the dense-time encoding",
         ),
@@ -148,7 +170,25 @@ fn boxed(items: &[Tf], index: usize) -> Lower<Box<Tf>> {
         .ok_or_else(|| refusal(CONSTRUCT, "a temporal operator is missing an operand"))
 }
 
-fn build(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>], at: usize, atom: &mut usize) -> Lower<Tf> {
+/// Where `build` is in the formula.
+#[derive(Clone, Copy)]
+struct Scope {
+    /// Inside a future operator.
+    future: bool,
+    /// Inside a past operator.
+    past: bool,
+    /// Reached from the root through conjunctions only.
+    conj: bool,
+}
+
+fn build(
+    graph: &Graph<'_>,
+    uses: &[FormulaNodeUse<'_>],
+    at: usize,
+    atom: &mut usize,
+    scope: Scope,
+    refuse_at: &mut Option<usize>,
+) -> Lower<Tf> {
     let node = uses
         .get(at)
         .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))?;
@@ -159,18 +199,39 @@ fn build(graph: &Graph<'_>, uses: &[FormulaNodeUse<'_>], at: usize, atom: &mut u
         *atom += 1;
         return Ok(Tf::Atom(*atom - 1));
     }
+    let iv = interval(graph, node)?;
+    let here = at_node(graph, node.node)?;
+    let direction = kind.direction();
+    if direction == Some(OperatorDirection::Future) {
+        if scope.past {
+            return defer_at(
+                here,
+                "temporal/future-in-past",
+                "a future operator inside the operand of a past operator",
+            );
+        }
+        let monitored =
+            matches!(kind, FormulaOperation::Until | FormulaOperation::Release) || iv.is_some();
+        if scope.future || (!scope.conj && monitored) {
+            refuse_at.get_or_insert(here);
+        }
+    }
+    let inner = Scope {
+        future: scope.future || direction == Some(OperatorDirection::Future),
+        past: scope.past || direction == Some(OperatorDirection::Past),
+        conj: scope.conj && kind == FormulaOperation::And,
+    };
     let mut operands = Vec::new();
     for &operand in &node.operands {
-        operands.push(build(graph, uses, operand, atom)?);
+        operands.push(build(graph, uses, operand, atom, inner, refuse_at)?);
     }
-    let iv = interval(graph, node)?;
     Ok(match kind {
         FormulaOperation::True => Tf::Const(true),
         FormulaOperation::False => Tf::Const(false),
         FormulaOperation::Holds => unreachable!("read above"),
         FormulaOperation::Aggregate => {
             return defer_at(
-                graph.position(node.node).unwrap_or_default(),
+                here,
                 "temporal/aggregate",
                 "an aggregate atom over an accumulation of the trace",
             );
@@ -205,23 +266,56 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
             "a clause the package does not read as a temporal clause",
         )
     })?;
+    if let Some(protocol) = view.requirements().first() {
+        return defer_at(
+            at_node(graph, protocol)?,
+            "temporal/protocol-subject",
+            "a clause that a protocol requires through its activation relation",
+        );
+    }
+    if let Activation::Each { trigger, .. } = view.activation() {
+        return defer_at(
+            at_node(graph, trigger)?,
+            "temporal/activation",
+            "an activation other than `on origin`",
+        );
+    }
+    if let Some(capture) = view.captures().first() {
+        return defer_at(
+            at_node(graph, capture)?,
+            "temporal/capture",
+            "a capture of the activation",
+        );
+    }
+    if !view.capture_names().is_empty() {
+        // The capture is read as a name, with no node of its own.
+        return defer_at(position, "temporal/capture", "a capture of the activation");
+    }
     let profile = TemporalProfile::from_identity(&view.profile().definition.identity);
     if profile != Some(TemporalProfile::InfiniteTrace) {
+        // The package has no node for the profile selection (a lock row), so
+        // the clause node, which carries it, is the node named.
         return defer_at(
             position,
             "temporal/profile",
             "a step-counting profile other than filament.temporal.infinite-trace/v1",
         );
     }
-    if !matches!(view.activation(), Activation::Origin) || !view.captures().is_empty() {
-        return defer_at(
-            position,
-            "temporal/activation",
-            "an activation other than `on origin`, or a capture",
-        );
-    }
     let mut atom = 0;
-    let tf = build(graph, view.formula_graph(), 0, &mut atom)?;
+    let mut refuse_at = None;
+    let start = Scope {
+        future: false,
+        past: false,
+        conj: true,
+    };
+    let tf = build(
+        graph,
+        view.formula_graph(),
+        0,
+        &mut atom,
+        start,
+        &mut refuse_at,
+    )?;
     let leaves = view.predicate_leaves();
     if atom != leaves.len() {
         return refuse(CONSTRUCT, "a formula whose atoms the package does not list");
@@ -246,7 +340,9 @@ pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<Clau
         context,
         context_node,
         binder: mangle("p_", &binder),
+        over,
         tf,
+        refuse_at,
         atoms,
         fairness: super::fairness_of(graph, position)?,
     })
@@ -291,7 +387,7 @@ impl LeanClause<'_> {
         Ok(match tf {
             Tf::Const(true) => "True".to_owned(),
             Tf::Const(false) => "False".to_owned(),
-            Tf::Hist(_) | Tf::Next(_) => {
+            Tf::Hist(_) => {
                 return refuse(CONSTRUCT, "a TLA+ monitor construct in a Lean definition");
             }
             Tf::Atom(index) => format!(
@@ -459,14 +555,17 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             ));
         }
         let ok = mangle("ok_", &clause.name);
+        let mut ok_body = vec![format!("{has} {} s.{}", clause.binder, object.variable())];
+        for def in &clause.defs {
+            ok_body.push(input.show.expr(def)?);
+        }
         out.push(define(
             clause.position,
             Some(ok.clone()),
             format!(
-                "def {ok} (s : State) ({} : List Nat) : Prop := {has} {} s.{}",
+                "def {ok} (s : State) ({} : List Nat) : Prop := {}",
                 clause.binder,
-                clause.binder,
-                object.variable()
+                ok_body.join(" /\\ ")
             ),
             obligation,
         ));

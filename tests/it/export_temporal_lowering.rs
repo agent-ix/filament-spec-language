@@ -62,6 +62,36 @@ fn export_full(
     profile: &str,
     fixed: bool,
 ) -> (u8, Value) {
+    export_unit(
+        &format!("{HEAD} {body} }}\n"),
+        target,
+        start,
+        profile,
+        fixed,
+    )
+}
+
+/// Exports the declarations `tail`, which follow the counter's, to `target`
+/// from the counter's snapshot.
+fn export_tail(tail: &str, target: Target) -> (u8, Value) {
+    export_unit(
+        tail,
+        target,
+        None,
+        "filament.temporal.infinite-trace/v1",
+        true,
+    )
+}
+
+/// Exports the obligation `T` of the unit that is the counter's followed by
+/// `tail`.
+fn export_unit(
+    tail: &str,
+    target: Target,
+    start: Option<i64>,
+    profile: &str,
+    fixed: bool,
+) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     let path = counter_request(
         directory.path(),
@@ -89,11 +119,11 @@ fn export_full(
     }
     let unit = COUNTER_UNIT.replace(
         "model Counter",
-        &format!("profile t = \"{profile}\";\nmodel Counter"),
+        &format!("profile t = \"{profile}\";\nprofile P = \"filament.protocol.finite-global/v1\";\nmodel Counter"),
     );
     std::fs::write(
         directory.path().join("unit.native"),
-        format!("{unit}{HEAD} {body} }}\n"),
+        format!("{unit}{tail}"),
     )
     .unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
@@ -163,7 +193,7 @@ fn always_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter
 
-THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value <= 5)))
+THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ []((v_Counter[o_c].fld_value <= 5))
 
 ===="#
     );
@@ -180,7 +210,7 @@ fn always_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -202,7 +232,7 @@ fn always_unfixed_keys_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter
 
-THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value <= 5)))
+THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ []((v_Counter[o_c].fld_value <= 5))
 
 ===="#
     );
@@ -219,7 +249,7 @@ fn always_unfixed_keys_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -248,11 +278,11 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T = [o_c \in Ids_Counter |-> IF ((v_Counter[o_c].fld_value >= 3)) THEN "acc" ELSE IF ~((v_Counter[o_c].fld_value >= 1)) THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (v_Counter[o_c].fld_value >= 3) THEN "acc" ELSE IF ~(v_Counter[o_c].fld_value >= 1) THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF ((v_Counter'[o_c].fld_value >= 3)) THEN "acc" ELSE IF ~((v_Counter'[o_c].fld_value >= 1)) THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (v_Counter'[o_c].fld_value >= 3) THEN "acc" ELSE IF ~(v_Counter'[o_c].fld_value >= 1) THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -280,10 +310,10 @@ fn until_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 3))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 3)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 0 <= d1 /\ (0 <= (i + d1) /\ at_T_1 (b.st (Int.toNat (i + d1))) o_c) /\ (forall e2 : Int, 0 <= e2 -> e2 < d1 -> (0 <= (i + e2) /\ at_T_0 (b.st (Int.toNat (i + e2))) o_c)))
@@ -312,11 +342,11 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T = [o_c \in Ids_Counter |-> IF ((v_Counter[o_c].fld_value >= 3)) THEN "acc" ELSE IF ~((v_Counter[o_c].fld_value >= 1)) THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (v_Counter[o_c].fld_value >= 3) THEN "acc" ELSE IF ~(v_Counter[o_c].fld_value >= 1) THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF ((v_Counter'[o_c].fld_value >= 3)) THEN "acc" ELSE IF ~((v_Counter'[o_c].fld_value >= 1)) THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (v_Counter'[o_c].fld_value >= 3) THEN "acc" ELSE IF ~(v_Counter'[o_c].fld_value >= 1) THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -344,10 +374,10 @@ fn until_unfixed_keys_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 3))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 3)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 0 <= d1 /\ (0 <= (i + d1) /\ at_T_1 (b.st (Int.toNat (i + d1))) o_c) /\ (forall e2 : Int, 0 <= e2 -> e2 < d1 -> (0 <= (i + e2) /\ at_T_0 (b.st (Int.toNat (i + e2))) o_c)))
@@ -378,12 +408,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (0 <= 0 /\ 0 <= 3) /\ ~((v_Counter[o_c].fld_value <= 5)) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (0 <= 0 /\ 0 <= 3) /\ ~(v_Counter[o_c].fld_value <= 5) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (0 <= n_T_0' /\ n_T_0' <= 3) /\ ~((v_Counter'[o_c].fld_value <= 5)) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (0 <= n_T_0' /\ n_T_0' <= 3) /\ ~(v_Counter'[o_c].fld_value <= 5) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -408,7 +438,7 @@ fn interval_always_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> d1 <= 3 -> (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -431,7 +461,7 @@ fn two_intervals_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 vars_T == <<vars, n_T_0, m_T_0, n_T_1, m_T_1>>
 
@@ -444,16 +474,16 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T_0 = [o_c \in Ids_Counter |-> IF (0 <= 0 /\ 0 <= 3) /\ ~((v_Counter[o_c].fld_value >= 4)) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
+  /\ m_T_0 = [o_c \in Ids_Counter |-> IF (0 <= 0 /\ 0 <= 3) /\ ~(v_Counter[o_c].fld_value >= 4) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
   /\ n_T_1 = 0
-  /\ m_T_1 = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 2) /\ (((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) THEN "acc" ELSE IF 0 >= 2 THEN "rej" ELSE "run"]
+  /\ m_T_1 = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 2) /\ (v_Counter[o_c].fld_value = 5) THEN "acc" ELSE IF 0 >= 2 THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T_0' = [o_c \in Ids_Counter |-> IF m_T_0[o_c] /= "run" THEN m_T_0[o_c] ELSE IF (0 <= n_T_0' /\ n_T_0' <= 3) /\ ~((v_Counter'[o_c].fld_value >= 4)) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
+  /\ m_T_0' = [o_c \in Ids_Counter |-> IF m_T_0[o_c] /= "run" THEN m_T_0[o_c] ELSE IF (0 <= n_T_0' /\ n_T_0' <= 3) /\ ~(v_Counter'[o_c].fld_value >= 4) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
   /\ n_T_1' = IF n_T_1 < 2 THEN n_T_1 + 1 ELSE 2
-  /\ m_T_1' = [o_c \in Ids_Counter |-> IF m_T_1[o_c] /= "run" THEN m_T_1[o_c] ELSE IF (1 <= n_T_1' /\ n_T_1' <= 2) /\ (((0 <= 5) /\ (5 <= 9)) /\ (v_Counter'[o_c].fld_value = 5)) THEN "acc" ELSE IF n_T_1' >= 2 THEN "rej" ELSE "run"]
+  /\ m_T_1' = [o_c \in Ids_Counter |-> IF m_T_1[o_c] /= "run" THEN m_T_1[o_c] ELSE IF (1 <= n_T_1' /\ n_T_1' <= 2) /\ (v_Counter'[o_c].fld_value = 5) THEN "acc" ELSE IF n_T_1' >= 2 THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -480,13 +510,13 @@ fn two_intervals_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 4))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 4)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   ((forall d1 : Int, 0 <= d1 -> d1 <= 3 -> (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c)) /\ (exists d2 : Int, 1 <= d2 /\ d2 <= 2 /\ (0 <= (i + d2) /\ at_T_1 (b.st (Int.toNat (i + d2))) o_c)))
@@ -508,7 +538,7 @@ fn co_buchi_tla() {
 
 ok_T(o_c) == o_c \in DOMAIN v_Counter
 
-THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ <>([](((v_Counter[o_c].fld_value <= 5))))
+THEOREM Th_T == Spec => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ <>([]((v_Counter[o_c].fld_value <= 5)))
 
 ===="#
     );
@@ -525,10 +555,75 @@ fn co_buchi_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 0 <= d1 /\ (forall d2 : Int, 0 <= d2 -> (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
+
+def Ob_T : Prop :=
+  forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
+
+end M_test_u3A_w21_u3A_unit_u2E_native"#
+    );
+}
+
+/// FSpec FR-813-AC-6: `eventually always` over a `since` as tla2 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
+fn co_buchi_since_tla() {
+    assert_eq!(
+        clause_text(
+            "eventually always (holds(c.value <= 5) since holds(c.value = 0))",
+            Target::Tla
+        ),
+        r#"Ids_Counter == {<<99>>}
+
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 0) /\ (0 <= 9))
+
+vars_T == <<vars, m_T_h0>>
+
+TypeOK_T ==
+  /\ m_T_h0 \in [Ids_Counter -> BOOLEAN]
+
+Init_T ==
+  /\ Init
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 0)]
+  /\ TypeOK_T
+
+Mon_T ==
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 0) \/ ((v_Counter'[o_c].fld_value <= 5) /\ m_T_h0[o_c]))]
+
+Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
+
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
+
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ <>([](m_T_h0[o_c]))
+
+===="#
+    );
+}
+
+/// FSpec FR-813-AC-6: `eventually always` over a `since` as lean4 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
+fn co_buchi_since_lean() {
+    assert_eq!(
+        clause_text(
+            "eventually always (holds(c.value <= 5) since holds(c.value = 0))",
+            Target::Lean
+        ),
+        r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
+
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 0) /\ (0 <= 9))
+
+def at_T_0 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
+
+def at_T_1 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 0)
+
+def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
+  (exists d1 : Int, 0 <= d1 /\ (forall d2 : Int, 0 <= d2 -> (exists d3 : Int, 0 <= d3 /\ 0 <= (((i + d1) + d2) - d3) /\ (0 <= (((i + d1) + d2) - d3) /\ at_T_1 (b.st (Int.toNat (((i + d1) + d2) - d3))) o_c) /\ (forall e4 : Int, 0 <= e4 -> e4 < d3 -> (0 <= (((i + d1) + d2) - e4) /\ at_T_0 (b.st (Int.toNat (((i + d1) + d2) - e4))) o_c)))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -548,7 +643,7 @@ fn once_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 1) /\ (1 <= 9))
 
 vars_T == <<vars, m_T_h0>>
 
@@ -557,17 +652,17 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter[o_c].fld_value = 1))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 1)]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((((0 <= 1) /\ (1 <= 9)) /\ (v_Counter'[o_c].fld_value = 1)) \/ m_T_h0[o_c])]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 1) \/ m_T_h0[o_c])]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ []((((v_Counter[o_c].fld_value >= 2)) => m_T_h0[o_c]))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value >= 2) => m_T_h0[o_c]))
 
 ===="#
     );
@@ -584,13 +679,13 @@ fn once_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 1) /\ (1 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 2)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 0 <= d2 /\ 0 <= ((i + d1) - d2) /\ (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
@@ -622,11 +717,11 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T = [o_c \in Ids_Counter |-> IF ~((v_Counter[o_c].fld_value <= 5)) THEN "rej" ELSE IF ((v_Counter[o_c].fld_value <= 4)) THEN "rel" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF ~(v_Counter[o_c].fld_value <= 5) THEN "rej" ELSE IF (v_Counter[o_c].fld_value <= 4) THEN "rel" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF ~((v_Counter'[o_c].fld_value <= 5)) THEN "rej" ELSE IF ((v_Counter'[o_c].fld_value <= 4)) THEN "rel" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF ~(v_Counter'[o_c].fld_value <= 5) THEN "rej" ELSE IF (v_Counter'[o_c].fld_value <= 4) THEN "rel" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -654,10 +749,10 @@ fn release_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 4))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 4)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   Not (exists d1 : Int, 0 <= d1 /\ Not ((0 <= (i + d1) /\ at_T_1 (b.st (Int.toNat (i + d1))) o_c)) /\ (forall e2 : Int, 0 <= e2 -> e2 < d1 -> Not ((0 <= (i + e2) /\ at_T_0 (b.st (Int.toNat (i + e2))) o_c))))
@@ -677,7 +772,7 @@ fn interval_eventually_tla() {
         clause_text("eventually[1, 3] holds(c.value = 2)", Target::Tla),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 vars_T == <<vars, n_T_0, m_T>>
 
@@ -688,12 +783,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 3) /\ (((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2)) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 3) /\ (v_Counter[o_c].fld_value = 2) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (1 <= n_T_0' /\ n_T_0' <= 3) /\ (((0 <= 2) /\ (2 <= 9)) /\ (v_Counter'[o_c].fld_value = 2)) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (1 <= n_T_0' /\ n_T_0' <= 3) /\ (v_Counter'[o_c].fld_value = 2) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -715,10 +810,10 @@ fn interval_eventually_lean() {
         clause_text("eventually[1, 3] holds(c.value = 2)", Target::Lean),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 1 <= d1 /\ d1 <= 3 /\ (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -741,11 +836,11 @@ fn strong_fairness_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ SF_vars(\E r_self \in Ids_Counter : op_inc(r_self))
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2))))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
 ===="#
     );
@@ -762,10 +857,10 @@ fn strong_fairness_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
@@ -791,11 +886,11 @@ fn weak_each_fairness_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ \A r_self \in Ids_Counter : WF_vars(op_inc(r_self))
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2))))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
 ===="#
     );
@@ -812,10 +907,10 @@ fn weak_each_fairness_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
@@ -841,7 +936,7 @@ fn monitored_each_fairness_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 vars_T == <<vars, m_T_h0>>
 
@@ -850,11 +945,11 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter[o_c].fld_value = 1))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 1)]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((((0 <= 1) /\ (1 <= 9)) /\ (v_Counter'[o_c].fld_value = 1)) \/ ((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter'[o_c].fld_value = 2)) /\ m_T_h0[o_c]))]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 1) \/ ((v_Counter'[o_c].fld_value = 2) /\ m_T_h0[o_c]))]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -877,13 +972,13 @@ fn monitored_each_fairness_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (exists d3 : Int, 0 <= d3 /\ 0 <= (((i + d1) + d2) - d3) /\ (0 <= (((i + d1) + d2) - d3) /\ at_T_1 (b.st (Int.toNat (((i + d1) + d2) - d3))) o_c) /\ (forall e4 : Int, 0 <= e4 -> e4 < d3 -> (0 <= (((i + d1) + d2) - e4) /\ at_T_0 (b.st (Int.toNat (((i + d1) + d2) - e4))) o_c)))))
@@ -909,11 +1004,11 @@ fn weak_fairness_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 Spec_T == Init /\ [][Next]_vars /\ WF_vars(Next) /\ WF_vars(\E r_self \in Ids_Counter : op_inc(r_self))
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2))))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](<>((v_Counter[o_c].fld_value = 2)))
 
 ===="#
     );
@@ -930,10 +1025,10 @@ fn weak_fairness_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_0 (b.st (Int.toNat ((i + d1) + d2))) o_c)))
@@ -959,7 +1054,7 @@ fn historically_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 vars_T == <<vars, m_T_h0>>
 
@@ -968,17 +1063,17 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> ~(((v_Counter[o_c].fld_value >= 0)))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value >= 0)]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> (~(((v_Counter'[o_c].fld_value >= 0))) \/ m_T_h0[o_c])]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value >= 0) /\ m_T_h0[o_c])]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) => ~(m_T_h0[o_c])))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => m_T_h0[o_c]))
 
 ===="#
     );
@@ -995,16 +1090,146 @@ fn historically_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 0))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 0)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (forall d2 : Int, 0 <= d2 -> 0 <= ((i + d1) - d2) -> (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
+
+def Ob_T : Prop :=
+  forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
+
+end M_test_u3A_w21_u3A_unit_u2E_native"#
+    );
+}
+
+/// FSpec FR-813-AC-23: `historically[1, *]` as tla2 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-23")]
+fn historically_from_tla() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 5) implies historically[1, *] holds(c.value = 1))",
+            Target::Tla
+        ),
+        r#"Ids_Counter == {<<99>>}
+
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
+
+vars_T == <<vars, m_T_c0>>
+
+TypeOK_T ==
+  /\ m_T_c0 \in [Ids_Counter -> -1..1]
+
+Init_T ==
+  /\ Init
+  /\ m_T_c0 = [o_c \in Ids_Counter |-> IF ~((v_Counter[o_c].fld_value = 1)) THEN 0 ELSE -1]
+  /\ TypeOK_T
+
+Mon_T ==
+  /\ m_T_c0' = [o_c \in Ids_Counter |-> IF m_T_c0[o_c] = -1 THEN (IF ~((v_Counter'[o_c].fld_value = 1)) THEN 0 ELSE -1) ELSE IF m_T_c0[o_c] < 1 THEN m_T_c0[o_c] + 1 ELSE 1]
+
+Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
+
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
+
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => ~(m_T_c0[o_c] = 1)))
+
+===="#
+    );
+}
+
+/// FSpec FR-813-AC-23: `historically[1, *]` as lean4 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-23")]
+fn historically_from_lean() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 5) implies historically[1, *] holds(c.value = 1))",
+            Target::Lean
+        ),
+        r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
+
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
+
+def at_T_0 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
+
+def at_T_1 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
+
+def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
+  (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (forall d2 : Int, 1 <= d2 -> 0 <= ((i + d1) - d2) -> (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
+
+def Ob_T : Prop :=
+  forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
+
+end M_test_u3A_w21_u3A_unit_u2E_native"#
+    );
+}
+
+/// FSpec FR-813-AC-23: `historically[1, 1]` as tla2 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-23")]
+fn historically_closed_tla() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 5) implies historically[1, 1] holds(c.value = 1))",
+            Target::Tla
+        ),
+        r#"Ids_Counter == {<<99>>}
+
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
+
+vars_T == <<vars, m_T_r0>>
+
+TypeOK_T ==
+  /\ m_T_r0 \in [Ids_Counter -> [1..1 -> BOOLEAN]]
+
+Init_T ==
+  /\ Init
+  /\ m_T_r0 = [o_c \in Ids_Counter |-> [k \in 1..1 |-> TRUE]]
+  /\ TypeOK_T
+
+Mon_T ==
+  /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..1 |-> IF k = 1 THEN ~((v_Counter[o_c].fld_value = 1)) ELSE m_T_r0[o_c][k - 1]]]
+
+Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
+
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
+
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => ~(((\E k \in 1..1 : m_T_r0[o_c][k])))))
+
+===="#
+    );
+}
+
+/// FSpec FR-813-AC-23: `historically[1, 1]` as lean4 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-23")]
+fn historically_closed_lean() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 5) implies historically[1, 1] holds(c.value = 1))",
+            Target::Lean
+        ),
+        r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
+
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
+
+def at_T_0 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
+
+def at_T_1 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
+
+def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
+  (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (forall d2 : Int, 1 <= d2 -> d2 <= 1 -> (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -1024,7 +1249,7 @@ fn since_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
 
 vars_T == <<vars, m_T_h0>>
 
@@ -1033,17 +1258,17 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> (((0 <= 0) /\ (0 <= 9)) /\ (v_Counter[o_c].fld_value = 0))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 0)]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((((0 <= 0) /\ (0 <= 9)) /\ (v_Counter'[o_c].fld_value = 0)) \/ (((v_Counter'[o_c].fld_value >= 1)) /\ m_T_h0[o_c]))]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 0) \/ ((v_Counter'[o_c].fld_value >= 1) /\ m_T_h0[o_c]))]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2)) => m_T_h0[o_c]))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 2) => m_T_h0[o_c]))
 
 ===="#
     );
@@ -1060,19 +1285,90 @@ fn since_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_2 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 0) /\ (0 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 0))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 0)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 0 <= d2 /\ 0 <= ((i + d1) - d2) /\ (0 <= ((i + d1) - d2) /\ at_T_2 (b.st (Int.toNat ((i + d1) - d2))) o_c) /\ (forall e3 : Int, 0 <= e3 -> e3 < d2 -> (0 <= ((i + d1) - e3) /\ at_T_1 (b.st (Int.toNat ((i + d1) - e3))) o_c)))))
+
+def Ob_T : Prop :=
+  forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
+
+end M_test_u3A_w21_u3A_unit_u2E_native"#
+    );
+}
+
+/// FSpec FR-813-AC-10: `since[1, 2]` with two registers as tla2 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-10")]
+fn since_within_tla() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 2) implies (holds(c.value >= 1) since[1, 2] holds(c.value = 0)))",
+            Target::Tla
+        ),
+        r#"Ids_Counter == {<<99>>}
+
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
+
+vars_T == <<vars, m_T_r0, m_T_r1>>
+
+TypeOK_T ==
+  /\ m_T_r0 \in [Ids_Counter -> [1..2 -> BOOLEAN]]
+  /\ m_T_r1 \in [Ids_Counter -> [1..2 -> BOOLEAN]]
+
+Init_T ==
+  /\ Init
+  /\ m_T_r0 = [o_c \in Ids_Counter |-> [k \in 1..2 |-> FALSE]]
+  /\ m_T_r1 = [o_c \in Ids_Counter |-> [k \in 1..2 |-> FALSE]]
+  /\ TypeOK_T
+
+Mon_T ==
+  /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..2 |-> IF k = 1 THEN (v_Counter[o_c].fld_value = 0) ELSE m_T_r0[o_c][k - 1]]]
+  /\ m_T_r1' = [o_c \in Ids_Counter |-> [k \in 1..2 |-> IF k = 1 THEN (v_Counter[o_c].fld_value >= 1) ELSE m_T_r1[o_c][k - 1]]]
+
+Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
+
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
+
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 2) => (\E d \in 1..2 : (IF d = 0 THEN (v_Counter[o_c].fld_value = 0) ELSE m_T_r0[o_c][d]) /\ (\A e \in 1..(d - 1) : IF e = 0 THEN (v_Counter[o_c].fld_value >= 1) ELSE m_T_r1[o_c][e]))))
+
+===="#
+    );
+}
+
+/// FSpec FR-813-AC-10: `since[1, 2]` with two registers as lean4 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-10")]
+fn since_within_lean() {
+    assert_eq!(
+        clause_text(
+            "always (holds(c.value = 2) implies (holds(c.value >= 1) since[1, 2] holds(c.value = 0)))",
+            Target::Lean
+        ),
+        r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
+
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
+
+def at_T_0 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
+
+def at_T_1 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
+
+def at_T_2 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 0)
+
+def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
+  (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 1 <= d2 /\ d2 <= 2 /\ (0 <= ((i + d1) - d2) /\ at_T_2 (b.st (Int.toNat ((i + d1) - d2))) o_c) /\ (forall e3 : Int, 1 <= e3 -> e3 < d2 -> (0 <= ((i + d1) - e3) /\ at_T_1 (b.st (Int.toNat ((i + d1) - e3))) o_c)))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -1092,7 +1388,7 @@ fn triggered_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 vars_T == <<vars, m_T_h0>>
 
@@ -1101,17 +1397,17 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> ~(((v_Counter[o_c].fld_value <= 5)))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value <= 5)]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> (~(((v_Counter'[o_c].fld_value <= 5))) \/ (~(((v_Counter'[o_c].fld_value >= 0))) /\ m_T_h0[o_c]))]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value <= 5) /\ ((v_Counter'[o_c].fld_value >= 0) \/ m_T_h0[o_c]))]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2)) => ~(m_T_h0[o_c])))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 2) => m_T_h0[o_c]))
 
 ===="#
     );
@@ -1128,16 +1424,16 @@ fn triggered_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 0))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 0)
 
 def at_T_2 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value <= 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value <= 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> Not (exists d2 : Int, 0 <= d2 /\ 0 <= ((i + d1) - d2) /\ Not ((0 <= ((i + d1) - d2) /\ at_T_2 (b.st (Int.toNat ((i + d1) - d2))) o_c)) /\ (forall e3 : Int, 0 <= e3 -> e3 < d2 -> Not ((0 <= ((i + d1) - e3) /\ at_T_1 (b.st (Int.toNat ((i + d1) - e3))) o_c))))))
@@ -1171,12 +1467,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 3) /\ ((v_Counter[o_c].fld_value >= 3)) THEN "acc" ELSE IF (1 <= 0) /\ ~((v_Counter[o_c].fld_value >= 1)) THEN "rej" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (1 <= 0 /\ 0 <= 3) /\ (v_Counter[o_c].fld_value >= 3) THEN "acc" ELSE IF (1 <= 0) /\ ~(v_Counter[o_c].fld_value >= 1) THEN "rej" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (1 <= n_T_0' /\ n_T_0' <= 3) /\ ((v_Counter'[o_c].fld_value >= 3)) THEN "acc" ELSE IF (1 <= n_T_0') /\ ~((v_Counter'[o_c].fld_value >= 1)) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (1 <= n_T_0' /\ n_T_0' <= 3) /\ (v_Counter'[o_c].fld_value >= 3) THEN "acc" ELSE IF (1 <= n_T_0') /\ ~(v_Counter'[o_c].fld_value >= 1) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -1204,10 +1500,10 @@ fn bounded_until_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 3))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 3)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 1 <= d1 /\ d1 <= 3 /\ (0 <= (i + d1) /\ at_T_1 (b.st (Int.toNat (i + d1))) o_c) /\ (forall e2 : Int, 1 <= e2 -> e2 < d1 -> (0 <= (i + e2) /\ at_T_0 (b.st (Int.toNat (i + e2))) o_c)))
@@ -1230,7 +1526,7 @@ fn once_from_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 vars_T == <<vars, m_T_c0>>
 
@@ -1239,17 +1535,17 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_c0 = [o_c \in Ids_Counter |-> IF (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter[o_c].fld_value = 1)) THEN 0 ELSE -1]
+  /\ m_T_c0 = [o_c \in Ids_Counter |-> IF (v_Counter[o_c].fld_value = 1) THEN 0 ELSE -1]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_c0' = [o_c \in Ids_Counter |-> IF m_T_c0[o_c] = -1 THEN (IF (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter'[o_c].fld_value = 1)) THEN 0 ELSE -1) ELSE IF m_T_c0[o_c] < 2 THEN m_T_c0[o_c] + 1 ELSE 2]
+  /\ m_T_c0' = [o_c \in Ids_Counter |-> IF m_T_c0[o_c] = -1 THEN (IF (v_Counter'[o_c].fld_value = 1) THEN 0 ELSE -1) ELSE IF m_T_c0[o_c] < 2 THEN m_T_c0[o_c] + 1 ELSE 2]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) => m_T_c0[o_c] = 2))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => m_T_c0[o_c] = 2))
 
 ===="#
     );
@@ -1266,13 +1562,13 @@ fn once_from_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 2 <= d2 /\ 0 <= ((i + d1) - d2) /\ (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
@@ -1295,7 +1591,7 @@ fn since_from_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 vars_T == <<vars, m_T_h0, m_T_r0>>
 
@@ -1305,19 +1601,19 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h0 = [o_c \in Ids_Counter |-> (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter[o_c].fld_value = 1))]
+  /\ m_T_h0 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 1)]
   /\ m_T_r0 = [o_c \in Ids_Counter |-> [k \in 1..2 |-> FALSE]]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((((0 <= 1) /\ (1 <= 9)) /\ (v_Counter'[o_c].fld_value = 1)) \/ (((v_Counter'[o_c].fld_value >= 1)) /\ m_T_h0[o_c]))]
+  /\ m_T_h0' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 1) \/ ((v_Counter'[o_c].fld_value >= 1) /\ m_T_h0[o_c]))]
   /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..2 |-> IF k = 1 THEN m_T_h0[o_c] ELSE m_T_r0[o_c][k - 1]]]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) => m_T_r0[o_c][2]))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => m_T_r0[o_c][2]))
 
 ===="#
     );
@@ -1334,16 +1630,16 @@ fn since_from_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_2 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 2 <= d2 /\ 0 <= ((i + d1) - d2) /\ (0 <= ((i + d1) - d2) /\ at_T_2 (b.st (Int.toNat ((i + d1) - d2))) o_c) /\ (forall e3 : Int, 2 <= e3 -> e3 < d2 -> (0 <= ((i + d1) - e3) /\ at_T_1 (b.st (Int.toNat ((i + d1) - e3))) o_c)))))
@@ -1366,7 +1662,7 @@ fn once_within_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 vars_T == <<vars, m_T_r0>>
 
@@ -1379,13 +1675,13 @@ Init_T ==
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..3 |-> IF k = 1 THEN (((0 <= 1) /\ (1 <= 9)) /\ (v_Counter[o_c].fld_value = 1)) ELSE m_T_r0[o_c][k - 1]]]
+  /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..3 |-> IF k = 1 THEN (v_Counter[o_c].fld_value = 1) ELSE m_T_r0[o_c][k - 1]]]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) => ((\E k \in 1..3 : m_T_r0[o_c][k]))))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 5) => ((\E k \in 1..3 : m_T_r0[o_c][k]))))
 
 ===="#
     );
@@ -1402,13 +1698,13 @@ fn once_within_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9)) /\ ((0 <= 1) /\ (1 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 1 <= d2 /\ d2 <= 3 /\ (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
@@ -1431,7 +1727,7 @@ fn nested_past_tla() {
         ),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 1) /\ (1 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
 
 vars_T == <<vars, m_T_h1, m_T_r0>>
 
@@ -1441,19 +1737,19 @@ TypeOK_T ==
 
 Init_T ==
   /\ Init
-  /\ m_T_h1 = [o_c \in Ids_Counter |-> (((0 <= 0) /\ (0 <= 9)) /\ (v_Counter[o_c].fld_value = 0))]
+  /\ m_T_h1 = [o_c \in Ids_Counter |-> (v_Counter[o_c].fld_value = 0)]
   /\ m_T_r0 = [o_c \in Ids_Counter |-> [k \in 1..1 |-> FALSE]]
   /\ TypeOK_T
 
 Mon_T ==
-  /\ m_T_h1' = [o_c \in Ids_Counter |-> ((((0 <= 0) /\ (0 <= 9)) /\ (v_Counter'[o_c].fld_value = 0)) \/ ((((0 <= 1) /\ (1 <= 9)) /\ (v_Counter'[o_c].fld_value = 1)) /\ m_T_h1[o_c]))]
+  /\ m_T_h1' = [o_c \in Ids_Counter |-> ((v_Counter'[o_c].fld_value = 0) \/ ((v_Counter'[o_c].fld_value = 1) /\ m_T_h1[o_c]))]
   /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..1 |-> IF k = 1 THEN m_T_h1[o_c] ELSE m_T_r0[o_c][k - 1]]]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
 Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
 
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((((0 <= 2) /\ (2 <= 9)) /\ (v_Counter[o_c].fld_value = 2)) => ((\E k \in 1..1 : m_T_r0[o_c][k]))))
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ [](((v_Counter[o_c].fld_value = 2) => ((\E k \in 1..1 : m_T_r0[o_c][k]))))
 
 ===="#
     );
@@ -1470,19 +1766,84 @@ fn nested_past_lean() {
         ),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 2) /\ (2 <= 9)) /\ ((0 <= 1) /\ (1 <= 9)) /\ ((0 <= 0) /\ (0 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 2) /\ (2 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 2))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 2)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 1) /\ (1 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 1)
 
 def at_T_2 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 0) /\ (0 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 0))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 0)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) -> (exists d2 : Int, 1 <= d2 /\ d2 <= 1 /\ (exists d3 : Int, 0 <= d3 /\ 0 <= (((i + d1) - d2) - d3) /\ (0 <= (((i + d1) - d2) - d3) /\ at_T_2 (b.st (Int.toNat (((i + d1) - d2) - d3))) o_c) /\ (forall e4 : Int, 0 <= e4 -> e4 < d3 -> (0 <= (((i + d1) - d2) - e4) /\ at_T_1 (b.st (Int.toNat (((i + d1) - d2) - e4))) o_c))))))
+
+def Ob_T : Prop :=
+  forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
+
+end M_test_u3A_w21_u3A_unit_u2E_native"#
+    );
+}
+
+/// FSpec FR-813-AC-11: `once[1, 1]` at a terminal state as tla2 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-11")]
+fn terminal_once_tla() {
+    assert_eq!(
+        clause_text(
+            "eventually (holds(c.value = 5) and once[1, 1] holds(c.value = 5))",
+            Target::Tla
+        ),
+        r#"Ids_Counter == {<<99>>}
+
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9))
+
+vars_T == <<vars, m_T_r0>>
+
+TypeOK_T ==
+  /\ m_T_r0 \in [Ids_Counter -> [1..1 -> BOOLEAN]]
+
+Init_T ==
+  /\ Init
+  /\ m_T_r0 = [o_c \in Ids_Counter |-> [k \in 1..1 |-> FALSE]]
+  /\ TypeOK_T
+
+Mon_T ==
+  /\ m_T_r0' = [o_c \in Ids_Counter |-> [k \in 1..1 |-> IF k = 1 THEN (v_Counter[o_c].fld_value = 5) ELSE m_T_r0[o_c][k - 1]]]
+
+Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
+
+Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
+
+THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ <>(((v_Counter[o_c].fld_value = 5) /\ ((\E k \in 1..1 : m_T_r0[o_c][k]))))
+
+===="#
+    );
+}
+
+/// FSpec FR-813-AC-11: `once[1, 1]` at a terminal state as lean4 text.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-11")]
+fn terminal_once_lean() {
+    assert_eq!(
+        clause_text(
+            "eventually (holds(c.value = 5) and once[1, 1] holds(c.value = 5))",
+            Target::Lean
+        ),
+        r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
+
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9))
+
+def at_T_0 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
+
+def at_T_1 (s : State) (o_c : List Nat) : Prop :=
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
+
+def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
+  (exists d1 : Int, 0 <= d1 /\ ((0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c) /\ (exists d2 : Int, 1 <= d2 /\ d2 <= 1 /\ (0 <= ((i + d1) - d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) - d2))) o_c))))
 
 def Ob_T : Prop :=
   forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
@@ -1499,7 +1860,7 @@ fn terminal_always_tla() {
         clause_text_from("always[2, 3] holds(c.value = 5)", Target::Tla, Some(4),),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 vars_T == <<vars, n_T_0, m_T>>
 
@@ -1510,12 +1871,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ ~(((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ ~(v_Counter[o_c].fld_value = 5) THEN "rej" ELSE IF 0 >= 3 THEN "rel" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ ~(((0 <= 5) /\ (5 <= 9)) /\ (v_Counter'[o_c].fld_value = 5)) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ ~(v_Counter'[o_c].fld_value = 5) THEN "rej" ELSE IF n_T_0' >= 3 THEN "rel" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -1537,10 +1898,10 @@ fn terminal_always_lean() {
         clause_text_from("always[2, 3] holds(c.value = 5)", Target::Lean, Some(4),),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 2 <= d1 -> d1 <= 3 -> (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -1560,7 +1921,7 @@ fn terminal_eventually_tla() {
         clause_text_from("eventually[2, 3] holds(c.value = 5)", Target::Tla, Some(4),),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 vars_T == <<vars, n_T_0, m_T>>
 
@@ -1571,12 +1932,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ (((0 <= 5) /\ (5 <= 9)) /\ (v_Counter[o_c].fld_value = 5)) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ (v_Counter[o_c].fld_value = 5) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ (((0 <= 5) /\ (5 <= 9)) /\ (v_Counter'[o_c].fld_value = 5)) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ (v_Counter'[o_c].fld_value = 5) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -1598,10 +1959,10 @@ fn terminal_eventually_lean() {
         clause_text_from("eventually[2, 3] holds(c.value = 5)", Target::Lean, Some(4),),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 5) /\ (5 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 5) /\ (5 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 5))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 5)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 2 <= d1 /\ d1 <= 3 /\ (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -1621,7 +1982,7 @@ fn terminal_eventually_missed_tla() {
         clause_text_from("eventually[2, 3] holds(c.value = 4)", Target::Tla, Some(4),),
         r#"Ids_Counter == {<<99>>}
 
-ok_T(o_c) == o_c \in DOMAIN v_Counter
+ok_T(o_c) == o_c \in DOMAIN v_Counter /\ ((0 <= 4) /\ (4 <= 9))
 
 vars_T == <<vars, n_T_0, m_T>>
 
@@ -1632,12 +1993,12 @@ TypeOK_T ==
 Init_T ==
   /\ Init
   /\ n_T_0 = 0
-  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ (((0 <= 4) /\ (4 <= 9)) /\ (v_Counter[o_c].fld_value = 4)) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
+  /\ m_T = [o_c \in Ids_Counter |-> IF (2 <= 0 /\ 0 <= 3) /\ (v_Counter[o_c].fld_value = 4) THEN "acc" ELSE IF 0 >= 3 THEN "rej" ELSE "run"]
   /\ TypeOK_T
 
 Mon_T ==
   /\ n_T_0' = IF n_T_0 < 3 THEN n_T_0 + 1 ELSE 3
-  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ (((0 <= 4) /\ (4 <= 9)) /\ (v_Counter'[o_c].fld_value = 4)) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
+  /\ m_T' = [o_c \in Ids_Counter |-> IF m_T[o_c] /= "run" THEN m_T[o_c] ELSE IF (2 <= n_T_0' /\ n_T_0' <= 3) /\ (v_Counter'[o_c].fld_value = 4) THEN "acc" ELSE IF n_T_0' >= 3 THEN "rej" ELSE "run"]
 
 Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
 
@@ -1659,10 +2020,10 @@ fn terminal_eventually_missed_lean() {
         clause_text_from("eventually[2, 3] holds(c.value = 4)", Target::Lean, Some(4),),
         r#"def Ids_Counter (k : List Nat) : Prop := exists s : State, Init s /\ F_has_Counter k s.v_Counter
 
-def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
+def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter /\ ((0 <= 4) /\ (4 <= 9))
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((0 <= 4) /\ (4 <= 9)) /\ ((F_get_Counter o_c s.v_Counter).fld_value = 4))
+  ((F_get_Counter o_c s.v_Counter).fld_value = 4)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (exists d1 : Int, 2 <= d1 /\ d1 <= 3 /\ (0 <= (i + d1) /\ at_T_0 (b.st (Int.toNat (i + d1))) o_c))
@@ -1671,47 +2032,6 @@ def Ob_T : Prop :=
   forall b : Behaviour, forall o_c, Ids_Counter o_c -> (forall j : Nat, ok_T (b.st j) o_c) /\ holds_T b o_c 0
 
 end M_test_u3A_w21_u3A_unit_u2E_native"#
-    );
-}
-
-/// FSpec FR-813-AC-6: a nested future operator as tla2 text.
-#[test]
-#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
-fn nested_future_tla() {
-    assert_eq!(
-        clause_text(
-            "always (holds(c.value >= 1) until holds(c.value >= 3))",
-            Target::Tla
-        ),
-        r#"Ids_Counter == {<<99>>}
-
-ok_T(o_c) == o_c \in DOMAIN v_Counter
-
-vars_T == <<vars, m_T_g0, m_T_g1>>
-
-TypeOK_T ==
-  /\ m_T_g0 \in [Ids_Counter -> BOOLEAN]
-  /\ m_T_g1 \in [Ids_Counter -> BOOLEAN]
-
-Init_T ==
-  /\ Init
-  /\ \A o_c \in Ids_Counter : m_T_g0[o_c]
-  /\ TypeOK_T
-
-Mon_T ==
-  /\ m_T_g0' \in [Ids_Counter -> BOOLEAN]
-  /\ m_T_g1' \in [Ids_Counter -> BOOLEAN]
-  /\ \A o_c \in Ids_Counter : (m_T_g0[o_c] <=> (m_T_g1[o_c] /\ m_T_g0'[o_c])) /\ (m_T_g1[o_c] <=> (((v_Counter[o_c].fld_value >= 3)) \/ (((v_Counter[o_c].fld_value >= 1)) /\ m_T_g1'[o_c])))
-
-Next_T == (Next \/ (~ENABLED Next /\ UNCHANGED vars)) /\ Mon_T
-
-Spec_T == Init_T /\ [][Next_T]_vars_T /\ WF_vars_T(Next_T)
-
-accept_T(o_c) == []<>(~m_T_g1[o_c] \/ ((v_Counter[o_c].fld_value >= 3)))
-
-THEOREM Th_T == Spec_T => \A o_c \in Ids_Counter : [](ok_T(o_c)) /\ accept_T(o_c)
-
-===="#
     );
 }
 
@@ -1729,10 +2049,10 @@ fn nested_future_lean() {
 def ok_T (s : State) (o_c : List Nat) : Prop := F_has_Counter o_c s.v_Counter
 
 def at_T_0 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 1))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 1)
 
 def at_T_1 (s : State) (o_c : List Nat) : Prop :=
-  (((F_get_Counter o_c s.v_Counter).fld_value >= 3))
+  ((F_get_Counter o_c s.v_Counter).fld_value >= 3)
 
 def holds_T (b : Behaviour) (o_c : List Nat) (i : Int) : Prop :=
   (forall d1 : Int, 0 <= d1 -> (exists d2 : Int, 0 <= d2 /\ (0 <= ((i + d1) + d2) /\ at_T_1 (b.st (Int.toNat ((i + d1) + d2))) o_c) /\ (forall e3 : Int, 0 <= e3 -> e3 < d2 -> (0 <= ((i + d1) + e3) /\ at_T_0 (b.st (Int.toNat ((i + d1) + e3))) o_c))))
@@ -1795,30 +2115,6 @@ fn a_lowered_temporal_clause_is_preserved_and_claims_its_regions() {
             }
         }
     }
-}
-
-/// FSpec FR-813-AC-6: a clause with no deterministic monitor exports to TLA+
-/// `conditional` with `nondeterministic-monitor` naming the clause, and to
-/// Lean `preserved`.
-#[test]
-#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-6")]
-fn a_nested_future_operator_is_conditional_in_tla_and_preserved_in_lean() {
-    let body = "always (holds(c.value >= 1) until holds(c.value >= 3))";
-    let (exit, value) = export(body, Target::Tla);
-    assert_eq!(exit, 0, "{value}");
-    let record = &value["export"]["records"][0];
-    assert_eq!(record["disposition"], "conditional", "{value}");
-    let condition = &record["conditions"][0];
-    assert_eq!(condition["type"], "nondeterministic-monitor", "{value}");
-    assert_eq!(condition["clause"], "T", "{value}");
-    assert!(condition["node"].is_string(), "{value}");
-    assert_eq!(record["conditions"].as_array().unwrap().len(), 1, "{value}");
-    let (exit, value) = export(body, Target::Lean);
-    assert_eq!(exit, 0, "{value}");
-    assert_eq!(
-        value["export"]["records"][0]["disposition"], "preserved",
-        "{value}"
-    );
 }
 
 /// FSpec FR-813-AC-3: the step counter of `always[0, 3]` is bounded by the
@@ -1945,4 +2241,152 @@ fn an_unfixed_key_set_is_a_constant_and_a_conditional_record() {
         value["export"]["records"][0]["disposition"], "preserved",
         "{value}"
     );
+}
+
+/// The refusal of `tail` under `target`: asserts the typed shape (exit 21,
+/// `unimplemented_capability`, a node and a locus) and returns it.
+fn refusal_of(tail: &str, target: Target) -> Value {
+    let (exit, value) = export_tail(tail, target);
+    assert_eq!(exit, 21, "{value}");
+    assert_eq!(value["export"]["status"], "refused", "{value}");
+    let refusal = value["export"]["refusal"].clone();
+    assert_eq!(refusal["code"], "unimplemented_capability", "{value}");
+    assert_eq!(refusal["cause"], "unimplemented-meaning", "{value}");
+    assert!(
+        refusal["node"].is_string() && refusal["locus"].is_object(),
+        "{value}"
+    );
+    let family = if matches!(target, Target::Tla) {
+        "tla"
+    } else {
+        "lean"
+    };
+    assert_eq!(
+        refusal["capability"],
+        format!("export:{family}:{}", refusal["construct"].as_str().unwrap()),
+        "{value}"
+    );
+    refusal
+}
+
+fn clause_tail(body: &str) -> String {
+    format!("{HEAD} {body} }}\n")
+}
+
+/// FSpec FR-813-AC-24 (FND-011): a future operator inside a future operator
+/// has no deterministic monitor, so TLA+ refuses it at the inner operator's
+/// node; Lean states the clause directly.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_nested_future_operator_is_refused_in_tla_and_defined_in_lean() {
+    for body in [
+        "always (holds(c.value >= 1) until holds(c.value >= 3))",
+        "always (holds(c.value = 1) implies eventually[1, 1] holds(c.value = 3))",
+    ] {
+        let refusal = refusal_of(&clause_tail(body), Target::Tla);
+        assert_eq!(refusal["construct"], "temporal/formula");
+        let (exit, value) = export_tail(&clause_tail(body), Target::Lean);
+        assert_eq!(exit, 0, "{value}");
+        let text = value["export"]["target_text"].as_str().unwrap();
+        assert!(text.contains("def holds_T"), "{text}");
+    }
+}
+
+/// FSpec FR-813-AC-24: a future operator inside a past operator is refused in
+/// both targets at the future operator's node.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_future_operator_inside_a_past_operand_is_refused() {
+    for target in [Target::Tla, Target::Lean] {
+        let refusal = refusal_of(
+            &clause_tail("always once eventually holds(c.value = 1)"),
+            target,
+        );
+        assert_eq!(refusal["construct"], "temporal/formula");
+    }
+}
+
+/// FSpec FR-813-AC-24: an `on each` activation and a capture are refused at
+/// their own nodes, never at the clause.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn an_activation_and_a_capture_are_refused_at_their_own_nodes() {
+    let each = "temporal T using t over (c: Counter::Counter) clock \"model-steps\" on each (q: Counter::Counter) { always holds(c.value <= 5) }\n";
+    let capture =
+        clause_tail("capture big: Boolean = c.value > 3; always holds(c.value <= 5 or big)");
+    for target in [Target::Tla, Target::Lean] {
+        for tail in [each.to_owned(), capture.clone()] {
+            let refusal = refusal_of(&tail, target);
+            assert_ne!(refusal["construct"], "temporal/temporal_clause");
+        }
+    }
+}
+
+/// FSpec FR-813-AC-24: a clause over a subject that is no object type is
+/// refused at its binder's node.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_non_object_subject_is_refused_at_its_binder() {
+    let tail = "temporal T using t over (n: Int[0, 2]) clock \"steps\" on origin { always holds(n <= 2) }\n";
+    for target in [Target::Tla, Target::Lean] {
+        refusal_of(tail, target);
+    }
+}
+
+/// FSpec FR-813 Binding and FR-817-AC-16 (FND-012): a clause that a protocol
+/// requires is refused at the protocol clause's node, not exported over the
+/// bare model.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-24")]
+fn a_clause_a_protocol_requires_is_refused() {
+    let tail = format!(
+        "{}protocol Hand using P over (k: Counter::Counter) on origin {{\n\
+             role a on Counter::Counter;\n\
+             requires temporal T;\n\
+             run sequence Main {{ check Ok using v {{ true }}; }}\n\
+             finish Done as (d: Counter::Counter) {{ true }};\n\
+         }}\n",
+        clause_tail("always holds(c.value <= 5)")
+    );
+    for target in [Target::Tla, Target::Lean] {
+        let refusal = refusal_of(&tail, target);
+        assert_ne!(refusal["construct"], "temporal/temporal_clause");
+    }
+}
+
+/// FSpec FR-812 and FR-813 (FND-013): a narrowing's range check is a
+/// definedness condition of `ok_T`, never an atom the clause can negate.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-813-AC-1")]
+fn a_definedness_condition_is_in_ok_and_not_in_the_atom() {
+    let body = "always (holds(c.value = 5) implies historically holds(c.value >= 0))";
+    let tla = clause_text(body, Target::Tla);
+    let ok = tla.lines().find(|l| l.starts_with("ok_T")).unwrap();
+    assert!(ok.contains("(0 <= 5) /\\ (5 <= 9)"), "{tla}");
+    assert!(
+        !tla.lines()
+            .filter(|l| !l.starts_with("ok_T"))
+            .any(|l| l.contains("(0 <= 5)")),
+        "{tla}"
+    );
+    let lean = clause_text(body, Target::Lean);
+    let ok = lean.lines().find(|l| l.starts_with("def ok_T")).unwrap();
+    assert!(ok.contains("(0 <= 5) /\\ (5 <= 9)"), "{lean}");
+    assert!(
+        !lean
+            .lines()
+            .filter(|l| !l.starts_with("def ok_T"))
+            .any(|l| l.contains("(0 <= 5)")),
+        "{lean}"
+    );
+}
+
+/// FSpec FR-814-AC-8 (FND-019): a parameter spelled `self` is `p_self` and
+/// the receiver stays `r_self`.
+#[test]
+#[trace("FSpec-TC-1972", "FSpec-FR-814-AC-8")]
+fn the_receiver_is_known_by_node_not_by_spelling() {
+    let text = exported_text("always holds(c.value <= 5)", Target::Tla);
+    assert!(text.contains("r_self"), "{text}");
+    assert!(!text.contains("p_self"), "{text}");
 }

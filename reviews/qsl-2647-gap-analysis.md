@@ -21,3 +21,10 @@ Ticket: QSL-2647. Manual criterion-to-test check: the FR-813 criteria live in th
 ## Verdict
 
 AC-1 (always, both targets), AC-2 (until, both targets, plus release), AC-4 weak and strong fairness half, AC-5 (Lean has no theorem, proof or sorry) and AC-6 co-Buchi half have exact-text goldens that assert the whole clause text. Records are asserted `preserved` with regions for always, until and eventually-always. The two gaps above are the ones that let code-review SR-202611200234060 FND-001 ship unguarded.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
