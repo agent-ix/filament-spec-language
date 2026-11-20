@@ -569,21 +569,30 @@ fn a_plain_request_reply_protocol_proves_and_replays_a_deadlock_control() {
              }}\n"
         )
     };
-    for (name, block_request, expected) in [("safe", false, "proved"), ("blocked", true, "refuted")]
-    {
+    for (name, block_request, max_states, expected) in [
+        ("safe", false, None, "proved"),
+        ("bounded", false, Some(1), "incomplete"),
+        ("blocked", true, None, "refuted"),
+    ] {
         let ws = Workspace::new(&format!("cli-request-reply-{name}"));
+        let mut temporal = json!({"item_kind": "deadlock-freedom", "subject": subject});
+        if let Some(max_states) = max_states {
+            temporal["limits"] = json!({"max_states": max_states});
+        }
         let run = analyze(&litmus_request(
             &ws,
             &unit(block_request),
             json!({"items": [{"claim": "Handshake", "kind": "temporal-satisfaction",
-                "temporal": {"item_kind": "deadlock-freedom", "subject": subject}}]}),
+                "temporal": temporal}]}),
         ));
         let item = run.item(0);
         assert_eq!(label(&item), expected, "{}", run.document());
-        let transitions = item["exploration"]["transitions"]
-            .as_str()
-            .and_then(|value| value.parse::<u64>().ok());
-        assert!(transitions.is_some_and(|count| count > 0), "{item}");
+        if !matches!(name, "bounded") {
+            let transitions = item["exploration"]["transitions"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok());
+            assert!(transitions.is_some_and(|count| count > 0), "{item}");
+        }
         if block_request {
             assert!(
                 item["counterexample"]["blocked"]
