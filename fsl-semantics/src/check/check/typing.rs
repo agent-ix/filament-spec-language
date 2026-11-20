@@ -2824,9 +2824,12 @@ impl<'a> Typer<'a> {
                     ..
                 } = *frame;
                 if index == arguments.len() {
-                    for (position, parameter) in operation.parameters.iter().enumerate().skip(index)
-                    {
-                        let at = location.child(position + 1);
+                    for parameter in operation.parameters.iter().skip(index) {
+                        // This `absent` is a synthetic argument: there is no
+                        // source expression at the missing position. Attribute
+                        // its checked literal to the call site so package
+                        // emission can retain a source occurrence for it.
+                        let at = location.clone();
                         let absent = self.absent_literal(Some(parameter), &at)?;
                         typed.push(self.push(absent));
                     }
