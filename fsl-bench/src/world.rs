@@ -343,6 +343,7 @@ pub struct World {
 
 struct PreparedModel {
     selections: Vec<ModelSelection>,
+    packages: PackageInput,
     models: SelectedModels,
 }
 
@@ -378,7 +379,6 @@ impl World {
 
     fn build_using(model: &Model, cache: Option<&mut ModelSetupCache>) -> Result<Self, WorldError> {
         let document = model.document();
-        let packages = package_input([document.as_slice()]).map_err(|e| refused("intake", e))?;
         let unit = model.unit();
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("bench", "mc"),
@@ -399,9 +399,11 @@ impl World {
                     .iter()
                     .find(|entry| entry.selections == built.selections().models)
             });
-        let models = if let Some(prepared) = prepared {
-            prepared.models.clone()
+        let (packages, models) = if let Some(prepared) = prepared {
+            (prepared.packages.clone(), prepared.models.clone())
         } else {
+            let packages =
+                package_input([document.as_slice()]).map_err(|e| refused("intake", e))?;
             let models = admit_unit(
                 &built.selections().models,
                 &packages,
@@ -419,10 +421,11 @@ impl World {
                     .or_default()
                     .push(PreparedModel {
                         selections: built.selections().models.clone(),
+                        packages: packages.clone(),
                         models: models.clone(),
                     });
             }
-            models
+            (packages, models)
         };
         let graph = PackageDeclarations::assemble(
             parsed.source().reference().clone(),
