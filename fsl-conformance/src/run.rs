@@ -437,6 +437,7 @@ fn run_execute(
         accounting,
         supplied: Default::default(),
         prepare: PrepareLimits::default(),
+        session: Default::default(),
     };
     *typed = Some(ExecuteResult(std::sync::Arc::new(execute(
         checked.package(),

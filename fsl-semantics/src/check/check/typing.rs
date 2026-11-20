@@ -383,6 +383,7 @@ struct CaseArms<'r> {
 struct OpenArm {
     member: usize,
     binders: Vec<Slot>,
+    names: Vec<String>,
 }
 
 /// Which operand of a pair is being typed.
@@ -752,6 +753,8 @@ struct PopulationFrame<'e> {
     source: Node,
     /// The slot the binder reads.
     slot: Slot,
+    /// The source name of the population binder.
+    binder: String,
     /// The body of `sum` and `only`.
     body: Option<ExprRef<'e>>,
     /// The typed condition, once typed.
@@ -3278,7 +3281,10 @@ impl<'a> Typer<'a> {
             Some((value, slot)) => {
                 self.unbind(1);
                 let LetFrame {
-                    branches, location, ..
+                    branches,
+                    location,
+                    name,
+                    ..
                 } = *frame;
                 let body = typed;
                 let value_type = match branches {
@@ -3370,7 +3376,15 @@ impl<'a> Typer<'a> {
                 binders.push(self.bind(&binder.name, value_type.clone(), &at, LocalKind::Bound)?);
             }
             let goal = frame.branches.goal(frame.expression.at(arm.body), at);
-            arms.open = Some(OpenArm { member, binders });
+            arms.open = Some(OpenArm {
+                member,
+                binders,
+                names: arm
+                    .binders
+                    .iter()
+                    .map(|binder| binder.name.clone())
+                    .collect(),
+            });
             frame.stage = CaseStage::Arms(arms);
             frames.push(Frame::Case(frame));
             return Ok(Step::Descend(goal));
@@ -4011,6 +4025,7 @@ impl<'a> Typer<'a> {
                 let TallyFrame {
                     value_type,
                     location,
+                    binder,
                     ..
                 } = *frame;
                 if matches!(visit, Visit::Sum) && !summand_of_family(&value_type, &body.value_type)
@@ -4221,7 +4236,7 @@ impl<'a> Typer<'a> {
             ),
             (None, None) => {
                 return self
-                    .finish_population(form, source, slot, None, None, &location)
+                    .finish_population(form, source, slot, binder, None, None, &location)
                     .map(Step::Typed);
             }
         };
@@ -4229,6 +4244,7 @@ impl<'a> Typer<'a> {
             form,
             source,
             slot,
+            binder: binder.to_owned(),
             body,
             typed_condition: None,
             awaiting,
@@ -4257,11 +4273,20 @@ impl<'a> Typer<'a> {
                         form,
                         source,
                         slot,
+                        binder,
                         location,
                         ..
                     } = *frame;
-                    self.finish_population(form, source, slot, Some(typed), None, &location)
-                        .map(Step::Typed)
+                    self.finish_population(
+                        form,
+                        source,
+                        slot,
+                        &binder,
+                        Some(typed),
+                        None,
+                        &location,
+                    )
+                    .map(Step::Typed)
                 }
             },
             PopulationAwait::Body => {
@@ -4269,12 +4294,21 @@ impl<'a> Typer<'a> {
                     form,
                     source,
                     slot,
+                    binder,
                     typed_condition,
                     location,
                     ..
                 } = *frame;
-                self.finish_population(form, source, slot, typed_condition, Some(typed), &location)
-                    .map(Step::Typed)
+                self.finish_population(
+                    form,
+                    source,
+                    slot,
+                    &binder,
+                    typed_condition,
+                    Some(typed),
+                    &location,
+                )
+                .map(Step::Typed)
             }
         }
     }
@@ -4288,6 +4322,7 @@ impl<'a> Typer<'a> {
         form: PopulationForm,
         source: Node,
         slot: Slot,
+        binder: &str,
         condition: Option<Node>,
         body: Option<Node>,
         location: &Location,

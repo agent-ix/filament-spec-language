@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_eval::{FamilyOutcome, FamilyResult, SessionLimits};
 use filament_exact::{
     Cancel, CancelCause, Incomplete, Integer, Outcome, Refusal, ScalarLimits, Undefined, Value,
     ValueType,
@@ -284,11 +284,15 @@ pub struct CallIncomplete {
 }
 
 impl CallIncomplete {
-    /// The `Call::accounting` field that raises this bound: the exhausted
-    /// counter's `filament.value.accounting/v1` member name, which is no setting
-    /// name (see [`Self::setting`]).
+    /// The limit field reported for this incomplete call. Scalar accounting
+    /// limits retain their counter name; the session limit reports its
+    /// qualified setting name.
     pub fn limits_field(&self) -> &'static str {
-        self.record.limit_kind.as_str()
+        if self.record.limit_kind == filament_exact::LimitKind::LiveOccurrences {
+            self.setting_name()
+        } else {
+            self.record.limit_kind.as_str()
+        }
     }
 
     /// The setting that raises this bound at every entry point (FR-255
@@ -1024,6 +1028,10 @@ pub(crate) fn run_compiled(
             accounting: call.accounting,
             supplied: call.supplied,
             prepare: *prepare,
+            session: SessionLimits {
+                live_occurrences: call.live_occurrences,
+                held: 0,
+            },
         },
         cancel,
     )

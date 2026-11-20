@@ -6,6 +6,7 @@ pub(crate) mod published_fspec;
 
 mod admitted_record_chain;
 mod aggregate_dispatch;
+mod application_live_occurrences;
 mod category_facade;
 mod checked_body_failure;
 mod compile_ieee_profile;

@@ -32,8 +32,12 @@
 use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use filament_eval::{CheckedClosure, Evaluation, LiveContext, RequestRefusal, Signature, Transition};
+use filament_eval::{
+    CheckedClosure, Evaluation, LiveContext, RequestRefusal, SessionLimits, Signature, Transition,
+};
 use filament_exact::{Meter, NodeKey, Value, ValueType};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
@@ -66,6 +70,12 @@ pub struct PackageClosure<P, X> {
     /// Whether the caller already admitted its arguments (under its own
     /// supplied-value run), so `Begin` admits nothing more.
     pre_admitted: bool,
+    /// The evaluator bound for direct package-adapter entry points. During a
+    /// scheduler transition, the S6a machine also receives that transition's
+    /// `LiveContext` clone so nested calls share the scheduler's count.
+    session_limits: SessionLimits,
+    /// Optional high-water sink used by checked-package convenience callers.
+    peak_live_occurrences: Option<Arc<AtomicU64>>,
     expression: PhantomData<fn() -> X>,
 }
 
@@ -79,17 +89,37 @@ where
         Self {
             package,
             pre_admitted: false,
+            session_limits: SessionLimits {
+                live_occurrences: filament_eval::DEFAULT_LIVE_OCCURRENCES,
+                held: 0,
+            },
+            peak_live_occurrences: None,
             expression: PhantomData,
         }
     }
 
-    /// A closure for a caller that admitted its arguments already, under its
-    /// own supplied-value run (`call_supplied`): `Begin` admits nothing more,
-    /// so no argument is admitted twice.
-    pub(super) const fn pre_admitted(package: P) -> Self {
+    /// A closure configured with the call-stack bound supplied by its caller.
+    pub const fn new_with_session_limits(package: P, session_limits: SessionLimits) -> Self {
+        Self {
+            package,
+            pre_admitted: false,
+            session_limits,
+            peak_live_occurrences: None,
+            expression: PhantomData,
+        }
+    }
+
+    /// A closure for a caller that supplied the arguments and session bound.
+    pub(super) fn pre_admitted_with_session_limits(
+        package: P,
+        session_limits: SessionLimits,
+        peak_live_occurrences: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             package,
             pre_admitted: true,
+            session_limits,
+            peak_live_occurrences: Some(peak_live_occurrences),
             expression: PhantomData,
         }
     }
@@ -290,7 +320,7 @@ where
         &self,
         task: &mut Self::Task,
         delivered: Option<Evaluation>,
-        _context: &mut LiveContext,
+        context: &mut LiveContext,
         environment: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Transition, InternalFault> {
@@ -309,30 +339,48 @@ where
                     InternalFault::new("S6a", "checked-identity-not-resolved-by-package")
                 })?;
                 // The scheduler charged this application's `function.call`.
-                let mut env = EvaluationEnv::charged(package, environment, arguments);
-                evaluate_declaration(
+                let mut env = EvaluationEnv::charged_with_live_context(
+                    package,
+                    environment,
+                    arguments,
+                    self.session_limits,
+                    context.clone(),
+                );
+                let mut evaluation = evaluate_declaration(
                     S6aFamilyKind::Value,
                     &callable,
                     EvaluationTarget::Value(&mut env),
                     meter,
-                )
-                .map(Transition::Done)
+                )?;
+                if let Some(peak) = self.peak_live_occurrences.as_ref() {
+                    peak.fetch_max(env.peak_live_occurrences, Ordering::Relaxed);
+                }
+                context.reach(env.peak_live_occurrences);
+                evaluation.peak_live_occurrences = env.peak_live_occurrences;
+                Ok(Transition::Done(evaluation))
             }
             Frame::Expression {
                 expression,
                 parameters,
             } => {
                 let graph = self.package.graph();
-                Machine::new(
+                let mut machine = Machine::new(
                     graph.scope(),
                     graph,
                     environment,
                     meter,
                     graph.dispatch_tables(),
                 )
-                .with_formed_units(expression.formed_units())
-                .run(expression.root(), expression.slots(), parameters)
-                .map(Transition::Done)
+                .with_session_limits(self.session_limits)
+                .with_live_context(context.clone())
+                .with_formed_units(expression.formed_units());
+                if let Some(peak) = self.peak_live_occurrences.as_ref() {
+                    machine = machine.with_peak_live_occurrences_sink(Arc::clone(peak));
+                }
+                let evaluation =
+                    machine.run_expression(expression.root(), expression.slots(), parameters)?;
+                context.reach(evaluation.peak_live_occurrences);
+                Ok(Transition::Done(evaluation))
             }
             Frame::Finished => Err(InternalFault::new(
                 "S6a",

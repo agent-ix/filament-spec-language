@@ -2656,6 +2656,7 @@ fn interpret(
             accounting,
             supplied: SuppliedLimits::default(),
             prepare: fsl_eval::execution::PrepareLimits::default(),
+            session: Default::default(),
         },
         cancel,
     )

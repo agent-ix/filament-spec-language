@@ -1180,7 +1180,6 @@ const ZERO: &str = "0";
 /// raising the limit lets it finish.
 #[trace("TC-2164", "NFR-130-AC-3")]
 #[test]
-#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
 fn native_run_live_occurrence_limit_stops_deep_recursion() {
     let work = json!({"work_units": 100_000_000_000_u64});
     let (code, document, stderr) = run_recursion(1_000_000, json!({"accounting": work}));
@@ -1204,7 +1203,6 @@ fn native_run_live_occurrence_limit_stops_deep_recursion() {
 /// zero is a real limit, and a malformed `call.evaluation` refuses.
 #[trace("TC-2165", "NFR-130-AC-4")]
 #[test]
-#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
 fn native_run_live_occurrence_limit_defaults_and_refusals() {
     let (code, document, stderr) = run_recursion(1000, json!({}));
     assert_eq!(code, Some(0), "{stderr}");

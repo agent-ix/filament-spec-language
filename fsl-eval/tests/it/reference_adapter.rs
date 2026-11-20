@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use filament_eval::{
     Admission, Body, BodyFactory, BodyFailure, CallFailure, Evaluation, FamilyOutcome, Progress,
-    Registry, Resume, SessionLimits, Signature, Transition,
+    LiveContext, Registry, Resume, SessionLimits, Signature, Transition,
 };
 use filament_exact::{
     Cancel, CancelCause, ChargePoint, Integer, IntegerInterval, LimitKind, Meter, NodeKey, Outcome,

@@ -2,7 +2,8 @@
 //! A CG-shaped external caller enters FSL only through fsl-replay.
 
 use filament_eval::{
-    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, Resume, Transition,
+    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, LiveContext, Resume,
+    Transition,
 };
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
@@ -98,7 +99,7 @@ pub fn run() {
         result_units: limit,
     });
     let session = registry
-        .begin_call(
+        .begin_call_default(
             &selection,
             vec![Value::Integer(Integer::from(3_u64))],
             &environment,

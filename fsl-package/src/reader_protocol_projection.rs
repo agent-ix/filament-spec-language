@@ -1555,7 +1555,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     _ => {
                         return Err(BuildError::Fault(fault(
                             "reader-function-body-has-checked-identity",
-                        )))
+                        )));
                     }
                 };
                 let name = node
@@ -2116,6 +2116,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [CheckedTerm::Binding { name, value }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-let-binder-has-name").into());
+                };
                 let binder = self.binder_of(id, name.as_ref(), body)?;
                 let slot = self.next_slot(context, locals);
                 let value = self.project_argument(id, value, context, locals)?;
@@ -2397,6 +2402,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             {
                 let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
+                };
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-collection-query-binder-has-name").into());
                 };
                 let binder = self.binder_of(id, name.as_ref(), value)?;
                 let slot = self.next_slot(context, locals);
@@ -2834,6 +2844,19 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .ok_or_else(|| fault("reader-union-case-binder-has-name"))?;
                 arm_names.push(declared.to_owned());
                 arm_slots.push(next_slot);
+                arm_names.push(
+                    target
+                        .path
+                        .iter()
+                        .rev()
+                        .find_map(|segment| match segment {
+                            filament_contract_model::CheckedNodePathSegment::Name(name) => {
+                                Some(name.to_string())
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| format!("slot_{next_slot}")),
+                );
                 arm_locals.insert(target.clone(), next_slot);
                 next_slot = next_slot
                     .checked_add(1)
@@ -3209,7 +3232,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         Ok(self.push(ReaderProjectedNode::leaf(
             NodeKind::Literal(CheckedLiteral(value)),
             value_type,
-        )))
+                        )))
     }
 }
 

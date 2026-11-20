@@ -141,7 +141,7 @@ fn division_owner_selection_reaches_public_compile_source_execution_and_strict_r
                 let result = acquired
                     .handle()
                     .registry()
-                    .begin_call(
+                    .begin_call_default(
                         &callable,
                         vec![
                             Value::Integer(Integer::from(a)),
