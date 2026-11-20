@@ -664,7 +664,6 @@ fn zero_weight_workloads_follow_enabled_operation_weights() {
 #[trace("TC-2062", "FR-740-AC-2")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-5")]
 #[test]
-#[ignore = "IR-1569: Service's Boolean random parameter `ok` is refused by IR's reader until it admits Boolean support values"]
 fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let world = World::new(&world::service(""));
     let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())

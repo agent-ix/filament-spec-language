@@ -988,8 +988,14 @@ pub(super) fn carry_rows(
         for node in &mut row.supertypes {
             rekey.id(node);
         }
-        for member in &mut row.members {
-            rekey.id(&mut member.type_node);
+        for member in row.members.iter_mut().chain(
+            row.operations
+                .iter_mut()
+                .flat_map(|operation| operation.parameters.iter_mut()),
+        ) {
+            if let Some(node) = member.type_node.as_mut() {
+                rekey.id(node);
+            }
         }
     }
     let mut source_operations = retained.selected_source_operation_rows.clone();

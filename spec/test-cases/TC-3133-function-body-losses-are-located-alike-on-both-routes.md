@@ -33,9 +33,11 @@ Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39.
    both routes with the stated inputs.
 6. Call step 1's `f` on both routes with every `work_units` limit from `0` to
    `U - 1`, `U` the source route's completed usage.
-7. Emit FR-531-AC-39's `Config` unit with the `sqrtPre` precondition, read
-   its clause function's `body_locations` rows, admit the bytes, then remove
-   the second `sqrt`'s row and admit them again.
+7. Emit FR-531-AC-39's `Config` unit (the three `size` bodies, `pre rootCall`
+   on `probe` calling `self.size()`, and `pre sqrtPre` on `size`), read the
+   clause function's `body_locations` rows, admit the bytes, then remove the
+   second `sqrt`'s row and refuse them, and refuse them again with the
+   carrier emptied.
 
 Test: `fsl-eval/tests/it/ieee_ordering_route_parity.rs`
 `an_ordering_over_square_roots_charges_the_same_on_both_routes` (steps 1 to 3),

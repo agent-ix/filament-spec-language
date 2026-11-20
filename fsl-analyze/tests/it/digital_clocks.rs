@@ -852,7 +852,6 @@ fn a_randomized_mdp_entry_is_bounded_by_the_transition_limit() {
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
 #[test]
-#[ignore = "IR-1569: the fixture declares the Boolean random parameter send(lost), whose support v0.1.5 refuses, so S4 refuses the unit before its delay"]
 fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
     let world = with_tick(
         "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };\n",
