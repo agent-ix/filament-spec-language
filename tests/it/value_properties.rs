@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use filament_eval::FamilyOutcome;
-use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Refusal, Value, ValueType};
+use filament_exact::{FieldValue, Meter, Outcome, Refusal, Value, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_bench::prop::{self, near_miss, value};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -206,7 +206,6 @@ impl std::fmt::Display for CompileFailure {
 
 struct Compiled {
     package: CheckedPackage,
-    composite_keys: BTreeMap<NodeKey, &'static str>,
 }
 
 fn compile(source: &str) -> Result<Compiled, CompileFailure> {
@@ -228,12 +227,6 @@ fn compile(source: &str) -> Result<Compiled, CompileFailure> {
         Vec::new(),
     )
     .map_err(|error| CompileFailure::Source(format!("assembly: {error:?}")))?;
-    let mut composite_keys = BTreeMap::new();
-    for name in ["RecordValue", "TupleValue"] {
-        if let Some(ValueType::Composite(key)) = declarations.types.named(name) {
-            composite_keys.insert(key.clone(), name);
-        }
-    }
     declarations
         .check(
             CheckMode::Linked,
@@ -242,7 +235,6 @@ fn compile(source: &str) -> Result<Compiled, CompileFailure> {
         )
         .map(|graph| Compiled {
             package: CheckedPackage::link(graph),
-            composite_keys,
         })
         .map_err(CompileFailure::Check)
 }
@@ -258,7 +250,13 @@ fn call_named(package: &Compiled, name: &str) -> Outcome<Value> {
         )
         .expect("an admitted generated function call");
     match evaluation.outcome {
-        FamilyOutcome::Evaluated(outcome) => outcome,
+        FamilyOutcome::Evaluated(outcome) => {
+            if let Outcome::Completed(value) = &outcome {
+                let signature = package.package.graph().callable(name).unwrap();
+                assert_result_type(value, signature.result);
+            }
+            outcome
+        }
         other => panic!("kernel value outcome, got {other:?}"),
     }
 }
@@ -267,7 +265,34 @@ fn call(package: &Compiled) -> Outcome<Value> {
     call_named(package, "invoke")
 }
 
-fn actual(value: &Value, compiled: &Compiled) -> Reference {
+fn assert_result_type(value: &Value, expected: &ValueType) {
+    match (value, expected) {
+        (Value::Integer(_), ValueType::Integer | ValueType::Int(_))
+        | (Value::Boolean(_), ValueType::Boolean)
+        | (Value::Rational(_), ValueType::Rational(_))
+        | (Value::Decimal(_), ValueType::Decimal(_))
+        | (Value::Text(_), ValueType::Text(_)) => {}
+        (Value::Composite(composite), ValueType::Composite(key)) => {
+            assert_eq!(composite.declaration(), key, "nominal result identity");
+        }
+        (Value::Option(option), ValueType::Option(member)) => {
+            assert_eq!(option.payload_type(), member.as_ref());
+            if let Some(value) = option.payload() {
+                assert_result_type(value, member);
+            }
+        }
+        (Value::Collection(collection), ValueType::Collection(expected)) => {
+            assert_eq!(collection.collection_type().kind(), expected.kind());
+            assert_eq!(collection.collection_type().element(), expected.element());
+            for value in collection.elements() {
+                assert_result_type(value, expected.element());
+            }
+        }
+        other => panic!("result family differs from its checked type: {other:?}"),
+    }
+}
+
+fn actual(value: &Value) -> Reference {
     match value {
         Value::Integer(number) => Reference::Integer(number.to_string().parse().unwrap()),
         Value::Boolean(truth) => Reference::Boolean(*truth),
@@ -285,18 +310,20 @@ fn actual(value: &Value, compiled: &Compiled) -> Reference {
             number.representation().scale(),
         ),
         Value::Text(text) => Reference::Text(text.payload().as_str().into()),
-        Value::Option(option) => Reference::Option(
-            option
-                .payload()
-                .map(|member| Box::new(actual(member, compiled))),
-        ),
+        Value::Option(option) => {
+            Reference::Option(option.payload().map(|member| Box::new(actual(member))))
+        }
         Value::Composite(composite) => Reference::Composite(
-            compiled.composite_keys[composite.declaration()],
+            if composite.slots().len() == 1 {
+                "RecordValue"
+            } else {
+                "TupleValue"
+            },
             composite
                 .slots()
                 .iter()
                 .map(|slot| match slot {
-                    FieldValue::Present(value) => actual(value, compiled),
+                    FieldValue::Present(value) => actual(value),
                     other => panic!("generated present field, got {other:?}"),
                 })
                 .collect(),
@@ -308,14 +335,7 @@ fn actual(value: &Value, compiled: &Compiled) -> Reference {
                 filament_exact::CollectionKind::Bag => value::CollectionKind::Bag,
                 other => panic!("generated collection kind, got {other:?}"),
             };
-            Reference::Collection(
-                kind,
-                collection
-                    .elements()
-                    .iter()
-                    .map(|value| actual(value, compiled))
-                    .collect(),
-            )
+            Reference::Collection(kind, collection.elements().iter().map(actual).collect())
         }
         other => panic!("generated value family, got {other:?}"),
     }
@@ -378,7 +398,7 @@ fn evaluate_agreement(source: &str, expected: &Reference) -> TestCaseResult {
             "expected {expected:?}, got {result:?}\n{source}"
         )));
     };
-    let observed = actual(&value, &package);
+    let observed = actual(&value);
     prop_assert!(
         agree(expected, &observed),
         "reference {expected:?}, evaluator {observed:?}\n{source}"
@@ -668,7 +688,7 @@ fn p4_refusals_agree_with_the_reference() {
         let package = compile(&source).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
         let result = call(&package);
         match (expected, result) {
-            (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value, &package)), "{source}"),
+            (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value)), "{source}"),
             (None, Outcome::Refused(refusal)) => {
                 if decimal_case {
                     prop_assert_eq!(refusal.code(), Some(code), "{}", source);
@@ -789,7 +809,7 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     )));
                 };
                 prop_assert!(
-                    agree(&expected, &actual(&value, &package)),
+                    agree(&expected, &actual(&value)),
                     "{name}: reference {expected:?}, evaluator {value:?}\n{source}"
                 );
             }
