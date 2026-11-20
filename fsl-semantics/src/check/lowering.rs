@@ -7465,14 +7465,14 @@ fn is_map(content: &NodeContent) -> bool {
 /// The operand segments of a derived node's path (FSpec FR-322: `[node_tag,
 /// semantic_form, ...operands]`, each operand a string or an operand node's
 /// key). A `reference`, `option` or collection type names its target; a
-/// compound unit names each `(unit, exponent)` term. A value, expression,
-/// temporal, hybrid or bounded-domain node names, in first-occurrence order
-/// and without repeats (a decimal range keeps a repeated text, so equal bounds repeat), what its body walks: binding names, a literal's type
-/// node and text, referenced nodes, an application's operation identity, a
-/// fairness member's declaration and name, its laws' definition identities,
-/// its operator and result type, and last the node's semantic type. Every
-/// other derived node has no operands: equal content is one node, and a
-/// repeat of its path takes the next producer ordinal.
+/// compound unit names each `(unit, exponent)` term. Value, expression,
+/// temporal, hybrid and bounded-domain nodes take operands from their body
+/// walk in order, retaining repeated positions: binding names, a literal's
+/// type node and text, referenced nodes, an application's operation
+/// identity, a fairness member's declaration and name, its laws' definition
+/// identities, its operator and result type, and last the node's semantic
+/// type. Every other derived node has no operands: equal content is one node,
+/// and a repeat of its path takes the next producer ordinal.
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     if content.node_tag == NodeTag::State {
@@ -7598,13 +7598,6 @@ fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     }
 }
 
-/// Whether `content` is a `bounded_domain`/`decimal_range` node, whose path
-/// repeats a text operand (FSpec's `dec_cents` vector).
-#[ix_trace_rs::string_edge]
-fn is_decimal_range(content: &NodeContent) -> bool {
-    content.node_tag == NodeTag::BoundedDomain && content.semantic_form == "decimal_range"
-}
-
 /// Whether `content` is a `carried_quantity` scalar type (the FR-322 wire
 /// spelling the node was built with).
 #[ix_trace_rs::string_edge]
@@ -7727,20 +7720,11 @@ fn timed_interval_spelling(timed: &crate::value::member::TimedMember) -> String 
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     struct Walk {
-        seen: HashSet<PathSegment>,
         operands: Vec<PathSegment>,
-        /// Whether a repeated text operand is kept: a decimal range's path
-        /// repeats a bound's text where two bounds are equal (`scale_min` and
-        /// `scale_max` of FSpec's `dec_cents`), so only a repeated node is
-        /// dropped.
-        keep_text_repeats: bool,
     }
     impl Walk {
         fn push(&mut self, segment: PathSegment) {
-            let repeatable = self.keep_text_repeats && matches!(segment, PathSegment::Text(_));
-            if repeatable || self.seen.insert(segment.clone()) {
-                self.operands.push(segment);
-            }
+            self.operands.push(segment);
         }
         fn text(&mut self, text: &str) {
             self.push(PathSegment::Text(text.to_owned()));
@@ -7758,9 +7742,6 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
             let NodeRef::Admitted(key) = node else {
                 return;
             };
-            if !self.seen.insert(PathSegment::Node(key.clone())) {
-                return;
-            }
             self.operands
                 .push(PathSegment::Text(key.package().to_owned()));
             self.operands.extend(key.path());
@@ -7815,9 +7796,7 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         }
     }
     let mut walk = Walk {
-        seen: HashSet::new(),
         operands: Vec::new(),
-        keep_text_repeats: is_decimal_range(content),
     };
     match &content.body {
         BodyTerm::Leaf(leaf) => walk.leaf(leaf),
