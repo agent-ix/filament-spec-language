@@ -10,6 +10,7 @@ use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind, Visit};
 use filament_eval::FamilyOutcome;
 use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::location::ExpressionLocation;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::{CheckedGraph, CheckedNode, CheckedStateClause};
 
@@ -17,6 +18,236 @@ use fsl_eval::value::{ClauseEvaluation, StopReport};
 
 use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
+use crate::{
+    bounds::ReplayLimits,
+    execute::prepare_state_clause,
+    result::SeparationRefusal,
+    spine::{CallOutcome, CallRefusal, CallValue, ClauseDisposition},
+    ReplayRefusal, ReplayRequestWire, StateClauseCounterexample, WitnessEnvelope,
+};
+use fsl_foundation::Code;
+use fsl_semantics::model::observation::OutOfRange;
+use std::borrow::Cow;
+
+/// FR-269's refusal from the public state-clause witness derivation entry.
+/// Each variant retains its typed cause and request locus.
+#[derive(Debug, thiserror::Error)]
+pub enum DerivationRefusal {
+    /// FR-122 refused before the clause evaluation settled.
+    #[error(transparent)]
+    Replay(#[from] ReplayRefusal),
+    /// FR-106 admitted an out-of-range integer in the post snapshot.
+    #[error("invalid_runtime_input/invalid-value at /family_payload/observation")]
+    RangeViolation(Vec<OutOfRange>),
+    /// The replay executor or S6a evaluator reached a broken invariant.
+    #[error("runtime_invariant: {0:?}")]
+    Fault(InternalFault),
+    /// The state-clause evaluation returned a catalog refusal.
+    #[error("{} / {} at /family_payload/observation", .0.code, .0.cause)]
+    Refused(SeparationRefusal),
+    /// The evaluation meter ran out before the clause completed.
+    #[error("resource_exhausted/insufficient-next-charge at /family_payload/observation")]
+    Exhausted,
+    /// The clause's evaluation ended undefined.
+    #[error("undefined_expression/{cause} at /family_payload/observation: {expression:?}")]
+    Undefined {
+        /// The expression where evaluation became undefined.
+        expression: ExpressionLocation,
+        /// The native undefined cause.
+        cause: &'static str,
+    },
+    /// The clause evaluated true, so the supplied observation is not a counterexample.
+    #[error("invalid_runtime_input/invalid-value at /family_payload/observation")]
+    NotRefuted,
+}
+
+impl DerivationRefusal {
+    /// The catalog code for this refusal.
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Replay(refusal) => refusal.code().as_str(),
+            Self::RangeViolation(_) | Self::NotRefuted => Code::InvalidRuntimeInput.as_str(),
+            Self::Fault(_) => Code::RuntimeInvariant.as_str(),
+            Self::Refused(refusal) => &refusal.code,
+            Self::Exhausted => Code::ResourceExhausted.as_str(),
+            Self::Undefined { .. } => Code::UndefinedExpression.as_str(),
+        }
+    }
+
+    /// The catalog cause, when this refusal has one.
+    pub fn cause(&self) -> Option<&str> {
+        match self {
+            Self::Replay(refusal) => refusal.cause(),
+            Self::RangeViolation(_) | Self::NotRefuted => Some("invalid-value"),
+            Self::Fault(_) => None,
+            Self::Refused(refusal) => Some(&refusal.cause),
+            Self::Exhausted => Some("insufficient-next-charge"),
+            Self::Undefined { cause, .. } => Some(cause),
+        }
+    }
+
+    /// The wire pointer associated with this refusal, when one exists.
+    pub fn pointer(&self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::Replay(refusal) => refusal.pointer(),
+            Self::Fault(_) => None,
+            Self::RangeViolation(_)
+            | Self::Refused(_)
+            | Self::Exhausted
+            | Self::Undefined { .. }
+            | Self::NotRefuted => Some(Cow::Borrowed("/family_payload/observation")),
+        }
+    }
+}
+
+/// FR-269 (ADR-031 SW-9): re-run a state clause's replay front half and
+/// derive its decisive witness without reading the payload's `witness`.
+/// The clause's evaluation and witness derivation are shared with
+/// [`crate::replay_state_clause`] through `prepare_state_clause`.
+pub fn derive_state_clause_witness(
+    wire: ReplayRequestWire,
+    envelope: &WitnessEnvelope<StateClauseCounterexample>,
+    replay_limits: ReplayLimits,
+) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
+    let prepared = prepare_state_clause(wire, envelope, replay_limits)?;
+    let range_violations = prepared
+        .check
+        .observations
+        .as_ref()
+        .and_then(|observations| observations.post.as_ref())
+        .map(|post| post.out_of_range.clone())
+        .unwrap_or_default();
+    if !range_violations.is_empty() {
+        return Err(DerivationRefusal::RangeViolation(range_violations));
+    }
+
+    let report = prepared.check.report;
+    classify_clause_outcome(report.disposition, report.witness)
+}
+
+fn classify_clause_outcome(
+    disposition: ClauseDisposition,
+    witness: Option<SeparatingWitnessRecord>,
+) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
+    match disposition {
+        ClauseDisposition::Admit(failure)
+        | ClauseDisposition::SnapshotAdmission { failure, .. } => {
+            Err(DerivationRefusal::Replay(ReplayRefusal::Admission(failure)))
+        }
+        ClauseDisposition::EvaluateFault(fault) => Err(DerivationRefusal::Fault(fault)),
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(false))) => {
+            Ok(witness)
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true))) => {
+            Err(DerivationRefusal::NotRefuted)
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Completed(_)) => Err(DerivationRefusal::Fault(
+            InternalFault::new("replay", "state-clause-completes-a-boolean"),
+        )),
+        ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
+            Err(DerivationRefusal::Refused(separation_refusal(refusal)))
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => {
+            Err(DerivationRefusal::Exhausted)
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Undefined { reason, location }) => location
+            .map_or_else(
+                || {
+                    Err(DerivationRefusal::Fault(InternalFault::new(
+                        "replay",
+                        "undefined-evaluation-is-located",
+                    )))
+                },
+                |expression| {
+                    Err(DerivationRefusal::Undefined {
+                        expression,
+                        cause: reason,
+                    })
+                },
+            ),
+        ClauseDisposition::MissingName { .. } => Err(DerivationRefusal::Fault(InternalFault::new(
+            "replay",
+            "state-clause-resolved-by-name",
+        ))),
+        ClauseDisposition::Compile(_)
+        | ClauseDisposition::UnknownLanguage { .. }
+        | ClauseDisposition::NotAPredicate { .. }
+        | ClauseDisposition::ArgumentRefusal(_)
+        | ClauseDisposition::Temporal(_)
+        | ClauseDisposition::TemporalRefusal(_)
+        | ClauseDisposition::TraceRefused(_)
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
+        | ClauseDisposition::TemporalValuation(_) => Err(DerivationRefusal::Fault(
+            InternalFault::new("replay", "clause-check-reports-admission-or-evaluation"),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TC-3121: an evaluator invariant fault remains the typed internal
+    /// fault rather than becoming a missing witness or a replay refusal.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-8")]
+    #[test]
+    fn in_crate_fault_disposition_remains_a_derivation_fault() {
+        let fault = InternalFault::new("S6a", "checked-program-invariant");
+        let error = classify_clause_outcome(
+            ClauseDisposition::EvaluateFault(fault),
+            None,
+        )
+        .expect_err("an in-crate fault is a typed derivation refusal");
+        assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
+        assert!(matches!(error, DerivationRefusal::Fault(_)));
+    }
+
+    /// TC-3121: the undefined evaluator outcome keeps its native cause and
+    /// source expression location at the derivation boundary.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-7")]
+    #[test]
+    fn undefined_disposition_keeps_location_and_cause() {
+        let location = ExpressionLocation::at(
+            filament_semantic_value::location::ExpressionOwner::StateClause {
+                clause: "UndefinedDivision".to_owned(),
+                index: 0,
+            },
+            &[0],
+        );
+        let error = classify_clause_outcome(
+            ClauseDisposition::Evaluate(CallOutcome::Undefined {
+                reason: "division-by-zero",
+                location: Some(location.clone()),
+            }),
+            None,
+        )
+        .expect_err("an undefined evaluation has no witness");
+        assert_eq!(error.code(), Code::UndefinedExpression.as_str());
+        assert_eq!(error.cause(), Some("division-by-zero"));
+        assert!(matches!(
+            error,
+            DerivationRefusal::Undefined { expression, cause }
+                if expression == location && cause == "division-by-zero"
+        ));
+    }
+}
+
+fn separation_refusal(refusal: CallRefusal) -> SeparationRefusal {
+    let (code, fields) = match refusal {
+        CallRefusal::Record { code, fields, .. } => (code, fields),
+        CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
+    };
+    SeparationRefusal {
+        code: code.code().to_owned(),
+        cause: code.cause().to_owned(),
+        fields: fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+    }
+}
 
 /// FR-265's output for a clause that completed a Boolean: the basis, and
 /// the record exactly when the basis is decisive.

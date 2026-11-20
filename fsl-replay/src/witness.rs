@@ -600,6 +600,7 @@ pub(crate) use derivation::decisive_stop;
 pub(crate) use derivation::derive_separating_witness;
 #[cfg(test)]
 pub(crate) use derivation::Derived;
+pub use derivation::{derive_state_clause_witness, DerivationRefusal};
 
 /// FR-070/ADR-013 O-25: the typed counterexample/witness envelope, generic
 /// over its family-owned payload `P` (the extension point FR-070-AC-5
