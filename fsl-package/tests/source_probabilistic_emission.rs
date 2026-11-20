@@ -12,9 +12,11 @@ use filament_contract_model::{
     NativeJoinBudget,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_package::{emit_checked, CheckedPackage, EmitLimits, ReadIdentityRows};
+use fsl_package::{emit_checked, CheckedPackage, EmitLimits, EmitRefusal, ReadIdentityRows};
 use fsl_semantics::{
-    check::{CheckCause, CheckRefusal, PackageDeclarations, ProbabilisticCause},
+    check::{
+        CheckCause, CheckRefusal, PackageDeclarations, ProbabilisticCause, ProbabilisticFeature,
+    },
     model::{
         accounting::ModelNormalizationLimits,
         intake::{admit_unit, package_input, PackageInput},
@@ -145,8 +147,24 @@ const TIMED: &str = "object O { n: Integer; operation step() modifies self.n; }\
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
 fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
+    assert_delays_emitted(TIMED);
+}
+
+/// FR-740-AC-5's literal unit, whose `O` has a `Clock` field.
+#[trace("TC-3012", "FR-740-AC-5")]
+#[test]
+#[ignore = "QSL-2347: the strict read refuses a clock place over a source object type until the source clock_place join lands"]
+fn a_delay_on_each_source_object_beside_a_source_clock_is_emitted() {
+    assert_delays_emitted(&format!(
+        "{TIMED_CLOCK}object Other {{ n: Integer; operation poke() modifies self.n; }}\n"
+    ));
+}
+
+/// The delays of `objects` timed on `O` are emitted on their source object
+/// nodes, the discrete one typed by the unit node of `ms`.
+fn assert_delays_emitted(objects: &str) {
     let package = check(&format!(
-        "{TIMED}time O dense unit ms;\n\
+        "{objects}time O dense unit ms;\n\
          delay O::step ~ uniform;\n\
          delay Other::poke ~ discrete {{ 1 ms: 9, 3 ms: 1 }};\n"
     ))
@@ -163,8 +181,13 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
         .iter()
         .find(|node| node["body"].to_string().contains("\"discrete\""))
         .expect("the discrete delay");
-    let body = discrete["body"].to_string();
-    assert!(body.contains("\"1\"") && body.contains("\"3\""), "{body}");
+    let unit = unit_node(&wire, "ms");
+    let mut times = Vec::new();
+    quantities(&discrete["body"], &mut times);
+    assert_eq!(
+        times,
+        [("1".to_owned(), unit.clone()), ("3".to_owned(), unit)]
+    );
 }
 
 #[trace("TC-3012", "FR-740-AC-5")]
@@ -206,7 +229,7 @@ fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
 #[trace("TC-3012", "FR-569-AC-18")]
 #[trace("FSpec-TC-2033", "FSpec-FR-610-AC-9")]
 #[test]
-#[ignore = "QSL-2463: the strict read refuses a clock place over a source object type (MalformedClockPlace: contract-ir resolves clock places through selected model packages only); needs a contract-ir ticket"]
+#[ignore = "QSL-2347: the strict read refuses a clock place over a source object type (MalformedClockPlace) until the source clock_place join lands"]
 fn a_source_operation_entry_lists_its_parameters() {
     let package = check(
         "object O { d: Clock; n: Integer; \
@@ -252,7 +275,7 @@ fn refused(body: &str) -> ProbabilisticCause {
 /// FR-185 "Workloads": the `on` name of a workload names a source object
 /// type, whose operations the workload weighs under the rules of a selected
 /// model. (No acceptance criterion states the source-model clause.)
-#[trace("TC-3012", "FR-740-AC-6")]
+#[trace("TC-620", "FR-185-AC-14")]
 #[test]
 fn a_workload_on_a_source_object_type_is_admitted_with_that_types_operations() {
     let package = check(&format!(
@@ -276,7 +299,7 @@ fn a_workload_on_a_source_object_type_is_admitted_with_that_types_operations() {
     assert_eq!(workload.model_key(), Some(switch));
 }
 
-#[trace("TC-3012", "FR-740-AC-6")]
+#[trace("TC-620", "FR-185-AC-14")]
 #[test]
 fn a_workload_on_a_source_object_type_weighs_only_that_types_operations() {
     let cause = refused(&format!(
@@ -307,7 +330,7 @@ fn a_workload_on_a_source_object_type_weighs_only_that_types_operations() {
 
 /// A source object type's operations include those it inherits, as a
 /// selected model's workload weighs an operation of an ancestor type.
-#[trace("TC-3012", "FR-740-AC-6")]
+#[trace("TC-620", "FR-185-AC-14")]
 #[test]
 fn a_workload_on_a_source_subtype_weighs_and_requires_its_inherited_operations() {
     for weights in [
@@ -343,7 +366,7 @@ fn a_workload_on_a_source_subtype_weighs_and_requires_its_inherited_operations()
 
 /// A subtype's redefinition hides the ancestor's operation of that name, for a
 /// pure operation and for one that modifies state.
-#[trace("TC-3012", "FR-740-AC-6")]
+#[trace("TC-620", "FR-185-AC-14")]
 #[test]
 fn a_workload_on_a_source_subtype_weighs_a_redefined_operation_once() {
     for (base, redefinition) in [
@@ -394,7 +417,7 @@ const DIAMOND: &str = "object B { n: Integer; operation x() modifies self.n; }\n
 /// A name two unrelated ancestors declare is carried by the subtype twice: a
 /// workload weighs and requires each declaration by its own spelling, and
 /// FR-104 refuses only the written `D::x`.
-#[trace("TC-3012", "FR-740-AC-6")]
+#[trace("TC-620", "FR-185-AC-14")]
 #[test]
 fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
     let package = check(&format!(
@@ -484,4 +507,88 @@ fn a_boolean_source_switch_with_a_workload_and_a_reward_emits() {
     assert_eq!(first_reference(random[0]), object);
     assert_eq!(first_reference(workload[0]), object);
     assert_eq!(probabilistic(&wire, "reward").len(), 1);
+    let model = package.graph().probabilistic_model();
+    let support: Vec<(bool, String)> = model.random_parameters()[0]
+        .support()
+        .iter()
+        .map(|support| match &support.value.0 {
+            filament_exact::Value::Boolean(value) => (*value, support.weight.to_string()),
+            other => panic!("a Boolean support value: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        support,
+        [(true, "1/1".to_owned()), (false, "3/1".to_owned())]
+    );
+    let weights: Vec<(&str, String)> = model.workloads()[0]
+        .weights()
+        .iter()
+        .map(|(operation, weight)| (operation.name(), weight.to_string()))
+        .collect();
+    assert_eq!(
+        weights,
+        [("choose", "1/1".to_owned()), ("clear", "0/1".to_owned())]
+    );
+}
+
+/// The node id of the unit node named `name`.
+fn unit_node(wire: &Value, name: &str) -> Value {
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|node| node["declaration"]["qualified_name"] == serde_json::json!([name]))
+        .unwrap_or_else(|| panic!("a node for {name}"))["node_id"]
+        .clone()
+}
+
+/// Every quantity literal under `term`, as its magnitude and its type node.
+fn quantities(term: &Value, found: &mut Vec<(String, Value)>) {
+    match term {
+        Value::Object(map) => {
+            if map.get("value_kind").is_some_and(|kind| kind == "quantity") {
+                found.push((
+                    map["value"].as_str().expect("a magnitude").to_owned(),
+                    map["type"].clone(),
+                ));
+            }
+            map.values().for_each(|inner| quantities(inner, found));
+        }
+        Value::Array(items) => items.iter().for_each(|inner| quantities(inner, found)),
+        _ => {}
+    }
+}
+
+/// FSpec FR-640 Reader rule 3 reads a workload's operation names as distinct,
+/// so a workload on a subtype of two parents that each declare `x` weighs two
+/// operations of one name: S3 admits it (FR-185-AC-14) and S4 refuses it at
+/// the workload's span rather than write rows the strict read refuses without
+/// a locus (QSL-2707).
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_workload_weighing_two_operations_of_one_name_is_refused_at_its_span() {
+    let source = "object B { n: Integer; operation x() modifies self.n; }\n\
+        object C { m: Integer; operation x() modifies self.m; }\n\
+        object D extends B, C { operation y() modifies self.n; }\n\
+        workload W on D { weight D::y = 1; weight B::x = 1; weight C::x = 1; }\n";
+    let package = check(source).unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let refusal = emit_checked(&package, EmitLimits::new(10_000_000))
+        .expect_err("a repeated operation name is refused");
+    let EmitRefusal::ProbabilisticModelNotEmitted {
+        declaration,
+        feature,
+        region,
+        ..
+    } = &refusal
+    else {
+        panic!("a located probabilistic refusal: {refusal:?}");
+    };
+    assert_eq!(declaration, "W");
+    assert_eq!(*feature, ProbabilisticFeature::Workload);
+    let text = format!("{HEADER}{source}");
+    let label = text
+        .get(region.start() as usize..region.end() as usize)
+        .expect("the region lies in the unit");
+    assert!(label.contains('W'), "{label}");
+    assert!(!refusal.to_string().contains("Span {"), "{refusal}");
 }

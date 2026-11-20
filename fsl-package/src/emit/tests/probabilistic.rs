@@ -3094,3 +3094,82 @@ fn a_time_window_over_a_tick_model_is_a_quantity_at_the_model_unit() {
         "form kind probability event kind compare measure kind steps from <node> until <node> within quantity <node> 5 bound direction at_least value integer 1 bound direction at_least value rational 1/2 over activation kind origin confidence"
     );
 }
+
+/// TC-3012 (FR-740-AC-6): FSL's reader rebuilds the random parameter and the
+/// workload declared on a source object from the emitted package: the
+/// parameter with probabilities `1/4` and `3/4`, the workload equal to S3's.
+/// The join runs over S3's own source packages, which the bytes do not carry.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_source_random_parameter_and_workload_are_read_back_equal() {
+    use fsl_semantics::model::observation::ModelSelections;
+    let package = source_object_reward(
+        "random O::step(x) ~ { 1: 1, 3: 3 };\nworkload W on O { weight O::step = 1; }",
+    );
+    let emission = emit_checked(&package).expect("the package emits");
+    let evidence = read_evidence(&emission);
+    let (admitted, _) = admitted_of(read_with(&emission, &evidence));
+    let mut rows_budget = V2ReadLimits::fixture().native_join_budget();
+    let rows = emission
+        .identity_rows(&admitted, &mut rows_budget)
+        .expect("the identity rows join the package");
+    let mut join_budget = V2ReadLimits::fixture().native_join_budget();
+    let bare = crate::BarePackage::new(&admitted)
+        .with_supply(
+            crate::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes view admits its supply");
+    let sources = package.graph().source_packages();
+    let mut selections = crate::AnalysisView::model_selections(&bare);
+    selections.extend(sources.iter().map(|source| source.model_selection.clone()));
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the package input is empty");
+    let model = fsl_semantics::model::state::StateModel::new(
+        ModelSelections::new(&selections, sources),
+        package.graph().scope().types(),
+        &packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("the source package re-admits");
+    let operations = model
+        .operation_table(&BTreeMap::new())
+        .expect("the operations type");
+    let nodes = bare.probabilistic().expect("the nodes read");
+    let read = model
+        .probabilistic_model(&operations, &nodes)
+        .unwrap_or_else(|refusal| panic!("the records rebuild: {refusal}"));
+    let [random] = read.random_parameters() else {
+        panic!("one random parameter read");
+    };
+    let probabilities: Vec<String> = random
+        .support()
+        .iter()
+        .map(|support| spelling(&support.probability))
+        .collect();
+    assert_eq!(probabilities, ["1/4", "3/4"]);
+    let (checked, read) = (package.graph().probabilistic_model(), &read);
+    let [read_workload] = read.workloads() else {
+        panic!("one workload read");
+    };
+    let [checked_workload] = checked.workloads() else {
+        panic!("one checked workload");
+    };
+    assert_eq!(read_workload.name(), checked_workload.name());
+    let content = |workload: &fsl_semantics::check::Workload| -> Vec<(String, String)> {
+        workload
+            .weights()
+            .iter()
+            .map(|(operation, weight)| (operation.name().to_owned(), spelling(weight)))
+            .collect()
+    };
+    assert_eq!(content(read_workload), content(checked_workload));
+    assert_eq!(read_workload.model_key(), checked_workload.model_key());
+}
+
+fn spelling(value: &filament_exact::Rational) -> String {
+    format!("{}/{}", value.numerator(), value.denominator())
+}

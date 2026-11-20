@@ -128,10 +128,20 @@ pub fn object_type_node_key(key: &DeclarationKey) -> Result<NodeKey, InvalidNode
 /// when no node key can be formed.
 #[must_use]
 pub fn declaring_node_key(key: &DeclarationKey) -> Option<NodeKey> {
-    let Some(package) = key.package.strip_prefix("source/") else {
-        return object_type_node_key(key).ok();
-    };
-    let name = crate::model::intake::type_identity_segment(&key.package, &key.node)?;
+    if key.package.starts_with("source/") {
+        source_object_node_key(key)
+    } else {
+        object_type_node_key(key).ok()
+    }
+}
+
+/// The own declaration node of the object type `key` declares in the unit's
+/// source: its source package name and its type name, at ordinal 0. `None` for
+/// a key of no source package.
+#[must_use]
+pub(crate) fn source_object_node_key(key: &DeclarationKey) -> Option<NodeKey> {
+    let package = key.package.strip_prefix("source/")?;
+    let name = super::intake::type_identity_segment(&key.package, &key.node)?;
     crate::check::declared_node_key(package.to_owned(), vec![name.to_owned()], 0).ok()
 }
 

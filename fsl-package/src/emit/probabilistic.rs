@@ -331,6 +331,17 @@ fn workload_node(
         weights.push((declaring, operation.name().to_owned(), weight.clone()));
     }
     weights.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
+    // FSpec FR-640 Reader rule 3 reads a workload's operation names as distinct, so
+    // one that weighs two declarations of a name (a subtype of two parents
+    // that each declare it) is refused here with its locus; the reader rule is
+    // QSL-2707.
+    if weights
+        .iter()
+        .enumerate()
+        .any(|(at, (_, name, _))| weights[..at].iter().any(|(_, earlier, _)| earlier == name))
+    {
+        return Err(unwritable());
+    }
     let rows = weights
         .iter()
         .map(|(declaring, operation, weight)| {

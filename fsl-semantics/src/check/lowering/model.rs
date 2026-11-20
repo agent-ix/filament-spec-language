@@ -1443,17 +1443,7 @@ impl AdmittedModel {
                 Some(DomainPackageRecord::ObjectType(_))
             )
         {
-            let package_name = self.selection.identity.strip_prefix("source/")?;
-            let name = crate::model::intake::type_identity_segment(
-                &declaration.package,
-                &declaration.node,
-            )?;
-            return crate::check::declared_node_key(
-                package_name.to_owned(),
-                vec![name.to_owned()],
-                0,
-            )
-            .ok();
+            return crate::model::key::source_object_node_key(declaration);
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
