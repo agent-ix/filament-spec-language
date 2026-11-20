@@ -4,23 +4,23 @@
 //! over ADR-028 §15.5's `Retx`, and the core checker that rebuilds the
 //! digital or region product itself.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
-    Engines,
+    AnalyzeRecord, Engines, analyze_items, exact_probabilistic_item,
+    exact_probabilistic_item_tampered,
 };
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    CertificateRule, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+    ProbabilityDocumentError, ProofBasis, TerminalValue, check_probability_certificate_document,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
@@ -476,9 +476,11 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
 
 // --- FR-923 (TC-2492) -------------------------------------------------------
 
-/// FR-923-AC-1: a `discrete` delay over every scheduler leaves no choice:
-/// minimum and maximum are the workload's value.
-#[trace("TC-2492", "FR-923-AC-1")]
+/// A `discrete` delay over every scheduler leaves no choice: minimum and
+/// maximum are the workload's value. This is the proof half of FR-923-AC-1,
+/// whose refutation half is the ignored test below, so the criterion is
+/// tagged there.
+#[trace("TC-2492")]
 #[trace("FSpec-TC-1769", "FSpec-FR-752-AC-3")]
 #[test]
 fn every_scheduler_discrete_delay_is_certified() {

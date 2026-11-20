@@ -458,14 +458,18 @@ fn check_mean_time_values(
                 Some(previous) => match objective {
                     ProbabilityObjective::Minimum => previous.min(sum.clone()),
                     ProbabilityObjective::Maximum => previous.max(sum.clone()),
-                    ProbabilityObjective::Workload => unreachable!(),
+                    ProbabilityObjective::Workload => {
+                        return Err(ProbabilityDocumentError::Unsupported);
+                    }
                 },
             });
             match objective {
                 ProbabilityObjective::Maximum => progress &= descends,
                 ProbabilityObjective::Minimum if sum == *value => progress |= descends,
                 ProbabilityObjective::Minimum => {}
-                ProbabilityObjective::Workload => unreachable!(),
+                ProbabilityObjective::Workload => {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                }
             }
         }
         if best.as_ref() != Some(value) {

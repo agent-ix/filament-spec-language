@@ -47,3 +47,23 @@ FAIL for the focused assurance slice: FR-921-AC-4 lacks active fresh-process evi
 ## Disposition pass summary
 
 At frozen head `2b16a60fef4b7382fecdf1f9148961c0baeaecfa`, FR-921-AC-4 remains parked owed-test evidence under the arch scope freeze. No follow-up ticket was created or deferred.
+
+## New findings (disposition pass 2)
+
+Planless, PR-scoped, at head `b42bed4b90`. Plan completion: not assessed. Matrix: `quoin matrix --repo /home/peter/dev/worktrees/qsl-2156-probability-digital --json`, quoin 0.36.8, `spec-artifacts-process@v0.36.0`, exit 0. No cargo run in this pass; the run evidence is the lead's `/tmp/qsl2156-focused-3.log` (exit 0).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | FR-923-AC-1 shows `tagged` only because of its proof half. The refutation half (`every_scheduler_discrete_delay_refutes`, bound above 159129/160000 refuted) is ignored, so the matrix reports the criterion as covered when half of it has no active evidence. | fsl-analyze/tests/it/timed_product_certificate.rs:493-499 |
+| FND-003 | medium | FR-201's unbounded acyclic restriction has no active test. After the fix round, the only cycle case (`exact_certificate_rejects_threshold_miss_and_cycles`, TC-636) asserts the `Workload` refusal only, so the untimed every-scheduler cycle acceptance (code-review FND-002) is untested. | fsl-replay/src/probability_certificate.rs:2417-2447 |
+
+### Coverage at this head
+
+- Active: FR-921-AC-1..3, FR-922-AC-1..3, FR-923-AC-1 (proof half), FR-923-AC-2, FR-924-AC-1, FR-924-AC-2, FR-924-AC-4, FR-198-AC-1..5.
+- `tagged-by-ignored-test` (the PR body lists these as remaining QSL-2156 scope): FR-877-AC-1..4, FR-923-AC-3, FR-924-AC-3, FR-924-AC-5, FR-924-AC-6, and FR-921-AC-4 (prior FND-001, deferred).
+- No timed deadline refutation is exercised by any active test. The `!holds` branch of `run_timed` (`fsl-analyze/src/analyze/exact.rs:342-380`) has no active evidence.
+- Reverse gap and stubs, in the changed production paths only: no unowned behaviour and no empty implementation found. The test helpers changed in the fix round (`digital_clocks_of`, the `Max` bound) keep their oracles; see the code-review artifact.
+
+## Disposition pass 2 summary
+
+At head `b42bed4b90`, prior FND-001 (FR-921-AC-4) stays `tagged-by-ignored-test`. Its latest outcome is `deferred`, so no new row is due. FND-002 and FND-003 are new and have no outcome yet.

@@ -1064,14 +1064,18 @@ impl<'c> Builder<'_, '_, 'c> {
                 clocks: clocks
                     .into_iter()
                     .map(|clock| match clock {
-                        ClockKey::Digital(clock) => clock,
-                        ClockKey::Region(_) => unreachable!(),
+                        ClockKey::Digital(clock) => Ok(clock),
+                        ClockKey::Region(_) => Err(fault("digital-route-clock-key-is-digital")),
                     })
-                    .collect(),
-                deadline: deadline.map(|deadline| match deadline {
-                    DeadlineKey::Digital(deadline) => deadline,
-                    DeadlineKey::Region(_) => unreachable!(),
-                }),
+                    .collect::<Result<Vec<_>, ProductRefusal>>()?,
+                deadline: deadline
+                    .map(|deadline| match deadline {
+                        DeadlineKey::Digital(deadline) => Ok(deadline),
+                        DeadlineKey::Region(_) => {
+                            Err(fault("digital-route-deadline-key-is-digital"))
+                        }
+                    })
+                    .transpose()?,
                 tail,
                 monitor,
                 accumulator: None,
@@ -1116,10 +1120,14 @@ impl<'c> Builder<'_, '_, 'c> {
                 scale: self.base_scale,
                 subdivisions: self.subdivisions,
                 clocks: region_clocks,
-                deadline: deadline.map(|deadline| match deadline {
-                    DeadlineKey::Region(deadline) => deadline,
-                    DeadlineKey::Digital(_) => unreachable!(),
-                }),
+                deadline: deadline
+                    .map(|deadline| match deadline {
+                        DeadlineKey::Region(deadline) => Ok(deadline),
+                        DeadlineKey::Digital(_) => {
+                            Err(fault("region-route-deadline-key-is-region"))
+                        }
+                    })
+                    .transpose()?,
                 tail,
                 monitor,
                 accumulator: None,
