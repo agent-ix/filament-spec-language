@@ -7,6 +7,8 @@ relationships:
     type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-1021
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: verifies
 ---
 # TC-3035: A hybrid provider answer settles by its own arm
 
@@ -20,7 +22,7 @@ that every exact number on the hybrid wire is a `Rational` object, that an
 undefined-evaluation counterexample is written and read back, that a
 refuted hybrid item's replay target is `state_clause` naming its claim, and
 that `read_entry` reads against the model and the frame's counterexamples.
-Scope: FR-750-AC-6 to FR-750-AC-11, FR-750-AC-15 and FR-1021-AC-3.
+Scope: FR-750-AC-6 to FR-750-AC-11, FR-750-AC-15, FR-750-AC-16, FR-621-AC-14 and FR-1021-AC-3.
 
 ## Test Procedure
 
@@ -50,6 +52,14 @@ Scope: FR-750-AC-6 to FR-750-AC-11, FR-750-AC-15 and FR-1021-AC-3.
 8. Over FSpec FR-652-AC-3's `Grow`, replay the `Below` request carrying the
    nine-step witness at `/replay/certificate`; then with the cut witness,
    with no `certificate`, and with the witness on a `function` request.
+9. Replay FSpec FR-193-AC-17's reproducing `Braking` request carrying a
+   structurally valid witness that misses its start, then with `before`
+   `v = 1`; replay Step 8's request with the witness's step written `"4"`,
+   with a second dwell, and under a `work_units` bound that stops the
+   witness check; analyze an `insufficient-horizon` proof carrying a
+   `flowpipe`, FSpec FR-652-AC-5's certificate and its `[1, 10]` variant,
+   and a witness check stopped by the work limit, reading each item's
+   `certificate` member.
 
 ## Expected Results
 
@@ -85,3 +95,4 @@ Scope: FR-750-AC-6 to FR-750-AC-11, FR-750-AC-15 and FR-1021-AC-3.
 - Step 8: the `hybrid` row `reproduced-with-validated-witness`, `success`;
   `inconclusive` with `hybrid-trace` `not-exact` twice; refused
   `unknown-member` at `/replay/certificate`.
+- Step 9: `reproduced-with-evaluated-witness`; `inconclusive` `not-reproduced`; `invalid_runtime_input`/`wrong-value-kind` at `/replay/certificate/dwells/0/0/step`; `invalid_runtime_input`/`invalid-value` at `/replay/certificate/dwells`; the `incomplete` row; `certificate` with exactly `identity` and `form`, then `checker`, `accepted` `true` and `form`, then `accepted` `false`, `rule` `jump`, `at` `/certificate/steps/160`, then `accepted` `false`, `rule` `work-limit` on the `incomplete` item.
