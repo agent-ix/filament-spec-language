@@ -531,7 +531,7 @@ fn compare_witness(
                 sources,
                 meter,
             )?;
-            Ok(settle_separation(outcome, derived_record))
+            Ok(settle_separation(outcome, given, derived_record))
         }
         (Some(given_record), Some(derived_record)) if given_record == derived_record => {
             let outcome = separate(
@@ -542,7 +542,7 @@ fn compare_witness(
                 sources,
                 meter,
             )?;
-            Ok(settle_separation(outcome, derived_record))
+            Ok(settle_separation(outcome, given, derived_record))
         }
         _ => Ok(Some(WitnessCheck::Disagrees {
             given: given.cloned().map(Box::new),
@@ -558,12 +558,13 @@ fn compare_witness(
 /// exhausted.
 pub(crate) fn settle_separation(
     outcome: SeparationOutcome,
+    given: Option<&SeparatingWitnessRecord>,
     record: &SeparatingWitnessRecord,
 ) -> Option<WitnessCheck> {
     match outcome {
         SeparationOutcome::Holds => Some(WitnessCheck::Agrees(Some(Box::new(record.clone())))),
         SeparationOutcome::Failed(step, reason) => Some(WitnessCheck::Disagrees {
-            given: Some(Box::new(record.clone())),
+            given: given.cloned().map(Box::new),
             derived: Some(Box::new(record.clone())),
             failure: WitnessFailure::Separation { step, reason },
         }),

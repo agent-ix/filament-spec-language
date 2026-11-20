@@ -52,6 +52,33 @@ pub(super) fn unit_for(unit: String, domain_document: Vec<u8>) -> Unit {
     }
 }
 
+pub(super) fn unit_for_with_function_modes(
+    unit: String,
+    domain_document: Vec<u8>,
+    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+) -> Unit {
+    let packages =
+        fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
+    let compiled = crate::spine::compose_in_mode(
+        source(),
+        IDENTITY,
+        unit.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+        SpineLimits::default(),
+        crate::spine::ComposeModes {
+            check_mode: None,
+            function_modes,
+        },
+    )
+    .expect("the ConfigVersion unit compiles with its requested function modes");
+    Unit {
+        bytes: unit.into_bytes(),
+        domain_document,
+        compiled,
+    }
+}
+
 pub(super) fn config_version_unit() -> Unit {
     let (unit, _) = config_version_unit_and_packages();
     unit_for(unit, config_version_domain_document())

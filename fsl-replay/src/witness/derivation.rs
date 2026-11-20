@@ -117,12 +117,8 @@ pub fn derive_state_clause_witness(
         .and_then(|observations| observations.post.as_ref())
         .map(|post| post.out_of_range.clone())
         .unwrap_or_default();
-    if !range_violations.is_empty() {
-        return Err(DerivationRefusal::RangeViolation(range_violations));
-    }
-
     let report = prepared.check.report;
-    classify_clause_outcome(report.disposition, report.witness)
+    classify_with_range_violations(range_violations, report.disposition, report.witness)
 }
 
 fn classify_clause_outcome(
@@ -201,6 +197,49 @@ mod tests {
         assert!(matches!(error, DerivationRefusal::Fault(_)));
     }
 
+    /// TC-3121: an admitted range violation takes precedence over a clause
+    /// evaluator fault, while the same fault without a range violation stays
+    /// a runtime-invariant refusal.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-8")]
+    #[test]
+    fn range_violation_precedes_an_in_crate_fault() {
+        let fault = InternalFault::new("S6a", "checked-program-invariant");
+        let observed = filament_exact::Integer::from(-1_i64);
+        let object_type = filament_exact::EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new(
+                "agent-ix/config-version",
+                "ConfigVersion",
+            ),
+        );
+        let range_violation = OutOfRange {
+            object: filament_exact::ObjectReference::new(
+                filament_exact::UniverseId::new(crate::fixture_node(1)),
+                object_type.clone(),
+                filament_exact::ObjectId::new("child").unwrap(),
+            ),
+            field: filament_semantic_value::declaration::FieldRef::new(object_type, "versionNumber"),
+            index: None,
+            range: filament_exact::IntegerInterval::new(
+                filament_exact::Integer::from(0_i64),
+                filament_exact::Integer::from(1000_i64),
+            )
+            .unwrap(),
+            observed,
+            steps: Vec::new(),
+        };
+        let error = classify_with_range_violations(
+            vec![range_violation.clone()],
+            ClauseDisposition::EvaluateFault(fault),
+            None,
+        )
+        .expect_err("range admission takes precedence over clause evaluation");
+        assert!(matches!(
+            error,
+            DerivationRefusal::RangeViolation(violations) if violations == vec![range_violation]
+        ));
+    }
+
     /// TC-3121: the undefined evaluator outcome keeps its native cause and
     /// source expression location at the derivation boundary.
     #[ix_trace_rs::trace("TC-3121", "FR-269-AC-7")]
@@ -229,6 +268,17 @@ mod tests {
                 if expression == location && cause == "division-by-zero"
         ));
     }
+}
+
+fn classify_with_range_violations(
+    range_violations: Vec<OutOfRange>,
+    disposition: ClauseDisposition,
+    witness: Option<SeparatingWitnessRecord>,
+) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
+    if !range_violations.is_empty() {
+        return Err(DerivationRefusal::RangeViolation(range_violations));
+    }
+    classify_clause_outcome(disposition, witness)
 }
 
 /// FR-265's output for a clause that completed a Boolean: the basis, and
