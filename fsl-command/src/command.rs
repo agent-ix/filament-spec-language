@@ -2529,7 +2529,7 @@ fn compile_outcome_inner(
             }
             let compiled = compile_formal_model_unit(&sources[0])?;
             let document = fsl_replay::OutcomeDocument::new(
-                fsl_replay::Operation::Compile,
+                fsl_replay::Operation::Package,
                 Some(fsl_replay::OutcomeStage::I1),
                 filament_semantic_value::catalog::Category::Success,
             );
@@ -3343,10 +3343,12 @@ fn check_sources<T>(
             );
         }
         let checked = checked_result.map_err(failure)?.into_value();
-        let selections = request
-            .clocks
-            .package_selections(&checked, &[&parsed])
-            .map_err(|refusal| spine_failure(*refusal))?;
+        let selections = match &request.clocks {
+            Some(clocks) => clocks
+                .package_selections(&checked, &[&parsed])
+                .map_err(|refusal| spine_failure(*refusal))?,
+            None => Vec::new(),
+        };
         (checked, selections)
     };
     finish(
