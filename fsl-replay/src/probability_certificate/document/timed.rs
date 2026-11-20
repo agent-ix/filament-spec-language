@@ -331,7 +331,7 @@ fn check_mean_time_values(
                 }
                 let denominator = one().sub(&internal);
                 if !denominator.is_zero() {
-                    exits.push(reward.div(&denominator));
+                    exits.push((key.clone(), choice_index, reward.div(&denominator)));
                 }
             }
         }
@@ -339,15 +339,34 @@ fn check_mean_time_values(
             return Err(ProbabilityDocumentError::Unsupported);
         }
         let expected = match objective {
-            ProbabilityObjective::Minimum => exits.into_iter().min(),
-            ProbabilityObjective::Maximum => exits.into_iter().max(),
+            ProbabilityObjective::Minimum => exits.iter().map(|exit| exit.2.clone()).min(),
+            ProbabilityObjective::Maximum => exits.iter().map(|exit| exit.2.clone()).max(),
             ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
         }
         .unwrap_or_else(zero);
         for key in members {
             if values.get(key) != Some(&expected) {
-                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key.clone()));
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
             }
+        }
+        if !mean_time_component_policy_valid(
+            graph,
+            &member_set,
+            &exits,
+            &expected,
+            costs,
+            values,
+            &ranks,
+            cancel,
+            meter,
+        )? {
+            return Ok(rejected(
+                ProbabilityCertificateRule::RankBroken,
+                members[0].clone(),
+            ));
         }
     }
     for (key, state) in &graph.states {
@@ -486,6 +505,188 @@ fn check_mean_time_values(
             document: None,
         },
     ))
+}
+
+/// Check a checker-derived shortest-path policy from a component member to
+/// an objective-best exit. This independently validates the macro state's
+/// exit closure instead of trusting member values alone.
+fn mean_time_component_policy_valid(
+    graph: &CheckerGraph,
+    members: &BTreeSet<ProbabilityProductKey>,
+    exits: &[(ProbabilityProductKey, usize, Rational)],
+    expected: &Rational,
+    costs: &BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>,
+    values: &BTreeMap<ProbabilityProductKey, Rational>,
+    ranks: &BTreeMap<ProbabilityProductKey, u64>,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<bool, ProbabilityDocumentError> {
+    let keys = graph.states.keys().cloned().collect::<Vec<_>>();
+    let indices = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| (key.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let candidate = members
+        .iter()
+        .map(|key| {
+            indices
+                .get(key)
+                .copied()
+                .ok_or(ProbabilityDocumentError::Malformed)
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let zero = zero();
+    for (owner, owner_choice, exit_value) in exits {
+        poll(cancel)?;
+        if exit_value != expected {
+            continue;
+        }
+        let mut distance = members
+            .iter()
+            .map(|key| (key.clone(), None))
+            .collect::<BTreeMap<_, Option<usize>>>();
+        *distance
+            .get_mut(owner)
+            .ok_or(ProbabilityDocumentError::Malformed)? = Some(0);
+        loop {
+            let mut changed = false;
+            for key in members {
+                poll(cancel)?;
+                if distance.get(key).copied().flatten().is_some() {
+                    continue;
+                }
+                let state = graph
+                    .states
+                    .get(key)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+                let mut nearest = None;
+                for (choice_index, choice) in state.choices.iter().enumerate() {
+                    let edge_costs = action_costs
+                        .get(choice_index)
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    if !super::super::internal_nonprogressive_choice(
+                        key,
+                        choice,
+                        Some(edge_costs),
+                        &candidate,
+                        &indices,
+                        &zero,
+                    )? {
+                        continue;
+                    }
+                    for edge in choice {
+                        if let Some(next) = distance.get(&edge.target).copied().flatten() {
+                            let candidate_distance = next + 1;
+                            nearest = Some(nearest.map_or(candidate_distance, |current| {
+                                current.min(candidate_distance)
+                            }));
+                        }
+                    }
+                }
+                if let Some(nearest) = nearest {
+                    *distance
+                        .get_mut(key)
+                        .ok_or(ProbabilityDocumentError::Malformed)? = Some(nearest);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if members
+            .iter()
+            .any(|key| distance.get(key).copied().flatten().is_none())
+        {
+            continue;
+        }
+        let mut valid = true;
+        for key in members {
+            poll(cancel)?;
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            let selected = if key == owner {
+                *owner_choice
+            } else {
+                let current = distance.get(key).copied().flatten().unwrap_or(0);
+                let mut selected = None;
+                for (choice_index, choice) in state.choices.iter().enumerate() {
+                    let edge_costs = action_costs
+                        .get(choice_index)
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    if super::super::internal_nonprogressive_choice(
+                        key,
+                        choice,
+                        Some(edge_costs),
+                        &candidate,
+                        &indices,
+                        &zero,
+                    )? && choice.iter().any(|edge| {
+                        distance
+                            .get(&edge.target)
+                            .copied()
+                            .flatten()
+                            .is_some_and(|next| next < current)
+                    }) {
+                        selected = Some(choice_index);
+                        break;
+                    }
+                }
+                let Some(choice_index) = selected else {
+                    valid = false;
+                    break;
+                };
+                choice_index
+            };
+            let Some(choice) = state.choices.get(selected) else {
+                return Err(ProbabilityDocumentError::Malformed);
+            };
+            let Some(edge_costs) = action_costs.get(selected) else {
+                return Err(ProbabilityDocumentError::Malformed);
+            };
+            let mut sum = zero.clone();
+            let mut descends = false;
+            for (edge, cost) in choice.iter().zip(edge_costs) {
+                poll(cancel)?;
+                let successor = values
+                    .get(&edge.target)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let next_value = arithmetic(
+                    filament_exact::RationalArithmetic::Add(cost, successor),
+                    meter,
+                    cancel,
+                )?;
+                let weighted = arithmetic(
+                    filament_exact::RationalArithmetic::Multiply(&edge.probability, &next_value),
+                    meter,
+                    cancel,
+                )?;
+                sum = arithmetic(
+                    filament_exact::RationalArithmetic::Add(&sum, &weighted),
+                    meter,
+                    cancel,
+                )?;
+                descends |= edge.probability > zero
+                    && ranks
+                        .get(&edge.target)
+                        .zip(ranks.get(key))
+                        .is_some_and(|(next, current)| next < current);
+            }
+            if sum != *expected || !descends {
+                valid = false;
+                break;
+            }
+        }
+        if valid {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn mean_time_query(

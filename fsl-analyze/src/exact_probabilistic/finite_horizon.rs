@@ -364,7 +364,6 @@ impl ZeroTimeSolver<'_> {
             }
         }
         let mut exits = Vec::new();
-        let mut internal_policy = Vec::new();
         for state in &members {
             let groups = action_groups(self.product, ProbStateId(*state))?;
             for (choice_index, edges) in groups.iter().enumerate() {
@@ -372,7 +371,6 @@ impl ZeroTimeSolver<'_> {
                     .iter()
                     .all(|edge| edge.elapsed.is_zero() && member_set.contains(&edge.to.index()));
                 if internal {
-                    internal_policy.push((*state, choice_index));
                     continue;
                 }
                 let (exit_value, internal_mass) = self.exit_expectation(edges, &member_set)?;
@@ -408,13 +406,12 @@ impl ZeroTimeSolver<'_> {
             if let Some(slot) = self.policy.get_mut(exit_state) {
                 *slot = Some(exit_choice);
             }
-            for (state, choice) in internal_policy {
-                if self.policy.get(state).is_some_and(Option::is_none) {
-                    if let Some(slot) = self.policy.get_mut(state) {
-                        *slot = Some(choice);
-                    }
-                }
-            }
+            expand_zero_time_component_policy(
+                self.product,
+                &members,
+                exit_state,
+                &mut self.policy,
+            )?;
         }
         if let Some(slot) = self.solved_components.get_mut(component) {
             *slot = true;
@@ -463,6 +460,74 @@ impl ZeroTimeSolver<'_> {
                 .max_by(|left, right| left.1.cmp(&right.1)),
         }
     }
+}
+
+/// Expand the selected MEC exit into a proper policy: every other member
+/// follows the first canonical internal action on a shortest path to the
+/// exit owner (FR-198/ADR-028 UR-7).
+fn expand_zero_time_component_policy(
+    product: &ProbProduct,
+    component: &[usize],
+    owner: usize,
+    policy: &mut [Option<usize>],
+) -> Result<(), FhError> {
+    let members = component.iter().copied().collect::<BTreeSet<_>>();
+    let mut distance = vec![None; product.states.len()];
+    *distance.get_mut(owner).ok_or(FhError::InvalidState)? = Some(0_usize);
+    loop {
+        let mut changed = false;
+        for state in component {
+            if distance.get(*state).copied().flatten().is_some() {
+                continue;
+            }
+            let groups = action_groups(product, ProbStateId(*state))?;
+            let nearest = groups
+                .iter()
+                .filter(|edges| {
+                    edges
+                        .iter()
+                        .all(|edge| edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                })
+                .flat_map(|edges| edges.iter().map(|edge| edge.to.index()))
+                .filter_map(|target| distance.get(target).copied().flatten().map(|d| d + 1))
+                .min();
+            if let Some(nearest) = nearest {
+                *distance.get_mut(*state).ok_or(FhError::InvalidState)? = Some(nearest);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for state in component {
+        if *state == owner {
+            continue;
+        }
+        let current = distance
+            .get(*state)
+            .copied()
+            .flatten()
+            .ok_or(FhError::InvalidState)?;
+        let groups = action_groups(product, ProbStateId(*state))?;
+        let selected = groups
+            .iter()
+            .position(|edges| {
+                edges
+                    .iter()
+                    .all(|edge| edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                    && edges.iter().any(|edge| {
+                        distance
+                            .get(edge.to.index())
+                            .copied()
+                            .flatten()
+                            .is_some_and(|next| next < current)
+                    })
+            })
+            .ok_or(FhError::InvalidState)?;
+        *policy.get_mut(*state).ok_or(FhError::InvalidState)? = Some(selected);
+    }
+    Ok(())
 }
 
 fn induction(
@@ -1011,6 +1076,76 @@ mod tests {
             maximum,
             FhResult::Exact { values, .. } if values[0] == rational(1, 1)
         ));
+    }
+
+    #[test]
+    fn zero_time_mec_policy_takes_the_canonical_shortest_path_to_its_exit() {
+        let key = |model| super::super::ProbKey {
+            binding: None,
+            model: vec![model],
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        };
+        let product = ProbProduct {
+            states: vec![key(0), key(1), key(2), key(3)],
+            kind: ProductKind::Mdp,
+            edges: vec![
+                ProbEdge {
+                    from: ProbStateId(0),
+                    choice: ProductAction::PostState(Box::new(key(1))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(1),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+                ProbEdge {
+                    from: ProbStateId(1),
+                    choice: ProductAction::PostState(Box::new(key(1))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(1),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+                ProbEdge {
+                    from: ProbStateId(1),
+                    choice: ProductAction::PostState(Box::new(key(2))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(2),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+                ProbEdge {
+                    from: ProbStateId(2),
+                    choice: ProductAction::PostState(Box::new(key(3))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(3),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+            ],
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: Vec::new(),
+            labels: vec![Vec::new(); 4],
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let mut policy = vec![None; product.states.len()];
+        policy[2] = Some(0);
+        expand_zero_time_component_policy(&product, &[0, 1, 2], 2, &mut policy)
+            .expect("every MEC state has a shortest route to the selected exit");
+        assert_eq!(policy[0], Some(0));
+        assert_eq!(policy[1], Some(1));
+        assert_eq!(policy[2], Some(0));
     }
 
     /// Trace: TC-632
