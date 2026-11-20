@@ -38,6 +38,7 @@ mod probability_source_routes;
 mod protocol_source_routes;
 mod refinement_source_routes;
 mod source_corpus;
+mod value_properties;
 
 #[cfg(feature = "checked-handoff")]
 mod selected_object_closure;
