@@ -2501,7 +2501,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// takes zero time and whose positive-probability support remains inside
     /// the candidate. A raw edge SCC is insufficient: it mistakes a leaky
     /// cycle for a closed zero-time component.
-    fn zero_delay_component(&self) -> Option<Vec<usize>> {
+    fn zero_delay_components(&self) -> Vec<Vec<usize>> {
         let count = self.nodes.len();
         let product = ProbProduct {
             states: self.nodes.iter().map(|node| node.key.clone()).collect(),
@@ -2543,23 +2543,59 @@ impl<'c> Builder<'_, '_, 'c> {
             product: &product,
             choices,
         };
-        maximal_end_components_from(&graph, (0..count).collect())
-            .ok()?
-            .into_iter()
-            .next()
+        maximal_end_components_from(&graph, (0..count).collect()).unwrap_or_default()
     }
 
     fn finish(
-        self,
+        mut self,
         initial: Vec<(u32, Option<ModelInstance>, ProbStateId)>,
     ) -> Result<ProbProduct, ProductRefusal> {
-        if let Some(cycle) = self.zero_delay_component() {
-            return Err(ProductRefusal::ZeroDelayCycle {
-                states: cycle
-                    .into_iter()
-                    .map(|member| self.nodes[member].key.clone())
-                    .collect(),
+        for component in self.zero_delay_components() {
+            let members: BTreeSet<_> = component.iter().copied().collect();
+            let has_exit = component.iter().any(|state| {
+                let mut groups: Vec<(&ProductAction, Vec<usize>)> = Vec::new();
+                for (edge_index, edge) in self.edges.iter().enumerate() {
+                    if edge.from.index() != *state || edge.probability.is_zero() {
+                        continue;
+                    }
+                    if let Some((_, indices)) = groups
+                        .iter_mut()
+                        .find(|(action, _)| same_action(action, &edge.choice))
+                    {
+                        indices.push(edge_index);
+                    } else {
+                        groups.push((&edge.choice, vec![edge_index]));
+                    }
+                }
+                groups.iter().any(|(_, indices)| {
+                    !indices.iter().all(|index| {
+                        self.zero_delay.get(*index).copied().unwrap_or(false)
+                            && members.contains(&self.edges[*index].to.index())
+                    })
+                })
             });
+            if has_exit {
+                return Err(ProductRefusal::ZeroDelayCycle {
+                    states: component
+                        .into_iter()
+                        .map(|member| self.nodes[member].key.clone())
+                        .collect(),
+                });
+            }
+            self.time_locked.extend(component);
+        }
+        if !self.time_locked.is_empty() {
+            let locked: BTreeSet<_> = self.time_locked.iter().copied().collect();
+            let mut edges = Vec::with_capacity(self.edges.len());
+            let mut zero_delay = Vec::with_capacity(self.zero_delay.len());
+            for (edge, zero) in self.edges.drain(..).zip(self.zero_delay.drain(..)) {
+                if !locked.contains(&edge.from.index()) {
+                    edges.push(edge);
+                    zero_delay.push(zero);
+                }
+            }
+            self.edges = edges;
+            self.zero_delay = zero_delay;
         }
         let mut decided: Vec<(ProbStateId, MonitorVerdict)> = self
             .nodes
