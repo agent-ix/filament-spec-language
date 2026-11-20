@@ -7,7 +7,7 @@
 //! equal entry for entry.
 
 use filament_eval::CallFailure;
-use filament_exact::{ChargePoint, IeeeValue, Meter, ScalarLimits, Value};
+use filament_exact::{ChargePoint, IeeeValue, LimitKind, Meter, ScalarLimits, Value};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
@@ -33,16 +33,23 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 
 const F64: &str = "Float64[nearest-even]";
 
-/// One route's outcome, written in its debug form, and charge log.
+/// One route's outcome, loss records and stop location, written in their
+/// debug forms, and charge log.
 #[derive(Debug, PartialEq)]
 struct Charged {
     outcome: String,
+    losses: String,
+    location: String,
+    work_units: u64,
     charges: Vec<ChargePoint>,
 }
 
-fn charged(outcome: String, meter: &Meter) -> Charged {
+fn charged(evaluation: &filament_eval::Evaluation, meter: &Meter) -> Charged {
     Charged {
-        outcome,
+        outcome: format!("{:?}", evaluation.outcome),
+        losses: format!("{:?}", evaluation.losses),
+        location: format!("{:?}", evaluation.location),
+        work_units: meter.consumed(LimitKind::WorkUnits),
         charges: meter
             .admitted_charges()
             .iter()
@@ -73,10 +80,30 @@ fn routes(
     body: &str,
     arguments: &[Value],
 ) -> (Charged, Result<Charged, CallFailure>) {
+    unit_routes(
+        &format!("function f using v({parameters}): Boolean pure {{ {body} }}\n"),
+        "f",
+        arguments,
+    )
+}
+
+/// A unit holding `functions` evaluated at `arguments` through `entry` on the
+/// source route and on the package route, whose call may be refused.
+fn unit_routes(
+    functions: &str,
+    entry: &str,
+    arguments: &[Value],
+) -> (Charged, Result<Charged, CallFailure>) {
+    let (package, emission) = checked_unit(functions);
+    package_routes(&package, &emission, entry, arguments, UNLIMITED)
+}
+
+/// The checked package of a unit holding `functions`, and its emission.
+fn checked_unit(functions: &str) -> (CheckedPackage, fsl_package::Emission) {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
-         function f using v({parameters}): Boolean pure {{ {body} }}\n"
+         {functions}"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("a", "u"),
@@ -103,10 +130,24 @@ fn routes(
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
-            .unwrap_or_else(|refusal| panic!("{body}: {refusal:?}")),
+            .unwrap_or_else(|refusal| panic!("{functions}: {refusal:?}")),
     );
-    let f = QualifiedName::unqualified("f").expect("f is an identifier");
-    let mut meter = Meter::new(UNLIMITED);
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("the checked package emits");
+    (package, emission)
+}
+
+/// `entry` called at `arguments` on the source route over `package` and on the
+/// package route over the bytes of `emission`.
+fn package_routes(
+    package: &CheckedPackage,
+    emission: &fsl_package::Emission,
+    entry: &str,
+    arguments: &[Value],
+    limits: ScalarLimits,
+) -> (Charged, Result<Charged, CallFailure>) {
+    let f = QualifiedName::unqualified(entry).expect("the entry is an identifier");
+    let mut meter = Meter::new(limits);
     let source = package
         .call(
             &f,
@@ -115,19 +156,17 @@ fn routes(
             &mut meter,
         )
         .expect("the source call runs");
-    let source = charged(format!("{:?}", source.outcome), &meter);
+    let source = charged(&source, &meter);
 
-    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
-        .expect("the checked package emits");
     let no_domains = package_input(std::iter::empty::<&[u8]>()).expect("empty model closure");
     let read = fsl_package::read_evaluation_emission(
-        &package,
-        &emission,
+        package,
+        emission,
         LibraryName::new("fixture").expect("a library name"),
         &no_domains,
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
-        fsl_package::SourceWitnessSupplier::new(&emission),
+        fsl_package::SourceWitnessSupplier::new(emission),
     )
     .expect("the reader admits the package");
     let v2 = read.admitted();
@@ -147,7 +186,7 @@ fn routes(
             &mut budget(),
         )
         .expect("the fixture budget admits the supply");
-    let mut meter = Meter::new(UNLIMITED);
+    let mut meter = Meter::new(limits);
     let packaged = bare
         .call(
             &f,
@@ -155,7 +194,7 @@ fn routes(
             &ObjectEnvironment::default(),
             &mut meter,
         )
-        .map(|packaged| charged(format!("{:?}", packaged.outcome), &meter));
+        .map(|packaged| charged(&packaged, &meter));
     (source, packaged)
 }
 
@@ -165,13 +204,13 @@ fn f64v(bits: u64) -> Value {
 
 /// FR-397-AC-30, FR-940-AC-15: each ordering body charges the same log on
 /// both routes, with ordinary operands and with `p` a quiet NaN. The AC's
-/// `sqrt` body is under the ignored
-/// `an_ordering_over_square_roots_charges_the_same_on_both_routes` (QSL-2625),
-/// so this test covers the AC's other bodies only.
+/// `sqrt` body is covered by
+/// `an_ordering_over_square_roots_charges_the_same_on_both_routes`, so this
+/// test covers the AC's other bodies.
 #[trace("TC-3077", "FR-397-AC-30")]
 #[trace("TC-3077", "FR-940-AC-15")]
 #[test]
-fn an_ordering_charges_the_same_on_the_source_and_package_routes_except_square_roots() {
+fn an_ordering_charges_the_same_on_the_source_and_package_routes() {
     let one = f64v(0x3ff0_0000_0000_0000);
     let two = f64v(0x4000_0000_0000_0000);
     let nan = f64v(0x7ff8_0000_0000_0001);
@@ -242,7 +281,6 @@ fn the_ordering_part_rule_reads_the_shape_on_both_routes() {
 #[trace("TC-3077", "FR-397-AC-30")]
 #[trace("TC-3077", "FR-940-AC-15")]
 #[test]
-#[ignore = "QSL-2625: a package function body has no location for a flag-raising IEEE operation's value loss"]
 fn an_ordering_over_square_roots_charges_the_same_on_both_routes() {
     let one = f64v(0x3ff0_0000_0000_0000);
     let two = f64v(0x4000_0000_0000_0000);
@@ -305,7 +343,6 @@ fn flag_free_ieee_operations_charge_the_same_on_both_routes() {
 /// QSL-2625: the flag-raising IEEE operations on the package route.
 #[trace("TC-3077", "FR-940-AC-15")]
 #[test]
-#[ignore = "QSL-2625: a package function body has no location for a flag-raising IEEE operation's value loss"]
 fn flag_raising_ieee_operations_charge_the_same_on_both_routes() {
     for float in [F64, F32] {
         let bits = |one: u64, three: u64| match float {
@@ -341,5 +378,328 @@ fn a_float_nested_in_an_option_parameter_is_refused_on_the_package_route() {
     assert!(
         format!("{refusal:?}").contains("unknown_required_feature"),
         "{refusal:?}"
+    );
+}
+
+const SQRTS: &str = "filament::value::ieee::sqrt(p) <= filament::value::ieee::sqrt(q)";
+
+/// The unit of FR-531-AC-36: `f` orders two square roots and `g` calls `f`.
+fn square_root_unit() -> String {
+    format!(
+        "function f using v(p: {F64}, q: {F64}, r: {F64}): Boolean pure {{ {SQRTS} }}\n\
+         function g using v(p: {F64}, q: {F64}, r: {F64}): Boolean pure {{ f(p, q, r) }}\n"
+    )
+}
+
+fn twos() -> [Value; 3] {
+    let two = f64v(0x4000_0000_0000_0000);
+    [two.clone(), two.clone(), two]
+}
+
+/// FR-531-AC-36: `f` and `g` complete on both routes with equal charge logs
+/// and two inexact losses, located in `f`'s body at the checker's paths `[0]`
+/// and `[1]` for both, never at `g`'s call site.
+#[trace("TC-3133", "FR-531-AC-36")]
+#[test]
+fn a_call_through_a_function_locates_the_loss_in_the_callee_body() {
+    let unit = square_root_unit();
+    for entry in ["f", "g"] {
+        let (source, packaged) = unit_routes(&unit, entry, &twos());
+        let packaged = packaged.expect("the package call runs");
+        assert_eq!(source, packaged, "{entry}");
+        assert!(
+            source.outcome.contains("true"),
+            "{entry}: {}",
+            source.outcome
+        );
+        assert_eq!(
+            source.losses.matches("LocatedLoss").count(),
+            2,
+            "{}",
+            source.losses
+        );
+        let first = source
+            .losses
+            .find("depth: 1, last_index: Some(0)")
+            .expect("a loss at [0]");
+        let second = source
+            .losses
+            .find("depth: 1, last_index: Some(1)")
+            .expect("a loss at [1]");
+        assert!(first < second, "{}", source.losses);
+        assert!(
+            !source.losses.contains("depth: 2") && !source.losses.contains("\"g\""),
+            "{}",
+            source.losses
+        );
+    }
+}
+
+/// FR-531-AC-36: the same bytes with the second `sqrt`'s row removed are
+/// refused by the strict reader and evaluate nothing.
+#[trace("TC-3133", "FR-531-AC-36")]
+#[test]
+fn a_function_body_without_its_location_rows_is_refused() {
+    let (package, emission) = checked_unit(&square_root_unit());
+    let mut wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
+    let rows = wire["checked_term_data"]["body_locations"]
+        .as_array_mut()
+        .expect("the body location rows");
+    let removed = rows
+        .iter()
+        .position(|row| row["location"]["path"] == serde_json::json!([1]))
+        .expect("the second sqrt's row");
+    rows.remove(removed);
+    let forged = emission
+        .clone()
+        .with_package_bytes(serde_json::to_vec(&wire).expect("the package encodes"));
+    let no_domains = package_input(std::iter::empty::<&[u8]>()).expect("empty model closure");
+    let refused = fsl_package::read_evaluation_emission(
+        &package,
+        &forged,
+        LibraryName::new("fixture").expect("a library name"),
+        &no_domains,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&forged),
+    )
+    .err()
+    .expect("the reader refuses the package");
+    assert!(
+        format!("{refused:?}").contains("/checked_term_data/body_locations"),
+        "{refused:?}"
+    );
+}
+
+/// One row of FR-531-AC-37: the parameters after `r`, the term `e` and its
+/// arguments at the width `float`, and the flags the one loss holds.
+struct FlagRow {
+    parameters: String,
+    term: String,
+    arguments: Vec<Value>,
+    flags: &'static [&'static str],
+}
+
+fn float_of(float: &str, value: f64) -> Value {
+    if float == F32 {
+        f32v((value as f32).to_bits())
+    } else {
+        f64v(value.to_bits())
+    }
+}
+
+fn smallest_subnormal(float: &str) -> Value {
+    if float == F32 {
+        f32v(1)
+    } else {
+        f64v(1)
+    }
+}
+
+fn largest_finite(float: &str) -> Value {
+    if float == F32 {
+        f32v(f32::MAX.to_bits())
+    } else {
+        f64v(f64::MAX.to_bits())
+    }
+}
+
+fn rational(numerator: i64, denominator: i64) -> Value {
+    Value::Rational(
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(numerator),
+            filament_exact::Integer::from(denominator),
+        )
+        .expect("a nonzero denominator"),
+    )
+}
+
+fn flag_rows(float: &str) -> Vec<FlagRow> {
+    let pq = format!("p: {float}, q: {float}");
+    let row = |parameters: &str, term: &str, arguments: Vec<Value>, flags| FlagRow {
+        parameters: parameters.to_owned(),
+        term: term.to_owned(),
+        arguments,
+        flags,
+    };
+    let mut rows = vec![
+        row(
+            &pq,
+            "p + q",
+            vec![float_of(float, 1.0), float_of(float, 2f64.powi(-60))],
+            &["Inexact"],
+        ),
+        row(
+            &pq,
+            "p - q",
+            vec![float_of(float, 1.0), float_of(float, 2f64.powi(-60))],
+            &["Inexact"],
+        ),
+        row(
+            &pq,
+            "p * q",
+            vec![largest_finite(float), largest_finite(float)],
+            &["Overflow", "Inexact"],
+        ),
+        row(
+            &pq,
+            "p * q",
+            vec![smallest_subnormal(float), float_of(float, 0.5)],
+            &["Underflow", "Inexact"],
+        ),
+        row(
+            &pq,
+            "p / q",
+            vec![float_of(float, 1.0), float_of(float, 3.0)],
+            &["Inexact"],
+        ),
+        row(
+            &pq,
+            "p / q",
+            vec![float_of(float, 1.0), float_of(float, 0.0)],
+            &["DivideByZero"],
+        ),
+        row(
+            &format!("p: {float}"),
+            "filament::value::ieee::sqrt(p)",
+            vec![float_of(float, 2.0)],
+            &["Inexact"],
+        ),
+        row(
+            &format!("p: {float}"),
+            "filament::value::ieee::sqrt(p)",
+            vec![float_of(float, -1.0)],
+            &["Invalid"],
+        ),
+        row(
+            "a: Rational[-10, 10; 1, 10]",
+            &format!("convert<{float}>(a)"),
+            vec![rational(1, 10)],
+            &["Inexact"],
+        ),
+    ];
+    if float == F32 {
+        rows.push(row(
+            &format!("b: {F64}"),
+            &format!("convert<{F32}>(b)"),
+            vec![f64v(0.1f64.to_bits())],
+            &["Inexact"],
+        ));
+        rows.push(row(
+            &format!("b: {F64}"),
+            &format!("convert<{F32}>(b)"),
+            vec![f64v(f64::MAX.to_bits())],
+            &["Overflow", "Inexact"],
+        ));
+    }
+    rows
+}
+
+/// FR-531-AC-37: every flag-raising IEEE operation over both widths records
+/// one loss with exactly its flags, located at `Body { f, 0 }` path `[1]` for
+/// the right operand of `f`'s ordering and at `Body { g, 1 }` path `[]` for
+/// `g`'s root, and the two routes agree outcome, loss and charge log.
+#[trace("TC-3133", "FR-531-AC-37")]
+#[test]
+fn every_flag_raising_ieee_operation_is_located_alike_on_both_routes() {
+    for float in [F32, F64] {
+        for row in flag_rows(float) {
+            let unit = format!(
+                "function f using v(r: {float}, {parameters}): Boolean pure {{ r <= {term} }}\n\
+                 function g using v({parameters}): {float} pure {{ {term} }}\n",
+                parameters = row.parameters,
+                term = row.term,
+            );
+            let (package, emission) = checked_unit(&unit);
+            for (entry, arguments, location) in [
+                (
+                    "f",
+                    [vec![float_of(float, 0.0)], row.arguments.clone()].concat(),
+                    ("\"f\"", "index: 0", "depth: 1, last_index: Some(1)"),
+                ),
+                (
+                    "g",
+                    row.arguments.clone(),
+                    ("\"g\"", "index: 1", "depth: 0, last_index: None"),
+                ),
+            ] {
+                let label = format!("{float}: {} as {entry}", row.term);
+                let (source, packaged) =
+                    package_routes(&package, &emission, entry, &arguments, UNLIMITED);
+                let packaged = packaged.unwrap_or_else(|failure| panic!("{label}: {failure:?}"));
+                assert_eq!(source, packaged, "{label}");
+                assert_eq!(
+                    source.losses.matches("LocatedLoss").count(),
+                    1,
+                    "{label}: {}",
+                    source.losses
+                );
+                let bits: u8 = row
+                    .flags
+                    .iter()
+                    .map(|flag| match *flag {
+                        "Invalid" => 1,
+                        "DivideByZero" => 2,
+                        "Overflow" => 4,
+                        "Underflow" => 8,
+                        "Inexact" => 16,
+                        other => panic!("unknown flag {other}"),
+                    })
+                    .sum();
+                assert!(
+                    source.losses.contains(&format!("IeeeFlags({bits})")),
+                    "{label}: {}",
+                    source.losses
+                );
+                for fragment in [location.0, location.1, location.2] {
+                    assert!(
+                        source.losses.contains(fragment),
+                        "{label}: {}",
+                        source.losses
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// FR-531-AC-38: a call refused by a `work_units` limit from `0` to one below
+/// what the completed call spends returns the same `Incomplete`, location and
+/// charge log on both routes, and one limit stops at the second `sqrt` of
+/// `f`'s body, `[1]`, not the lowered `[1, 0]`.
+#[trace("TC-3133", "FR-531-AC-38")]
+#[test]
+fn a_denied_charge_in_a_body_is_located_alike_on_both_routes() {
+    let (package, emission) = checked_unit(&square_root_unit());
+    let (completed, _) = package_routes(&package, &emission, "f", &twos(), UNLIMITED);
+    let spent = completed.work_units;
+    assert!(spent > 0);
+    let mut located = std::collections::BTreeSet::new();
+    for limit in 0..spent {
+        let limits = ScalarLimits {
+            work_units: limit,
+            ..UNLIMITED
+        };
+        let (source, packaged) = package_routes(&package, &emission, "f", &twos(), limits);
+        let packaged = packaged.expect("the package call runs");
+        assert!(
+            source.outcome.contains("WorkUnits"),
+            "{limit}: {}",
+            source.outcome
+        );
+        assert_eq!(source, packaged, "work_units limit {limit}");
+        located.insert(source.location);
+    }
+    assert!(
+        located.iter().any(|location| location.contains("\"f\"")
+            && location.contains("depth: 1, last_index: Some(1)")),
+        "{located:?}"
+    );
+    assert!(
+        located
+            .iter()
+            .all(|location| !location.contains("depth: 2")),
+        "{located:?}"
     );
 }

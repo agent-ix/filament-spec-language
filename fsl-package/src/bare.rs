@@ -675,6 +675,68 @@ struct SourcePopulationJson {
 struct SourceObjectOperationJson {
     identity: String,
     query: bool,
+    clock_parameters: Vec<String>,
+    parameters: Vec<SourceObjectParameterJson>,
+}
+
+/// One member entry of an operation's parameters: a data entry has a
+/// `type_node`, a clock entry a `member_type` and its collection layers.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceObjectParameterJson {
+    name: String,
+    optional: bool,
+    type_node: Option<CheckedNodeId>,
+    member_type: Option<String>,
+    collections: Vec<ClockCollectionLayerJson>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClockCollectionLayerJson {
+    kind: String,
+    minimum: String,
+    maximum: String,
+}
+
+impl SourceObjectParameterJson {
+    fn of(member: &filament_contract_model::SelectedSourceObjectMember) -> Self {
+        Self {
+            name: member.name.to_string(),
+            optional: member.optional,
+            type_node: member.type_node.clone(),
+            member_type: member.member_type.as_deref().map(str::to_owned),
+            collections: member
+                .collections
+                .iter()
+                .map(|layer| ClockCollectionLayerJson {
+                    kind: layer.kind.to_string(),
+                    minimum: layer.minimum.to_string(),
+                    maximum: layer.maximum.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn member(self) -> filament_contract_model::SelectedSourceObjectMember {
+        filament_contract_model::SelectedSourceObjectMember {
+            name: self.name.into(),
+            optional: self.optional,
+            type_node: self.type_node,
+            member_type: self.member_type.map(Into::into),
+            collections: self
+                .collections
+                .into_iter()
+                .map(
+                    |layer| filament_contract_model::SelectedClockCollectionLayer {
+                        kind: layer.kind.into(),
+                        minimum: layer.minimum.into(),
+                        maximum: layer.maximum.into(),
+                    },
+                )
+                .collect(),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -715,7 +777,7 @@ impl SourceObjectJson {
                         Presence::Required => SourceObjectPresenceJson::Required,
                         Presence::Optional => SourceObjectPresenceJson::Optional,
                     },
-                    type_node: member.type_node.clone(),
+                    type_node: member.type_node.clone().ok_or_else(malformed)?,
                     value_type: OriginalValueType::of(&facts.value_type)
                         .map_err(|_| malformed())?,
                 })
@@ -741,13 +803,28 @@ impl SourceObjectJson {
                     symmetric: population.symmetric,
                 })
                 .collect(),
-            operations: operations
-                .iter()
-                .map(|operation| SourceObjectOperationJson {
-                    identity: operation.identity.to_string(),
-                    query: operation.query,
-                })
-                .collect(),
+            operations: if row.operations.len() == operations.len() {
+                row.operations
+                    .iter()
+                    .zip(operations)
+                    .map(|(held, operation)| SourceObjectOperationJson {
+                        identity: operation.identity.to_string(),
+                        query: operation.query,
+                        clock_parameters: held
+                            .clock_parameters
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                        parameters: held
+                            .parameters
+                            .iter()
+                            .map(SourceObjectParameterJson::of)
+                            .collect(),
+                    })
+                    .collect()
+            } else {
+                return Err(malformed());
+            },
         })
     }
 
@@ -772,11 +849,11 @@ impl SourceObjectJson {
                 SourceObjectPresenceJson::Optional => Presence::Optional,
             };
             let value_type = member.value_type.value().map_err(|_| malformed())?;
-            members.push(filament_contract_model::SelectedSourceObjectMember {
-                name: member.admitted_name.clone().into(),
-                type_node: member.type_node,
-                optional: presence == Presence::Optional,
-            });
+            members.push(filament_contract_model::SelectedSourceObjectMember::data(
+                member.admitted_name.clone(),
+                member.type_node,
+                presence == Presence::Optional,
+            ));
             facts.push(crate::emit::SourceObjectMemberFacts {
                 original_member_identity: member.original_member_identity.into(),
                 admitted_name: member.admitted_name.into(),
@@ -791,7 +868,16 @@ impl SourceObjectJson {
                 |operation| filament_contract_model::SelectedSourceObjectOperation {
                     identity: operation.identity.as_str().into(),
                     query: operation.query,
-                    clock_parameters: Vec::new(),
+                    clock_parameters: operation
+                        .clock_parameters
+                        .iter()
+                        .map(|name| name.as_str().into())
+                        .collect(),
+                    parameters: operation
+                        .parameters
+                        .iter()
+                        .map(|parameter| parameter.clone().member())
+                        .collect(),
                 },
             )
             .collect();

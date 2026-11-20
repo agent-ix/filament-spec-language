@@ -755,14 +755,12 @@ fn a_workload_reads_back_as_the_s3_record() {
     );
 }
 
-/// FSL FR-740: an enum-valued random parameter is refused at emission with
-/// the declaration's locus, because IR's reader maps no model variant type to
-/// a support literal kind and would refuse the package. The rebuild of an
-/// enum value's rank from its type is covered at S3
-/// (`an_enum_valued_package_rebuilds_the_s3_records`).
-#[trace("TC-2062", "FR-185-AC-12")]
+/// FSL FR-740: an enum-valued random parameter is emitted with an `enum`
+/// support literal typed at the enumeration and naming each case, and the
+/// strict reader admits it.
+#[trace("TC-2062", "FR-740-AC-1")]
 #[test]
-fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
+fn an_enum_valued_random_parameter_is_emitted_and_read_back() {
     use super::variant_types::fixture;
     let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
@@ -781,16 +779,81 @@ fn an_enum_valued_random_parameter_refuses_emission_with_its_locus() {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
-    let refusal = emit_checked(&CheckedPackage::link(graph)).expect_err("emission refuses");
-    assert!(matches!(
-        &refusal,
-        EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
-            region,
-            ..
-        } if declaration == "promote(t)" && region.start() < region.end()
-    ));
+    let (wire, read) = emit_and_read(&CheckedPackage::link(graph), &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let [random] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..] else {
+        panic!("one random_parameter node");
+    };
+    let rows = random["body"]["members"][3]["value"]["members"]
+        .as_array()
+        .expect("the support rows");
+    let cases: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let value = &row["members"][0]["value"];
+            assert_eq!(value["value_kind"], "enum", "{value}");
+            value["value"].clone()
+        })
+        .collect();
+    assert_eq!(cases, [json!("Standard"), json!("Gold")]);
+}
+
+/// FSL FR-740: a Boolean-valued random parameter is emitted with `boolean`
+/// support literals `true` and `false` at their exact weights, and the strict
+/// reader admits it.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn a_boolean_valued_random_parameter_is_emitted_and_read_back() {
+    use super::abstraction::fixture;
+    let mut model = fixture::document();
+    let parameter = model["types"]
+        .as_array_mut()
+        .expect("the types")
+        .iter_mut()
+        .find(|declaration| declaration["identity"] == fixture::id("ConfigVersion"))
+        .map(|declaration| &mut declaration["operations"][0]["params"][0])
+        .expect("the first parameter of attemptUpdate");
+    parameter["typeRef"] = json!("ix://filament/native/Boolean");
+    let document = crate::emit::tests::wire_bytes(&model).expect("the model serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model M = {package:?};\n\
+         random ConfigVersion::attemptUpdate(n) ~ {{ true: 999, false: 1 }};\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let (wire, read) = emit_and_read(&CheckedPackage::link(graph), &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let [random] = super::owners::node_where(&wire, "probabilistic", "random_parameter")[..] else {
+        panic!("one random_parameter node");
+    };
+    let rows = random["body"]["members"][3]["value"]["members"]
+        .as_array()
+        .expect("the support rows");
+    let supports: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            let value = &row["members"][0]["value"];
+            assert_eq!(value["value_kind"], "boolean", "{value}");
+            (
+                value["value"].clone(),
+                row["members"][1]["value"]["value"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        supports,
+        [(json!(true), json!("999")), (json!(false), json!("1"))]
+    );
 }
 
 /// FSL FR-740: a quantity-valued random parameter reads back as S3's record,
@@ -2311,15 +2374,14 @@ fn refusal_of(
     )
 }
 
-/// TC-2062 (FR-185-AC-12): the S4 refusal of a reward, a delay, a random
-/// parameter and a workload is located at the declaration (its label span in
+/// TC-2062 (FR-185-AC-12): the S4 refusal of a delay, a random parameter and a
+/// workload is located at the declaration (its label span in
 /// the unit's text) and names the declaration in words, with no debug
 /// rendering of a span or source reference.
 #[trace("TC-2062", "FR-185-AC-12")]
 #[test]
 fn probabilistic_refusals_have_locus() {
     use super::abstraction::fixture as abstraction;
-    use super::variant_types::fixture as variants;
     use fsl_semantics::check::ProbabilisticFeature;
     let head = "language \"ix:native\" edition \"1-draft\";\n";
     let objects = "object O { n: Integer; operation step(x: Integer) modifies self.n; }\n";
@@ -2327,7 +2389,20 @@ fn probabilistic_refusals_have_locus() {
                  dimension Time; unit ms : Time = rational(1, 1);\ntime O dense unit ms;\n";
     let abstraction_document =
         crate::emit::tests::wire_bytes(&abstraction::document()).expect("serializes");
-    let variant_document = serde_json::to_vec(&variants::document()).expect("serializes");
+    // A random parameter over a `String`, which has no support literal kind,
+    // is the refusal a random parameter still gets.
+    let mut string_model = abstraction::document();
+    string_model["types"]
+        .as_array_mut()
+        .expect("the types")
+        .iter_mut()
+        .find(|declaration| declaration["identity"] == abstraction::id("ConfigVersion"))
+        .map(|declaration| {
+            declaration["operations"][0]["params"][0]["typeRef"] =
+                json!("ix://filament/native/String");
+        })
+        .expect("the first parameter of attemptUpdate");
+    let string_document = crate::emit::tests::wire_bytes(&string_model).expect("serializes");
     let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 3] = [
         (
             format!("{head}{timed}{objects}delay O::step ~ uniform;\n"),
@@ -2338,12 +2413,12 @@ fn probabilistic_refusals_have_locus() {
         (
             format!(
                 "{head}profile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n\
-                 random Account::promote(t) ~ {{ M::Tier::Standard: 3, M::Tier::Gold: 1 }};\n",
-                variants::PACKAGE
+                 random ConfigVersion::attemptUpdate(n) ~ {{ \"a\": 1, \"b\": 1 }};\n",
+                abstraction::PACKAGE
             ),
-            variant_document,
+            string_document,
             ProbabilisticFeature::RandomParameter,
-            "promote(t)",
+            "attemptUpdate(n)",
         ),
         (
             format!(

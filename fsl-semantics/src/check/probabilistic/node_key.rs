@@ -40,13 +40,16 @@ fn spelling(value: &Rational) -> String {
 
 /// The canonical spelling of a support value, as its node's identity carries
 /// it: integers and rationals in FR-205 form, a quantity as its magnitude, a
-/// text as its JSON string encoding. `None` for a value no node can carry yet.
+/// text as its JSON string encoding, a Boolean as `true` or `false` and an enum
+/// member as its case name. `None` for a value no node can carry yet.
 fn support_spelling(value: &Value) -> Option<String> {
     match value {
         Value::Integer(value) => Some(value.to_string()),
         Value::Rational(value) => Some(spelling(value)),
         Value::Text(value) => serde_json::to_string(value.retained()).ok(),
         Value::Quantity(value) => Some(spelling(value.magnitude())),
+        Value::Boolean(value) => Some(value.to_string()),
+        Value::Enum(member) => Some(member.variant().case().to_owned()),
         _ => None,
     }
 }

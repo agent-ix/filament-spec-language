@@ -525,9 +525,12 @@ fn names_one_of(value: &Value, graph: &WireGraph, keys: &BTreeSet<NodeKey>) -> b
         Value::Object(members)
             if members.contains_key("package") && members.contains_key("path") =>
         {
-            graph
-                .key_of_value(value)
-                .is_ok_and(|key| keys.contains(&key))
+            graph.key_of_value(value).is_ok_and(|key| {
+                keys.contains(&key)
+                    || key.path().iter().any(|segment| {
+                        matches!(segment, PathSegment::Node(operand) if keys.contains(operand))
+                    })
+            })
         }
         Value::Object(members) => members
             .values()
@@ -611,6 +614,12 @@ fn edited(wire: &Value, dropped: &[usize], replacement: Option<(usize, usize)>) 
             }
             if let Value::Array(items) = member {
                 items.retain(|item| !names_one_of(item, &graph, &gone));
+            } else if let Value::Object(tables) = member {
+                for table in tables.values_mut() {
+                    if let Value::Array(items) = table {
+                        items.retain(|item| !names_one_of(item, &graph, &gone));
+                    }
+                }
             }
             reidentified(member, &graph, &renamed, &order);
         }

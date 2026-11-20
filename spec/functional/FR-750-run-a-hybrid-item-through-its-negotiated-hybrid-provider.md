@@ -212,7 +212,15 @@ validated witness reproduces a trace, one `counterexamples` entry.
   when exact replay cannot decide the trace and FR-751 accepts the
   `validated-witness` the request carries beside it (FR-450 "Settlement"),
   `inconclusive` with the `hybrid-trace` disagreement, or `incomplete` with
-  the `work_units` limit.
+  the `work_units` limit. The executor SHALL read the request's
+  `/replay/certificate` (FSpec FR-652 "Checking order" steps 1 to 3) before
+  it replays, refusing a malformed or structurally mismatched witness
+  `invalid_runtime_input` at `/replay/certificate/<member>` and never as an
+  internal fault; it SHALL then run static and exact replay first, and check
+  the witness by FR-751 only when exact replay returns `NotExact`. A trace
+  exact replay decides writes its row by exact replay alone, whatever
+  witness the request carries, and a witness check the work meter stops
+  writes the `incomplete` row.
 - `Engine::hybrid(descriptor, provider)` SHALL make an engine from a
   descriptor whose `dynamics` holds `hybrid` and that advertises
   `temporal-satisfaction`. A descriptor that does not is refused with a typed
@@ -263,8 +271,16 @@ validated witness reproduces a trace, one `counterexamples` entry.
 - A hybrid item routed to a candidate that no registered engine or process
   provider serves SHALL settle `unsupported`,
   `unsupported_projection`/`tool-unavailable` naming that backend.
-- A provider that returns a certificate SHALL have it checked by FR-751
-  before the record is written.
+- Every returned certificate that the verdict rests on SHALL be checked by
+  FR-751 before the record is written: the certificate of a `proved` entry
+  that FR-250 and FSpec FR-193 coverage settle `proved`, and the
+  `validated-witness` of a trace FR-450's exact replay returns `NotExact`
+  for. Any other returned certificate, on a proof settled
+  `insufficient-horizon` or with a trace exact replay decides, whose replay
+  is refused or whose replay the work meter stops, is recorded unchecked
+  (FR-621) and changes no settlement. Every returned certificate is still
+  read by `read_entry`, so a certificate FSpec FR-652 "Structural refusals"
+  refuses refuses the entry, checked or not.
 
 ### Replay refusals
 
@@ -324,6 +340,7 @@ reproduces, does not reproduce, or exhausts its meter like any other.
 | FR-750-AC-13 | `read_entry(entry, counterexamples, graph, claim, wire)` reads FR-750-AC-7's process `expression-form` entry, whose `locus` is the division's node id in the emitted package (a different id from the division's index in the checked graph), into `Unsupported` with the flow site of `v` in `Moving` and the division's `TermLocus`, decoding the id through `wire` and mapping it to the checked graph, never `NotRead`; the same entry with `locus` carrying the division's checked-graph index where that index names another node in the emitted package resolves through `wire` to that other node, not to the division, and refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus` because that node is no term of `v`'s rate; a node id `wire` does not hold refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`; the same entry with `locus` naming a guard node of `Moving`, or a node outside the model, refuses `invalid_result`/`invalid-value` at `/diagnostic/detail/locus`, and with `mode` `Halted` at `/diagnostic/detail/mode`. | Test (TC-3037) |
 | FR-750-AC-14 | `to_wire(model, wire)` writes `division-by-zero`, `outside-parameter-range`, `outside-result-range` and `outside-capture-range` for the four `UndefinedCause` variants (a `drag(s: Rational[-100, 100])` call reached with `s = 120`, its result bounded by a `Rational[0, 1]` result type exceeded, and a capture `v0: Rational[0, 10]` initialized at 12), each with `where.locus` the term's emitted-package node id, and the reader decodes each `locus` through the `WireGraph` and reads each back to the same variant with the payload taken from the term `locus` names; an in-process `Unsupported` answer for FR-750-AC-7's flow writes `detail.locus` as the division's emitted node id, which `read_entry` reads back to the same `ExpressionSite` and `TermLocus`; a `cause` `undefined` refuses `invalid_result`/`invalid-value` at `/kind/cause`. A provider's `undefined-evaluation` claim at the reproduced position, locus and cause whose `time` contains the reproduced irrational instant settles `refuted`, and the same claim with another `cause` or a `time` that excludes the instant settles `inconclusive`, `ReplayParity(HybridTrace(NotReproduced{..}))`. | Test (TC-3037) |
 | FR-750-AC-15 | Over FSpec FR-652-AC-3's `Grow`, the replay request of its hybrid claim `Below`, carrying the point trace from `v = 1` as its `HybridCounterexample` and FR-652-AC-3's nine-step `validated-witness` at `/replay/certificate`, makes FR-098 write the FSpec FR-323 `hybrid` row `reproduced-with-validated-witness`, category `success`, with `replay` (static only, exact `not-exact`) and the request's counterexample; with the witness cut after its step at `[28, 32]`, or with no `certificate`, the row is `inconclusive` with the `hybrid-trace` `not-exact` disagreement; the witness on a `function` request refuses `invalid_runtime_input`/`unknown-member` at `/replay/certificate`. | Test (TC-3035) |
+| FR-750-AC-16 | Exact replay settles before any witness: the FSpec FR-323 replay request of FSpec FR-193-AC-17's `Braking` point trace, which exact replay reproduces, carrying at `/replay/certificate` a structurally valid `validated-witness` whose `dwells/0/0` `box` misses the trace's start, writes the `hybrid` row `reproduced-with-evaluated-witness`, and the same request with `before` `v = 1` writes `inconclusive` with the `hybrid-trace` `not-reproduced` disagreement, the witness consulted by neither; FR-750-AC-15's request with the witness's `dwells/0/0/step` written `"4"` refuses `invalid_runtime_input`/`wrong-value-kind` at `/replay/certificate/dwells/0/0/step`, and with a second dwell for the one-state trace refuses `invalid_runtime_input`/`invalid-value` at `/replay/certificate/dwells`, never `failed` `internal_fault`; FR-750-AC-15's accepted request under a `work_units` bound that stops the witness check writes the `incomplete` row with the `work_units` limit. On the analyze path, a `bounded-solver` proof settled `insufficient-horizon` that carries a `flowpipe` records the certificate unchecked, with `form` and no `accepted`, and the item's `certification` is not `certified`. | Test (TC-3035) |
 
 ## Dependencies
 

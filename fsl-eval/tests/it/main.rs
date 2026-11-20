@@ -41,6 +41,7 @@ mod enumeration_findings;
 mod equality_matrix;
 mod evaluation_ignores_display_strings;
 mod evaluation_rulings;
+mod evaluator_closure_cases;
 mod fairness_kernels;
 mod family_sums;
 mod finite_simulation;

@@ -636,7 +636,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
                 return Ok(Evaluation {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                    location: None,
+                    location: projection.location(selected.body).cloned(),
                     losses: Vec::new(),
                     frame_depth: 0,
                     peak_live_occurrences: 0,
@@ -716,7 +716,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
             return Ok(Evaluation {
                 outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                location: None,
+                location: projection.location(selected.body).cloned(),
                 losses: Vec::new(),
                 frame_depth: 0,
                 peak_live_occurrences: 0,

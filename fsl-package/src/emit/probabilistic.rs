@@ -246,13 +246,10 @@ fn random_parameter_node(
     let mut rows = Vec::with_capacity(random.support().len());
     for support in random.support() {
         let value = match support.value.0.clone() {
-            // IR's reader admits no Boolean or enum support value yet
-            // (probabilistic_join.rs): `not_member` refuses every literal
-            // whose payload is not a string, and `member_literal_kind` maps
-            // no model variant type to a literal kind. A value written here
-            // would refuse the whole package, so emission refuses the
-            // declaration with its locus instead.
-            Value::Boolean(_) => return Err(unwritable()),
+            Value::Boolean(value) => {
+                let type_id = scalar_type(ids, graph, nodes, source_map, "boolean", &region)?;
+                literal(&type_id, LiteralKind::Boolean, &value)?
+            }
             Value::Integer(value) => {
                 let type_id = scalar_type(ids, graph, nodes, source_map, "integer", &region)?;
                 literal(&type_id, LiteralKind::Integer, &value.to_string())?
@@ -269,7 +266,13 @@ fn random_parameter_node(
                 }
                 literal(&unit, LiteralKind::Quantity, &spelling(value.magnitude()))?
             }
-            Value::Enum(_) => return Err(unwritable()),
+            Value::Enum(member) => {
+                let owner = node_id(ids, member.variant().owner());
+                if !nodes.iter().any(|node| node.node_id == owner) {
+                    return Err(unwritable());
+                }
+                literal(&owner, LiteralKind::Enum, &member.variant().case())?
+            }
             _ => return Err(unwritable()),
         };
         rows.push(claim_aggregate(vec![

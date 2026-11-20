@@ -1368,7 +1368,6 @@ impl Emission {
         &self.selected_operation_member_rows
     }
 
-
     /// Selected model tuple identity rows carried by this emission.
     pub fn selected_tuple_declaration_rows(
         &self,
@@ -4070,6 +4069,7 @@ fn checked_equality_term_data(
         protocol_locations: Vec::new(),
         dispatch_tables: Vec::new(),
         probabilistic_claims: Vec::new(),
+        body_locations: Vec::new(),
     }))
 }
 
@@ -4161,6 +4161,20 @@ fn source_declaration_identity(
             .collect::<Vec<_>>()
             .join("/")
     )
+}
+
+/// The name a function body's rows carry: the checker's function name with a
+/// source model's private package spelled as the package the emitted nodes
+/// carry (FSpec FR-322), so no check-time alias reaches the bytes.
+fn emitted_function_name(name: &str, source_keys: &SourceDeclarationKeys) -> String {
+    source_keys
+        .packages
+        .iter()
+        .find_map(|(package, identity)| {
+            name.strip_prefix(&format!("ix://{package}/"))
+                .map(|declaration| format!("ix://{identity}/{declaration}"))
+        })
+        .unwrap_or_else(|| name.to_owned())
 }
 
 /// Apply the source owner's declaration-key spelling to a key retained by S3.
@@ -4357,8 +4371,10 @@ fn checked_term_data(
         filament_contract_model::SelectedModelEnumMemberRow,
     )],
     equality_rows: &[EqualityProducerEmissionRow],
+    nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     source_keys: &SourceDeclarationKeys,
+    output_bytes: u64,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
@@ -4372,10 +4388,18 @@ fn checked_term_data(
     term_data.protocol_locations =
         protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
+    term_data.body_locations = body_locations::checked_body_locations(
+        graph,
+        emitted_node_ids,
+        nodes,
+        source_keys,
+        output_bytes,
+    )?;
     Ok((!term_data.equality_decisions.is_empty()
         || !term_data.protocol_locations.is_empty()
         || !term_data.dispatch_tables.is_empty()
-        || !term_data.probabilistic_claims.is_empty())
+        || !term_data.probabilistic_claims.is_empty()
+        || !term_data.body_locations.is_empty())
     .then_some(term_data))
 }
 
@@ -5824,6 +5848,87 @@ fn push_scalar_type(
     });
 }
 
+/// Replace every `NodeRef` of `data` equal to `old` with `new`: the identity
+/// map `rekey_timed_model_nodes` applies to the graph, applied to the sidecar.
+fn replace_term_data_node(
+    data: &mut filament_contract_model::CheckedTermDataV2,
+    old: &CheckedNodeId,
+    new: &CheckedNodeId,
+) {
+    use filament_contract_model::{
+        CheckedBodyLocationOrigin, CheckedResolvedEqualityUnitForm as UnitForm,
+    };
+    let fix = |id: &mut CheckedNodeId| {
+        if id == old {
+            *id = new.clone();
+        }
+    };
+    for row in &mut data.equality_decisions {
+        fix(&mut row.application);
+        for operand in [&mut row.left, &mut row.right] {
+            fix(&mut operand.source_type);
+            if let Some(target) = &mut operand.conversion_target {
+                fix(target);
+            }
+        }
+        for unit in &mut row.units {
+            fix(&mut unit.quantity_type);
+            fix(&mut unit.unit);
+            match &mut unit.form {
+                UnitForm::Declared {
+                    dimension_node,
+                    dimension_terms,
+                    root_unit,
+                    path,
+                } => {
+                    fix(dimension_node);
+                    fix(root_unit);
+                    dimension_terms
+                        .iter_mut()
+                        .for_each(|term| fix(&mut term.dimension));
+                    path.iter_mut().for_each(|edge| fix(&mut edge.target));
+                }
+                UnitForm::Compound {
+                    dimension_terms,
+                    terms,
+                } => {
+                    dimension_terms
+                        .iter_mut()
+                        .for_each(|term| fix(&mut term.dimension));
+                    terms.iter_mut().for_each(|term| fix(&mut term.root_unit));
+                }
+            }
+        }
+        for member in &mut row.enum_members {
+            fix(&mut member.enum_type);
+            fix(&mut member.member);
+        }
+    }
+    for row in &mut data.protocol_locations {
+        fix(&mut row.application);
+    }
+    for table in &mut data.dispatch_tables {
+        fix(&mut table.application);
+        fix(&mut table.operation.declaring);
+        fix(&mut table.context);
+        for candidate in &mut table.candidates {
+            fix(&mut candidate.selected_operation.declaring);
+            fix(&mut candidate.operation_body);
+            if let Some(precondition) = &mut candidate.effective_precondition {
+                fix(precondition);
+            }
+        }
+    }
+    for claim in &mut data.probabilistic_claims {
+        fix(&mut claim.declaration);
+    }
+    for row in &mut data.body_locations {
+        fix(&mut row.application);
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &mut row.location.origin;
+        fix(function);
+    }
+}
+
 /// Replace producer-local temporary timed identities with their structural
 /// identities. Timed graph edges are acyclic, so each pass resolves another
 /// level of references until every node and source-map entry agrees.
@@ -5831,6 +5936,7 @@ fn rekey_timed_model_nodes(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
+    term_data: &mut Option<filament_contract_model::CheckedTermDataV2>,
 ) -> Result<(), EmitRefusal> {
     let timed_count = nodes
         .iter()
@@ -5876,6 +5982,9 @@ fn rekey_timed_model_nodes(
                 if entry.node_id == old {
                     entry.node_id = new.clone();
                 }
+            }
+            if let Some(data) = term_data.as_mut() {
+                replace_term_data_node(data, &old, &new);
             }
         }
     }
@@ -6028,7 +6137,10 @@ fn normalize_model_declaration_occurrences(
     for root in nodes.iter().filter(|node| {
         node.node_tag.as_ref() == CheckedNodeTag::Model.as_wire()
             && node.semantic_form.as_ref() == "model_root"
-            && matches!(node.owner.as_ref(), Some(CheckedNodeOwner::ModelRoot { .. }))
+            && matches!(
+                node.owner.as_ref(),
+                Some(CheckedNodeOwner::ModelRoot { .. })
+            )
     }) {
         let Some(CheckedNodeOwner::ModelRoot { identity }) = root.owner.as_ref() else {
             return Err(EmitRefusal::SourceMapInvariant);
@@ -6042,7 +6154,9 @@ fn normalize_model_declaration_occurrences(
             return Err(EmitRefusal::SourceMapInvariant);
         };
         if entries.next().is_some()
-            || root_regions.insert(identity.to_string(), entry.regions.clone()).is_some()
+            || root_regions
+                .insert(identity.to_string(), entry.regions.clone())
+                .is_some()
         {
             return Err(EmitRefusal::SourceMapInvariant);
         }
@@ -6234,7 +6348,8 @@ pub fn emit_timed_models(
     let lock = base.lock().clone();
     let mut source_map = base.source_map().to_vec();
     read_index_segments(ids, &mut nodes, &mut source_map)?;
-    rekey_timed_model_nodes(ids, &mut nodes, &mut source_map)?;
+    let mut checked_term_data = base.checked_term_data().cloned();
+    rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut checked_term_data)?;
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
     write_index_segments(
         &mut nodes,
@@ -6271,7 +6386,7 @@ pub fn emit_timed_models(
                 refinement_step_rows: None,
             },
             CheckedPackageSidecarsRef {
-                checked_term_data: None,
+                checked_term_data: checked_term_data.as_ref(),
                 temporal_bindings: base.temporal_bindings(),
                 temporal_clause_names: base.temporal_clause_names(),
                 claim_names: base.claim_names(),
@@ -7119,14 +7234,14 @@ fn emit_package_inner(
                 nodes.push(node);
             }
         }
-        rekey_timed_model_nodes(ids, &mut nodes, &mut source_map)?;
+        rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
         if timed_order::order_timed_aggregates(&mut nodes, &source_map)
             .map_err(EmitRefusal::TimedOrder)?
         {
-            rekey_timed_model_nodes(ids, &mut nodes, &mut source_map)?;
+            rekey_timed_model_nodes(ids, &mut nodes, &mut source_map, &mut None)?;
         }
         #[cfg(test)]
         TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
@@ -7251,8 +7366,10 @@ fn emit_package_inner(
         &emitted_node_ids,
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
+        &nodes,
         &source_map,
         &source_keys,
+        limits.output_bytes,
     )?;
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
@@ -7719,14 +7836,14 @@ fn source_object_rows(
                     _ => None,
                 })
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            members.push(SelectedSourceObjectMember {
-                name: name.into(),
-                type_node: emitted
+            members.push(SelectedSourceObjectMember::data(
+                name,
+                emitted
                     .get(&target)
                     .cloned()
                     .ok_or(EmitRefusal::SourceMapInvariant)?,
                 optional,
-            });
+            ));
             member_facts.push(SourceObjectMemberFacts {
                 original_member_identity: original_member_identity.into(),
                 admitted_name: name.into(),
@@ -7806,6 +7923,37 @@ fn source_object_rows(
                         .ok_or(EmitRefusal::SourceMapInvariant)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // FSpec FR-610 "Identity rows": a data entry for a parameter whose
+            // type has a node, a clock entry (the type's rendering) for one
+            // whose type has none.
+            let parameters = operation
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    let name = parameter
+                        .key
+                        .node
+                        .strip_prefix(&parameter_prefix)
+                        .filter(|name| !name.is_empty() && !name.contains('/'))
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    let node = parameter
+                        .value_type
+                        .as_package()
+                        .and_then(|key| fsl_semantics::model::key::object_type_node_key(key).ok())
+                        .and_then(|key| emitted.get(&key));
+                    Ok(match node {
+                        Some(node) => SelectedSourceObjectMember::data(
+                            name,
+                            node.clone(),
+                            parameter.presence == filament_exact::Presence::Optional,
+                        ),
+                        None => SelectedSourceObjectMember::clock(
+                            name,
+                            parameter.value_type.to_string(),
+                        ),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitRefusal>>()?;
             operations.push(SourceObjectOperationFacts {
                 identity: identity.clone(),
                 query,
@@ -7814,6 +7962,7 @@ fn source_object_rows(
                 identity,
                 query,
                 clock_parameters,
+                parameters,
             });
         }
         rows.push((
@@ -8933,8 +9082,8 @@ fn temporal_binding_rows(
         };
         check_selected_definition(&source, span, profile, selection)?;
         let clock = &selection.clock;
-        let clock_name = hyper_clock_name(graph, occurrence.node())
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let clock_name =
+            hyper_clock_name(graph, occurrence.node()).ok_or(EmitRefusal::SourceMapInvariant)?;
         validate_temporal_clock(&source, span, clock_name, clock)?;
         // FSpec FR-322 "Hyper clause rows": the rows are keyed on the
         // `hyperproperty` node at its `claim` occurrence, one per quantifier
@@ -9579,6 +9728,7 @@ pub use clock_selection::{
     clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
     ClockSelectionDeclaration, ClockSelectionRefusal,
 };
+mod body_locations;
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
