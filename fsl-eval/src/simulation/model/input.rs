@@ -33,8 +33,8 @@ use fsl_semantics::check::footprint::{
 use fsl_semantics::check::{
     CheckedBody, CheckedHyperClause, CheckedNode, CheckedProbabilisticModel, CheckedProtocol,
     CheckedProtocolNodeKeys, CheckedRow, CheckedStateClause, CheckedTemporalClause,
-    CheckedTerminalPredicate, EnumBinding, FormulaNodeId, ModelTimeSource, Reward, StatePredicate,
-    TimedModel, VariantTypeDeclaration, Written,
+    CheckedTerminalPredicate, EnumBinding, FormulaNodeId, ModelTimeSource, ReadReward, Reward,
+    StatePredicate, TimedModel, VariantTypeDeclaration, Written,
 };
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
@@ -471,9 +471,9 @@ impl<'p> PackageModelInput<'p> {
     ///
     /// Its random parameters and workloads are the ones the package's
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
-    /// selected domain packages (FSL FR-740). A package route reads no
-    /// reward (a `reward` node refuses as an unread form, below) and carries
-    /// no claim of the model, and its delay tables are empty.
+    /// selected domain packages (FSL FR-740), and its rewards are the ones
+    /// its `reward` nodes carry, evaluated through their clause functions. It
+    /// carries no claim of the model, and its delay tables are empty.
     ///
     /// # Errors
     ///
@@ -1088,6 +1088,27 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault>;
 
+    /// FR-187: the reward a package's `reward` node carries, evaluated
+    /// through its clause function ([`crate::value::bare_evaluate_reward`]);
+    /// the package route's counterpart of [`Self::evaluate_reward`].
+    ///
+    /// # Errors
+    ///
+    /// An internal fault, as the evaluator reports it.
+    fn evaluate_read_reward(
+        &self,
+        reward: &ReadReward,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault>;
+
+    /// FR-187: the type of the value a package's reward computes.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault, as the evaluator reports it.
+    fn read_reward_type(&self, reward: &ReadReward) -> Result<ValueType, InternalFault>;
+
     /// The checked state clause `name`, for a reading of its body.
     fn state_clause(&self, name: &str) -> Option<&CheckedStateClause>;
 
@@ -1502,6 +1523,19 @@ impl ModelEvaluator for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         crate::value::evaluate_reward(self, reward, arguments, meter)
+    }
+
+    fn evaluate_read_reward(
+        &self,
+        _reward: &ReadReward,
+        _arguments: Vec<Value>,
+        _meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        Err(PACKAGE_FORM)
+    }
+
+    fn read_reward_type(&self, _reward: &ReadReward) -> Result<ValueType, InternalFault> {
+        Err(PACKAGE_FORM)
     }
 
     fn state_clause(&self, name: &str) -> Option<&CheckedStateClause> {
@@ -1931,6 +1965,19 @@ impl ModelEvaluator for BarePackage<'_> {
         _meter: &mut Meter,
     ) -> Result<Evaluation, InternalFault> {
         Err(SOURCE_FORM)
+    }
+
+    fn evaluate_read_reward(
+        &self,
+        reward: &ReadReward,
+        arguments: Vec<Value>,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, InternalFault> {
+        crate::value::bare_evaluate_reward(self, reward, arguments, meter)
+    }
+
+    fn read_reward_type(&self, reward: &ReadReward) -> Result<ValueType, InternalFault> {
+        crate::value::bare_reward_value_type(self, reward)
     }
 
     fn state_clause(&self, _name: &str) -> Option<&CheckedStateClause> {

@@ -358,9 +358,22 @@ impl World {
     }
 
     fn admit_within(&self, max_candidates: u64) -> Result<ModelSystem<'_>, AdmissionFailure> {
+        self.admit_input(
+            crate::simulation::model::ModelCheckInput::source(&self.package),
+            max_candidates,
+        )
+    }
+
+    /// The system over this world's states read through `input`, with an
+    /// expansion budget of `max_candidates`.
+    pub(crate) fn admit_input<'a>(
+        &'a self,
+        input: crate::simulation::model::ModelCheckInput<'a>,
+        max_candidates: u64,
+    ) -> Result<ModelSystem<'a>, AdmissionFailure> {
         ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
-            input: crate::simulation::model::ModelCheckInput::source(&self.package),
+            input,
             packages: &self.packages,
             normalization: ModelNormalizationLimits::default(),
             snapshots: &self.snapshots,

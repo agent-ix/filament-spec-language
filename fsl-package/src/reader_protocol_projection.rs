@@ -1279,29 +1279,36 @@ impl<'wire> BareWalker<'wire> {
         })
     }
 
-    /// Read the checked result type of a named pure function without
+    /// The pure function `function` selects, when the package holds it.
+    fn selected_function(&self, function: FunctionSelector<'_>) -> Option<&CheckedSemanticNodeV2> {
+        match function {
+            FunctionSelector::Name(name) => self.index.nodes.values().copied().find(|node| {
+                has_form(node, WireTag::Function, WireForm::PureFunction)
+                    && node.declaration.as_ref().is_some_and(|declaration| {
+                        declaration.qualified_name.len() == 1
+                            && declaration.qualified_name[0].as_ref() == name
+                    })
+            }),
+            FunctionSelector::Node(key) => self
+                .index
+                .ids
+                .get(key)
+                .and_then(|id| self.index.node(id))
+                .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction)),
+        }
+    }
+
+    /// Read the checked result type of a selected pure function without
     /// projecting its body. This lets callers reject an unrepresentable
     /// result before a body operation can produce an earlier refusal.
     pub(crate) fn function_result_type(
         &self,
-        name: &str,
+        function: FunctionSelector<'_>,
     ) -> Result<Option<ReaderFunctionResultType>, WalkFailure> {
-        let selected = self.index.nodes.values().find(|node| {
-            has_form(node, WireTag::Function, WireForm::PureFunction)
-                && node.declaration.as_ref().is_some_and(|declaration| {
-                    declaration.qualified_name.len() == 1
-                        && declaration.qualified_name[0].as_ref() == name
-                })
-        });
-        let Some(selected) = selected else {
+        let Some(selected) = self.selected_function(function) else {
             return Ok(None);
         };
-        let function = selected
-            .declaration
-            .as_ref()
-            .and_then(|declaration| declaration.qualified_name.last())
-            .map(|name| name.to_string())
-            .ok_or_else(|| WalkFailure::Fault(fault("reader-function-name-is-admitted")))?;
+        let function = function_label(selected);
         let (_, body) = function_parts(&selected.body)
             .ok_or_else(|| WalkFailure::Fault(fault("reader-pure-function-has-checked-body")))?;
         let CheckedTerm::Reference { target } = body else {
@@ -1336,16 +1343,9 @@ impl<'wire> BareWalker<'wire> {
     /// route retains the admitted node types and evaluator operations only.
     pub(crate) fn project_function(
         &self,
-        name: &str,
+        function: FunctionSelector<'_>,
     ) -> Result<Option<ReaderProtocolProjection>, WalkFailure> {
-        let selected = self.index.nodes.values().find(|node| {
-            has_form(node, WireTag::Function, WireForm::PureFunction)
-                && node.declaration.as_ref().is_some_and(|declaration| {
-                    declaration.qualified_name.len() == 1
-                        && declaration.qualified_name[0].as_ref() == name
-                })
-        });
-        let Some(selected) = selected else {
+        let Some(selected) = self.selected_function(function) else {
             return Ok(None);
         };
         let failure = match self.index.project_function(&selected.node_id) {
@@ -1379,20 +1379,10 @@ impl<'wire> BareWalker<'wire> {
                             view: Box::new(view),
                         })
                     }
-                    Some(FunctionTypePosition::Result) => {
-                        let function = selected
-                            .declaration
-                            .as_ref()
-                            .and_then(|declaration| declaration.qualified_name.last())
-                            .map(|name| name.to_string())
-                            .ok_or_else(|| {
-                                WalkFailure::Fault(fault("reader-function-name-is-admitted"))
-                            })?;
-                        Err(WalkFailure::FunctionResultType {
-                            function,
-                            view: Box::new(view),
-                        })
-                    }
+                    Some(FunctionTypePosition::Result) => Err(WalkFailure::FunctionResultType {
+                        function: function_label(selected),
+                        view: Box::new(view),
+                    }),
                     None => Err(WalkFailure::Unsupported(view)),
                 }
             }
@@ -1670,12 +1660,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                         )));
                     }
                 };
-                let name = node
-                    .declaration
-                    .as_ref()
-                    .and_then(|declaration| declaration.qualified_name.last())
-                    .map(|name| name.to_string())
-                    .ok_or_else(|| fault("reader-function-name-is-admitted"))?;
+                let name = function_label(node);
                 let parameters = parameter_ids
                     .iter()
                     .map(|id| {
@@ -3850,6 +3835,37 @@ fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
         })
         .collect::<Option<Vec<_>>>()?;
     Some(Location::at(origin, &path))
+}
+
+/// The name of a function node: its declared name, or empty for a clause
+/// function, which carries no declaration.
+fn function_label(node: &CheckedSemanticNodeV2) -> String {
+    node.declaration
+        .as_ref()
+        .and_then(|declaration| declaration.qualified_name.last())
+        .map(ToString::to_string)
+        .unwrap_or_default()
+}
+
+/// How a pure function is selected from a package's nodes.
+#[derive(Clone, Copy)]
+pub(crate) enum FunctionSelector<'a> {
+    /// By its declared, unqualified name.
+    Name(&'a str),
+    /// By its node's structural key: the only way to select a clause function,
+    /// which has no declared name.
+    Node(&'a NodeKey),
+}
+
+impl FunctionSelector<'_> {
+    /// The name a refusal gives the function: the selecting name, or empty
+    /// for a clause function.
+    pub(crate) fn label(&self) -> &str {
+        match self {
+            Self::Name(name) => name,
+            Self::Node(_) => "",
+        }
+    }
 }
 
 fn function_parts(term: &CheckedTerm) -> Option<(&[CheckedTerm], &CheckedTerm)> {

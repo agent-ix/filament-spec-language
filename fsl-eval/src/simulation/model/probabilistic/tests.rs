@@ -880,18 +880,10 @@ fn the_package_route_rebuilds_the_probabilistic_model_of_the_emitted_package() {
     }
 }
 
-/// FSL FR-740: no engine reads the reward a package carries yet, so the
-/// package route refuses a package with a `reward` node at that node, naming
-/// the form, instead of building an input whose model has no reward.
-#[test]
-fn the_package_route_refuses_a_package_with_a_reward_node() {
-    let mut model = world::service("");
-    model.body = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };\n\
-                  workload Steady on M { weight Server::request = 1; \
-                  weight Server::attempt = 1; weight Server::reset = 1; }\n\
-                  reward duration on Server::attempt = d;\n"
-        .to_owned();
-    let world = World::new(&model);
+/// Admission of `world`'s model through the package route: its package is
+/// emitted, read back from the wire bytes, and the system is built over the
+/// input the package route rebuilds from the nodes.
+fn wire_admission(world: &World) -> Result<(), AdmissionFailure> {
     let read = fsl_package::read_evaluation_package(
         &world.package,
         fsl_semantics::library::LibraryName::new("fixture").expect("a library name"),
@@ -916,21 +908,60 @@ fn the_package_route_refuses_a_package_with_a_reward_node() {
             &mut join_budget,
         )
         .expect("the bytes view admits its supply");
-    let Err(crate::simulation::model::PendingPackageForm::Form { form, node }) =
-        crate::simulation::model::PackageModelInput::of(
-            &bare,
-            world.packages(),
-            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-        )
-    else {
-        panic!("the package route refuses the reward node");
+    let input = crate::simulation::model::PackageModelInput::of(
+        &bare,
+        world.packages(),
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .unwrap_or_else(|pending| panic!("the package route builds its input: {pending}"));
+    world.admit_input(input.input(), 1_000_000).map(|_| ())
+}
+
+/// FR-187-AC-4 (TC-622 step 4): the package route reads a negative reward
+/// from the wire, so a package whose `reward` node computes `n - 3` over
+/// `n: Int[0, 5]` refuses admission
+/// `invalid_probabilistic_model`/`negative-reward`, naming the operation and
+/// the reward, as the source route does.
+#[trace("TC-622", "FR-187-AC-4")]
+#[test]
+fn a_negative_reward_read_from_the_wire_refuses_admission() {
+    let model = world::refund();
+    let world = World::with_s3_reward_signs_unchecked(&model);
+    let Err(AdmissionFailure::Refused(record)) = wire_admission(&world) else {
+        panic!("admission refuses");
     };
-    assert_eq!(form, fsl_package::UnreadModelForm::Reward);
-    assert!(
-        admitted.resolved_graph().nodes.iter().any(|candidate| {
-            candidate.node_id == node && candidate.semantic_form.as_ref() == "reward"
-        }),
-        "the refusal names the reward node {node:?}"
+    assert_eq!(
+        (record.catalog.code(), record.catalog.cause()),
+        (Code::InvalidProbabilisticModel.as_str(), "negative-reward")
+    );
+    assert_eq!(
+        record.fields.get("reward").map(String::as_str),
+        Some("refund")
+    );
+    assert_eq!(
+        record.fields.get("operation"),
+        Some(&model.ident("Account/pay"))
+    );
+}
+
+/// FR-187-AC-5 (TC-2064): the reward `refund = n - 3` over `n: Int[0, 5]` in
+/// a hand-built checked package read from the wire (S3 never checked its sign)
+/// is refused at admission `invalid_probabilistic_model`/`negative-reward`
+/// naming `n = 0`, the first argument vector in canonical order.
+#[trace("TC-2064", "FR-187-AC-5")]
+#[test]
+fn a_hand_built_wire_package_with_a_negative_reward_is_refused_naming_its_arguments() {
+    let world = World::with_s3_reward_signs_unchecked(&world::refund());
+    let Err(AdmissionFailure::Refused(record)) = wire_admission(&world) else {
+        panic!("admission refuses");
+    };
+    assert_eq!(
+        (record.catalog.code(), record.catalog.cause()),
+        (Code::InvalidProbabilisticModel.as_str(), "negative-reward")
+    );
+    assert_eq!(
+        record.fields.get("arguments").map(String::as_str),
+        Some("n = 0")
     );
 }
 

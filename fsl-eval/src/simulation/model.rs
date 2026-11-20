@@ -1182,7 +1182,7 @@ impl<'a> ModelSystem<'a> {
             .as_ref()
             .map_err(|_| fault("terminal-nodes-resolve"))?;
         let clauses = Self::clauses_of(&input.state_clauses)?;
-        let probabilistic = probabilistic::Tables::of(input.probabilistic)?;
+        let probabilistic = probabilistic::Tables::of(input.probabilistic, input.evaluator)?;
         let system = Self {
             over: match only {
                 [only] => Some(only.identity.clone()),

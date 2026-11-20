@@ -564,6 +564,68 @@ pub(crate) fn post_targets(
     )
 }
 
+/// The projection of the clause function a package's `reward` node names.
+fn reward_projection(
+    package: &BarePackage<'_>,
+    reward: &fsl_semantics::check::ReadReward,
+) -> Result<fsl_package::ReaderProtocolProjection, InternalFault> {
+    package
+        .project_clause_function(&reward.function)
+        .ok()
+        .flatten()
+        .ok_or(InternalFault::new(
+            "FR-940",
+            "bare-reward-function-projects",
+        ))
+}
+
+/// FR-187 (ADR-024 PM-5): the type of the value of the reward `reward` a
+/// package carries, which its clause function computes.
+///
+/// # Errors
+///
+/// An internal fault when the reward's function does not project.
+pub fn reward_value_type(
+    package: &BarePackage<'_>,
+    reward: &fsl_semantics::check::ReadReward,
+) -> Result<filament_exact::ValueType, InternalFault> {
+    let projection = reward_projection(package, reward)?;
+    let selected = projection
+        .selected_function()
+        .ok_or(InternalFault::new("FR-940", "bare-reward-has-function"))?;
+    Ok(selected.result_type.clone())
+}
+
+/// FR-187 (ADR-024 PM-5): evaluate the reward `reward` a package carries on
+/// `arguments`, one value per parameter of its operation in declared order,
+/// through its clause function. A reward reads its operation's parameters
+/// alone, so the object environment is empty.
+///
+/// # Errors
+///
+/// An internal fault when the reward's function does not project or the
+/// package's declarations are not readable.
+pub fn evaluate_reward(
+    package: &BarePackage<'_>,
+    reward: &fsl_semantics::check::ReadReward,
+    arguments: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let projection = reward_projection(package, reward)?;
+    let selected = projection
+        .selected_function()
+        .ok_or(InternalFault::new("FR-940", "bare-reward-has-function"))?;
+    let world = package
+        .world()
+        .map_err(|_| InternalFault::new("FR-940", "bare-reward-world-reads"))?;
+    let objects = ObjectEnvironment::default();
+    Machine::from_bare_package(&world, &objects, meter).run(
+        ReaderNode::root(&projection),
+        selected.slots,
+        arguments,
+    )
+}
+
 impl super::clause_set::ClauseHost for BarePackage<'_> {
     fn clause_observation(
         &self,

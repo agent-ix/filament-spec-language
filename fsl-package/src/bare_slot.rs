@@ -28,8 +28,8 @@ use crate::protocol_view::{
     argument, control_operation, group_member, integer, reference, text, ControlOperation,
 };
 use crate::reader_protocol_projection::{
-    node_value_type, BareWalker, ReaderProtocolProjection, TypeError, TypeReader, UnsupportedView,
-    WalkFailure,
+    node_value_type, BareWalker, FunctionSelector, ReaderProtocolProjection, TypeError, TypeReader,
+    UnsupportedView, WalkFailure,
 };
 use crate::wire_form::{has_tag, WireTag};
 
@@ -713,6 +713,27 @@ impl<'p> BarePackage<'p> {
         &self,
         name: &str,
     ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
+        self.project_selected_function(FunctionSelector::Name(name))
+    }
+
+    /// The projection of the clause function at `node`, such as the function a
+    /// `reward` node's expression names, as [`Self::project_function`]
+    /// projects a named one. `None` when the package holds no function there.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::project_function`].
+    pub fn project_clause_function(
+        &self,
+        node: &NodeKey,
+    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
+        self.project_selected_function(FunctionSelector::Node(node))
+    }
+
+    fn project_selected_function(
+        &self,
+        function: FunctionSelector<'_>,
+    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
         let (_, identities) = self.witness()?;
         let walker = BareWalker::new(
             self.package(),
@@ -723,7 +744,7 @@ impl<'p> BarePackage<'p> {
         .map_err(SlotSelectionFailure::Fault)?;
         if let Some(result) =
             walker
-                .function_result_type(name)
+                .function_result_type(function)
                 .map_err(|failure| match failure {
                     WalkFailure::Unsupported(view) => {
                         BareSelectionFailure::Unsupported(Box::new(view))
@@ -743,7 +764,7 @@ impl<'p> BarePackage<'p> {
                 || world.types().runtime_type(&result.value_type).is_none()
             {
                 return Err(BareSelectionFailure::FunctionResultType {
-                    function: name.to_owned(),
+                    function: function.label().to_owned(),
                     view: Box::new(UnsupportedView::missing_type(
                         self.package().name(),
                         result.function_node,
@@ -752,7 +773,7 @@ impl<'p> BarePackage<'p> {
             }
         }
         let projection = walker
-            .project_function(name)
+            .project_function(function)
             .map_err(|failure| match failure {
                 WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
                 WalkFailure::FunctionParameterType { position, view } => {
