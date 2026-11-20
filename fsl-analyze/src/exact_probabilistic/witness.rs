@@ -934,7 +934,7 @@ mod tests {
                 draw: None,
                 to: state,
                 probability: rational(1),
-                elapsed: Rational::from_integer(0.into()),
+                elapsed: Rational::from_integer(0_i64.into()),
                 rewards: Vec::new(),
             }],
             initial: vec![(0, None, state)],
