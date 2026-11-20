@@ -332,18 +332,15 @@ impl Engine {
         } else {
             let value_validity_modes: Vec<_> = advertised
                 .iter()
-                .filter_map(|(kind, mode)| {
-                    (*kind == Capability::ValueValidity).then_some(*mode)
-                })
+                .filter_map(|(kind, mode)| (*kind == Capability::ValueValidity).then_some(*mode))
                 .collect();
-            (!value_validity_modes.is_empty()
-                && !value_validity_modes.contains(&Mode::Unbounded))
-            .then_some(ProviderRegistrationCause::ValueValidityNotUnbounded {
-                modes: value_validity_modes
-                    .iter()
-                    .map(|mode| mode.to_wire().to_owned())
-                    .collect(),
-            })
+            (!value_validity_modes.is_empty() && !value_validity_modes.contains(&Mode::Unbounded))
+                .then_some(ProviderRegistrationCause::ValueValidityNotUnbounded {
+                    modes: value_validity_modes
+                        .iter()
+                        .map(|mode| mode.to_wire().to_owned())
+                        .collect(),
+                })
         };
         if let Some(cause) = cause {
             return Err(ProviderRegistrationRefusal {
