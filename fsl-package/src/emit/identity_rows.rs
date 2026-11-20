@@ -238,12 +238,48 @@ fn copy_source_object(
     for member in &row.members {
         charge::work(budget, locus, 1)?;
         charge::text(budget, locus, &member.name)?;
-        charge::node(budget, locus, &member.type_node)?;
+        if let Some(type_node) = &member.type_node {
+            charge::node(budget, locus, type_node)?;
+        }
+        if let Some(member_type) = &member.member_type {
+            charge::text(budget, locus, member_type)?;
+        }
+        charge::items(budget, locus, member.collections.len())?;
+        for collection in &member.collections {
+            charge::work(budget, locus, 1)?;
+            charge::text(budget, locus, &collection.kind)?;
+            charge::text(budget, locus, &collection.minimum)?;
+            charge::text(budget, locus, &collection.maximum)?;
+        }
     }
     charge::items(budget, locus, row.populations.len())?;
     for population in &row.populations {
         charge::work(budget, locus, 1)?;
         charge::text(budget, locus, &population.name)?;
+    }
+    charge::items(budget, locus, row.operations.len())?;
+    for operation in &row.operations {
+        charge::work(budget, locus, 1)?;
+        charge::text(budget, locus, &operation.identity)?;
+        charge::texts(budget, locus, &operation.clock_parameters)?;
+        charge::items(budget, locus, operation.parameters.len())?;
+        for parameter in &operation.parameters {
+            charge::work(budget, locus, 1)?;
+            charge::text(budget, locus, &parameter.name)?;
+            if let Some(type_node) = &parameter.type_node {
+                charge::node(budget, locus, type_node)?;
+            }
+            if let Some(member_type) = &parameter.member_type {
+                charge::text(budget, locus, member_type)?;
+            }
+            charge::items(budget, locus, parameter.collections.len())?;
+            for collection in &parameter.collections {
+                charge::work(budget, locus, 1)?;
+                charge::text(budget, locus, &collection.kind)?;
+                charge::text(budget, locus, &collection.minimum)?;
+                charge::text(budget, locus, &collection.maximum)?;
+            }
+        }
     }
     Ok(row.clone())
 }

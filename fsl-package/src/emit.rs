@@ -12,34 +12,34 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use filament_contract_model::{
-    encode_checked_package_v2, ApplicationOperator, CheckedAbstractionField,
-    CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
-    CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
-    CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
-    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencyClockSelection,
-    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId,
-    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
-    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
-    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind,
-    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
-    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedOriginalDeclarationId,
-    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
-    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    ApplicationOperator, CheckedAbstractionField, CheckedAbstractionFrame,
+    CheckedAbstractionObject, CheckedAbstractionParameter, CheckedAbstractionPopulation,
+    CheckedArtifactRef, CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
+    CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
+    CheckedDependencyClockSelection, CheckedDependencySelection, CheckedDiagnosticsV2,
+    CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
+    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
+    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
+    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
+    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
+    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
+    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
+    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
+    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
+    StateForm, ValueForm, encode_checked_package_v2,
 };
 use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
+use fsl_foundation::Code;
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
-use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -51,8 +51,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
-    ModelRole, NodeOwner, TemporalRole,
+    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
+    native_diagnostics_catalog,
 };
 use ix_trace_rs::string_edge;
 
@@ -7660,11 +7660,15 @@ fn source_object_rows(
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             members.push(SelectedSourceObjectMember {
                 name: name.into(),
-                type_node: emitted
-                    .get(&target)
-                    .cloned()
-                    .ok_or(EmitRefusal::SourceMapInvariant)?,
+                type_node: Some(
+                    emitted
+                        .get(&target)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                ),
                 optional,
+                member_type: None,
+                collections: Vec::new(),
             });
             member_facts.push(SourceObjectMemberFacts {
                 original_member_identity: original_member_identity.into(),
@@ -7745,6 +7749,79 @@ fn source_object_rows(
                         .ok_or(EmitRefusal::SourceMapInvariant)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let parameters = operation
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    let name = parameter
+                        .key
+                        .node
+                        .strip_prefix(&parameter_prefix)
+                        .filter(|name| !name.is_empty() && !name.contains('/'))
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    let optional = parameter.multiplicity.lower == 0;
+                    if parameter.value_type
+                        == fsl_semantics::model::domain_package::ValueTypeRef::Clock
+                    {
+                        let mut collections = Vec::new();
+                        if parameter.multiplicity.lower != 1
+                            || parameter.multiplicity.upper != Some(1)
+                        {
+                            let kind = match (
+                                parameter.multiplicity.ordered,
+                                parameter.multiplicity.unique,
+                            ) {
+                                (true, _) => "sequence",
+                                (false, true) => "set",
+                                (false, false) => "bag",
+                            };
+                            collections.push(
+                                filament_contract_model::SelectedClockCollectionLayer {
+                                    kind: kind.into(),
+                                    minimum: parameter.multiplicity.lower.to_string().into(),
+                                    maximum: parameter.multiplicity.upper.map_or_else(
+                                        || "unbounded".into(),
+                                        |bound| bound.to_string().into(),
+                                    ),
+                                },
+                            );
+                        }
+                        return Ok(SelectedSourceObjectMember {
+                            name: name.into(),
+                            optional,
+                            type_node: None,
+                            member_type: Some("ix://filament/native/Clock".into()),
+                            collections,
+                        });
+                    }
+                    let type_node = match &parameter.value_type {
+                        fsl_semantics::model::domain_package::ValueTypeRef::Package(key) => {
+                            source_node_for_declaration(graph, key)
+                                .and_then(|node| emitted.get(&node.key()))
+                                .cloned()
+                        }
+                        fsl_semantics::model::domain_package::ValueTypeRef::Resolved(value) => {
+                            match value.as_ref() {
+                                filament_exact::ValueType::Composite(key) => {
+                                    emitted.get(key).cloned()
+                                }
+                                _ => None,
+                            }
+                        }
+                        fsl_semantics::model::domain_package::ValueTypeRef::Clock
+                        | fsl_semantics::model::domain_package::ValueTypeRef::Native(_)
+                        | fsl_semantics::model::domain_package::ValueTypeRef::Unit(_) => None,
+                    }
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    Ok(SelectedSourceObjectMember {
+                        name: name.into(),
+                        optional,
+                        type_node: Some(type_node),
+                        member_type: None,
+                        collections: Vec::new(),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitRefusal>>()?;
             operations.push(SourceObjectOperationFacts {
                 identity: identity.clone(),
                 query,
@@ -7753,6 +7830,7 @@ fn source_object_rows(
                 identity,
                 query,
                 clock_parameters,
+                parameters,
             });
         }
         rows.push((
@@ -9513,12 +9591,12 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
-    ClockSelectionDeclaration, ClockSelectionRefusal,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
+    is_model_binding_name, profile_clock_kind,
 };
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
+pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;
