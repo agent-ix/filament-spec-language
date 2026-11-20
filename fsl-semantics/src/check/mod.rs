@@ -1811,7 +1811,9 @@ fn limit_cause(limit: &fsl_foundation::diagnostic::LimitExceeded) -> CheckCause 
             actual: limit.actual(),
             region: match limit.locus() {
                 Some(Locus::Region(region)) => Some(region.clone()),
-                Some(Locus::Occurrence(_) | Locus::Artifact { .. }) | None => None,
+                Some(Locus::Occurrence(_) | Locus::Artifact { .. } | Locus::Input { .. }) | None => {
+                    None
+                }
             },
         })),
         Err(setting) => CheckCause::InternalFault(Box::new(KeyFault::UncheckedLimit(setting))),

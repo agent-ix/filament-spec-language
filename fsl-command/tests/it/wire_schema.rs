@@ -42,6 +42,34 @@ fn outcome_golden_validates_and_rejects_mutations() {
     let refused_value: Value = serde_json::from_slice(&refused_bytes).expect("outcome JSON");
     assert_eq!(fsl_foundation::canonical_json::encode(&refused_value).unwrap(), refused_bytes);
     assert!(validate.is_valid(&refused_value));
+
+    let input_locus = fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Input {
+        operand: "./out/handoff".to_owned(),
+        member: Some("selection.json".to_owned()),
+        pointer: None,
+    });
+    let input_document = OutcomeDocument::new(Operation::Check, None, Category::Refusal)
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("invalid-input"),
+            "invalid_runtime_input",
+            Some(input_locus),
+            "bad handoff input",
+        )]);
+    let input_value: Value = serde_json::from_slice(
+        &input_document.to_bytes().expect("input-locus outcome serializes"),
+    )
+    .expect("input-locus outcome JSON");
+    assert!(validate.is_valid(&input_value));
+    let mut missing_nullable_member = input_value.clone();
+    missing_nullable_member["diagnostics"][0]["locus"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pointer");
+    assert!(!validate.is_valid(&missing_nullable_member));
+    let mut malformed_pointer = input_value;
+    malformed_pointer["diagnostics"][0]["locus"]["pointer"] = json!("selection");
+    assert!(!validate.is_valid(&malformed_pointer));
+
     let mut mutations = Vec::new();
     let mut missing_code = refused_value.clone();
     missing_code["diagnostics"][0].as_object_mut().unwrap().remove("code");

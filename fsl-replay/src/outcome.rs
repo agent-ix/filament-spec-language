@@ -1825,6 +1825,15 @@ pub enum OutcomeLocus {
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
     },
+    /// A position in an input named by the caller, not an FR-001 artifact.
+    Input {
+        /// The operand exactly as the caller wrote it.
+        operand: String,
+        /// The member file relative to a directory operand, when present.
+        member: Option<String>,
+        /// The RFC 6901 pointer into the input, when present.
+        pointer: Option<String>,
+    },
     /// A refusal located in a snapshot or invocation document.
     Document {
         /// The document's FR-001 labels.
@@ -1913,6 +1922,15 @@ impl From<&Locus> for OutcomeLocus {
             Locus::Artifact { identity, pointer } => Self::Artifact {
                 identity: identity.clone(),
                 pointer: pointer.to_string(),
+            },
+            Locus::Input {
+                operand,
+                member,
+                pointer,
+            } => Self::Input {
+                operand: operand.clone(),
+                member: member.clone(),
+                pointer: pointer.as_ref().map(ToString::to_string),
             },
         }
     }
@@ -4535,6 +4553,42 @@ mod tests {
                 "kind": "located",
                 "file": "fixture.native",
                 "span": serde_json::to_value(span).expect("a span"),
+            })
+        );
+    }
+
+    /// FR-095-AC-7 (TC-422): caller-named input loci preserve operand text
+    /// and always write nullable `member` and `pointer` members.
+    #[trace("TC-422", "FR-095-AC-7")]
+    #[test]
+    fn input_loci_preserve_operand_and_nullable_members_on_the_wire() {
+        let first = OutcomeLocus::from(&Locus::Input {
+            operand: "./out/handoff".to_owned(),
+            member: Some("selection.json".to_owned()),
+            pointer: None,
+        });
+        assert_eq!(
+            serde_json::to_value(first).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": "selection.json",
+                "operand": "./out/handoff",
+                "pointer": null
+            })
+        );
+
+        let second = OutcomeLocus::from(&Locus::Input {
+            operand: "pkg.json".to_owned(),
+            member: None,
+            pointer: Some("/lock".parse().expect("valid pointer")),
+        });
+        assert_eq!(
+            serde_json::to_value(second).expect("input locus serializes"),
+            json!({
+                "kind": "input",
+                "member": null,
+                "operand": "pkg.json",
+                "pointer": "/lock"
             })
         );
     }

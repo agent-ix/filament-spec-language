@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! ADR-013 T-5 (DA-13): the foundation diagnostic locus, and the JSON
-//! pointer its artifact variant carries.
+//! pointer its artifact and input variants carry.
 //!
 //! A stage converts its own position into a [`Locus`] when it emits a
 //! diagnostic (ADR-011 §6.1): S0 to S2 name a [`SourceRegion`], S3 on names
-//! a kernel [`Location`] tag, and a wire reader names a pointer in the
-//! artifact being read.
+//! a kernel [`Location`] tag, a wire reader names a pointer in the artifact
+//! being read, and a command can name a caller-supplied input.
 
 use alloc::{borrow::ToOwned, string::String};
 use core::fmt;
@@ -33,11 +33,20 @@ pub enum Locus {
         /// The pointer into that artifact.
         pointer: JsonPointer,
     },
+    /// A position in a caller-named input that is not an FR-001 artifact.
+    Input {
+        /// The operand exactly as the caller wrote it.
+        operand: String,
+        /// The member file relative to a directory operand, when present.
+        member: Option<String>,
+        /// The RFC 6901 pointer into the input, when present.
+        pointer: Option<JsonPointer>,
+    },
 }
 
 /// FSpec FR-461's rendering of a position: a source region as the source's
 /// identity and its byte range, an occurrence as its kernel location, and an
-/// artifact as its pointer.
+/// artifact as its pointer, and an input as its caller operand and position.
 impl fmt::Display for Locus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -50,6 +59,20 @@ impl fmt::Display for Locus {
             ),
             Self::Occurrence(location) => write!(f, "occurrence {location:?}"),
             Self::Artifact { pointer, .. } => write!(f, "artifact at `{pointer}`"),
+            Self::Input {
+                operand,
+                member,
+                pointer,
+            } => {
+                write!(f, "input `{operand}`")?;
+                if let Some(member) = member {
+                    write!(f, " member `{member}`")?;
+                }
+                if let Some(pointer) = pointer {
+                    write!(f, " at `{pointer}`")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -64,12 +87,16 @@ pub enum UnresolvedLocus {
     /// denotes.
     #[error("an artifact locus names no source region")]
     Artifact,
+    /// The locus names a caller input position, which no source region
+    /// denotes.
+    #[error("an input locus names no source region")]
+    Input,
 }
 
 impl Locus {
     /// The source regions this locus denotes: a region locus is its own
     /// region, and an occurrence locus resolves through `map` (ADR-013
-    /// T-5). An artifact locus names no source region.
+    /// T-5). Artifact and input loci name no source region.
     pub fn regions<'a>(
         &'a self,
         map: &'a PackageSourceMap,
@@ -78,6 +105,7 @@ impl Locus {
             Self::Region(region) => Ok(core::slice::from_ref(region)),
             Self::Occurrence(location) => Ok(map.resolve(location)?),
             Self::Artifact { .. } => Err(UnresolvedLocus::Artifact),
+            Self::Input { .. } => Err(UnresolvedLocus::Input),
         }
     }
 }
@@ -168,8 +196,8 @@ mod tests {
 
     /// T-5: a region locus is its own region; an occurrence locus resolves
     /// through the source map to the regions its key maps, and refuses with
-    /// the map's cause when the key is unmapped; an artifact locus names no
-    /// region.
+    /// the map's cause when the key is unmapped; artifact and input loci name
+    /// no region.
     #[trace("TC-422", "FR-095-AC-5")]
     #[test]
     fn each_locus_variant_resolves_to_regions_by_its_own_rule() {
@@ -201,6 +229,13 @@ mod tests {
         };
         assert_eq!(artifact.to_string(), "artifact at `/source_map/0`");
         assert_eq!(artifact.regions(&map), Err(UnresolvedLocus::Artifact));
+        let input = Locus::Input {
+            operand: "./out/handoff".into(),
+            member: Some("selection.json".into()),
+            pointer: None,
+        };
+        assert_eq!(input.to_string(), "input `./out/handoff` member `selection.json`");
+        assert_eq!(input.regions(&map), Err(UnresolvedLocus::Input));
     }
 
     /// T-5's artifact pointer is RFC 6901: the empty pointer and escaped

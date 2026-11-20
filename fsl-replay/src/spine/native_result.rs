@@ -1057,6 +1057,17 @@ pub enum RefusalLocusRead {
         /// Pointer within the artifact.
         pointer: String,
     },
+    /// A position in a caller-named input operand.
+    Input {
+        /// The operand exactly as the caller wrote it.
+        operand: String,
+        /// Member path relative to a directory operand, present as null when absent.
+        #[serde(default, deserialize_with = "present")]
+        member: Option<Option<String>>,
+        /// Pointer into the input, present as null when absent.
+        #[serde(default, deserialize_with = "present")]
+        pointer: Option<Option<String>>,
+    },
     /// A member in a JSON input document.
     Document {
         /// Document identity, present as null when the caller supplied none.
@@ -1795,6 +1806,25 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
+        RefusalLocusRead::Input {
+            operand: _,
+            member,
+            pointer,
+        } => {
+            if member.is_none()
+                || pointer.is_none()
+                || pointer
+                    .as_ref()
+                    .and_then(Option::as_ref)
+                    .is_some_and(|pointer| {
+                        pointer
+                            .parse::<fsl_foundation::diagnostic::JsonPointer>()
+                            .is_err()
+                    })
+            {
+                return Err(invalid());
+            }
+        }
         RefusalLocusRead::Document {
             document,
             path,
@@ -1924,6 +1954,77 @@ mod refusal_locus_tests {
         });
         let bytes = serde_json::to_vec(&clause_document(legacy)).expect("document serializes");
         assert!(read_native_run_result(&bytes).is_err());
+    }
+
+    /// FR-267-AC-29 (TC-3081): input-locus nullable members are required,
+    /// pointers are RFC 6901, and the strict reader round-trips both forms.
+    #[trace("TC-3081", "FR-267-AC-29")]
+    #[test]
+    fn native_result_reader_round_trips_input_locus_and_rejects_bad_shapes() {
+        let selection = json!({
+            "kind": "input",
+            "member": "selection.json",
+            "operand": "handoff",
+            "pointer": null
+        });
+        let bytes = serde_json::to_vec(&clause_document(selection.clone()))
+            .expect("document serializes");
+        let NativeRunResult::Clause(record) = read_native_run_result(&bytes).expect("reads") else {
+            panic!("expected a clause-run record");
+        };
+        assert!(matches!(
+            record.refusal_locus(),
+            Some(RefusalLocusRead::Input {
+                operand,
+                member: Some(Some(member)),
+                pointer: Some(None),
+            }) if operand == "handoff" && member == "selection.json"
+        ));
+
+        let absent_member = json!({
+            "kind": "input", "member": null, "operand": "handoff", "pointer": null
+        });
+        let bytes = serde_json::to_vec(&clause_document(absent_member.clone()))
+            .expect("document serializes");
+        let NativeRunResult::Clause(record) = read_native_run_result(&bytes).expect("reads") else {
+            panic!("expected a clause-run record");
+        };
+        assert!(matches!(
+            record.refusal_locus(),
+            Some(RefusalLocusRead::Input {
+                operand,
+                member: Some(None),
+                pointer: Some(None),
+            }) if operand == "handoff"
+        ));
+
+        let mut missing_member = selection.clone();
+        missing_member.as_object_mut().unwrap().remove("member");
+        let mut missing_pointer = selection.clone();
+        missing_pointer.as_object_mut().unwrap().remove("pointer");
+        let mut null_operand = selection.clone();
+        null_operand["operand"] = Value::Null;
+        let mut extra_identity = selection.clone();
+        extra_identity["identity"] = json!({"authority":"a","identity":"b"});
+        let mut invalid_pointer = selection.clone();
+        invalid_pointer["pointer"] = json!("selection");
+        let mut unknown_kind = selection.clone();
+        unknown_kind["kind"] = json!("file");
+        for malformed_locus in [
+            missing_member,
+            missing_pointer,
+            null_operand,
+            extra_identity,
+            invalid_pointer,
+            unknown_kind,
+        ] {
+            let document = clause_document(malformed_locus);
+            let bytes = serde_json::to_vec(&document).expect("document serializes");
+            assert!(matches!(
+                read_native_run_result(&bytes),
+                Err(error) if error.to_string().contains("disposition.refusal.locus")
+            ));
+        }
     }
 }
 
