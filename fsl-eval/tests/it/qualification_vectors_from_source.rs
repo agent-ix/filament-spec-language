@@ -226,14 +226,115 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     Some(result)
 }
 
+fn unicode_scalars(text: &str) -> Vec<char> {
+    text.match_indices("U+")
+        .map(|(start, _)| {
+            let digits: String = text[start + 2..]
+                .chars()
+                .take_while(char::is_ascii_hexdigit)
+                .collect();
+            char::from_u32(u32::from_str_radix(&digits, 16).expect("authored code point"))
+                .expect("Unicode scalar")
+        })
+        .collect()
+}
+
+fn text_comparison(
+    profile: &str,
+    left: &str,
+    right: &str,
+    operator: &str,
+    expected: bool,
+) -> SourceCase {
+    SourceCase {
+        declarations: format!(
+            "function left using v(): Text[0,8;{profile}] pure {{ Text({left}) }}\n\
+             function right using v(): Text[0,8;{profile}] pure {{ Text({right}) }}\n\
+             function f using v(): Boolean pure {{ left() {operator} right() }}"
+        ),
+        expected: Expected::Boolean(expected),
+    }
+}
+
 fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    let quote = |text: &str| serde_json::to_string(text).expect("source string spelling");
     let cases = match vector.id {
-        "T01" => vec![function("Boolean", "convert<Text[0,8;unicode-scalars]>(Text(\"é\")) = convert<Text[0,8;unicode-scalars]>(Text(\"e\\u0301\"))", Expected::Boolean(vector.expected == "equal"))],
-        "T02" => ["nfc", "nfd"].into_iter().map(|profile| function("Boolean", &format!("convert<Text[0,8;{profile}]>(Text(\"é\")) = convert<Text[0,8;{profile}]>(Text(\"e\\u0301\"))"), Expected::Boolean(vector.expected.starts_with("equal ")))).collect(),
-        "T03" => ["nfkc", "nfkd", "nfc"].into_iter().map(|profile| function("Boolean", &format!("convert<Text[0,8;{profile}]>(Text(\"\\ufb00\")) = convert<Text[0,8;{profile}]>(Text(\"ff\"))"), Expected::Boolean(if profile == "nfc" { !vector.expected.contains("unequal under `nfc`") } else { vector.expected.starts_with("equal ") }))).collect(),
-        "T05b" => vec![SourceCase { declarations: "type P = Text;".to_owned(), expected: refusal_expected(vector.expected) }],
-        "T06b" => vec![function("Boolean", "convert<Text[0,8;binary-utf8]>(Text(\"é\")) = convert<Text[0,8;binary-utf8]>(Text(\"\\u00e9\"))", Expected::Boolean(vector.expected.contains("compare equal")))],
-        "T12" => vec![function("Boolean", "convert<Text[0,8;unicode-scalars]>(Text(\"a\")) < convert<Text[0,8;unicode-scalars]>(Text(\"b\"))", Expected::Boolean(vector.expected.contains("`a < b`"))), function("Boolean", "convert<Text[0,8;binary-utf8]>(Text(\"\\u007f\")) < convert<Text[0,8;binary-utf8]>(Text(\"\\u0080\"))", Expected::Boolean(vector.expected.contains("less than")))],
+        "T01" | "T02" => {
+            let scalars = unicode_scalars(self::vector("T01").inputs);
+            let left = quote(&scalars[0].to_string());
+            let right = quote(&scalars[1..].iter().collect::<String>());
+            if vector.id == "T01" {
+                assert!(matches!(vector.expected, "equal" | "unequal"));
+                vec![text_comparison(
+                    "unicode-scalars",
+                    &left,
+                    &right,
+                    "=",
+                    vector.expected == "equal",
+                )]
+            } else {
+                assert!(vector.expected.starts_with("equal under each profile;"));
+                quoted(vector.inputs)
+                    .into_iter()
+                    .map(|profile| text_comparison(profile, &left, &right, "=", true))
+                    .collect()
+            }
+        }
+        "T03" => {
+            let inputs = quoted(vector.inputs);
+            let left = quote(&unicode_scalars(vector.inputs)[0].to_string());
+            let right = quote(inputs[0]);
+            assert!(vector
+                .expected
+                .starts_with("equal under compatibility profiles; unequal under `nfc`"));
+            inputs[1..]
+                .iter()
+                .map(|profile| text_comparison(profile, &left, &right, "=", *profile != "nfc"))
+                .collect()
+        }
+        "T05b" => vec![SourceCase {
+            declarations: "type P = Text;".to_owned(),
+            expected: refusal_expected(vector.expected),
+        }],
+        "T06b" => {
+            let inputs = quoted(vector.inputs);
+            assert!(vector.expected.contains("compare equal"));
+            vec![text_comparison(
+                "binary-utf8",
+                inputs[0],
+                inputs[1],
+                "=",
+                true,
+            )]
+        }
+        "T12" => {
+            let inputs = quoted(vector.inputs);
+            let bytes = |text: &str| {
+                let bytes: Vec<u8> = text
+                    .split_whitespace()
+                    .map(|byte| u8::from_str_radix(byte, 16).expect("authored byte"))
+                    .collect();
+                quote(std::str::from_utf8(&bytes).expect("authored UTF-8"))
+            };
+            assert!(vector.expected.starts_with("`a < b`;"));
+            assert!(vector.expected.contains("less than"));
+            vec![
+                text_comparison(
+                    "unicode-scalars",
+                    &quote(inputs[0]),
+                    &quote(inputs[1]),
+                    "<",
+                    true,
+                ),
+                text_comparison(
+                    "binary-utf8",
+                    &bytes(inputs[2]),
+                    &bytes(inputs[3]),
+                    "<",
+                    true,
+                ),
+            ]
+        }
         _ => return None,
     };
     Some(cases)
@@ -245,8 +346,7 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         "F03" | "F04" => (32, format!("float32(bits: {:#010x}) + float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
         "F07" | "F08" | "F10" => {
             let width = if vector.id == "F10" { 64 } else { 32 };
-            let (branch, _) = vector.expected.split_once(';').expect("rounding alternatives");
-            (width, format!("float{width}(bits: {:#x}) + float{width}(bits: {:#x})", operands[0], operands[1]), float_expected(&format!("{branch}; inexact")))
+            (width, format!("float{width}(bits: {:#x}) + float{width}(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected))
         }
         "F11" => (32, format!("filament::value::ieee::fma(float32(bits: {:#x}), float32(bits: {:#x}), float32(bits: {:#x}))", operands[0], operands[1], operands[2]), float_expected(vector.expected)),
         "F15" | "F16" => (32, format!("float32(bits: {:#x}) * float32(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected)),
@@ -370,7 +470,7 @@ fn observed(case: &SourceCase) -> Expected {
             let error = errors.errors.first().expect("assembly refusal");
             return Expected::Refused {
                 code: error.cause.code().as_str().to_owned(),
-                cause: error.cause.cause().map(str::to_owned),
+                cause: Some(error.cause.catalog_code().cause().to_owned()),
             };
         }
     };
