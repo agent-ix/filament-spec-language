@@ -1,0 +1,39 @@
+{
+  "format": "fsl-cst-component-gate/v1",
+  "ticket": "QSL-2075",
+  "reviewed_feature_head": "2eee6ee41514465cf35481a71dd3eef8db56b46e",
+  "accepted_peer_commit": "f38cb49aebd84b3d8ca54bd86e01db7c298c01df",
+  "incorporation_commit": "e9cf16489",
+  "gate_head": "39c57459d8f07c94099e2d44830ced51a9578b75",
+  "scope": "Full fsl-cst component on the final reviewed branch",
+  "command": "cargo test --locked -p fsl-cst -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "environment": {
+    "CARGO_TARGET_DIR": "owned existing worktree target",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "exit_code": 0,
+  "passed": 323,
+  "failed": 0,
+  "ignored": 19,
+  "segments": {
+    "unit": {"passed": 15, "failed": 0, "ignored": 1},
+    "integration": {"passed": 307, "failed": 0, "ignored": 18},
+    "documentation": {"passed": 1, "failed": 0, "ignored": 0}
+  },
+  "value_declaration_cases": {
+    "passed": 34,
+    "failed": 0,
+    "ignored": 0,
+    "near_misses": 28,
+    "accepted_counterparts": 6
+  },
+  "notes": [
+    "Known strict pending oracles were incorporated from the accepted peer commit before this gate and are not passing coverage.",
+    "The reviewed value cases are unchanged; the only merge conflict was additive module registration.",
+    "This was one component gate, without a product binary, workspace, proof, Kani, lint or review sweep.",
+    "Review artifacts and this trailing receipt introduce no source behavior changes."
+  ]
+}
