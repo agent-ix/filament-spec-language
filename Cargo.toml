@@ -98,7 +98,7 @@ unicode-normalization = "0.1.25"
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [dev-dependencies]
-# QSL-2055 consumes the same bounded source strategies as the property suites.
+# The source-value properties share the bounded generator strategies.
 fsl-bench = { path = "fsl-bench", features = ["property-generators"] }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # FR-660: acceptance reads the pinned standard only through its published
