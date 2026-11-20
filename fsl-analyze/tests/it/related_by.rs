@@ -9,26 +9,26 @@
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
-use fsl_eval::simulation::SubjectSystem;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+use fsl_eval::simulation::SubjectSystem;
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    ModelCheckItem, ModelCheckLimits, ModelTraceSubject, ProtocolTraceSubject, ReplayLimits,
-    ReplayRefusal, replay_protocol_trace,
+    replay_protocol_trace, ModelCheckItem, ModelCheckLimits, ModelTraceSubject,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
 };
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::Letters;
 use crate::fill::{
-    Documents, PACKAGE, attempt, contracts, document, instance, json_of, model_subject,
-    package_over, protocol, reachable, sc_system, source_memory, unit_text_with, universe,
+    attempt, contracts, document, instance, json_of, model_subject, package_over, protocol,
+    reachable, sc_system, source_memory, unit_text_with, universe, Documents, PACKAGE,
 };
 use crate::model_settle::{envelope_at, protocol_anchor, request};
 use crate::protocol_system::violated;
@@ -57,6 +57,31 @@ fn related_document() -> Vec<u8> {
         "sourceEnd": {"type": id("Cell"), "role": "owner", "multiplicity": many},
         "targetEnd": {"type": id("Cell"), "role": "owned", "multiplicity": many}
     }]);
+    doc.to_string().into_bytes()
+}
+
+/// The related model with an operation that returns one finite `Cell` value.
+fn related_attempt_document() -> Vec<u8> {
+    let mut doc: Json =
+        serde_json::from_slice(&related_document()).expect("the related model is JSON");
+    let cell = doc["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == json!(id("Cell")))
+        .expect("the Cell type");
+    cell["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(json!({
+            "identity": id("Cell/pickPeer"), "name": "pickPeer", "params": [],
+            "pre": [], "post": [],
+            "origin": {"source": {"sourceIdentity": id("spec"), "path": "model.fspec",
+                "startLine": 1, "startColumn": 1}},
+            "frame": {"modifies": [], "modifies_receiver": [], "creates": [], "deletes": []},
+            "returns": {"typeRef": id("Cell"), "nullable": false,
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true}}
+        }));
     doc.to_string().into_bytes()
 }
 
@@ -105,6 +130,21 @@ fn body(clause: &str) -> String {
         attempt("Stuck", "touch", "TouchPre", "s", "false")
     );
     contracts("self.v = 0") + &protocol("P", "relationship Owns = M::owns;", &run, "d")
+}
+
+fn attempt_body(related: bool) -> String {
+    let clause = if related {
+        " related by Owns (k, r)"
+    } else {
+        ""
+    };
+    let run = format!(
+        "sequence Main {{ attempt Pick by w on M::Cell::pickPeer contracts [PickPeerPre] as (r: M::Cell){clause} {{ true }}; {} }}",
+        attempt("Stuck", "touch", "TouchPre", "s", "false")
+    );
+    contracts("self.v = 0")
+        + "pre PickPeerPre using v on M::Cell::pickPeer { true }\n"
+        + &protocol("P", "relationship Owns = M::owns;", &run, "true")
 }
 
 fn subject<'a>(
@@ -315,6 +355,101 @@ fn replay_does_not_call_a_false_node_constraint_a_related_by_failure() {
     assert!(
         matches!(*refusal, fsl_replay::ModelTraceRefusal::ProtocolNotEnabled { step, .. } if step == at),
         "the unrelated cause keeps the ordinary not-enabled refusal: {refusal:?}"
+    );
+}
+
+/// FR-731-AC-3: the result binder of an attempt is the observed value for its
+/// relationship premise during replay diagnosis, not its pre-step slot value.
+#[trace("TC-2023", "FR-731-AC-3")]
+#[test]
+fn replay_names_a_failed_relation_on_an_attempt_result_binder() {
+    let model = related_attempt_document();
+    let (mut documents, start) = related_documents(&model);
+    let snapshot = documents
+        .snapshots
+        .values_mut()
+        .next()
+        .expect("one snapshot");
+    let mut snapshot_json: Json = serde_json::from_slice(snapshot).expect("snapshot is JSON");
+    snapshot_json["relationships"][0]["instances"] = json!([]);
+    *snapshot = snapshot_json.to_string().into_bytes();
+
+    let free_body = attempt_body(false);
+    let free = package_over(model.clone(), "package", "", &free_body);
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: subject(&free, &documents, &start),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        &Cancel::new(),
+    )
+    .expect("the free attempt protocol checks");
+    let counterexample = violated(&outcome);
+    let at = counterexample
+        .prefix
+        .iter()
+        .position(|step| {
+            step.transition.kind() == StepKind::Attempt
+                && step.transition.node() == Some("Main/Pick")
+        })
+        .expect("the counterexample takes Pick");
+    assert!(
+        counterexample.prefix[at]
+            .transition
+            .binder_record()
+            .is_some(),
+        "the attempt result binder is carried into replay diagnosis"
+    );
+
+    let related_body = attempt_body(true);
+    let related = package_over(model.clone(), "package", "", &related_body);
+    let related_subject = subject(&related, &documents, &start);
+    let (node, occurrence) = protocol_anchor(&related, "P");
+    let replayed = replay_protocol_trace(
+        request(
+            &related,
+            &[],
+            &model,
+            documents.snapshots.iter(),
+            &unit_text_with("", &related_body).into_bytes(),
+        ),
+        &ProtocolTraceSubject {
+            model: ModelTraceSubject {
+                timed: None,
+                initial: vec![start.clone()],
+                universes: universe(&["c", "d"]),
+                expansion: ExpansionLimits {
+                    max_candidates: 1_000_000,
+                },
+            },
+            protocol: "P".to_owned(),
+            over: instance("c"),
+            roles: related_subject.roles.clone(),
+            capacities: Vec::new(),
+            memory: related_subject.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        },
+        &envelope_at(counterexample, node, occurrence),
+        &NO_ATOMS,
+        ReplayLimits::default(),
+    );
+    let Err(ReplayRefusal::ModelTrace(refusal)) = replayed else {
+        panic!("an attempt with an unrelated result refuses: {replayed:?}");
+    };
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "invalid_runtime_input/invalid-value: protocol step {at} at `Main/Pick` fails related-by clause `Owns`"
+        )
     );
 }
 
