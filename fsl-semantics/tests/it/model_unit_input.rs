@@ -346,3 +346,26 @@ union Mark { Circle(Integer), Blank }
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_map_type() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/maps";
+map Index = Map<Text, Integer>[0, 4];
+"#;
+    let packages = package_input([source.as_bytes()]).expect("map model unit compiles");
+    let (_, document) = admit(
+        "example/maps",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the map type");
+    let records = read_records("example/maps", &document).expect("map type is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::MapType(_)
+        )
+    }));
+}

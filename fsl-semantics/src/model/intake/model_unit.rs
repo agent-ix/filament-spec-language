@@ -291,6 +291,29 @@ pub fn compile_model_unit(
                 has_value_type = true;
                 index = next;
             }
+            Some("map") => {
+                let Some((map_type, name, next)) = read_map_type(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid map type declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(map_type);
+                index = next;
+            }
             Some("tuple") => {
                 let Some((tuple_type, name, next)) =
                     read_tuple_type(&tokens, index, &identity, parsed)
@@ -930,6 +953,76 @@ fn read_variant_type(
             "roles": [], "origin": source_origin(parsed, Span { start, end }),
             "constraints": [], "extensions": [], "unknownPolicy": "reject",
             "variants": variants,
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_map_type(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "=" || tokens.get(index + 1)?.text != "Map" {
+        return None;
+    }
+    index += 2;
+    if tokens.get(index)?.text != "<" {
+        return None;
+    }
+    index += 1;
+    let keys = tokens.get(index)?.text.clone();
+    index += 1;
+    while tokens.get(index)?.text != "," {
+        index += 1;
+    }
+    index += 1;
+    let values = tokens.get(index)?.text.clone();
+    index += 1;
+    while tokens.get(index)?.text != ">" {
+        index += 1;
+    }
+    index += 1;
+    if tokens.get(index)?.text != "[" {
+        return None;
+    }
+    index += 1;
+    let lower = signed_integer(tokens, &mut index)?.parse::<u64>().ok()?;
+    if tokens.get(index)?.text != "," {
+        return None;
+    }
+    index += 1;
+    let upper = if tokens.get(index)?.text == "*" {
+        index += 1;
+        None
+    } else {
+        let value = tokens.get(index)?.text.parse::<u64>().ok()?;
+        index += 1;
+        Some(value)
+    };
+    if tokens.get(index)?.text != "]" {
+        return None;
+    }
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    index += 1;
+    Some((
+        json!({
+            "identity": format!("ix://{package}/{name}"),
+            "displayName": name,
+            "kind": "map",
+            "keys": type_ref(&keys, package),
+            "values": type_ref(&values, package),
+            "bound": {"lower": lower, "upper": upper},
+            "origin": source_origin(parsed, Span { start, end: tokens[index - 1].span.end }),
         }),
         name,
         index,
