@@ -34,7 +34,7 @@ use fsl_foundation::ReductionKind;
 use fsl_foundation::RequestIndex;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::HyperUnsupported;
-use fsl_semantics::family::UnsupportedItem;
+use fsl_semantics::family::{ClaimMemberPath, UnsupportedItem};
 use fsl_semantics::model::observation::AdmissionFailure;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -605,6 +605,9 @@ pub enum UnavailabilityCause {
         /// (FR-498); `None` for a claim checked outside an assembled
         /// package, which keeps the span as its locus.
         claim: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+        /// The FSL member path to the unsupported form (FR-498), when this
+        /// cause names a checked claim.
+        member_path: Option<ClaimMemberPath>,
     },
     /// ADR-020 AX-5: a refinement with a hidden abstract field and a
     /// non-empty `F_A` has no liveness half to decide. Wire cause
@@ -665,6 +668,10 @@ pub enum UnavailabilityCause {
     PunctualInterval {
         /// The punctual interval's span.
         span: fsl_foundation::Span,
+        /// The checked claim occurrence, when a package owns the claim.
+        claim: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+        /// The FSL member path to the punctual formula interval (FR-498).
+        member_path: Option<ClaimMemberPath>,
     },
     /// FSpec FR-483 arm outcome `unsupported`: the value-validity arm does
     /// not decide the claim's form or an element it reads.
@@ -704,7 +711,15 @@ pub struct WeakAccessFailure {
 impl From<&UnsupportedItem> for UnavailabilityCause {
     fn from(item: &UnsupportedItem) -> Self {
         match item {
-            UnsupportedItem::PunctualInterval { span } => Self::PunctualInterval { span: *span },
+            UnsupportedItem::PunctualInterval {
+                span,
+                claim,
+                member_path,
+            } => Self::PunctualInterval {
+                span: *span,
+                claim: claim.clone(),
+                member_path: member_path.clone(),
+            },
             UnsupportedItem::HyperForm { reason } => Self::UnsupportedHyperForm { reason: *reason },
         }
     }
@@ -2474,8 +2489,19 @@ mod tests {
     #[test]
     fn a_punctual_item_settles_unsupported_naming_the_interval() {
         let span = fsl_foundation::Span { start: 4, end: 16 };
-        let cause = UnavailabilityCause::from(&UnsupportedItem::PunctualInterval { span });
-        assert_eq!(cause, UnavailabilityCause::PunctualInterval { span });
+        let cause = UnavailabilityCause::from(&UnsupportedItem::PunctualInterval {
+            span,
+            claim: None,
+            member_path: None,
+        });
+        assert_eq!(
+            cause,
+            UnavailabilityCause::PunctualInterval {
+                span,
+                claim: None,
+                member_path: None,
+            }
+        );
         assert_eq!(cause.as_str(), "punctual-interval");
         assert_eq!(cause.basis().as_str(), "unavailable");
         assert_eq!(

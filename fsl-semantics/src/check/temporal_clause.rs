@@ -560,7 +560,11 @@ impl TemporalClaim {
             requirements
         };
         match self.punctual {
-            Some(span) => requirements.with_unsupported(UnsupportedItem::PunctualInterval { span }),
+            Some(span) => requirements.with_unsupported(UnsupportedItem::PunctualInterval {
+                span,
+                claim: None,
+                member_path: None,
+            }),
             None => requirements,
         }
     }

@@ -305,6 +305,64 @@ fn probabilistic_claim_identity_survives_reordering() {
     assert_eq!((rows.len(), nodes.len()), (2, 2));
 }
 
+/// FSpec FR-322-AC-472: same-named probabilistic claims under different
+/// workloads have distinct structural paths and rows; their emitted package
+/// is readable, while reversing the structural row order is refused.
+#[trace("FSpec-TC-1563", "FSpec-FR-322-AC-472")]
+#[trace("TC-1288", "FR-498-AC-5")]
+#[test]
+fn same_named_claims_under_distinct_workloads_keep_structural_row_order() {
+    let package = claims_package(&[
+        STEADY,
+        BURSTY,
+        &claim_under("A", "Steady", HOLDS),
+        &claim_under("A", "Bursty", HOLDS),
+    ]);
+    let (wire, read) = emit_and_read(&package, config_version_unit::DOMAIN_PACKAGE.as_bytes());
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+
+    let claims: Vec<_> = claim_nodes(&wire)
+        .into_iter()
+        .filter(|(name, _)| *name == "A")
+        .map(|(_, node)| node)
+        .collect();
+    assert_eq!(claims.len(), 2, "both declarations survive package emission");
+    assert_ne!(claims[0]["node_id"], claims[1]["node_id"]);
+    assert_eq!(
+        claims
+            .iter()
+            .map(|node| node["occurrences"].as_array().unwrap().len())
+            .collect::<Vec<_>>(),
+        [1, 1]
+    );
+
+    let (rows, nodes) = emitted_claims(&package);
+    assert_eq!((rows.len(), nodes.len()), (2, 2));
+    let mut declaration_ids: Vec<_> = claims
+        .iter()
+        .map(|node| resolved_id(&wire, &node["node_id"], 8))
+        .collect();
+    declaration_ids.sort_by_key(|id| {
+        (
+            id["package"].to_string(),
+            id["path"].to_string(),
+            id["ordinal"].as_u64(),
+        )
+    });
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["declaration"].clone())
+            .collect::<Vec<_>>(),
+        declaration_ids,
+        "the reader-facing rows follow structural node order"
+    );
+
+    assert!(matches!(
+        read_with_claim_rows_edit(&package, &|rows| rows.reverse()),
+        Read::Refused(_)
+    ));
+}
+
 /// FR-498-AC-1/AC-2: same-path expression nodes retain repeated operand
 /// positions, so changing declaration order cannot swap their ordinals or
 /// alter the claims' checked identities.
@@ -2560,6 +2618,26 @@ fn read_document_with_body_edit(
         .find(|node| node["semantic_form"] == "probabilistic_claim")
         .expect("a claim node");
     edit(&mut claim["body"]);
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(package_identity(document), document)
+        .expect("a fresh evidence key");
+    read_v2(&jcs(&wire), library(), V2ReadLimits::fixture(), &evidence)
+}
+
+/// [`read_v2`] after editing the checked package's probabilistic-claim rows.
+fn read_with_claim_rows_edit(
+    package: &CheckedPackage,
+    edit: &dyn Fn(&mut Vec<Value>),
+) -> Read {
+    let emission = emit_checked(package).expect("the package emits");
+    let mut wire = wire(&emission);
+    edit(
+        wire["checked_term_data"]["probabilistic_claims"]
+            .as_array_mut()
+            .expect("the package carries claim rows"),
+    );
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let mut evidence = read_evidence(&emission);
     evidence
         .insert_domain_package_document(package_identity(document), document)

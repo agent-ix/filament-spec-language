@@ -251,6 +251,7 @@ fn plan_refusal(fault_: PlanFault, claim: Option<&OccurrenceKey>) -> ProductRefu
         PlanFault::TimedFormShape { span } => ProductRefusal::TimedFormShape {
             span,
             claim: claim.cloned(),
+            member_path: None,
         },
         PlanFault::Broken(invariant) => fault(invariant),
     }

@@ -31,10 +31,12 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_replay::ModelCheckLimit;
 use fsl_semantics::check::{
-    BinaryTemporal, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim, ClockOp,
-    ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler, UnaryTemporal,
-    Workload,
+    AggregateTerm, BinaryTemporal, BindingValue, BodyTerm, CheckedInterval, CheckedPredicate,
+    CheckedProbabilisticClaim, ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode,
+    LeafTerm, MemberTerm, NodeKey, NodeTag, ProbForm, ProbScheduler, SemanticGraph,
+    SemanticNode, UnaryTemporal, Workload,
 };
+use fsl_semantics::family::ClaimMemberPath;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
@@ -72,7 +74,7 @@ pub(super) fn build<'s, 'a>(
         ),
         ProbScheduler::Every => None,
     };
-    let form = Form::of(claim)?;
+    let form = Form::of(package, claim)?;
     admit(system, &timed, claim, workload, &form)?;
     let scale = scale_of(system, &timed, &form)?;
     let caps = caps_of(&timed, &scale)?;
@@ -145,6 +147,104 @@ fn zero() -> Rational {
     Rational::from_integer(Integer::zero())
 }
 
+fn binding<'a>(aggregate: &'a AggregateTerm, name: &str) -> Option<&'a BindingValue> {
+    aggregate.members.iter().find_map(|member| match member {
+        MemberTerm::Binding(binding) if binding.name == name => Some(&binding.value),
+        _ => None,
+    })
+}
+
+fn reference(value: &BindingValue) -> Option<NodeKey> {
+    let BindingValue::Leaf(LeafTerm::Reference { target }) = value else {
+        return None;
+    };
+    target.admitted().cloned()
+}
+
+fn formula_member_path(
+    graph: &SemanticGraph,
+    claim: &CheckedProbabilisticClaim,
+    target_index: usize,
+) -> Option<ClaimMemberPath> {
+    let Event::Formula { formula, .. } = match &claim.form {
+        ProbForm::Probability { event, .. } => event,
+        _ => return None,
+    } else {
+        return None;
+    };
+    let occurrence = claim.occurrence()?;
+    let claim_node = graph.node(occurrence.node().clone())?;
+    let BodyTerm::Aggregate(body) = claim_node.body() else {
+        return None;
+    };
+    let BindingValue::Aggregate(form) = binding(body, "form")? else {
+        return None;
+    };
+    let BindingValue::Aggregate(event) = binding(form, "event")? else {
+        return None;
+    };
+    let formula_root = reference(binding(event, "formula")?)?;
+
+    let formula = formula.formula();
+    let root_index = formula.root().index();
+    let mut pending = vec![(root_index, formula_root, Vec::new())];
+    while let Some((index, key, mut path)) = pending.pop() {
+        path.push(key.clone());
+        if index == target_index {
+            return Some(ClaimMemberPath {
+                body: vec!["form".into(), "event".into(), "formula".into()],
+                formulas: path,
+            });
+        }
+        let operands: Vec<_> = formula.nodes().get(index)?.operands().collect();
+        let node = graph.node(key)?;
+        let mut children = Vec::new();
+        let BodyTerm::Application(application) = node.body() else {
+            continue;
+        };
+        for argument in &application.arguments {
+            let mut refs = Vec::new();
+            match argument {
+                MemberTerm::Leaf(leaf) => {
+                    if let LeafTerm::Reference { target } = leaf {
+                        if let Some(key) = target.admitted() {
+                            refs.push(key.clone());
+                        }
+                    }
+                }
+                MemberTerm::Group(group) => {
+                    for leaf in group.leaves() {
+                        if let LeafTerm::Reference { target } = leaf {
+                            if let Some(key) = target.admitted() {
+                                refs.push(key.clone());
+                            }
+                        }
+                    }
+                }
+                MemberTerm::Binding(binding) => binding.value.for_each_leaf(&mut |leaf| {
+                    if let LeafTerm::Reference { target } = leaf {
+                        if let Some(key) = target.admitted() {
+                            refs.push(key.clone());
+                        }
+                    }
+                }),
+            }
+            children.extend(refs.into_iter().filter(|child| {
+                graph.node(child.clone()).is_some_and(|node| {
+                    node.node_tag() == NodeTag::Temporal && node.semantic_form() == "formula"
+                })
+            }));
+        }
+        if children.len() != operands.len() {
+            continue;
+        }
+        for (operand, child) in operands.into_iter().zip(children).rev() {
+            pending.push((operand.index(), child, path.clone()));
+        }
+    }
+    None
+}
+
 /// The claim forms the digital route admits (ADR-028 TA-4).
 enum Form<'c> {
     /// `eventually[0, D] holds(P)` or `holds(A) until[0, D] holds(B)`.
@@ -159,10 +259,16 @@ enum Form<'c> {
 }
 
 impl<'c> Form<'c> {
-    fn of(claim: &'c CheckedProbabilisticClaim) -> Result<Self, ProductRefusal> {
-        let shape = || ProductRefusal::TimedFormShape {
+    fn of(
+        package: &fsl_package::CheckedPackage,
+        claim: &'c CheckedProbabilisticClaim,
+    ) -> Result<Self, ProductRefusal> {
+        let shape = |formula_node: Option<usize>| ProductRefusal::TimedFormShape {
             span: claim.span,
             claim: claim.occurrence().cloned(),
+            member_path: formula_node.and_then(|node| {
+                formula_member_path(package.graph().semantic_graph(), claim, node)
+            }),
         };
         match &claim.form {
             ProbForm::Probability {
@@ -171,7 +277,9 @@ impl<'c> Form<'c> {
             } => {
                 let checked = formula.formula();
                 let nodes = checked.nodes();
-                let root = nodes.get(checked.root().index()).ok_or_else(shape)?;
+                let root = nodes
+                    .get(checked.root().index())
+                    .ok_or_else(|| shape(Some(checked.root().index())))?;
                 let holds = |id: super::FormulaNodeId| {
                     matches!(nodes.get(id.index()), Some(FormulaNode::Holds { .. }))
                         .then(|| formula.condition(id.index()).map(|p| (id, p)))
@@ -185,7 +293,8 @@ impl<'c> Form<'c> {
                     } => (
                         DeadlineKind::Eventually,
                         interval,
-                        vec![holds(*operand).ok_or_else(shape)?],
+                        vec![holds(*operand)
+                            .ok_or_else(|| shape(Some(operand.index())))?],
                     ),
                     FormulaNode::Unary {
                         operator: UnaryTemporal::Always,
@@ -194,7 +303,8 @@ impl<'c> Form<'c> {
                     } => (
                         DeadlineKind::Always,
                         interval,
-                        vec![holds(*operand).ok_or_else(shape)?],
+                        vec![holds(*operand)
+                            .ok_or_else(|| shape(Some(operand.index())))?],
                     ),
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
@@ -205,18 +315,18 @@ impl<'c> Form<'c> {
                         DeadlineKind::Until,
                         interval,
                         vec![
-                            holds(*left).ok_or_else(shape)?,
-                            holds(*right).ok_or_else(shape)?,
+                            holds(*left).ok_or_else(|| shape(Some(left.index())))?,
+                            holds(*right).ok_or_else(|| shape(Some(right.index())))?,
                         ],
                     ),
-                    _ => return Err(shape()),
+                    _ => return Err(shape(Some(checked.root().index()))),
                 };
                 if !(interval.lower().is_zero() && interval.lower_closed()) {
-                    return Err(shape());
+                    return Err(shape(Some(checked.root().index())));
                 }
                 // A deadline needs an upper bound; `[0, *)` checks as no interval.
                 let Some(bound) = interval.upper() else {
-                    return Err(shape());
+                    return Err(shape(Some(checked.root().index())));
                 };
                 Ok(Self::Deadline {
                     kind,
@@ -228,11 +338,12 @@ impl<'c> Form<'c> {
                 })
             }
             ProbForm::Reach { .. } | ProbForm::ExpectedReward { .. } => {
-                let (plan, reads) = super::plan::Plan::of(claim, 1).map_err(|_| shape())?;
+                let (plan, reads) =
+                    super::plan::Plan::of(claim, 1).map_err(|_| shape(None))?;
                 drop(plan);
                 Ok(Self::Labels(reads))
             }
-            _ => Err(shape()),
+            _ => Err(shape(None)),
         }
     }
 

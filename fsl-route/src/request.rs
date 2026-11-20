@@ -679,6 +679,7 @@ impl RequestWriter {
 
     fn push(&mut self, written: Written, requirements: &Requirements) -> RequestIndex {
         let index = RequestIndex::new(self.items.len());
+        let unsupported = unsupported_for(requirements.unsupported(), &written.occurrence);
         self.items.push(RequestItem {
             index,
             occurrence: written.occurrence,
@@ -686,7 +687,7 @@ impl RequestWriter {
             hybrid_dynamics: requirements.hybrid_dynamics(),
             extent: written.extent,
             domains: written.domains,
-            unsupported: requirements.unsupported().cloned(),
+            unsupported,
             reductions: self.reductions.selected(),
             property_form: requirements.property_form(),
             item_kind: written.item_kind,
@@ -697,6 +698,29 @@ impl RequestWriter {
             premises: Vec::new(),
         });
         index
+    }
+}
+
+/// Keep a punctual cause tied to the claim occurrence that carries the
+/// requirement record (FR-498); the FR-331 wire still serializes only that
+/// occurrence as its locus.
+fn unsupported_for(
+    unsupported: Option<&UnsupportedItem>,
+    occurrence: &OccurrenceKey,
+) -> Option<UnsupportedItem> {
+    match unsupported? {
+        UnsupportedItem::PunctualInterval {
+            span,
+            claim,
+            member_path,
+        } => Some(UnsupportedItem::PunctualInterval {
+            span: *span,
+            claim: claim.clone().or_else(|| Some(occurrence.clone())),
+            member_path: member_path.clone(),
+        }),
+        UnsupportedItem::HyperForm { reason } => Some(UnsupportedItem::HyperForm {
+            reason: *reason,
+        }),
     }
 }
 
@@ -1191,7 +1215,7 @@ pub fn items_with_reductions(
                     requirements.invariant_clause(),
                 )
             },
-            unsupported: requirements.unsupported().cloned(),
+            unsupported: unsupported_for(requirements.unsupported(), occurrence),
             evidence,
             options: BTreeMap::new(),
         }
@@ -1783,6 +1807,8 @@ mod tests {
             .expect("admitted");
         let cause = UnsupportedItem::PunctualInterval {
             span: fsl_foundation::Span { start: 4, end: 16 },
+            claim: None,
+            member_path: None,
         };
         let plain = Requirements::new(Capability::TemporalSatisfaction, ClaimExtent::Bounded);
         let punctual = plain.clone().with_unsupported(cause.clone());

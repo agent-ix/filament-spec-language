@@ -784,7 +784,11 @@ fn vacuity_punctuality_and_budgets_settle_as_stated() {
     );
     let clause = punctual.package.graph().temporal_clauses()[0].clause();
     let span = clause.unsupported_punctual().expect("a punctual interval");
-    let disposed = UnsupportedItem::PunctualInterval { span };
+    let disposed = UnsupportedItem::PunctualInterval {
+        span,
+        claim: None,
+        member_path: None,
+    };
     let record = settle_zone_check::<&'static str>(
         ZoneItem::Unsupported(&disposed),
         &Cancel::new(),
@@ -794,7 +798,11 @@ fn vacuity_punctuality_and_budgets_settle_as_stated() {
     assert_eq!(record.label, ResultLabel::Unsupported);
     assert_eq!(
         record.value,
-        TerminalValue::Unsupported(UnavailabilityCause::PunctualInterval { span })
+        TerminalValue::Unsupported(UnavailabilityCause::PunctualInterval {
+            span,
+            claim: None,
+            member_path: None,
+        })
     );
     assert_eq!(record.value.category(), Category::Unsupported);
 

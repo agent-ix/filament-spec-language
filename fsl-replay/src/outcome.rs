@@ -1188,12 +1188,17 @@ impl OutcomeItem {
                     UnavailabilityCause::ZeroDelayCycle { states } => {
                         item.states = Some(ItemCauseStates::Cycle(states.clone()));
                     }
-                    UnavailabilityCause::TimedFormShape { span, claim } => match claim {
+                    UnavailabilityCause::TimedFormShape { span, claim, .. } => match claim {
                         Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
                         None => {
                             item.at = Some(ItemWhere::Text(format!("{}..{}", span.start, span.end)))
                         }
                     },
+                    UnavailabilityCause::PunctualInterval { claim, .. } => {
+                        if let Some(claim) = claim {
+                            item.locus = Some(ItemLocus::Claim(WireLocus::of(claim)));
+                        }
+                    }
                     UnavailabilityCause::ValueCheck { reason, .. } => {
                         item.refusal = Some(reason.as_str());
                     }
@@ -1217,8 +1222,7 @@ impl OutcomeItem {
                     | UnavailabilityCause::UnsupportedSmtFragment
                     | UnavailabilityCause::StrongAbstractFairness
                     | UnavailabilityCause::NotMarkov
-                    | UnavailabilityCause::ConfidenceBeyondPrecision
-                    | UnavailabilityCause::PunctualInterval { .. } => {}
+                    | UnavailabilityCause::ConfidenceBeyondPrecision => {}
                     UnavailabilityCause::NotStochastic { state, identity } => {
                         item.state = Some(state.into());
                         item.identity = Some(identity.into());
@@ -3132,6 +3136,7 @@ mod tests {
             UnavailabilityCause::TimedFormShape {
                 span: fsl_foundation::Span { start: 20, end: 32 },
                 claim: None,
+                member_path: None,
             },
         );
         let wire = serde_json::to_value(OutcomeItem::from_terminal(&timed_form))

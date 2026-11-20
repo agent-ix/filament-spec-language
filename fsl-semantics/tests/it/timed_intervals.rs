@@ -329,7 +329,7 @@ fn a_punctual_interval_is_unsupported_outside_a_bounded_window() {
         .expect("the record is keyed");
     assert_eq!(
         requirements.unsupported(),
-        Some(&UnsupportedItem::PunctualInterval { span })
+        Some(&UnsupportedItem::PunctualInterval { span, .. })
     );
 
     let (_, bounded) = checked("eventually[2 ms, 2 ms] holds(not c.healthy)");

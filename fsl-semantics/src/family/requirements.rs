@@ -127,6 +127,10 @@ pub enum UnsupportedItem {
     PunctualInterval {
         /// The punctual interval's span.
         span: fsl_foundation::Span,
+        /// The checked claim occurrence, when a package owns the claim.
+        claim: Option<fsl_foundation::source::provenance::OccurrenceKey>,
+        /// The member path to the unsupported interval, when known.
+        member_path: Option<ClaimMemberPath>,
     },
     /// FR-396, FR-399: a hyper item whose checked HP-4 form has no
     /// negotiation arm.
@@ -134,6 +138,16 @@ pub enum UnsupportedItem {
         /// The one classifier's reason for placing the form in HP-4.
         reason: HyperUnsupported,
     },
+}
+
+/// The FSL member path to a part of a checked probabilistic claim
+/// (FSL FR-498). The wire locus remains the claim's `{node, occurrence}`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ClaimMemberPath {
+    /// The ordered FR-640 binding names from the claim body to the cause.
+    pub body: Vec<String>,
+    /// The ordered temporal formula nodes from the event root to the cause.
+    pub formulas: Vec<filament_exact::NodeKey>,
 }
 
 /// The evidence kind a `probabilistic-satisfaction` claim is decided by
