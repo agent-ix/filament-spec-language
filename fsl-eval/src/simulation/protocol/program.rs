@@ -1436,6 +1436,7 @@ impl<'a> Program<'a> {
                         | ControlStep::Finish
                         | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
+                            eprintln!("bad parent node={node:?} parent={parent:?} holder={holder:?}");
                             return Err(ProtocolRefusal::fault("a-parent-holds-controls"));
                         }
                     }
