@@ -1470,6 +1470,33 @@ mod tests {
         (keys, redefinitions)
     }
 
+    /// QSL-2701 item 1: a source model's clause function is named under the
+    /// owning source's identity, the package the emitted nodes carry, so both
+    /// routes locate a value loss under one name; a selected model's keeps
+    /// its own.
+    #[test]
+    #[trace("FSpec-TC-196")]
+    fn a_source_models_clause_function_is_named_under_its_owner() {
+        let key = DeclarationKey {
+            package: "source/unit".to_owned(),
+            node: "ix://source/unit/Order/place".to_owned(),
+        };
+        let mut clauses = OperationClauses::default();
+        assert_eq!(
+            clauses.function_name(&key, ".precondition"),
+            "ix://source/unit/Order/place.precondition"
+        );
+        clauses.source_owner_identity = Some("agent-ix:unit".to_owned());
+        assert_eq!(
+            clauses.function_name(&key, ".precondition"),
+            "ix://agent-ix:unit/Order/place.precondition"
+        );
+        assert_eq!(
+            clauses.function_name(&key, ""),
+            "ix://agent-ix:unit/Order/place"
+        );
+    }
+
     /// Every key in `keys` declares a `self`-only signature and its own
     /// `true` precondition.
     fn clauses_for(keys: &[DeclarationKey]) -> OperationClauses {

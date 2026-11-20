@@ -305,3 +305,34 @@ fn an_if_over_contained_integer_branches_admits() {
     );
     one_application(&hull, "filament.op.control.if");
 }
+
+/// FSpec FR-322 `seq` (QSL-2729): `seq(i in lo .. hi: e)` lowers to
+/// `filament.op.collection.seq [ref(lo), ref(hi), binding i]`, the binder typed
+/// at the `integer_range` node of the bounds' extremes, and every
+/// `integer_range` node's body is exactly its two integer literals.
+#[test]
+#[trace("FR-093-AC-4")]
+fn a_seq_lowers_over_its_bounds_with_a_literal_integer_range_binder() {
+    let package = package(
+        "function s using v(): Sequence<Int[0, 1]>[0, 2] pure { seq(i in 0 .. 1: i) }",
+    );
+    let seq = one_application(&package, "filament.op.collection.seq");
+    let arguments = seq["body"]["arguments"].as_array().unwrap();
+    assert_eq!(arguments.len(), 3, "{seq}");
+    assert_eq!(arguments[0]["term"], "reference", "{seq}");
+    assert_eq!(arguments[1]["term"], "reference", "{seq}");
+    assert_eq!(arguments[2]["term"], "binding", "{seq}");
+    assert!(applications(&package, "filament.op.collection.map").is_empty());
+    let ranges: Vec<_> = nodes(&package)
+        .iter()
+        .filter(|node| node["node_tag"] == "bounded_domain" && node["semantic_form"] == "integer_range")
+        .collect();
+    assert!(!ranges.is_empty());
+    for range in ranges {
+        let members = range["body"]["members"].as_array().unwrap();
+        assert_eq!(members.len(), 2, "{range}");
+        for member in members {
+            assert_eq!(member["value"]["term"], "literal", "{range}");
+        }
+    }
+}

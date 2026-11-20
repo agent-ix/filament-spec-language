@@ -3166,7 +3166,6 @@ fn whole_population_rows_are_emitted_and_read_back() {
 
 /// The sequence expression must emit a canonical, strictly admitted mapping.
 #[test]
-#[ignore = "QSL-2729: seq-row bounded-domain node identity fails strict read-back"]
 fn seq_rows_are_emitted_and_read_back() {
     assert_field_row_reads_back("versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;");
 }
