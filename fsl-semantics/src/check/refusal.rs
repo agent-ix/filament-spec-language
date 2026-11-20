@@ -949,13 +949,6 @@ pub enum ProtocolConstruct {
     /// cannot name a relationship yet, so the clause `relationships` set is
     /// unproved against IR's reader: QSL-1141.
     Relationships,
-    /// A FIFO `channel` whose key type IR's reader does not take as
-    /// equality-stable (FR-465 "Channel"): the key's type is, or contains
-    /// through an option, a collection or a record field, a bounded domain,
-    /// a quantity, a float or a model-owned type. The check admits `=` over
-    /// it but the reader refuses the key (`ill_typed`/`operator-ineligible`):
-    /// QSL-1142.
-    ChannelKeyNotEqualityStable,
     /// A post-test `repeat`, whose `while` guard reads a binder its body
     /// declares (FSL FR-218). FSpec FR-466 "No post-test `repeat`" settles
     /// that the checked package has no post-test form (STD-539).
@@ -980,7 +973,6 @@ impl ProtocolConstruct {
             Self::ReferenceCycle => "QSL-844",
             Self::ReferenceToAttemptProtocol | Self::ProtocolReferenceInBody => "QSL-1121g",
             Self::Relationships => "QSL-1141",
-            Self::ChannelKeyNotEqualityStable => "QSL-1142",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
         }
     }

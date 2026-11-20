@@ -746,9 +746,6 @@ fn a_channel_carries_every_type_the_reader_admits() {
             "unordered".to_owned(),
             format!("fifo by (m: {carries}) {{ m }}"),
         ] {
-            if carries == "Quantity<m>" && ordering != "unordered" {
-                continue;
-            }
             let text = carrying_flow(carries, &ordering);
             let lowered = lower_with(model(), PROFILES, &text);
             assert!(
@@ -820,16 +817,38 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
     }
 }
 
-/// FR-881 / FSpec FR-726: equality-stable model-owned variant keys are emitted.
-#[trace("TC-2503", "FR-881", "FSpec-FR-726-AC-2")]
+/// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726: equality-stable model-owned
+/// variant keys and a bounded-integer model value type `PartId` are emitted
+/// and admitted by the reader.
+#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
 #[test]
 fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     use super::variant_types::fixture;
     let document = || {
-        crate::emit::tests::wire_bytes(&fixture::with_types(vec![fixture::variant_type(
-            "Odd",
-            &["2x", "Café", "Gold Plus"],
-        )]))
+        let mut part_id = fixture::instant();
+        part_id["displayName"] = serde_json::json!("PartId");
+        part_id["identity"] = fixture::id("PartId").into();
+        part_id.as_object_mut().unwrap().remove("target");
+        part_id["scalar"] = serde_json::json!("integer");
+        part_id["constraints"] = serde_json::Value::Array(
+            [("min", "0"), ("max", "99")]
+                .into_iter()
+                .map(|(keyword, value)| {
+                    serde_json::json!({
+                        "identity": fixture::id(&format!("PartId/constraints/{keyword}")),
+                        "keyword": keyword,
+                        "operands": {"value": value},
+                        "appliesTo": "ix://filament/native/Integer",
+                        "diagnosticCode": format!("bound.{keyword}"),
+                        "origin": part_id["origin"].clone(),
+                    })
+                })
+                .collect(),
+        );
+        crate::emit::tests::wire_bytes(&fixture::with_types(vec![
+            fixture::variant_type("Odd", &["2x", "Café", "Gold Plus"]),
+            part_id,
+        ]))
         .unwrap()
     };
     let package = (fixture::PACKAGE, "1");
@@ -850,6 +869,7 @@ fn model_owned_fifo_keys_are_emitted_and_variant_types_are_carried() {
     for (carries, key) in [
         ("M::Tier", "m"),
         ("M::Odd", "m"),
+        ("M::PartId", "m"),
         ("M::Settings", "m"),
         ("M::Settings", "m.tier"),
         ("Sequence<M::Tier>", "m"),
@@ -1830,15 +1850,19 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
     }
 }
 
-/// FR-881 / FSpec FR-726-AC-2: bounded, quantity, and record keys without
-/// float leaves are written and admitted by the reader.
+/// FR-880-AC-10 / FR-881-AC-2, FSpec FR-726-AC-2: bounded, quantity, and
+/// record keys without float leaves are written and admitted by the reader.
 #[test]
-#[trace("TC-2503", "FR-881", "FSpec-FR-726-AC-2")]
+#[trace("TC-2503", "TC-2504", "FR-880-AC-10", "FR-881-AC-2", "FSpec-FR-726-AC-2")]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
+        ("Int[0, 99]", "m"),
         ("Quantity<m>", "m"),
+        ("Option<Quantity<m>>", "m"),
         ("Option<Int[0, 5]>", "m"),
         ("Sequence<Quantity<m>>", "m"),
+        ("Sequence<Int[0, 5]>", "m"),
+        ("WithQuantity", "m"),
         ("WithBounded", "m"),
         ("WithBounded", "m.b"),
         ("WithQuantity", "m.q"),

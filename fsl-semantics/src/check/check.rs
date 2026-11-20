@@ -2121,67 +2121,43 @@ impl Scope {
         if self.model_records.events.is_empty() {
             return false;
         }
-        let mut seen = BTreeSet::new();
-        let mut pending = vec![value_type];
-        while let Some(value_type) = pending.pop() {
-            match value_type {
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
-                ValueType::Map(map) => pending.push(map.values()),
-                ValueType::Composite(declaration) => {
-                    if self.model_records.events.contains(declaration) {
-                        return true;
-                    }
-                    if !seen.insert(declaration.clone()) {
-                        continue;
-                    }
-                    match self.types.composite(declaration.clone()).map(|c| c.shape()) {
-                        Some(CompositeShape::Record(fields)) => {
-                            pending.extend(fields.iter().map(FieldDeclaration::value_type));
-                        }
-                        Some(CompositeShape::Tuple(positions)) => pending.extend(positions),
-                        Some(CompositeShape::Union(members)) => {
-                            pending.extend(members.iter().flat_map(|member| member.positions()));
-                        }
-                        None => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-        false
+        reaches_leaf(
+            value_type,
+            |leaf| {
+                matches!(
+                    leaf,
+                    ValueType::Composite(declaration)
+                        if self.model_records.events.contains(declaration)
+                )
+            },
+            |declaration| self.composite_members(declaration),
+        )
     }
 
     /// Whether a value type contains an IEEE float directly or through an
     /// option, collection, map value, or declared composite field.
     pub(crate) fn reaches_float(&self, value_type: &ValueType) -> bool {
-        let mut seen = BTreeSet::new();
-        let mut pending = vec![value_type];
-        while let Some(value_type) = pending.pop() {
-            match value_type {
-                ValueType::Float(_) => return true,
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
-                ValueType::Map(map) => pending.push(map.values()),
-                ValueType::Composite(declaration) => {
-                    if !seen.insert(declaration.clone()) {
-                        continue;
-                    }
-                    match self.types.composite(declaration.clone()).map(|c| c.shape()) {
-                        Some(CompositeShape::Record(fields)) => {
-                            pending.extend(fields.iter().map(FieldDeclaration::value_type));
-                        }
-                        Some(CompositeShape::Tuple(positions)) => pending.extend(positions),
-                        Some(CompositeShape::Union(members)) => {
-                            pending.extend(members.iter().flat_map(|member| member.positions()));
-                        }
-                        None => {}
-                    }
-                }
-                _ => {}
+        reaches_leaf(
+            value_type,
+            |leaf| matches!(leaf, ValueType::Float(_)),
+            |declaration| self.composite_members(declaration),
+        )
+    }
+
+    /// The types a declared composite holds: a record's fields, a tuple's
+    /// positions or every position of a union's members.
+    fn composite_members(&self, declaration: &filament_exact::NodeKey) -> Vec<&ValueType> {
+        match self.types.composite(declaration.clone()).map(|c| c.shape()) {
+            Some(CompositeShape::Record(fields)) => {
+                fields.iter().map(FieldDeclaration::value_type).collect()
             }
+            Some(CompositeShape::Tuple(positions)) => positions.iter().collect(),
+            Some(CompositeShape::Union(members)) => members
+                .iter()
+                .flat_map(|member| member.positions())
+                .collect(),
+            None => Vec::new(),
         }
-        false
     }
 
     /// The position, in the record `declaration`'s own fields, of the field
@@ -6239,32 +6215,41 @@ pub(crate) fn bind_parameters(
 
 /// Whether `ty` is, or holds through an option, a collection or a map's
 /// values, a `Float` (the IEEE profile is needed exactly then).
-pub(super) fn holds_float(mut ty: &ValueType) -> bool {
-    loop {
-        match ty {
-            ValueType::Float(_) => return true,
-            ValueType::Option(payload) => ty = payload,
-            ValueType::Collection(collection) => ty = collection.element(),
-            ValueType::Map(map) => ty = map.values(),
-            ValueType::Boolean
-            | ValueType::Integer
-            | ValueType::Int(_)
-            | ValueType::Rational(_)
-            | ValueType::Decimal(_)
-            | ValueType::Quantity(_)
-            | ValueType::BoundedQuantity(_)
-            | ValueType::CarriedQuantity(_)
-            | ValueType::Text(_)
-            | ValueType::String
-            | ValueType::Uuid
-            | ValueType::Timestamp
-            | ValueType::Enum(_)
-            | ValueType::Composite(_)
-            | ValueType::Reference(_)
-            | ValueType::Population(_) => return false,
-            ValueType::Bytes | ValueType::JsonObject => return false,
+pub(super) fn holds_float(ty: &ValueType) -> bool {
+    reaches_leaf(
+        ty,
+        |leaf| matches!(leaf, ValueType::Float(_)),
+        |_| Vec::new(),
+    )
+}
+
+/// Whether `root` is, or holds through an option, a collection, a map's
+/// values or a declared composite, a type `leaf` accepts. `members` gives the
+/// types a composite declaration holds; each declaration is visited once.
+fn reaches_leaf<'a>(
+    root: &'a ValueType,
+    leaf: impl Fn(&ValueType) -> bool,
+    members: impl Fn(&filament_exact::NodeKey) -> Vec<&'a ValueType>,
+) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(value_type) = pending.pop() {
+        if leaf(value_type) {
+            return true;
+        }
+        match value_type {
+            ValueType::Option(payload) => pending.push(payload),
+            ValueType::Collection(collection) => pending.push(collection.element()),
+            ValueType::Map(map) => pending.push(map.values()),
+            ValueType::Composite(declaration) => {
+                if seen.insert(declaration.clone()) {
+                    pending.extend(members(declaration));
+                }
+            }
+            _ => {}
         }
     }
+    false
 }
 
 #[cfg(test)]
