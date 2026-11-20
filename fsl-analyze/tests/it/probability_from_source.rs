@@ -6,6 +6,13 @@
 
 use serde_json::{json, Value};
 
+use crate::prob_world::{self, World};
+use filament_exact::Cancel;
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_eval::simulation::model::ModelSystem;
+use fsl_foundation::RequestIndex;
+use fsl_replay::{replay_probabilistic_witness, ExactProbLimits, ModelCheckLimits};
+
 use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
 
 const LINK_UNIT: &str =
@@ -46,6 +53,28 @@ const TOO_LIKELY: &str =
     "probabilistic TooLikely using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
+/// `LongRun`: the long-run fraction of healthy ticks under `Steady`.
+const LONG_RUN: &str =
+    "probabilistic LongRun using inf on M over (n: M::Node) under Steady on origin \
+     with alpha 0.1, beta 0.1, indifference 0.1 \
+     { long_run_fraction holds(n.healthy) >= 0.3 }";
+
+const FINITE: &str = "probabilistic Finite using ev on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(0, 1) [ eventually[0,2] holds(m.delivered) ] }";
+
+const UNTIL: &str = "probabilistic Until using inf on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(0, 1) [ holds(m.attempts = 0) until holds(m.delivered or m.attempts = 2) ] }";
+
+const ALWAYS: &str = "probabilistic Always using ev on M over (m: M::Msg) under Even on origin \
+     { probability >= rational(9, 10) [ always[0,2] holds(m.attempts >= 0) ] }";
+
+const REWARD: &str = "probabilistic Reward using inf on M over (m: M::Msg) under Even on origin \
+     { expected accumulate cost until holds(m.delivered or m.attempts = 2) <= rational(2, 1) }";
+
+const FAIR_DELIVER: &str = "probabilistic DeliverFair using ev on M over (m: M::Msg) \
+     under every scheduler fair weak Msg::send_a on origin \
+     { probability >= rational(95, 100) [ eventually[0,2] holds(m.delivered) ] }";
+
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
     let request = request_over(
@@ -59,28 +88,210 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
     run.document()
 }
 
+fn timed_unit(claims: &str) -> String {
+    let header = "profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let source = LINK_UNIT.replace(
+        header,
+        &format!(
+            "{header}profile tc = \"filament.temporal.complete/v1\";\n\
+             profile t = \"filament.temporal.timed/v1\";\n"
+        ),
+    );
+    format!(
+        "{source}\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         time M dense unit ms;\n\
+         delay Msg::send_a ~ uniform[1 ms, 2 ms];\n\
+         delay Msg::send_b ~ uniform[1 ms, 2 ms];\n\
+         {claims}\n"
+    )
+}
+
+fn run_timed(name: &str, claims: &str, items: Value) -> Value {
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &timed_unit(claims),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": items}),
+    );
+    analyze(&request).document()
+}
+
+fn run_pta(name: &str, claim: &str) -> Value {
+    let unit = timed_unit(claim)
+        .replace("uniform[1 ms, 2 ms]", "discrete { 1 ms: 1 }");
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &unit,
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "TimedDelivery", "probabilistic": {"evidence": "exact"}}]}),
+    );
+    analyze(&request).document()
+}
+
+fn run_health_long_run(name: &str, items: Value) -> Value {
+    let model =
+        crate::prob_world::health("self.healthy = (not fault)", "true: 1, false: 1", false, "");
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         model M = \"{}\";\n{}\n{}\n",
+        model.package, model.body, LONG_RUN
+    );
+    let model_document = model.document(false);
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "start"},
+        "observation": "current",
+        "model": {"identity": model.package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": "ix://test/health/nodes", "complete": true,
+            "objects": [{"key": "n", "type": "ix://test/health/Node",
+                "fields": {"healthy": {"boolean": true}}}]}]
+    })
+    .to_string()
+    .into_bytes();
+    let ws = Workspace::new(name);
+    let request = request_over(
+        &ws,
+        &unit,
+        &model_document,
+        &[snapshot],
+        json!({"items": items}),
+    );
+    analyze(&request).document()
+}
+
 /// FR-741-AC-1: each statistical method settles `measured` with a
 /// measurement naming its method and seed, and a rerun with four workers
 /// gives the same item.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
-#[test]
-#[ignore = "QSL-2158: statistical probability items from source through fsl analyze not implemented yet"]
-fn statistical_items_settle_measured_from_source() {
-    for method in ["okamoto", "sprt", "clopper-pearson"] {
-        let item = |workers: u64| {
-            json!([{"claim": "Delivered", "probabilistic": {
-                "evidence": "statistical", "method": {"type": method},
-                "seed": "7", "max_witnesses": 8, "workers": workers}}])
-        };
-        let one = run(&format!("stat-{method}-1"), DELIVERED, item(1));
-        let four = run(&format!("stat-{method}-4"), DELIVERED, item(4));
-        let first = &one["items"][0];
-        assert_eq!(label(first), "measured", "{first}");
-        assert_eq!(first["measurement"]["method"], method, "{first}");
-        assert_eq!(first["measurement"]["seed"], "7", "{first}");
-        assert_eq!(first, &four["items"][0], "workers do not change the result");
+fn statistical_method_from_source(method: &str, method_selection: Value) {
+    let claim_name = if method == "regenerative" {
+        "LongRun"
+    } else {
+        "Delivered"
+    };
+    let item = |workers: u64| {
+        json!([{"claim": claim_name, "probabilistic": {
+            "evidence": "statistical", "method": method_selection,
+            "seed": "7", "max_witnesses": 8, "workers": workers}}])
+    };
+    let (one, four) = if method == "regenerative" {
+        (
+            run_health_long_run(&format!("stat-{method}-1"), item(1)),
+            run_health_long_run(&format!("stat-{method}-4"), item(4)),
+        )
+    } else {
+        (
+            run(&format!("stat-{method}-1"), DELIVERED, item(1)),
+            run(&format!("stat-{method}-4"), DELIVERED, item(4)),
+        )
+    };
+    assert!(one["items"][0].is_object(), "{one}");
+    assert!(four["items"][0].is_object(), "{four}");
+    let first = &one["items"][0];
+    assert_eq!(label(first), "measured", "{first}");
+    assert_eq!(
+        first["verdict"]["basis"]["method"]["type"], method,
+        "{first}"
+    );
+    assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
+    if method == "sprt" {
+        assert!(first["verdict"]["interval"].is_null(), "{first}");
+    } else {
+        assert!(first["verdict"]["interval"].is_object(), "{first}");
     }
+    assert!(
+        first["verdict"]["basis"]["samples"].as_str().is_some(),
+        "{first}"
+    );
+    assert!(
+        first["verdict"]["basis"]["draws"].as_str().is_some(),
+        "{first}"
+    );
+    assert_eq!(first["request"]["probabilistic"]["workers"], 1);
+    assert_eq!(four["items"][0]["request"]["probabilistic"]["workers"], 4);
+    assert_eq!(
+        first["verdict"], four["items"][0]["verdict"],
+        "workers do not change the measurement"
+    );
+}
+
+#[test]
+fn statistical_okamoto_from_source() {
+    statistical_method_from_source("okamoto", json!({"type": "okamoto"}));
+}
+
+#[test]
+fn statistical_sprt_from_source() {
+    statistical_method_from_source("sprt", json!({"type": "sprt"}));
+}
+
+#[test]
+fn statistical_regenerative_from_source() {
+    statistical_method_from_source(
+        "regenerative",
+        json!({"type": "regenerative", "min_cycles": 1}),
+    );
+}
+
+#[test]
+fn timed_sampling_from_source() {
+    let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.05 \
+         { probability >= 0.9 [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
+    let document = run_timed(
+        "timed-sampling-source",
+        claim,
+        json!([{"claim": "TimedDelivery", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"},
+            "seed": "7", "timed_sampling": {"q": 8, "max_sample_steps": 1000}
+        }}]),
+    );
+    let item = &document["items"][0];
+    assert!(item.is_object(), "expected an analyzed item: {document}");
+    assert_eq!(label(item), "measured", "{item}");
+    assert_eq!(item["request"]["probabilistic"]["timed_sampling"]["q"], 8);
+    assert_eq!(
+        item["request"]["probabilistic"]["timed_sampling"]["max_sample_steps"],
+        1000
+    );
+    assert_eq!(item["verdict"]["basis"]["grid"], "8", "{item}");
+    assert_eq!(
+        item["verdict"]["provenance"]["delay_grid_bits"], "8",
+        "{item}"
+    );
+    assert_eq!(
+        item["verdict"]["provenance"]["max_sample_steps"], "1000",
+        "{item}"
+    );
+}
+
+/// FR-741-AC-7: a timed probabilistic source claim uses the exact EN-5
+/// digital-clock product and retains its independently checkable certificate.
+#[test]
+fn pta_from_source() {
+    let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
+         { probability >= rational(95, 100) [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
+    let document = run_pta("pta-source", claim);
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["request"]["candidates"]["backends"], json!(["en-5"]));
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+    assert_eq!(
+        item["certificate"]["document"]["objective"]["timed"]["route"],
+        "digital",
+        "{item}"
+    );
 }
 
 /// FR-741-AC-2: an exact unbounded reachability item settles `proved` with
@@ -90,7 +301,6 @@ fn statistical_items_settle_measured_from_source() {
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
 #[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
-#[ignore = "QSL-2158: exact probability items from source through fsl analyze not implemented yet"]
 fn an_exact_item_settles_proved_with_its_certificate() {
     let document = run(
         "exact-eventually",
@@ -106,13 +316,47 @@ fn an_exact_item_settles_proved_with_its_certificate() {
     assert!(text.contains("391") && text.contains("400"), "{text}");
 }
 
+#[test]
+fn exact_unbounded_from_source() {
+    an_exact_item_settles_proved_with_its_certificate();
+}
+
+/// Exact source routing covers bounded reachability, unbounded until, bounded
+/// always, and expected rewards. Each proved result carries its exact value in
+/// the accepted certificate document.
+#[test]
+fn exact_finite_horizon_from_source() {
+    let claims = format!("{FINITE}\n{UNTIL}\n{ALWAYS}\n{REWARD}");
+    let document = run(
+        "exact-finite-and-subforms",
+        &claims,
+        json!([
+            {"claim": "Finite", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Until", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Always", "probabilistic": {"evidence": "exact"}},
+            {"claim": "Reward", "probabilistic": {"evidence": "exact"}}
+        ]),
+    );
+    for item in document["items"].as_array().expect("four items") {
+        assert_eq!(label(item), "proved", "{item}");
+        assert_eq!(item["certificate"]["accepted"], true, "{item}");
+        assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+        assert!(item["certificate"]["document"].is_object(), "{item}");
+        assert!(
+            item["certificate"]["document"]
+                .to_string()
+                .contains("numerator"),
+            "{item}"
+        );
+    }
+}
+
 /// FR-741-AC-3 (negative): an exact item whose value misses its threshold
 /// settles `refuted` with a counterexample whose replay reproduced it.
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
 #[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
-#[ignore = "QSL-2158: refuted exact probability items from source through fsl analyze not implemented yet"]
-fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
+fn probability_refuted_from_source() {
     let document = run(
         "exact-refuted",
         TOO_LIKELY,
@@ -120,10 +364,74 @@ fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
     );
     let item = &document["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    assert_eq!(
-        item["counterexample"]["replay"]["reproduced"], true,
-        "{item}"
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// The path set emitted by `fsl analyze` is the same source-backed witness
+/// that `fsl-replay` independently accepts against the checked package.
+#[test]
+fn probabilistic_witness_replays() {
+    let document = run(
+        "probabilistic-witness-replay",
+        TOO_LIKELY,
+        json!([{"claim": "TooLikely", "probabilistic": {"evidence": "exact"}}]),
     );
+    let emitted = document["items"][0]["counterexample"].clone();
+    assert_eq!(emitted["type"], "probabilistic", "{emitted}");
+    assert_eq!(emitted["evidence"]["type"], "path-set", "{emitted}");
+
+    let world = World::new(&prob_world::link(TOO_LIKELY));
+    let engines = Engines::fsl().expect("the linked engines register");
+    let record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("TooLikely", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let reproduced = record
+        .probabilistic_counterexample
+        .expect("the source run retains replayed witness evidence");
+    let source_wire = reproduced.wire.as_ref().expect("the witness spells");
+    let source_paths = source_wire["evidence"]["paths"]
+        .as_array()
+        .expect("typed witness paths");
+    let emitted_paths = emitted["evidence"]["paths"]
+        .as_array()
+        .expect("the verb emits witness paths");
+    assert_eq!(source_paths.len(), emitted_paths.len());
+    for (source_path, emitted_path) in source_paths.iter().zip(emitted_paths) {
+        let source_steps = source_path.as_array().expect("typed path steps");
+        let emitted_steps = emitted_path.as_array().expect("emitted path steps");
+        assert_eq!(source_steps.len(), emitted_steps.len());
+        for (source_step, emitted_step) in source_steps.iter().zip(emitted_steps) {
+            assert_eq!(source_step["transition"], emitted_step["transition"]);
+            assert_eq!(source_step["random"], emitted_step["random"]);
+            assert_eq!(
+                source_step["post_state"]["key"],
+                emitted_step["post_state"]["key"]
+            );
+        }
+    }
+
+    let witness = reproduced.evidence();
+    let system = ModelSystem::new(world.subject().simulation).expect("the source model admits");
+    let package = system
+        .source_package()
+        .expect("the subject is source-backed");
+    assert!(matches!(
+        replay_probabilistic_witness(
+            package,
+            &system,
+            &witness.item,
+            witness,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        ),
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
 }
 
 /// FR-741-AC-4 (negative): an unbounded exact-only claim requested with
@@ -132,7 +440,6 @@ fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-3")]
 #[test]
-#[ignore = "QSL-2158: probability item refusals from source through fsl analyze not implemented yet"]
 fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
     let document = run(
         "exact-only-statistical",
@@ -403,11 +710,51 @@ fn every_scheduler_without_random_is_refuted() {
 #[ix_trace_rs::trace("TC-2488", "FR-876-AC-3")]
 #[ix_trace_rs::trace("FSpec-TC-1766", "FSpec-FR-724-AC-2")]
 #[test]
-#[ignore = "QSL-2159: every-scheduler claims with random lines settling from source not implemented yet"]
-fn every_scheduler_with_random_is_proved() {
+fn exact_every_scheduler_from_source() {
     let document = run_unit("every-random-proved", &unit(EVERY));
     let item = &document["items"][0];
     assert_eq!(label(item), "proved", "{item}");
     let text = item.to_string();
     assert!(text.contains("24") && text.contains("25"), "{text}");
+}
+
+#[test]
+fn exact_fair_scheduler_from_source() {
+    let checked_source = crate::prob_world::World::new(&crate::prob_world::link(FAIR_DELIVER));
+    let claim = checked_source
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("DeliverFair")
+        .expect("the source claim checks");
+    assert_eq!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every);
+    assert!(!claim.fairness.is_empty(), "the fairness set is checked");
+    assert!(
+        matches!(
+            &claim.form,
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula {
+                    timed_horizon: None,
+                    ..
+                },
+                ..
+            }
+        ),
+        "FR-200 bounded fair event form: {:?}",
+        claim.form
+    );
+    let document = run(
+        "fair-scheduler",
+        FAIR_DELIVER,
+        json!([{"claim": "DeliverFair", "probabilistic": {"evidence": "exact"}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+    assert!(item["certificate"]["document"].is_object(), "{item}");
+    assert!(
+        item.to_string().contains("24") && item.to_string().contains("25"),
+        "{item}"
+    );
 }

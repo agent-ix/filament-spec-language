@@ -1058,6 +1058,9 @@ pub struct OutcomeItem {
     /// `undecided`.
     #[serde(skip_serializing_if = "Option::is_none")]
     measured: Option<&'static str>,
+    /// The FR-410 StatisticalVerdict of a completed measured result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verdict: Option<serde_json::Value>,
     /// The state-graph settlement method, when this item came from FR-391.
     #[serde(skip_serializing_if = "Option::is_none")]
     method: Option<&'static str>,
@@ -1475,6 +1478,10 @@ impl OutcomeItem {
             basis,
             certification,
             measured,
+            verdict: match value {
+                TerminalValue::Measured(verdict) => Some(statistical_verdict_wire(verdict)),
+                _ => None,
+            },
             method: None,
             max_depth: None,
             seed: None,
@@ -1594,6 +1601,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1670,6 +1678,7 @@ impl OutcomeItem {
             basis: None,
             certification: None,
             measured: None,
+            verdict: None,
             method: None,
             max_depth: None,
             seed: None,
@@ -1703,6 +1712,180 @@ impl OutcomeItem {
     pub fn certification(&self) -> Option<Certification> {
         self.certification
     }
+}
+
+fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
+    serde_json::json!({
+        "numerator": value.numerator().to_string(),
+        "denominator": value.denominator().to_string(),
+    })
+}
+
+fn statistical_method_wire(method: statistical::StatisticalMethod) -> serde_json::Value {
+    match method {
+        statistical::StatisticalMethod::Okamoto => serde_json::json!({"type": "okamoto"}),
+        statistical::StatisticalMethod::Sprt => serde_json::json!({"type": "sprt"}),
+        statistical::StatisticalMethod::ClopperPearson => {
+            serde_json::json!({"type": "clopper-pearson"})
+        }
+        statistical::StatisticalMethod::Regenerative { min_cycles } => {
+            serde_json::json!({"type": "regenerative", "min_cycles": min_cycles.to_string()})
+        }
+    }
+}
+
+fn statistical_decision_wire(decision: Decision) -> serde_json::Value {
+    match decision {
+        Decision::Accepted => serde_json::json!({"type": "accepted"}),
+        Decision::Rejected => serde_json::json!({"type": "rejected"}),
+        Decision::Undecided(cause) => serde_json::json!({
+            "type": "undecided",
+            "cause": {"type": match cause {
+                statistical::UndecidedCause::IndifferenceRegion => "indifference-region",
+                statistical::UndecidedCause::UndecidedSuccessor => "undecided-successor",
+            }}
+        }),
+    }
+}
+
+fn statistical_estimate_wire(
+    estimate: Option<&filament_exact::Rational>,
+    quantile: Option<&statistical::MeasureValue>,
+) -> serde_json::Value {
+    let estimate = estimate
+        .cloned()
+        .unwrap_or_else(|| filament_exact::Rational::from_integer(Integer::from(0_i64)));
+    let mut value = serde_json::Map::new();
+    value.insert("value".to_owned(), rational_wire(&estimate));
+    if let Some(quantile) = quantile {
+        let quantile = match quantile {
+            statistical::MeasureValue::Value(value) => {
+                serde_json::json!({"value": rational_wire(value)})
+            }
+            statistical::MeasureValue::Censored => {
+                serde_json::json!({"value": rational_wire(&estimate)})
+            }
+        };
+        value.insert("quantile".to_owned(), quantile);
+    }
+    serde_json::Value::Object(value)
+}
+
+fn statistical_interval_wire(
+    interval: Option<&(filament_exact::Rational, filament_exact::Rational)>,
+) -> Option<serde_json::Value> {
+    interval.map(|(lower, upper)| {
+        serde_json::json!({
+            "lower": rational_wire(lower),
+            "upper": rational_wire(upper),
+        })
+    })
+}
+
+fn statistical_verdict_wire(verdict: &StatisticalVerdict) -> serde_json::Value {
+    let method = statistical_method_wire(verdict.basis.method);
+    let method_name = method["type"].as_str().unwrap_or("okamoto");
+    let decision = statistical_decision_wire(verdict.decision);
+    let tests: Vec<_> = verdict
+        .tests
+        .iter()
+        .map(|test| {
+            let mut result = serde_json::Map::new();
+            result.insert(
+                "index".to_owned(),
+                serde_json::json!(test.index.to_string()),
+            );
+            result.insert(
+                "decision".to_owned(),
+                statistical_decision_wire(test.decision),
+            );
+            result.insert(
+                "estimate".to_owned(),
+                statistical_estimate_wire(test.estimate.as_ref(), test.quantile.as_ref()),
+            );
+            if let Some(interval) = statistical_interval_wire(test.interval.as_ref()) {
+                result.insert("interval".to_owned(), interval);
+            }
+            result.insert(
+                "samples".to_owned(),
+                serde_json::json!(test.samples.to_string()),
+            );
+            result.insert(
+                "draws".to_owned(),
+                serde_json::json!(test.draws.to_string()),
+            );
+            serde_json::Value::Object(result)
+        })
+        .collect();
+    let provenance_tests: Vec<_> = verdict
+        .provenance
+        .tests
+        .iter()
+        .map(|test| {
+            let last = test.traces.first.saturating_add(
+                test.traces
+                    .count
+                    .saturating_sub(1)
+                    .saturating_mul(test.traces.step),
+            );
+            serde_json::json!({
+                "index": test.index.to_string(),
+                "initial_state": test.initial.to_string(),
+                "binding": null,
+                "first_trace_index": test.traces.first.to_string(),
+                "last_trace_index": last.to_string(),
+            })
+        })
+        .collect();
+    let mut basis = serde_json::json!({
+        "method": method,
+        "confidence": {
+            "alpha": rational_wire(verdict.basis.confidence.alpha()),
+            "beta": rational_wire(verdict.basis.confidence.beta()),
+            "iota": rational_wire(verdict.basis.confidence.indifference()),
+        },
+        "samples": verdict.basis.samples.to_string(),
+        "draws": verdict.basis.draws.to_string(),
+        "tests": {
+            "m": verdict.basis.tests.to_string(),
+            "alpha": rational_wire(&verdict.basis.alpha_per_test),
+            "beta": rational_wire(&verdict.basis.beta_per_test),
+        },
+        "coverage": match verdict.basis.coverage {
+            statistical::Coverage::FiniteSample => "finite-sample",
+            statistical::Coverage::Asymptotic => "asymptotic",
+        },
+    });
+    if let Some(grid) = verdict.basis.delay_grid_bits {
+        basis["grid"] = serde_json::json!(grid.to_string());
+    }
+    let mut provenance = serde_json::json!({
+        "seed": verdict.provenance.seed.to_string(),
+        "sampler": "filament.simulation.sampler/v1",
+        "tests": provenance_tests,
+    });
+    if let Some(horizon) = &verdict.provenance.timed_horizon {
+        provenance["timed_horizon"] = rational_wire(horizon);
+    }
+    if let Some(grid) = verdict.provenance.delay_grid_bits {
+        provenance["delay_grid_bits"] = serde_json::json!(grid.to_string());
+    }
+    if let Some(max_sample_steps) = verdict.provenance.max_sample_steps {
+        provenance["max_sample_steps"] = serde_json::json!(max_sample_steps.to_string());
+    }
+    let mut value = serde_json::json!({
+        "decision": decision,
+        "estimate": statistical_estimate_wire(verdict.estimate.as_ref(), verdict.quantile.as_ref()),
+        "basis": basis,
+        "provenance": provenance,
+        "tests": tests,
+        "witnesses": [],
+    });
+    if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
+        value["interval"] = interval;
+    }
+    let _ = method_name;
+    value
 }
 
 /// The cause an item built from `report` carries: the table's `cause`

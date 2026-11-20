@@ -13,7 +13,7 @@
 //! requested again exactly.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -24,7 +24,7 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{OutcomeAxes, TerminalRecord, TerminalValue};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::routing::Disposition;
-use fsl_route::{CandidateOutcome, Registry};
+use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
@@ -929,8 +929,7 @@ impl ItemSelection {
             self.kind.as_deref(),
             Some("local-projection" | "realizability")
         );
-        self.probabilistic.is_some()
-            || self.hybrid.is_some()
+        self.hybrid.is_some()
             || self.correspondence.is_some()
             || (self.premises.is_some() && !protocol_analysis)
             || (self.assessed_root.is_some() && !protocol_analysis)
@@ -966,6 +965,133 @@ impl ItemSelection {
                             .is_some_and(|limits| limits.max_task_product_work.is_some()))
             })
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbabilisticSelection {
+    #[serde(default)]
+    evidence: Option<String>,
+    #[serde(default)]
+    method: Option<StatisticalMethodSelection>,
+    #[serde(default)]
+    seed: Option<String>,
+    #[serde(default)]
+    max_witnesses: Option<u32>,
+    #[serde(default)]
+    workers: Option<NonZeroU32>,
+    #[serde(default)]
+    timed_sampling: Option<TimedSamplingSelection>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatisticalMethodSelection {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    min_cycles: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TimedSamplingSelection {
+    #[serde(default)]
+    q: Option<u32>,
+    #[serde(default)]
+    max_sample_steps: Option<u64>,
+}
+
+impl TimedSamplingSelection {
+    fn resolve(self) -> fsl_replay::statistical::TimedSampling {
+        let defaults = fsl_replay::statistical::TimedSampling::default();
+        fsl_replay::statistical::TimedSampling {
+            q: self.q.unwrap_or(defaults.q),
+            max_sample_steps: self.max_sample_steps.unwrap_or(defaults.max_sample_steps),
+        }
+    }
+}
+
+fn probabilistic_item(
+    value: &Value,
+    default_evidence: EvidenceKind,
+) -> Result<super::ProbabilisticItem, ()> {
+    let selection: ProbabilisticSelection =
+        serde_json::from_value(value.clone()).map_err(|_| ())?;
+    let evidence = selection
+        .evidence
+        .as_deref()
+        .map(EvidenceKind::from_wire)
+        .unwrap_or(Some(default_evidence))
+        .ok_or(())?;
+    let timed_sampling = selection
+        .timed_sampling
+        .map(TimedSamplingSelection::resolve);
+    let (method, seed, sampler, limits) = match evidence {
+        EvidenceKind::Exact => {
+            if selection.method.is_some() || selection.seed.is_some() || timed_sampling.is_some() {
+                return Err(());
+            }
+            (
+                None,
+                None,
+                None,
+                super::ProbabilisticLimits::Exact(
+                    crate::exact_probabilistic::ExactProbLimits::default(),
+                ),
+            )
+        }
+        EvidenceKind::Statistical => {
+            let method = match selection.method {
+                None => fsl_replay::statistical::StatisticalMethod::Okamoto,
+                Some(StatisticalMethodSelection { kind, min_cycles }) => match kind.as_str() {
+                    "okamoto" if min_cycles.is_none() => {
+                        fsl_replay::statistical::StatisticalMethod::Okamoto
+                    }
+                    "sprt" if min_cycles.is_none() => {
+                        fsl_replay::statistical::StatisticalMethod::Sprt
+                    }
+                    "clopper-pearson" if min_cycles.is_none() => {
+                        fsl_replay::statistical::StatisticalMethod::ClopperPearson
+                    }
+                    "regenerative" => fsl_replay::statistical::StatisticalMethod::Regenerative {
+                        min_cycles: min_cycles.ok_or(())?,
+                    },
+                    _ => return Err(()),
+                },
+            };
+            let seed = selection
+                .seed
+                .as_deref()
+                .unwrap_or("0")
+                .parse::<u64>()
+                .map_err(|_| ())?;
+            let sampler = fsl_foundation::selection::DefinitionRef::new(
+                "agent-ix",
+                "filament.simulation.sampler/v1",
+            )
+            .map_err(|_| ())?;
+            (
+                Some(method),
+                Some(seed),
+                Some(sampler),
+                super::ProbabilisticLimits::Statistical(
+                    fsl_replay::statistical::StatisticalLimits::default(),
+                ),
+            )
+        }
+    };
+    Ok(super::ProbabilisticItem {
+        evidence,
+        limits,
+        method,
+        seed,
+        sampler,
+        max_witnesses: selection.max_witnesses,
+        workers: selection.workers,
+        symmetry: Vec::new(),
+        timed_sampling,
+    })
 }
 
 /// One item as [`resolve_items`] resolved it.
@@ -1136,6 +1262,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
+    );
+    names.extend(
+        graph
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .filter_map(|claim| Some((claim.name.clone(), claim.occurrence()?.node().clone()))),
     );
     // FR-630: a refinement is named by its declared name and keyed at the
     // node of its requirement record (FR-144).
@@ -1573,6 +1706,7 @@ fn resolve_one(
             }
             match kinds.as_slice() {
                 [kind] => *kind,
+                [] if selection.probabilistic.is_some() => Capability::ProbabilisticSatisfaction,
                 [] if state_graph.is_some() => Capability::TemporalSatisfaction,
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
@@ -1608,6 +1742,31 @@ fn resolve_one(
         Capability::LocalProjection | Capability::Realizability
     );
     let record = own.iter().find(|record| record.kind() == kind);
+    if selection.probabilistic.is_some() && kind != Capability::ProbabilisticSatisfaction {
+        return invalid_value(index, name, "probabilistic");
+    }
+    let probabilistic = if let Some(value) = &selection.probabilistic {
+        let default_evidence = package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .find(|checked| checked.occurrence() == Some(&claim))
+            .map(|checked| {
+                if checked.exact_only() {
+                    EvidenceKind::Exact
+                } else {
+                    EvidenceKind::Statistical
+                }
+            })
+            .unwrap_or(EvidenceKind::Statistical);
+        match probabilistic_item(value, default_evidence) {
+            Ok(item) => Some(item),
+            Err(()) => return invalid_value(index, name, "probabilistic"),
+        }
+    } else {
+        None
+    };
     // FR-967: options are checked after kind admission and the
     // inapplicable-kind rule, which `analyze` applies to an item whose kind
     // does not apply to its claim's family, and before candidates.
@@ -1654,15 +1813,32 @@ fn resolve_one(
         None if protocol_analysis_kind => ExtentClassification::Unbounded {
             finite_bound_available: false,
         },
+        None if kind == Capability::ProbabilisticSatisfaction => package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .iter()
+            .find(|checked| checked.occurrence() == Some(&claim))
+            .map(|checked| {
+                ExtentClassification::of(checked.requirements(claim.node().clone()).extent())
+            })
+            .unwrap_or(ExtentClassification::Bounded),
         None if kind == Capability::ValueValidity => {
             value_clause_extent(package, name, &node, &claim)
         }
         None => ExtentClassification::Bounded,
     };
-    let candidates = record.map_or_else(
-        || registry.candidates(kind, named.as_ref()),
-        |record| record.candidates().clone(),
-    );
+    let candidates = match &probabilistic {
+        Some(item) => registry.candidates_for_evidence(
+            kind,
+            &ItemEvidence::Kind(item.evidence),
+            named.as_ref(),
+        ),
+        None => record.map_or_else(
+            || registry.candidates(kind, named.as_ref()),
+            |record| record.candidates().clone(),
+        ),
+    };
     let candidates = if let Some(claim) = state_graph {
         registry.restrict_to_state_graph_form(
             registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package)),
@@ -1825,16 +2001,18 @@ fn resolve_one(
             limits: hybrid_limits,
             options: backend_options.clone(),
         }))
+    } else if let Some(probabilistic) = probabilistic {
+        Some(ItemForm::Probabilistic(probabilistic))
+    } else if kind == Capability::TemporalSatisfaction
+        || kind == Capability::GlobalConformance
+        || protocol_analysis_kind
+    {
+        let mut form = temporal_item(package, &claim, &temporal);
+        form.pending_reductions.clone_from(&selection.reductions);
+        form.protocol = protocol.clone();
+        Some(ItemForm::Temporal(form))
     } else {
-        (kind == Capability::TemporalSatisfaction
-            || kind == Capability::GlobalConformance
-            || protocol_analysis_kind)
-            .then(|| {
-                let mut form = temporal_item(package, &claim, &temporal);
-                form.pending_reductions.clone_from(&selection.reductions);
-                form.protocol = protocol.clone();
-                ItemForm::Temporal(form)
-            })
+        None
     };
     let claim_reads_time = claim_timed(package, &claim, binding);
     let item = ClaimItem {
@@ -3000,6 +3178,59 @@ impl ClaimItem {
                 );
             }
         }
+        if let Some(ItemForm::Probabilistic(probabilistic)) = &self.form {
+            let mut member = Map::new();
+            member.insert(
+                "evidence".to_owned(),
+                json!(probabilistic.evidence.to_wire()),
+            );
+            match probabilistic.evidence {
+                EvidenceKind::Statistical => {
+                    let method = match probabilistic.method {
+                        Some(fsl_replay::statistical::StatisticalMethod::Okamoto) => {
+                            json!({"type": "okamoto"})
+                        }
+                        Some(fsl_replay::statistical::StatisticalMethod::Sprt) => {
+                            json!({"type": "sprt"})
+                        }
+                        Some(fsl_replay::statistical::StatisticalMethod::ClopperPearson) => {
+                            json!({"type": "clopper-pearson"})
+                        }
+                        Some(fsl_replay::statistical::StatisticalMethod::Regenerative {
+                            min_cycles,
+                        }) => json!({"type": "regenerative", "min_cycles": min_cycles}),
+                        None => {
+                            return Err(serde::ser::Error::custom("missing statistical method"));
+                        }
+                    };
+                    member.insert("method".to_owned(), method);
+                    member.insert(
+                        "seed".to_owned(),
+                        json!(probabilistic.seed.unwrap_or_default().to_string()),
+                    );
+                    member.insert(
+                        "max_witnesses".to_owned(),
+                        json!(probabilistic
+                            .max_witnesses
+                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)),
+                    );
+                    member.insert(
+                        "workers".to_owned(),
+                        json!(probabilistic.workers.map_or(1, NonZeroU32::get)),
+                    );
+                    let timed_sampling = probabilistic.timed_sampling.unwrap_or_default();
+                    member.insert(
+                        "timed_sampling".to_owned(),
+                        json!({
+                            "q": timed_sampling.q,
+                            "max_sample_steps": timed_sampling.max_sample_steps,
+                        }),
+                    );
+                }
+                EvidenceKind::Exact => {}
+            }
+            item.insert("probabilistic".to_owned(), Value::Object(member));
+        }
         Ok(Value::Object(item))
     }
 }
@@ -3173,7 +3404,7 @@ pub fn settle_run(
                 ));
             }
             Err(super::simulation_item::SimulationFault::Fault) => {
-                return Err(AnalyzeDocumentError::Fault)
+                return Err(AnalyzeDocumentError::Fault);
             }
         }
     }
@@ -3415,6 +3646,15 @@ fn write_run(
     let mut gaps = Vec::new();
     for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
+        if let Some(bytes) = record.exact_certificate_document() {
+            if let Ok(document) = serde_json::from_slice::<Value>(bytes) {
+                written["certificate"] = json!({
+                    "accepted": true,
+                    "kind": "exact",
+                    "document": document,
+                });
+            }
+        }
         if let Some(output) = outcome.protocol_conformance.get(&index) {
             if let (Some(record), Ok(Value::Object(members))) =
                 (written.as_object_mut(), serde_json::to_value(output))
@@ -3688,6 +3928,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let category = record.remove("category").unwrap_or(Value::Null);
     let counterexample = record.remove("counterexample");
     let certificate_document = record.remove("certificate_document");
+    let certificate = record.remove("certificate");
     let mut item = Map::new();
     item.insert("request_index".to_owned(), index);
     item.insert(
@@ -3697,7 +3938,9 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
     let task_search_identity = identity.clone();
-    if let (Some(recorded), Some(identity)) = (
+    if let Some(certificate) = certificate {
+        item.insert("certificate".to_owned(), certificate);
+    } else if let (Some(recorded), Some(identity)) = (
         detail
             .as_ref()
             .and_then(|detail| detail.hybrid_certificate.as_ref()),
@@ -3744,6 +3987,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         "global",
         "projections",
         "recording",
+        "verdict",
     ] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());
