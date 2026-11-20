@@ -245,3 +245,36 @@ fn a_file_selection_reads_the_equality_file_beside_it() {
         names(&value, "/request/package/equality");
     }
 }
+
+/// FR-1039-AC-2: an `equality` file that is the handoff witness of another
+/// unit with an equality application, none of whose rows this package joins,
+/// refuses `invalid_package`/`refused-file` with the `Unjoined` variant.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-2")]
+fn a_foreign_equality_witness_refuses_unjoined() {
+    let unit = |body: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function e using v(n: Int[0, 9]): Boolean pure {{ {body} }}\n"
+        )
+    };
+    let own = tempfile::tempdir().unwrap();
+    compile(own.path(), &unit("n * 2 - n = n"), json!({}));
+    let foreign = tempfile::tempdir().unwrap();
+    compile(foreign.path(), &unit("n * 3 - n = n * 2"), json!({}));
+    std::fs::copy(
+        foreign.path().join("handoff/equality.json"),
+        own.path().join("foreign-equality.json"),
+    )
+    .unwrap();
+    let (exit, value) = run(
+        own.path(),
+        json!({"models": [], "package": {"file": "package.json", "equality": "foreign-equality.json"},
+            "call": {"function": "e", "arguments": []}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    names(&value, "refused-file");
+    names(&value, "Unjoined");
+}
