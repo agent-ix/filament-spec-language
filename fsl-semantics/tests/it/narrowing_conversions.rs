@@ -102,7 +102,7 @@ fn guarded_int_narrowing_checks_and_lowers_to_numeric_narrow() {
     assert_parameter_narrow(&graph);
 }
 
-#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149", "TC-3135")]
 #[test]
 fn unguarded_int_narrowing_refuses_unproved_range() {
     assert_unproved("function f using v(q: Int[0,20]): Int[0,9] pure { convert<Int[0,9]>(q) }");
@@ -235,7 +235,7 @@ fn float_to_integer_narrowing_stays_refused() {
     assert_eq!(errors[0].cause.code(), Code::IllTyped);
 }
 
-#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149")]
+#[trace("FR-093-AC-67", "FR-096", "FSpec-FR-149", "TC-3135")]
 #[test]
 fn historical_narrowing_corpus_now_reports_unproved_range() {
     for source in [
@@ -286,4 +286,36 @@ fn explicit_narrowing_of_an_application_keys_the_direct_conversion_context() {
         matches!(application.arguments.as_slice(), [MemberTerm::Leaf(LeafTerm::Reference { target })] if target.admitted() == Some(key.node()))
     );
     assert!(!graph.requirements().iter().any(|(key, _)| matches!(graph.semantic_graph().node(key.node().clone()).unwrap().body(), BodyTerm::Application(application) if application.operation.identity() == "filament.op.numeric.narrow")));
+}
+
+/// The `required` interval an unproved narrowing of `source` reports, as
+/// decimal text.
+fn required_bounds(source: &str) -> (Option<String>, Option<String>) {
+    use fsl_semantics::check::{CheckCause, Obligation};
+    let errors = check(source, CheckMode::Linked).expect_err("narrowing needs proof");
+    let CheckCause::Unproved(Obligation::Range { required, .. }) = &errors[0].cause else {
+        panic!("not a range obligation: {errors:?}");
+    };
+    (
+        required.lower.as_ref().map(ToString::to_string),
+        required.upper.as_ref().map(ToString::to_string),
+    )
+}
+
+#[trace("FR-093-AC-67", "FSpec-FR-149", "TC-3135")]
+#[test]
+fn an_unproved_narrowing_reports_the_target_range() {
+    let bounds = |lower: &str, upper: &str| (Some(lower.to_owned()), Some(upper.to_owned()));
+    assert_eq!(
+        required_bounds("function f using v(q: Int[0,20]): Int[0,9] pure { convert<Int[0,9]>(q) }"),
+        bounds("0", "9")
+    );
+    assert_eq!(
+        required_bounds("function f using v(n: Integer): Decimal[0,9;0,0;nearest-even] pure { convert<Decimal[0,9;0,0;nearest-even]>(n) }"),
+        bounds("0", "9")
+    );
+    assert_eq!(
+        required_bounds("function f using v(x: Rational[0,20;1,1]): Decimal[-25,95;1,1;exact] pure { convert<Decimal[-25,95;1,1;exact]>(x) }"),
+        bounds("-3", "10")
+    );
 }

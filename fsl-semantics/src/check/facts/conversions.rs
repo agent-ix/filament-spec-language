@@ -5,7 +5,9 @@ use crate::check::ir::CheckedNode;
 use crate::check::numeric_conversion::{classify, Class};
 use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
-use filament_exact::{DecimalType, IntegerInterval, RationalDomain, Value, ValueType};
+use filament_exact::{
+    DecimalType, Integer, IntegerInterval, NonZeroInteger, RationalDomain, Value, ValueType,
+};
 use filament_semantic_value::declaration::admits_equality_conversion;
 use filament_semantic_value::quantity::{UnitScope, UnitTable};
 
@@ -114,6 +116,7 @@ impl Definedness<'_> {
         }
         let required = match node.value_type() {
             ValueType::Int(target) => Interval::of_domain(target),
+            ValueType::Decimal(target) => decimal_hull(target),
             _ => Interval::unbounded(),
         };
         Err(Self::refuse(
@@ -124,5 +127,25 @@ impl Definedness<'_> {
                 operand: OperandText::default(),
             },
         ))
+    }
+}
+
+/// The integer interval spanning every value a `Decimal` target admits: its
+/// coefficient bounds read at the smallest and the largest membership scale,
+/// rounded outward.
+fn decimal_hull(target: &DecimalType) -> Interval {
+    let at = |scale: u32| {
+        let power = Integer::power_of_ten(u64::from(scale));
+        let divisor = NonZeroInteger::try_from(&power).ok()?;
+        let lower = target.lower().div_mod_floor(divisor).0;
+        let upper = target.upper().neg().div_mod_floor(divisor).0.neg();
+        Some((lower, upper))
+    };
+    match (at(target.min_scale()), at(target.max_scale())) {
+        (Some((low_a, high_a)), Some((low_b, high_b))) => Interval {
+            lower: End::Finite(low_a.min(low_b)),
+            upper: End::Finite(high_a.max(high_b)),
+        },
+        _ => Interval::unbounded(),
     }
 }
