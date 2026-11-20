@@ -214,6 +214,9 @@ pub fn compile_model_unit(
     let mut has_systems_port = false;
     let mut has_systems_connection = false;
     let mut has_systems_allocation = false;
+    let mut has_state_machine = false;
+    let mut has_process = false;
+    let mut has_persistence_interface = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -504,6 +507,78 @@ pub fn compile_model_unit(
                 has_systems_allocation = true;
                 index = next;
             }
+            Some("machine") => {
+                let Some((node, name, next)) =
+                    read_state_machine(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid state machine declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_state_machine = true;
+                index = next;
+            }
+            Some("process") => {
+                let Some((node, name, next)) = read_process(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid process declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_process = true;
+                index = next;
+            }
+            Some("store") => {
+                let Some((node, name, next)) = read_store(&tokens, index, &identity, parsed) else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid persistence interface declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(node);
+                has_persistence_interface = true;
+                index = next;
+            }
             Some("dimension") => {
                 let Some((dimension, name, next)) =
                     read_dimension(&tokens, index, &identity, parsed)
@@ -736,6 +811,15 @@ pub fn compile_model_unit(
     if has_systems_allocation {
         meanings.push(("allocation", "filament.meaning.systems.allocation/v1"));
     }
+    if has_state_machine {
+        meanings.push(("machine", "filament.meaning.model.state-machine/v1"));
+    }
+    if has_process {
+        meanings.push(("process", "filament.meaning.model.process/v1"));
+    }
+    if has_persistence_interface {
+        meanings.push(("store", "filament.meaning.model.persistence-interface/v1"));
+    }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
     }
@@ -945,6 +1029,9 @@ fn read_object(
                 index = next;
             }
             "occurs" => {
+                index = skip_statement(tokens, index)?;
+            }
+            "states" | "transition" | "step" => {
                 index = skip_statement(tokens, index)?;
             }
             "invariant" => index = skip_statement(tokens, index)?,
@@ -1656,6 +1743,186 @@ fn read_systems_allocation(
     ))
 }
 
+fn read_state_machine(
+    tokens: &[Token],
+    index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let (mut machine, next) = read_object(tokens, index, package, parsed)?;
+    let name = machine.name.clone();
+    let states_index = (index..next).find(|candidate| tokens[*candidate].text == "states")?;
+    let mut cursor = states_index + 2;
+    let mut states = Vec::new();
+    while tokens.get(cursor)?.text != ")" {
+        if tokens.get(cursor)?.text != "," {
+            let state = tokens[cursor].text.clone();
+            states.push(json!({
+                "identity": format!("ix://{package}/{name}/{state}"),
+                "name": state,
+                "origin": source_origin(parsed, tokens[cursor].span),
+            }));
+        }
+        cursor += 1;
+    }
+    let mut transitions = Vec::new();
+    let mut serial = 0;
+    cursor = states_index + 2;
+    while cursor < next {
+        if tokens[cursor].text != "transition" {
+            cursor += 1;
+            continue;
+        }
+        let start = tokens[cursor].span.start;
+        cursor += 1;
+        let from = tokens.get(cursor)?.text.clone();
+        cursor += 1;
+        if tokens.get(cursor)?.text != "->" {
+            return None;
+        }
+        cursor += 1;
+        let to = tokens.get(cursor)?.text.clone();
+        cursor += 1;
+        if tokens.get(cursor)?.text != "on" {
+            return None;
+        }
+        cursor += 1;
+        let trigger = tokens.get(cursor)?.text.clone();
+        cursor += 1;
+        let mut emits = Vec::new();
+        if tokens
+            .get(cursor)
+            .is_some_and(|token| token.text == "emits")
+        {
+            cursor += 1;
+            while tokens.get(cursor)?.text != ";" {
+                if tokens.get(cursor)?.text != "," {
+                    emits.push(format!("ix://{package}/{}", tokens[cursor].text));
+                }
+                cursor += 1;
+            }
+        }
+        if tokens.get(cursor)?.text != ";" {
+            return None;
+        }
+        let end = tokens[cursor].span.end;
+        transitions.push(json!({
+            "identity": format!("ix://{package}/{name}/transition{serial}"),
+            "from": format!("ix://{package}/{name}/{from}"),
+            "to": format!("ix://{package}/{name}/{to}"),
+            "trigger": format!("ix://{package}/{name}/{trigger}"),
+            "emits": emits,
+            "origin": source_origin(parsed, Span { start, end }),
+        }));
+        serial += 1;
+        cursor += 1;
+    }
+    machine.wire["kind"]["name"] = json!("machine");
+    machine.wire["identityFields"] = json!([]);
+    machine.wire["supertypes"] = json!([]);
+    machine.wire["states"] = json!(states);
+    machine.wire["transitions"] = json!(transitions);
+    Some((machine.wire, name, next))
+}
+
+fn read_process(
+    tokens: &[Token],
+    index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let (mut process, next) = read_object(tokens, index, package, parsed)?;
+    let name = process.name.clone();
+    let mut steps = Vec::new();
+    let mut cursor = index;
+    while cursor < next {
+        if tokens[cursor].text != "step" {
+            cursor += 1;
+            continue;
+        }
+        let start = tokens[cursor].span.start;
+        cursor += 1;
+        let step_name = tokens.get(cursor)?.text.clone();
+        cursor += 1;
+        if tokens.get(cursor)?.text != ":" {
+            return None;
+        }
+        cursor += 1;
+        let step_kind = match tokens.get(cursor)?.text.as_str() {
+            "begin" => "command".to_owned(),
+            step_kind => step_kind.to_owned(),
+        };
+        cursor += 1;
+        let mut consumes = Vec::new();
+        let mut emits = Vec::new();
+        while tokens.get(cursor)?.text != ";" {
+            let member = match tokens[cursor].text.as_str() {
+                "consumes" => Some(&mut consumes),
+                "emits" => Some(&mut emits),
+                _ => None,
+            };
+            if let Some(values) = member {
+                cursor += 1;
+                while tokens.get(cursor)?.text != ";"
+                    && tokens.get(cursor)?.text != "consumes"
+                    && tokens.get(cursor)?.text != "emits"
+                {
+                    if tokens.get(cursor)?.text != "," {
+                        values.push(format!("ix://{package}/{}", tokens[cursor].text));
+                    }
+                    cursor += 1;
+                }
+            } else {
+                cursor += 1;
+            }
+        }
+        let end = tokens[cursor].span.end;
+        steps.push(json!({
+            "identity": format!("ix://{package}/{name}/{step_name}"),
+            "name": step_name,
+            "stepKind": step_kind,
+            "consumes": consumes,
+            "emits": emits,
+            "origin": source_origin(parsed, Span { start, end }),
+        }));
+        cursor += 1;
+    }
+    process.wire["kind"]["name"] = json!("process");
+    process.wire["identityFields"] = json!([]);
+    process.wire["supertypes"] = json!([]);
+    process.wire["steps"] = json!(steps);
+    Some((process.wire, name, next))
+}
+
+fn read_store(
+    tokens: &[Token],
+    index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let (mut store, next) = read_object(tokens, index, package, parsed)?;
+    let name = store.name.clone();
+    let mut cursor = index + 2;
+    if tokens.get(cursor)?.text != "persists" {
+        return None;
+    }
+    cursor += 1;
+    let mut persists = Vec::new();
+    while tokens.get(cursor)?.text != "{" {
+        if tokens.get(cursor)?.text != "," {
+            persists.push(format!("ix://{package}/{}", tokens[cursor].text));
+        }
+        cursor += 1;
+    }
+    store.wire["kind"]["name"] = json!("store");
+    store.wire["identityFields"] = json!([]);
+    store.wire["supertypes"] = json!([]);
+    store.wire["fields"] = json!([]);
+    store.wire["relationships"] = json!([]);
+    store.wire["persists"] = json!(persists);
+    Some((store.wire, name, next))
+}
+
 fn read_dimension(
     tokens: &[Token],
     mut index: usize,
@@ -1840,8 +2107,38 @@ fn read_operation(
     index += 1;
     let name = tokens.get(index)?.text.clone();
     index += 1;
+    if tokens.get(index)?.text != "(" {
+        return None;
+    }
+    index += 1;
+    let mut params = Vec::new();
     while tokens.get(index)?.text != ")" {
+        if tokens.get(index)?.text == "," {
+            index += 1;
+            continue;
+        }
+        let parameter_start = tokens.get(index)?.span.start;
+        let parameter_name = tokens.get(index)?.text.clone();
         index += 1;
+        if tokens.get(index)?.text != ":" {
+            return None;
+        }
+        index += 1;
+        let type_name = tokens.get(index)?.text.clone();
+        index += 1;
+        let (reference, next) = read_member_type_ref(tokens, index - 1, &type_name, package)?;
+        index = next;
+        let parameter_end = tokens.get(index.saturating_sub(1))?.span.end;
+        params.push(json!({
+            "identity": format!("ix://{package}/{owner}/{name}/{parameter_name}"),
+            "name": parameter_name,
+            "typeRef": reference,
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": source_origin(parsed, Span { start: parameter_start, end: parameter_end }),
+        }));
+        if tokens.get(index)?.text != ")" && tokens.get(index)?.text != "," {
+            return None;
+        }
     }
     index += 1;
     let returns = if tokens.get(index).is_some_and(|token| token.text == ":") {
@@ -1855,7 +2152,7 @@ fn read_operation(
             index += 1;
         }
         Some(json!({
-            "typeRef": type_ref(&type_name, package),
+        "typeRef": type_ref(&type_name, package),
             "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
             "nullable": false,
         }))
@@ -1907,7 +2204,7 @@ fn read_operation(
     index += 1;
     let mut operation = json!({
         "identity": format!("ix://{package}/{owner}/{name}"),
-        "name": name, "params": [], "pre": [], "post": [],
+        "name": name, "params": params, "pre": [], "post": [],
         "origin": source_origin(parsed, Span { start, end }),
         "frame": {"modifies": [], "modifies_receiver": modifies_receiver, "creates": creates, "deletes": deletes},
     });
@@ -1985,6 +2282,22 @@ fn type_ref(type_name: &str, package: &str) -> String {
         _ => return format!("ix://{package}/{type_name}"),
     };
     format!("ix://filament/native/{native}")
+}
+
+fn read_member_type_ref(
+    tokens: &[Token],
+    index: usize,
+    type_name: &str,
+    package: &str,
+) -> Option<(String, usize)> {
+    if type_name == "Reference" && tokens.get(index + 1)?.text == "<" {
+        let target = tokens.get(index + 2)?.text.as_str();
+        if tokens.get(index + 3)?.text != ">" {
+            return None;
+        }
+        return Some((type_ref(target, package), index + 4));
+    }
+    Some((type_ref(type_name, package), index + 1))
 }
 
 fn source_origin(parsed: &ParsedSource, span: Span) -> Value {

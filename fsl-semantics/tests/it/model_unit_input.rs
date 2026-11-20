@@ -501,3 +501,75 @@ allocate Alloc from pump to pump;
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_state_machine() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/machines";
+event Placed { at: Timestamp; occurs at; }
+machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("state machine model compiles");
+    let (_, document) = admit(
+        "example/machines",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the state machine");
+    let records = read_records("example/machines", &document).expect("machine is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::StateMachine(_)
+        )
+    }));
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_process() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/processes";
+event Placed { at: Timestamp; occurs at; }
+process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("process model compiles");
+    let (_, document) = admit(
+        "example/processes",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the process");
+    let records = read_records("example/processes", &document).expect("process is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Process(_)
+        )
+    }));
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_persistence_interface() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/stores";
+object Node { value: Integer; }
+store Nodes persists Node { operation save(n: Reference<Node>); }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("store model compiles");
+    let (_, document) = admit(
+        "example/stores",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the store");
+    let records = read_records("example/stores", &document).expect("store is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::PersistenceInterface(_)
+        )
+    }));
+}
