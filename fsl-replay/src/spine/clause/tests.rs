@@ -38,14 +38,14 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use super::{
-    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunRequest,
-    ClauseRunSelection, ClauseRunSource, ClauseRunStage, ProgramBatchItemResult,
-    ProgramBatchSelection, ProgramCompilationRequest, ValueInvariantsBatchRequest,
-    admit_clause_observations, run_clause, run_program_batch_with_compile,
+    admit_clause_observations, run_clause, run_program_batch_with_compile, ClauseArgument,
+    ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunRequest, ClauseRunSelection,
+    ClauseRunSource, ClauseRunStage, ProgramBatchItemResult, ProgramBatchSelection,
+    ProgramCompilationRequest, ValueInvariantsBatchRequest,
 };
 use crate::spine::Call;
 use crate::spine::{
-    CompileRefusal, ComposedUnit, DependencyInput, SpineLimits, SuppliedLibrary, default_accounting,
+    default_accounting, CompileRefusal, ComposedUnit, DependencyInput, SpineLimits, SuppliedLibrary,
 };
 
 // Keep the oracle where the private fixture's actual package input is owned.
@@ -1207,9 +1207,8 @@ fn boolean_function_claim_round_trips_as_tested() {
     );
     let report = run_clause(request).expect("the claim selection is formed");
 
-    let item =
-        crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
-            .expect("a successful claim is an outcome item");
+    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), "isPositive", &report)
+        .expect("a successful claim is an outcome item");
     assert_eq!(item.result(), crate::ItemLabel::Tested);
     let item = serde_json::to_value(item).expect("the tested item serializes");
     assert!(item.get("diagnostic").is_none());
@@ -1334,11 +1333,9 @@ fn run_clause_writes_the_caller_budget_fields_of_a_compile_ceiling() {
     assert_eq!(refusal["fields"]["kind"], "input-bytes-exceeded");
     assert_eq!(refusal["fields"]["bound"], "1");
     assert_eq!(refusal["fields"]["setting"], "intake.input_bytes");
-    assert!(
-        refusal["fields"]["actual"]
-            .as_str()
-            .is_some_and(|actual| actual != "1")
-    );
+    assert!(refusal["fields"]["actual"]
+        .as_str()
+        .is_some_and(|actual| actual != "1"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1727,8 +1724,8 @@ fn config_version_domain_document_with_operations(
 /// at all ("Today FSL emits no `state` node",
 /// `spec/functional/FR-105-emit-state-nodes.md`). `VersionUnchanged` below
 /// is that postcondition, now reachable through `run_clause` end to end.
-pub(crate) fn config_version_unit_and_packages()
--> (String, fsl_semantics::model::intake::PackageInput) {
+pub(crate) fn config_version_unit_and_packages(
+) -> (String, fsl_semantics::model::intake::PackageInput) {
     config_version_unit_and_packages_for(config_version_domain_document())
 }
 
@@ -2152,9 +2149,7 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
                 fsl_foundation::diagnostic::Code::IncompletePopulation.as_str()
             );
         }
-        other => {
-            panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}")
-        }
+        other => panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}"),
     }
     assert_eq!(
         report.disposition.category(),
@@ -4466,11 +4461,9 @@ fn s4_state_clause_and_anchor_dependencies_beyond_the_frame() {
     else {
         unreachable!("the find above matched an application body");
     };
-    let [
-        fsl_semantics::check::MemberTerm::Leaf(fsl_semantics::check::LeafTerm::Reference {
-            target: receiver,
-        }),
-    ] = arguments.as_slice()
+    let [fsl_semantics::check::MemberTerm::Leaf(fsl_semantics::check::LeafTerm::Reference {
+        target: receiver,
+    })] = arguments.as_slice()
     else {
         panic!("the field read has one argument, a reference to its receiver, got {arguments:?}");
     };
@@ -4775,13 +4768,11 @@ fn s4_renaming_parent_order_changes_no_node_id() {
         node_keys(&renamed),
         "renaming a clause changes no node id"
     );
-    assert!(
-        renamed
-            .package
-            .graph()
-            .state_clause("ParentOrder")
-            .is_none()
-    );
+    assert!(renamed
+        .package
+        .graph()
+        .state_clause("ParentOrder")
+        .is_none());
     assert_eq!(
         renamed
             .package
@@ -5192,10 +5183,8 @@ fn tc_792_a_reference_completion_is_not_a_clause_truth() {
         disposition["internal_fault"]["invariant"],
         "clause-completes-reference"
     );
-    assert!(
-        disposition
-            .get("truth")
-            .is_none_or(serde_json::Value::is_null)
-    );
+    assert!(disposition
+        .get("truth")
+        .is_none_or(serde_json::Value::is_null));
     assert!(disposition.get("outcome").is_none());
 }
