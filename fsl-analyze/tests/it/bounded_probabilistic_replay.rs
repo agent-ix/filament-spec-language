@@ -158,11 +158,13 @@ fn full_key_source_and_semantic_cylinder_mutations_never_reproduce() {
     changed.binding = None;
     no_token(&world, &changed);
     let mut changed = original.clone();
-    changed.paths[0].steps[0].draw = vec![Value::Boolean(false)];
+    changed.paths[0].steps[0].draw = Some(vec![Value::Boolean(false)]);
     no_token(&world, &changed);
     let mut changed = original.clone();
     changed.paths[0].steps[0]
         .action
+        .as_mut()
+        .unwrap()
         .operation
         .push_str("-disabled");
     no_token(&world, &changed);
@@ -312,7 +314,7 @@ fn rekey(world: &World, name: &str, witness: &mut ProbabilisticCounterexample) {
         let mut previous = key(&witness.initial, control, &monitor);
         witness.initial_key = previous.clone();
         for step in &mut path.steps {
-            scheduler.insert(previous, step.action.clone());
+            scheduler.insert(previous, step.choice.clone());
             control = monitor.step(control, read(&step.post)).unwrap();
             step.post_key = key(&step.post, control, &monitor);
             previous = step.post_key.clone();
@@ -430,7 +432,7 @@ fn all_workload_first_hit_cylinders_have_exact_mass_fifty_five_over_sixty_four()
             } else {
                 &path.steps[length - 1].post
             };
-            let identity = &path.steps[length].action;
+            let identity = path.steps[length].action.as_ref().unwrap();
             let action = system
                 .actions(state)
                 .unwrap()
@@ -446,9 +448,12 @@ fn all_workload_first_hit_cylinders_have_exact_mass_fifty_five_over_sixty_four()
             let (transition, post) = draw.successors.into_iter().next().unwrap();
             let mut steps = path.steps[..length].to_vec();
             steps.push(fsl_replay::ProbabilityWitnessStep {
-                action: identity.clone(),
-                transition,
-                draw: draw.random,
+                choice: fsl_replay::ProductAction::Identity(
+                    fsl_replay::Schedule::of(&system, identity).unwrap(),
+                ),
+                action: Some(identity.clone()),
+                transition: Some(transition),
+                draw: Some(draw.random),
                 post,
                 post_key: failures.initial_key.clone(),
                 elapsed: ratio(0, 1),
@@ -458,7 +463,7 @@ fn all_workload_first_hit_cylinders_have_exact_mass_fifty_five_over_sixty_four()
                     && previous.steps.iter().zip(&steps).all(|(a, b)| {
                         a.action == b.action
                             && a.transition == b.transition
-                            && fsl_eval::simulation::model::same_values(&a.draw, &b.draw)
+                            && a.draw == b.draw
                     })
             }) {
                 accepting
@@ -559,7 +564,12 @@ fn a_decided_initial_path_cannot_continue_and_policy_keys_keep_horizons_distinct
         .unwrap()
         .unwrap()
         .into_iter()
-        .find(|action| action.identity != witness.paths[0].steps[1].action)
+        .find(|action| {
+            witness.paths[0].steps[1]
+                .action
+                .as_ref()
+                .is_some_and(|identity| action.identity != *identity)
+        })
         .unwrap();
     let draw = action
         .draws
@@ -568,9 +578,12 @@ fn a_decided_initial_path_cannot_continue_and_policy_keys_keep_horizons_distinct
         .unwrap();
     let (transition, post) = draw.successors.into_iter().next().unwrap();
     let step = &mut witness.paths[0].steps[1];
-    step.action = action.identity;
-    step.draw = draw.random;
-    step.transition = transition;
+    step.choice = fsl_replay::ProductAction::Identity(
+        fsl_replay::Schedule::of(&system, &action.identity).unwrap(),
+    );
+    step.action = Some(action.identity);
+    step.draw = Some(draw.random);
+    step.transition = Some(transition);
     step.post = post;
     rekey(&varying, "Min", &mut witness);
     assert_eq!(witness.scheduler.len(), 2);
@@ -710,6 +723,8 @@ fn an_exact_engine_value_cannot_settle_refuted_after_bounded_replay_disagrees() 
                 } else {
                     witness.paths[0].steps[0]
                         .action
+                        .as_mut()
+                        .unwrap()
                         .operation
                         .push_str("-disabled");
                 }
