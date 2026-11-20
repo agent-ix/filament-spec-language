@@ -55,6 +55,7 @@ mod call_replay_context_items;
 mod call_requirements_items;
 mod check_imports;
 mod checked_clause_kind_unique;
+mod checked_package_state_core;
 #[cfg(feature = "checked-handoff")]
 mod checker_value_boundaries;
 mod clock_derivation;
