@@ -1,4 +1,4 @@
 language "ix:native" edition "1-draft";
-profile v = "filament.model.complete/v1";
+profile s = "filament.state.core/v1";
 model Shop = "example/shop";
-invariant I using v on Shop::Order at current { self.total / 2 = rational(1, 1) }
+invariant I using s on Shop::Order at current { 7 / 3 = rational(7, 3) }

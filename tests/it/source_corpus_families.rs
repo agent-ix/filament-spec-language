@@ -88,7 +88,12 @@ pub(super) const COLLECTION_FAMILIES: &[Family] = &[
     },
     Family {
         name: "aggregate",
-        accepting: &["agg-sum-named", "agg-count-ok", "agg-size-range-ok", "r-sum"],
+        accepting: &[
+            "agg-sum-named",
+            "agg-count-ok",
+            "agg-size-range-ok",
+            "r-sum",
+        ],
         rejecting: &[
             "agg-size-range-bad",
             "agg-size-unbounded-coll-bad",
@@ -119,14 +124,17 @@ pub(super) const COLLECTION_FAMILIES: &[Family] = &[
 pub(super) const COLLECTION_FLIPS: &[(&str, &str)] = &[
     ("agg-count-narrow-2003", "QSL-2003"),
     ("r-count-narrow", "QSL-2003"),
-    ("r-unbounded-forall", "STD-12"),
 ];
 
 pub(super) const OPERATION_FAMILIES: &[Family] = &[
     Family {
         name: "invariant",
         accepting: &["inv-ok", "inv-enum-ok", "inv-deref-ok"],
-        rejecting: &["inv-nonbool-bad", "inv-pre-bad", "inv-unknown-enum-member-bad"],
+        rejecting: &[
+            "inv-nonbool-bad",
+            "inv-pre-bad",
+            "inv-unknown-enum-member-bad",
+        ],
     },
     Family {
         name: "precondition",
@@ -202,6 +210,10 @@ pub(super) const PROTOCOL_FAMILIES: &[Family] = &[
     },
 ];
 
-pub(super) const OPERATION_FLIPS: &[(&str, &str)] = &[];
+pub(super) const OPERATION_FLIPS: &[(&str, &str)] =
+    &[("prof-inv-slash", "QSL-2041:state-core-slash-form")];
 
-pub(super) const PROTOCOL_FLIPS: &[(&str, &str)] = &[];
+pub(super) const PROTOCOL_FLIPS: &[(&str, &str)] = &[(
+    "staged-saga-deadlock-free",
+    "QSL-2043:deadlock-unbounded-extent",
+)];

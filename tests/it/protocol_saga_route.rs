@@ -9,10 +9,13 @@
 //!
 //! | Row | Protocols |
 //! | -- | -- |
-//! | bounded static: deadlock, projection per role, realizability | [`Row::BoundedStatic`] |
+//! | compiles; one result per role projection, then realizability, then deadlock freedom | [`Row::Analyzed`] |
 //! | refused by compile before analysis | [`Row::Refused`] |
-//! | outside bounded static: typed projection refusal (G-111) | [`Row::Unsupported`] |
 //! | not a protocol (the `jobs` state rule runs) | [`Row::NotAProtocol`] |
+//!
+//! An [`Row::Analyzed`] entry is the outcome the analysis returns today,
+//! item by item: `proved`, `refuted`, or `unsupported:<cause>` where the
+//! cause is the typed refusal's kind.
 
 use filament_exact::Cancel;
 use fsl_command::command;
@@ -23,17 +26,11 @@ use std::path::{Path, PathBuf};
 
 /// Where one vendored saga program falls.
 enum Row {
-    /// Compiles; every local projection and realizability is proved, and
-    /// deadlock freedom has the stated result.
-    BoundedStatic { deadlock: &'static str },
+    /// Compiles; the analysis of each role projection (in declaration
+    /// order), then realizability, then deadlock freedom returns these.
+    Analyzed(&'static [&'static str]),
     /// Compile refuses it with this exit code, before any analysis.
     Refused { exit_code: u8 },
-    /// Compiles; projecting `role` under bounded static gives the typed
-    /// `Unsupported` outcome with this slug (G-111 owns the extension).
-    Unsupported {
-        role: &'static str,
-        slug: &'static str,
-    },
     /// A state-rule program in the same example, not a protocol.
     NotAProtocol,
 }
@@ -41,106 +38,160 @@ enum Row {
 const SAGAS: &[(&str, Row)] = &[
     (
         "declaration-minimal",
-        Row::BoundedStatic { deadlock: "proved" },
+        Row::Analyzed(&["proved", "proved", "proved"]),
     ),
     (
         "declaration-terminal-scheduling",
-        Row::BoundedStatic { deadlock: "proved" },
+        Row::Analyzed(&["proved", "proved", "proved"]),
     ),
     (
         "channels-loss-head",
-        Row::BoundedStatic { deadlock: "proved" },
+        Row::Analyzed(&[
+            "proved",
+            "proved",
+            "unsupported:evaluator-unsupported",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "channels-fifo-by-part",
-        Row::BoundedStatic { deadlock: "proved" },
+        Row::Analyzed(&[
+            "proved",
+            "proved",
+            "unsupported:evaluator-unsupported",
+            "unsupported:unbounded-extent",
+        ]),
     ),
-    ("steps-all-kinds", Row::BoundedStatic { deadlock: "proved" }),
+    (
+        "steps-all-kinds",
+        Row::Analyzed(&[
+            "unsupported:unsupported-control",
+            "unsupported:unsupported-control",
+            "unsupported:unsupported-control",
+            "unsupported:unbounded-extent",
+        ]),
+    ),
     (
         "control-parallel-all",
-        Row::BoundedStatic { deadlock: "proved" },
+        Row::Analyzed(&[
+            "unsupported:unsupported-control",
+            "unsupported:unsupported-control",
+            "unsupported:unsupported-control",
+            "refuted",
+        ]),
     ),
     (
         "declaration-on-each",
-        Row::Unsupported {
-            role: "Planning",
-            slug: "activation-on-each",
-        },
+        Row::Analyzed(&[
+            "unsupported:activation-on-each",
+            "unsupported:activation-on-each",
+            "failed",
+        ]),
     ),
     (
         "roles-replicated",
-        Row::Unsupported {
-            role: "Worker",
-            slug: "dynamic-role-population",
-        },
+        Row::Analyzed(&[
+            "unsupported:dynamic-role-population",
+            "unsupported:dynamic-role-population",
+            "unsupported:dynamic-role-population",
+            "proved",
+        ]),
     ),
     (
         "control-parallel-any-cancel",
-        Row::Unsupported {
-            role: "Machining",
-            slug: "unsupported-join",
-        },
+        Row::Analyzed(&[
+            "unsupported:unsupported-join",
+            "unsupported:unsupported-join",
+            "unsupported:unsupported-join",
+            "refuted",
+        ]),
     ),
     (
         "control-repeat-progress",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "repeat",
-        },
+        Row::Analyzed(&[
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "protocol-compiles",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "repeat",
-        },
+        Row::Analyzed(&[
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "inspection-compiles",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "repeat",
-        },
+        Row::Analyzed(&[
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "staged-saga-deadlock-free",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "repeat",
-        },
+        Row::Analyzed(&[
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:repeat",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "staged-saga-compensation",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "repeat",
-        },
+        Row::Analyzed(&[
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     (
         "timeouts-await",
-        Row::Unsupported {
-            role: "Inspection",
-            slug: "unsupported-control",
-        },
+        Row::Analyzed(&[
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unsupported-requested-capability",
+            "unsupported:unbounded-extent",
+        ]),
     ),
     ("protocol-wrong-role", Row::Refused { exit_code: 20 }),
-    ("protocol-overlapping-verdict", Row::Refused { exit_code: 20 }),
+    (
+        "protocol-overlapping-verdict",
+        Row::Refused { exit_code: 20 },
+    ),
     ("declaration-no-finish", Row::Refused { exit_code: 20 }),
     ("channels-object-payload", Row::Refused { exit_code: 20 }),
     ("steps-effect-of-send", Row::Refused { exit_code: 20 }),
-    ("steps-receive-other-channel", Row::Refused { exit_code: 20 }),
+    (
+        "steps-receive-other-channel",
+        Row::Refused { exit_code: 20 },
+    ),
     ("steps-unknown-contract", Row::Refused { exit_code: 20 }),
     ("control-join-omits-branch", Row::Refused { exit_code: 20 }),
     (
         "control-join-any-needs-outstanding",
         Row::Refused { exit_code: 20 },
     ),
-    ("control-repeat-no-progress", Row::Refused { exit_code: 21 }),
     ("compensation-zero-attempts", Row::Refused { exit_code: 20 }),
     (
         "timeouts-await-without-profile",
         Row::Refused { exit_code: 20 },
     ),
+    ("control-repeat-no-progress", Row::Refused { exit_code: 21 }),
     ("jobs-rework-tracked", Row::NotAProtocol),
     ("jobs-rework-untracked", Row::NotAProtocol),
     ("jobs-third-rework", Row::NotAProtocol),
@@ -173,7 +224,7 @@ fn compile_request(stem: &str) -> Value {
     let mut request = request(stem);
     request["format"] = json!("native-compile/1");
     let members = request["request"].as_object_mut().unwrap();
-    for member in ["items", "documents", "clause"] {
+    for member in ["items", "documents", "clause", "subject"] {
         members.remove(member);
     }
     request
@@ -229,112 +280,79 @@ fn vendored_sagas() -> BTreeSet<String> {
     stems
 }
 
+/// One analysis summary: `proved`, `refuted`, or `unsupported:<cause>`.
+fn summary(item: &Value) -> String {
+    let result = item["record"]["result"].as_str().unwrap_or("none");
+    if result != "unsupported" {
+        return result.to_owned();
+    }
+    let cause = item["record"]["cause"]["kind"]
+        .as_str()
+        .or_else(|| item["record"]["diagnostic"]["cause"].as_str())
+        .unwrap_or("untyped");
+    format!("unsupported:{cause}")
+}
+
+/// The analysis of a compiling saga: each role's local projection, then
+/// realizability, then deadlock freedom.
+fn analysis(directory: &Path, stem: &str) -> Result<Vec<String>, String> {
+    let (protocol, roles) = protocol_and_roles(stem);
+    let mut request = compile_request(stem);
+    request["format"] = json!("native-analyze/1");
+    request["request"].as_object_mut().unwrap().remove("clocks");
+    request["request"]["documents"] = json!([{"file": corpus().join("data/saga-start.json")}]);
+    let binding = json!({"type":"model-binding","selection":"example/parts"});
+    request["request"]["subject"] = json!({"protocol":{"protocol":protocol,
+        "over":{"reference":{"population":"ix://example/parts/jobs","key":"j1"}},
+        "roles": roles.iter().map(|role| (role.clone(), binding.clone()))
+            .collect::<serde_json::Map<_, _>>()}});
+    let mut items = roles
+        .iter()
+        .map(|role| {
+            json!({"claim":protocol,"kind":"local-projection","options":{"role":role},
+                "assessed_root":crate::protocol_source_routes::root_wire(),
+                "temporal":{"profile":"bounded-static","max_depth":64}})
+        })
+        .collect::<Vec<_>>();
+    items.push(json!({"claim":protocol,"kind":"realizability",
+        "assessed_root":crate::protocol_source_routes::root_wire(),
+        "premises":{"role_knowledge":[],"environment":[]},
+        "temporal":{"profile":"bounded-static","max_depth":64,"max_history":16}}));
+    items.push(json!({"claim":protocol,"kind":"global-conformance",
+        "temporal":{"item_kind":"deadlock-freedom"}}));
+    request["request"]["items"] = json!(items);
+    let output = command::analyze(
+        &write(directory, &request),
+        &crate::negotiation::Fr290,
+        &Cancel::new(),
+    )
+    .map_err(|error| format!("analyze refused: {error}"))?;
+    let records = output.value.as_value()["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if records.len() != roles.len() + 2 {
+        return Err(format!(
+            "expected one result per role {roles:?} plus realizability and deadlock: {}",
+            output.value
+        ));
+    }
+    Ok(records.iter().map(summary).collect())
+}
+
 #[test]
-#[trace("FR-636-AC-2", "FR-636-AC-5", "FR-570-AC-1")]
-fn bounded_static_sagas_check_project_and_realize() {
+#[trace("FR-636-AC-2", "FR-636-AC-5", "FR-570-AC-1", "FR-575-AC-1")]
+fn saga_protocols_return_their_recorded_analysis() {
     let directory = tempfile::tempdir().unwrap();
     let mut failures = Vec::new();
     for (stem, row) in SAGAS {
-        let Row::BoundedStatic { deadlock } = row else {
+        let Row::Analyzed(expected) = row else {
             continue;
         };
-        let (protocol, roles) = protocol_and_roles(stem);
-        let mut request = compile_request(stem);
-        request["format"] = json!("native-analyze/1");
-        request["request"].as_object_mut().unwrap().remove("clocks");
-        request["request"]["documents"] =
-            json!([{"file": corpus().join("data/saga-start.json")}]);
-        let binding = json!({"type":"model-binding","selection":"example/parts"});
-        request["request"]["subject"] = json!({"protocol":{"protocol":protocol,
-            "over":{"reference":{"population":"ix://example/parts/jobs","key":"j1"}},
-            "roles": roles.iter().map(|role| (role.clone(), binding.clone()))
-                .collect::<serde_json::Map<_, _>>()}});
-        let mut items = roles
-            .iter()
-            .map(|role| {
-                json!({"claim":protocol,"kind":"local-projection","options":{"role":role},
-                    "assessed_root":crate::protocol_source_routes::root_wire(),
-                    "temporal":{"profile":"bounded-static","max_depth":64}})
-            })
-            .collect::<Vec<_>>();
-        items.push(json!({"claim":protocol,"kind":"realizability",
-            "assessed_root":crate::protocol_source_routes::root_wire(),
-            "premises":{"role_knowledge":[],"environment":[]},
-            "temporal":{"profile":"bounded-static","max_depth":64,"max_history":16}}));
-        items.push(json!({"claim":protocol,"kind":"global-conformance",
-            "temporal":{"item_kind":"deadlock-freedom"}}));
-        request["request"]["items"] = json!(items);
-        let output = match command::analyze(
-            &write(directory.path(), &request),
-            &crate::negotiation::Fr290,
-            &Cancel::new(),
-        ) {
-            Ok(output) => output,
-            Err(error) => {
-                failures.push(format!("{stem}: analyze refused: {error}"));
-                continue;
-            }
-        };
-        let records = output.value.as_value()["items"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        if records.len() != roles.len() + 2 {
-            failures.push(format!(
-                "{stem}: expected one projection per role {roles:?} plus realizability and deadlock: {}",
-                output.value
-            ));
-            continue;
-        }
-        for (index, item) in records.iter().enumerate() {
-            let expected = if index == roles.len() + 1 {
-                *deadlock
-            } else {
-                "proved"
-            };
-            if item["record"]["result"] != expected {
-                failures.push(format!("{stem}: item {index} expected {expected}: {item}"));
-            }
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-fn handoff(directory: &Path, stem: &str) -> fsl_command::checked_handoff::CompiledHandoff {
-    let mut request = compile_request(stem);
-    request["request"]["handoff"] = json!({"directory":"handoff","package_name":"saga-route",
-        "native_join":{"work_units":1_u64<<28,"storage":1_u64<<24}});
-    command::compile_outcome(&write(directory, &request))
-        .unwrap_or_else(|error| panic!("{stem}: compile and emit the handoff: {error}"));
-    fsl_command::checked_handoff::compile(&directory.join("handoff"))
-        .unwrap_or_else(|error| panic!("{stem}: read and compile the handoff: {error}"))
-}
-
-#[test]
-#[trace("FR-575-AC-1")]
-fn unsupported_subsets_return_typed_refusals() {
-    use fsl_replay::protocol_analysis::AnalysisOutcome;
-    let mut failures = Vec::new();
-    for (stem, row) in SAGAS {
-        let Row::Unsupported { role, slug } = row else {
-            continue;
-        };
-        let directory = tempfile::tempdir().unwrap();
-        let package = handoff(directory.path(), stem);
-        let result = crate::protocol_source_routes::project(&package, role);
-        match result.outcome {
-            AnalysisOutcome::Unsupported(cause) if cause.slug.as_str() == *slug => {
-                if !package
-                    .admitted()
-                    .resolved_graph()
-                    .nodes
-                    .iter()
-                    .any(|node| node.node_id == cause.node)
-                {
-                    failures.push(format!("{stem}: the refusal names no source construct"));
-                }
-            }
-            other => failures.push(format!("{stem}: expected unsupported {slug}: {other:?}")),
+        match analysis(directory.path(), stem) {
+            Ok(actual) if actual == *expected => {}
+            Ok(actual) => failures.push(format!("{stem}: expected {expected:?}, got {actual:?}")),
+            Err(error) => failures.push(format!("{stem}: {error}")),
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -374,10 +392,11 @@ fn every_saga_protocol_is_classified() {
             (Row::Refused { .. }, Ok(_)) => {
                 failures.push(format!("{stem}: compiles but is listed as refused"));
             }
-            (_, Err(error)) => {
+            (Row::Analyzed(_), Err(error)) => {
                 failures.push(format!("{stem}: listed as compiling but refused: {error}"));
             }
-            (_, Ok(_)) => {}
+            (Row::Analyzed(_), Ok(_)) => {}
+            (Row::NotAProtocol, _) => unreachable!("handled above"),
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

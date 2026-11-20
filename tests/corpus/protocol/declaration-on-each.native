@@ -5,7 +5,7 @@ model Parts = "example/parts";
 
 // One instance for each work order that is ready.
 protocol PartFlow using p over (job: Parts::Job) on each (order: Parts::WorkOrder) when (order.ok) {
-  capture part : Integer = job.part;
+  capture partNo : Integer = job.part;
   role Planning on Parts::PlanningService;
   run sequence Main {}
   finish Over as (closing: Parts::ClosureView) { closing.complete };
