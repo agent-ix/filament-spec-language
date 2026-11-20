@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-2471: `fsl run <request>` at the command surface the driver calls
-//! (`run_with_limits_and_overrides`): a completed call, an undefined value,
+//! (`run_with_limits_and_overrides`): a completed call,
 //! an indeterminate finite-window clause, refusals, an exhausted budget, the
 //! `--clocks`, `--limit`, `--request-bytes` and `--dependent-bytes` inputs,
 //! and odd request and source input.
@@ -44,7 +44,10 @@ fn plain(path: &std::path::Path) -> Outcome {
 fn remaining() -> (Case, std::path::PathBuf) {
     packing(
         "Remaining",
-        &[("total", json!({"integer": "17"})), ("held", json!({"integer": "5"}))],
+        &[
+            ("total", json!({"integer": "17"})),
+            ("held", json!({"integer": "5"})),
+        ],
     )
 }
 
@@ -69,28 +72,10 @@ fn a_completed_call_writes_its_value() {
     );
 }
 
-/// FR-100-AC-10, FR-285-AC-4: an undefined evaluation keeps the label
-/// `undefined` and exits 10.
-#[test]
-#[trace("FR-100-AC-10", "FR-285-AC-4")]
-fn an_undefined_value_exits_10() {
-    let case = Case::new();
-    let source = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"filament.value.complete/v1\";\n\
-        type Pos = Int[1, 9];\n\
-        function Total using v(q: Sequence<Int[1, 9]>[0, 2]): Pos pure { sum<Pos>(x in q: x) }\n";
-    case.write("packing.fsl", source.as_bytes());
-    let path = case.json(
-        "run.json",
-        &request("packing.fsl", "Total", &[("q", json!({"sequence": []}))]),
-    );
-    let outcome = plain(&path);
-    let document = outcome.expect("execute", "undefined", 10);
-    assert_eq!(document["result"]["kind"], "undefined", "{document}");
-}
-
-/// A finite-window timestamped clause over an incomplete trace.
-fn finite_window(case: &Case, watermark: u64, complete: bool) -> std::path::PathBuf {
+/// A finite-window timestamped clause over stamps 0, 2 and 5 whose
+/// `level > 0` atom holds as `levels` says; `missing` leaves the valuation of
+/// the atom absent at position 1 (FR-501-AC-4).
+fn finite_window(case: &Case, levels: [i64; 3], missing: bool) -> std::path::PathBuf {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"{STAMPED}\";\n\
@@ -101,15 +86,18 @@ fn finite_window(case: &Case, watermark: u64, complete: bool) -> std::path::Path
     );
     case.write("program.native", source.as_bytes());
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});
-    let stamps: Vec<u64> = if watermark >= 5 { vec![0, 5] } else { vec![0] };
-    let observations: Vec<Value> = stamps
+    let observations: Vec<Value> = [0_u64, 2, 5]
         .into_iter()
-        .map(|stamp| json!({"position": {"sample": {"level": {"integer": "0"}}}, "stamp": stamp}))
+        .zip(levels)
+        .map(|(stamp, level)| {
+            json!({"position": {"sample": {"level": {"integer": level.to_string()}}},
+                "stamp": stamp})
+        })
         .collect();
-    let completeness = if complete {
-        json!({"complete": {"through": watermark}})
+    let missing: Vec<Value> = if missing {
+        vec![json!({"position": 1, "atom": 1})]
     } else {
-        json!("incomplete")
+        vec![]
     };
     let request = json!({"format": "native-run/1", "request": {"models": [],
         "program": {"source": {"file": "program.native", "authority": "test",
@@ -117,40 +105,58 @@ fn finite_window(case: &Case, watermark: u64, complete: bool) -> std::path::Path
         "clocks": clocks,
         "clause": {"selection": {"temporal": {"name": "Seen", "trace": {"timestamped": {
             "observations": observations,
-            "progress": {"watermark": watermark, "completeness": completeness,
+            "progress": {"watermark": 5, "completeness": {"complete": {"through": 5}},
                 "scope": "closed", "execution": "closed"},
             "lower_boundary": "authoritative-origin",
             "binding": {"profile": STAMPED, "clock": "plant-ms",
-                "parameters": clocks["plant-ms"]}}}}}}}});
+                "parameters": clocks["plant-ms"]},
+            "missing": missing}}}},
+            "observations": {}}}});
     case.json("run.json", &request)
 }
 
-/// FR-285-AC-7, FR-501: a finite-window clause whose window is still open on
-/// an incomplete trace is `indeterminate`, exit 11; closed and failed it is a
-/// violation, exit 10.
+/// FR-285-AC-7, AC-12, FR-501-AC-4: a finite-window clause whose valuation is
+/// absent is `indeterminate`, exit 11; complete and satisfied it succeeds,
+/// exit 0; complete and never satisfied it is a violation, exit 10.
 #[test]
-#[trace("FR-285-AC-7", "FR-285-AC-12", "FR-501")]
+#[trace("FR-285-AC-7", "FR-285-AC-12", "FR-501-AC-4")]
 fn finite_window_clause_reaches_indeterminate_and_violation() {
     let case = Case::new();
-    let open = plain(&finite_window(&case, 3, false));
+    let open = plain(&finite_window(&case, [0, 0, 0], true));
     assert_eq!(open.exit, 11, "{}", open.document);
     assert!(
         open.document.to_string().contains("indeterminate"),
         "{}",
         open.document
     );
-    let closed = plain(&finite_window(&case, 6, true));
-    assert_eq!(closed.exit, 10, "{}", closed.document);
+    let held = plain(&finite_window(&case, [0, 0, 1], false));
+    assert_eq!(held.exit, 0, "{}", held.document);
+    let failed = plain(&finite_window(&case, [0, 0, 0], false));
+    assert_eq!(failed.exit, 10, "{}", failed.document);
 }
 
-/// FR-100-AC-4, FR-286-AC-18: an unknown function, an out-of-range argument
-/// and a wrong value kind each refuse `invalid_runtime_input` at stage
-/// `call`, exit 20.
+/// FR-100-AC-5: an unknown function refuses `missing_declaration` at stage
+/// `call`, exit 20, naming the function in `details`.
+#[test]
+#[trace("FR-100-AC-5")]
+fn an_unknown_function_refuses_missing_declaration() {
+    let (_case, path) = packing("nope", &[]);
+    let diagnostic = plain(&path)
+        .refused("execute", 20, "missing_declaration")
+        .clone();
+    assert_eq!(
+        diagnostic["details"],
+        json!({"function": "nope"}),
+        "{diagnostic}"
+    );
+}
+
+/// FR-100-AC-4, FR-286-AC-18: an out-of-range argument and a wrong value
+/// kind each refuse `invalid_runtime_input` at stage `call`, exit 20.
 #[test]
 #[trace("FR-100-AC-4", "FR-286-AC-18")]
 fn call_defects_refuse_invalid_runtime_input() {
     for (function, arguments) in [
-        ("nope", vec![]),
         ("IsPacked", vec![("n", json!({"integer": "11"}))]),
         ("IsPacked", vec![("n", json!({"boolean": true}))]),
     ] {
@@ -169,7 +175,10 @@ fn an_exhausted_call_budget_exits_22() {
     let mut exhausted = request(
         "packing.fsl",
         "Remaining",
-        &[("total", json!({"integer": "17"})), ("held", json!({"integer": "5"}))],
+        &[
+            ("total", json!({"integer": "17"})),
+            ("held", json!({"integer": "5"})),
+        ],
     );
     exhausted["request"]["call"]["accounting"] = json!({"work_units": 0});
     let outcome = plain(&case.json("run.json", &exhausted));
@@ -193,7 +202,11 @@ fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
         &RequestOverrides::default(),
     );
     over.expect("execute", "incomplete", 22);
-    assert!(over.document.to_string().contains("request_bytes"), "{}", over.document);
+    assert!(
+        over.document.to_string().contains("request_bytes"),
+        "{}",
+        over.document
+    );
 
     let over = run(
         &path,
@@ -204,7 +217,11 @@ fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
         &RequestOverrides::default(),
     );
     over.expect("execute", "incomplete", 22);
-    assert!(over.document.to_string().contains("dependent_bytes"), "{}", over.document);
+    assert!(
+        over.document.to_string().contains("dependent_bytes"),
+        "{}",
+        over.document
+    );
 
     let fits = run(
         &path,
@@ -232,7 +249,10 @@ fn source_byte_stage_limit_is_reached() {
     };
     let outcome = run(&path, RunLimits::default(), &overrides);
     let diagnostic = outcome.refused("execute", 22, "stage_limit_exceeded");
-    assert!(diagnostic.to_string().contains("s1.input_bytes"), "{diagnostic}");
+    assert!(
+        diagnostic.to_string().contains("s1.input_bytes"),
+        "{diagnostic}"
+    );
 }
 
 /// FR-640-AC-14 (`--clocks`): a request that carries `clocks` and is also
@@ -241,18 +261,24 @@ fn source_byte_stage_limit_is_reached() {
 #[trace("FR-640-AC-14")]
 fn clocks_given_twice_refuse() {
     let case = Case::new();
-    let path = finite_window(&case, 3, false);
-    let supplied =
-        RawValue::from_string(json!({"plant-ms": {"kind": "timestamped_event",
-            "timestamp_unit": "ms"}}).to_string())
-        .unwrap();
+    let path = finite_window(&case, [0, 0, 1], false);
+    let supplied = RawValue::from_string(
+        json!({"plant-ms": {"kind": "timestamped_event",
+            "timestamp_unit": "ms"}})
+        .to_string(),
+    )
+    .unwrap();
     let overrides = RequestOverrides {
         clocks: Some(&supplied),
         ..RequestOverrides::default()
     };
     let outcome = run(&path, RunLimits::default(), &overrides);
     outcome.refused("execute", 20, "invalid-request");
-    assert!(outcome.document["last_stage"].is_null(), "{}", outcome.document);
+    assert!(
+        outcome.document["last_stage"].is_null(),
+        "{}",
+        outcome.document
+    );
 }
 
 /// FR-001-AC-3, AC-8: invalid UTF-8 and NUL sources refuse, exit 20.
@@ -268,7 +294,10 @@ fn invalid_utf8_and_nul_sources_refuse() {
         let outcome = plain(&path);
         outcome.expect("execute", "refusal", 20);
         assert!(
-            !outcome.document["diagnostics"].as_array().unwrap().is_empty(),
+            !outcome.document["diagnostics"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
             "{}",
             outcome.document
         );

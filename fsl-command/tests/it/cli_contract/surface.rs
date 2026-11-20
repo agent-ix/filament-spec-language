@@ -46,7 +46,10 @@ fn every_accepted_limit_name_is_listed_and_every_listed_name_is_accepted() {
     let listed = listed();
     assert_eq!(
         listed,
-        accepted.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>()
+        accepted
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>()
     );
     for name in &listed {
         let operand = format!("{name}=0");
@@ -66,8 +69,16 @@ fn every_limit_refusal_cause_is_reached() {
     for (operands, cause, operand) in [
         (vec!["s3.nodes"], UsageCause::NotAnAssignment, "s3.nodes"),
         (vec!["s9.nodes=1"], UsageCause::UnknownSetting, "s9.nodes=1"),
-        (vec!["work_units=1"], UsageCause::UnknownSetting, "work_units=1"),
-        (vec!["s3.nodes=ten"], UsageCause::NotAnInteger, "s3.nodes=ten"),
+        (
+            vec!["work_units=1"],
+            UsageCause::UnknownSetting,
+            "work_units=1",
+        ),
+        (
+            vec!["s3.nodes=ten"],
+            UsageCause::NotAnInteger,
+            "s3.nodes=ten",
+        ),
         (vec!["s3.nodes=-1"], UsageCause::NotAnInteger, "s3.nodes=-1"),
         (vec!["s3.nodes="], UsageCause::NotAnInteger, "s3.nodes="),
         (
@@ -76,8 +87,7 @@ fn every_limit_refusal_cause_is_reached() {
             "s3.nodes=6",
         ),
     ] {
-        let refusal = parse_operands(operands.iter().copied())
-            .expect_err("the operand refuses");
+        let refusal = parse_operands(operands.iter().copied()).expect_err("the operand refuses");
         assert_eq!(refusal.cause, cause, "{operands:?}");
         assert_eq!(refusal.operand, operand, "{operands:?}");
     }

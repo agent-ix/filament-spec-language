@@ -154,7 +154,11 @@ fn request_byte_ceiling_is_reached_and_raised() {
     };
     let over = compile(&path, Some(limits(size - 1)), &RequestOverrides::default());
     over.expect("package", "incomplete", 22);
-    assert!(over.document.to_string().contains("request_bytes"), "{}", over.document);
+    assert!(
+        over.document.to_string().contains("request_bytes"),
+        "{}",
+        over.document
+    );
     let fits = compile(&path, Some(limits(size)), &RequestOverrides::default());
     fits.expect("package", "success", 0);
 }
@@ -174,7 +178,10 @@ fn source_byte_stage_limit_is_reached_and_raised() {
     };
     let over = compile(&path, Some(RunLimits::default()), &overrides);
     let diagnostic = over.refused("package", 22, "stage_limit_exceeded");
-    assert!(diagnostic.to_string().contains("s1.input_bytes"), "{diagnostic}");
+    assert!(
+        diagnostic.to_string().contains("s1.input_bytes"),
+        "{diagnostic}"
+    );
 
     limits.source.source_bytes = SOURCE.len();
     let overrides = RequestOverrides {
@@ -253,13 +260,18 @@ fn malformed_requests_refuse_invalid_request() {
     let mut wrong_format = request("parcel.fsl");
     wrong_format["format"] = json!("native-compile/9");
     let malformed = case.write("malformed.json", b"{\"format\": ");
-    for path in [
-        malformed,
-        case.json("member.json", &unknown_member),
-        case.json("format.json", &wrong_format),
+    for (path, code) in [
+        (malformed, "invalid-request"),
+        (case.json("member.json", &unknown_member), "invalid-request"),
+        // FR-096: an unsupported command format is `unknown_wire`.
+        (case.json("format.json", &wrong_format), "unknown_wire"),
     ] {
         let outcome = plain(&path);
-        outcome.refused("package", 20, "invalid-request");
-        assert!(outcome.document["last_stage"].is_null(), "{}", outcome.document);
+        outcome.refused("package", 20, code);
+        assert!(
+            outcome.document["last_stage"].is_null(),
+            "{}",
+            outcome.document
+        );
     }
 }

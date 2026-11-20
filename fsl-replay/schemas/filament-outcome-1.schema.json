@@ -17,6 +17,7 @@
     "aggregate": {"$ref": "#/$defs/aggregate"}
   },
   "allOf": [
+    {"if": {"properties": {"operation": {"not": {"const": "analyze"}}}, "required": ["operation"]}, "then": {"properties": {"items": {"items": {"required": ["result"]}}}}},
     {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "then": {"required": ["aggregate", "registry"]}},
     {"if": {"properties": {"operation": {"const": "execute"}}, "required": ["operation"]}, "then": {"properties": {"registry": {"type": "array"}}}},
     {"if": {"properties": {"operation": {"not": {"enum": ["execute", "analyze"]}}}, "required": ["operation"]}, "then": {"not": {"required": ["registry"]}}},
@@ -55,7 +56,7 @@
       },
       "unevaluatedProperties": false
     },
-    "item": {"type": "object", "required": ["request_index", "result", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}}, "additionalProperties": true},
+    "item": {"type": "object", "required": ["request_index", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}}, "additionalProperties": true},
     "aggregate": {"type": "object", "required": ["status", "gaps"], "properties": {"status": {"type": "string"}, "gaps": {"type": "array", "items": {"type": "object", "required": ["request_index", "reason", "result"], "properties": {"request_index": {"type": "integer"}, "reason": {"type": "string"}, "result": {"type": "string"}}, "unevaluatedProperties": false}}}, "unevaluatedProperties": false}
   }
 }

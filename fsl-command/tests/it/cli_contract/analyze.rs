@@ -74,7 +74,10 @@ fn results(document: &Value) -> Vec<String> {
 #[test]
 #[trace("FR-621", "FR-286-AC-3")]
 fn a_proved_item_exits_0() {
-    let (_case, path) = counter(SOURCE.as_bytes(), &request(json!([{"claim": "WithinCapacity"}])));
+    let (_case, path) = counter(
+        SOURCE.as_bytes(),
+        &request(json!([{"claim": "WithinCapacity"}])),
+    );
     let outcome = analyze(&path);
     let document = outcome.expect("analyze", "success", 0);
     assert_eq!(results(document), ["proved"]);
@@ -117,15 +120,43 @@ fn a_cancelled_run_settles_every_item_incomplete() {
     let (_case, path) = counter(SOURCE.as_bytes(), &request(items));
     let cancel = Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
-    let outcome = analyze_under(&path, RunLimits::default(), &ProviderOptions::default(), &cancel);
+    let outcome = analyze_under(
+        &path,
+        RunLimits::default(),
+        &ProviderOptions::default(),
+        &cancel,
+    );
     assert_eq!(outcome.exit, 22, "{}", outcome.document);
     super::assert_outcome_schema(&outcome.document);
     assert_eq!(results(&outcome.document), ["incomplete", "incomplete"]);
 }
 
-/// FR-620-AC-9, FR-624: a claim the program lacks, a run request handed to
-/// analyze and an unknown request member each refuse the whole request,
-/// exit 20, with no items.
+/// FR-621-AC-10: a claim the program lacks settles as one `invalid-request`
+/// item (`record.settled_by` `disposition`), the document is a refusal, exit
+/// 20, and the aggregate names the gap.
+#[test]
+#[trace("FR-621-AC-10")]
+fn an_unknown_claim_is_an_invalid_request_item() {
+    let (_case, path) = counter(SOURCE.as_bytes(), &request(json!([{"claim": "Absent"}])));
+    let outcome = analyze(&path);
+    let document = outcome.expect("analyze", "refusal", 20);
+    assert_eq!(
+        document["items"].as_array().map(Vec::len),
+        Some(1),
+        "{document}"
+    );
+    assert_eq!(
+        document["items"][0]["record"]["settled_by"], "disposition",
+        "{document}"
+    );
+    assert_eq!(
+        document["aggregate"]["gaps"][0]["result"], "invalid-request",
+        "{document}"
+    );
+}
+
+/// FR-620-AC-9, FR-624: a run request handed to analyze and an unknown
+/// request member each refuse the whole request, exit 20, `invalid-request`.
 #[test]
 #[trace("FR-620-AC-9", "FR-624")]
 fn whole_request_defects_refuse() {
@@ -133,19 +164,10 @@ fn whole_request_defects_refuse() {
     wrong_format["format"] = json!("native-run/1");
     let mut unknown = request(json!([{"claim": "WithinCapacity"}]));
     unknown["request"]["extra"] = json!(true);
-    for document in [
-        request(json!([{"claim": "Absent"}])),
-        wrong_format,
-        unknown,
-    ] {
+    for document in [wrong_format, unknown] {
         let (_case, path) = counter(SOURCE.as_bytes(), &document);
         let outcome = analyze(&path);
-        outcome.expect("analyze", "refusal", 20);
-        assert!(
-            !outcome.document["diagnostics"].as_array().unwrap().is_empty(),
-            "{}",
-            outcome.document
-        );
+        outcome.refused("analyze", 20, "invalid-request");
     }
 }
 
@@ -154,7 +176,10 @@ fn whole_request_defects_refuse() {
 #[trace("FR-286-AC-19")]
 fn an_ill_typed_program_refuses() {
     let source = SOURCE.replace("q.value <= 2", "q.value + true");
-    let (_case, path) = counter(source.as_bytes(), &request(json!([{"claim": "WithinCapacity"}])));
+    let (_case, path) = counter(
+        source.as_bytes(),
+        &request(json!([{"claim": "WithinCapacity"}])),
+    );
     analyze(&path).expect("analyze", "refusal", 20);
 }
 
@@ -163,7 +188,10 @@ fn an_ill_typed_program_refuses() {
 #[test]
 #[trace("FR-312")]
 fn request_byte_ceiling_is_reached_and_raised() {
-    let (_case, path) = counter(SOURCE.as_bytes(), &request(json!([{"claim": "WithinCapacity"}])));
+    let (_case, path) = counter(
+        SOURCE.as_bytes(),
+        &request(json!([{"claim": "WithinCapacity"}])),
+    );
     let size = std::fs::metadata(&path).unwrap().len() as usize;
     let limits = |request_bytes| RunLimits {
         request_bytes,
@@ -176,7 +204,12 @@ fn request_byte_ceiling_is_reached_and_raised() {
         &Cancel::new(),
     );
     over.expect("analyze", "incomplete", 22);
-    let fits = analyze_under(&path, limits(size), &ProviderOptions::default(), &Cancel::new());
+    let fits = analyze_under(
+        &path,
+        limits(size),
+        &ProviderOptions::default(),
+        &Cancel::new(),
+    );
     fits.expect("analyze", "success", 0);
 }
 

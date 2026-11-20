@@ -45,14 +45,17 @@ fn records(values: &[u8], end: bool) -> Vec<u8> {
     let mut lines: Vec<String> = values
         .iter()
         .map(|value| {
-            json!({"observation": {"sample": {"bins": {"integer": value.to_string()}}}})
-                .to_string()
+            json!({"observation": {"sample": {"bins": {"integer": value.to_string()}}}}).to_string()
         })
         .collect();
     if end {
         lines.push(json!({"end": true}).to_string());
     }
-    lines.iter().map(|line| format!("{line}\n")).collect::<String>().into_bytes()
+    lines
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>()
+        .into_bytes()
 }
 
 fn changes(events: &[Value]) -> Vec<(u64, String, String)> {
@@ -116,13 +119,17 @@ fn pending_and_empty_streams_exit_0() {
 fn malformed_and_truncated_records_are_refusal_events() {
     let (_case, path) = load();
     let mut malformed = records(&[2], false);
-    malformed.extend_from_slice(b"{\"observation\": {\"sample\": {\"bins\": {\"integer\": \"4\"}}}, \"extra\": 1}\n");
+    malformed.extend_from_slice(
+        b"{\"observation\": {\"sample\": {\"bins\": {\"integer\": \"4\"}}}, \"extra\": 1}\n",
+    );
     malformed.extend_from_slice(&records(&[9, 3], true));
     let stream = monitor(&path, &malformed);
     let (events, summary) = stream.completed(10);
     assert_eq!(summary["refused"], 1, "{summary}");
     assert!(
-        events.iter().any(|event| event["record"] == 1 && event["category"] == "refusal"),
+        events
+            .iter()
+            .any(|event| event["record"] == 1 && event["category"] == "refusal"),
         "{events:?}"
     );
 
@@ -132,7 +139,9 @@ fn malformed_and_truncated_records_are_refusal_events() {
     let (events, summary) = stream.completed(0);
     assert_eq!(summary["refused"], 1, "{summary}");
     assert!(
-        events.iter().any(|event| event["record"] == 2 && event["category"] == "refusal"),
+        events
+            .iter()
+            .any(|event| event["record"] == 2 && event["category"] == "refusal"),
         "{events:?}"
     );
 }

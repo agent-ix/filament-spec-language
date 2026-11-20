@@ -19,7 +19,9 @@ fn reversed(value: &Value) -> String {
             let inner: Vec<String> = members
                 .iter()
                 .rev()
-                .map(|(name, member)| format!("{}:{}", Value::String(name.clone()), reversed(member)))
+                .map(|(name, member)| {
+                    format!("{}:{}", Value::String(name.clone()), reversed(member))
+                })
                 .collect();
             format!("{{{}}}", inner.join(","))
         }
@@ -63,7 +65,7 @@ fn program() -> Value {
 }
 
 /// FR-286-AC-3, AC-26, AC-27 for `compile`: success and a single-defect
-/// (unknown member) refusal are deterministic and order-free.
+/// (missing source file) refusal are deterministic and order-free.
 #[test]
 #[trace("FR-286-AC-3", "FR-286-AC-26", "FR-286-AC-27")]
 fn compile_documents_are_deterministic_and_order_free() {
@@ -72,13 +74,16 @@ fn compile_documents_are_deterministic_and_order_free() {
     let request = json!({"format": "native-compile/1",
         "request": {"models": [], "program": program()}});
     let mut refused = request.clone();
-    refused["request"]["extra"] = json!({"b": 1, "a": 2});
+    refused["request"]["program"]["source"]["file"] = json!("absent.fsl");
     for (value, exit) in [(request, 0), (refused, 20)] {
         let (forward, backward) = both_orders(&case, &value);
         let first = compile(&forward, None, &RequestOverrides::default());
         assert_eq!(first.exit, exit, "{}", first.document);
         super::assert_outcome_schema(&first.document);
-        assert_same(&first, &compile(&forward, None, &RequestOverrides::default()));
+        assert_same(
+            &first,
+            &compile(&forward, None, &RequestOverrides::default()),
+        );
         let other = compile(&backward, None, &RequestOverrides::default());
         assert_same(&first, &other);
         assert_eq!(first.package, other.package);
@@ -100,7 +105,8 @@ fn run_documents_are_deterministic_and_order_free() {
     };
     for (value, exit) in [(call("held"), 0), (call("zz"), 20)] {
         let (forward, backward) = both_orders(&case, &value);
-        let go = |path: &std::path::Path| run(path, RunLimits::default(), &RequestOverrides::default());
+        let go =
+            |path: &std::path::Path| run(path, RunLimits::default(), &RequestOverrides::default());
         let first = go(&forward);
         assert_eq!(first.exit, exit, "{}", first.document);
         super::assert_outcome_schema(&first.document);
@@ -157,26 +163,20 @@ fn analyze_documents_are_deterministic_and_order_free() {
     }
 }
 
-const BRAKING: &str = "language \"ix:native\" edition \"1-draft\";\n\
-     profile p = \"filament.temporal.infinite-trace/v1\";\n\
-     hybrid Braking using p {\n\
-       mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
-         flow { v' = -a; a' = 0; }\n\
-         transition to Stopped when { v = 0 } reset { v = 0 };\n\
-       mode Stopped invariant { v = 0 }\n\
-         flow { v' = 0; a' = 0; }\n\
-     }\n\
-     temporal SlowEnough using p over (h: Braking) clock \"model-time\" \
-     on origin { always holds(h.v < 30) }\n";
-
 /// FR-286-AC-22, AC-26, AC-27 for `export`: an assembled export and an
 /// unknown-limit refusal are deterministic and order-free.
 #[test]
 #[trace("FR-286-AC-22", "FR-286-AC-26", "FR-286-AC-27")]
 fn export_documents_are_deterministic_and_order_free() {
     let case = Case::new();
-    case.write("unit.fsl", BRAKING.as_bytes());
     let request = |limits: Option<Value>| {
+        let mut member = super::export::member();
+        if let Some(limits) = limits {
+            member["limits"] = limits;
+        }
+        super::export::counter_request(&case, super::export::COUNTER.as_bytes(), member)
+    };
+    |limits: Option<Value>| {
         let mut member = json!({"profile": "filament.output.tla2/v1",
             "obligations": ["SlowEnough"], "minimum_fidelity": "any"});
         if let Some(limits) = limits {
