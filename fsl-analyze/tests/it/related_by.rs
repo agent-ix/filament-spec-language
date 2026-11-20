@@ -150,7 +150,6 @@ fn picks(subject: &ProtocolSubject<'_>) -> Vec<(ProtocolTransition, Json)> {
     "FSpec-TC-1522",
     "FSpec-FR-051-AC-9"
 )]
-#[ignore = "QSL-2204: related-by clauses as step premises are not implemented yet"]
 #[test]
 fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_replay() {
     let model = related_document();
@@ -243,7 +242,6 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
 /// FR-731-AC-2: a second clause no peer satisfies leaves `Pick` with no
 /// step, and the two clauses in either order give the same states.
 #[trace("TC-2023", "FR-731-AC-2")]
-#[ignore = "QSL-2204: related-by clauses as step premises are not implemented yet"]
 #[test]
 fn an_unsatisfiable_clause_leaves_no_step_in_either_order() {
     let model = related_document();
