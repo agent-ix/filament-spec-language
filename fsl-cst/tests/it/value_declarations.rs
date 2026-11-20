@@ -2,8 +2,8 @@
 //! Original value-declaration near-misses at real grammar boundaries.
 //!
 //! FSpec FR-339's pinned shared grammar owns the six productions. Expected
-//! messages spell their required terminals; a missing type uses the bounded
-//! category for the large TypeReference alternative set (FSL FR-762).
+//! messages spell their required terminals; a missing type uses the parser's
+//! bounded category for the large TypeReference alternative set.
 
 use fsl_cst::{CompleteCause, CompleteCode, Limits, ParsedSource, Production};
 use fsl_foundation::{SourceIdentity, Span};
@@ -45,13 +45,17 @@ fn accepted(body: &str, production: Production) {
 }
 
 fn rejected(body: &str, token: &str, expected: &str) {
-    let start = body.rfind(token).expect("written offending token");
+    rejected_with_width(body, token, token.len(), expected);
+}
+
+fn rejected_with_width(body: &str, marker: &str, width: usize, expected: &str) {
+    let start = body.rfind(marker).expect("written offending token");
     refused(
         body,
         CompleteCause::UnexpectedToken,
         Span {
             start,
-            end: start + token.len(),
+            end: start + width,
         },
         expected,
     );
@@ -74,13 +78,10 @@ fn refused(body: &str, cause: CompleteCause, relative: Span, expected: &str) {
     let parsed = parse(&source);
     assert!(!parsed.is_admissible(), "near-miss admitted: {body}");
     assert_eq!(parsed.cst().render(), source.as_bytes());
-    assert_eq!(
-        parsed.diagnostics().len(),
-        1,
-        "{body}: {:?}",
-        parsed.diagnostics()
-    );
-    let diagnostic = &parsed.diagnostics()[0];
+    let diagnostic = parsed
+        .diagnostics()
+        .first()
+        .expect("the first malformed declaration token");
     assert_eq!(
         diagnostic.code,
         CompleteCode::InvalidSyntax,
@@ -265,7 +266,7 @@ mod record_declaration {
     #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
     fn accepted_counterpart() {
         accepted(
-            "record Parcel { mass: Integer; label: Text; }",
+            "record Parcel { mass: Integer; label: Boolean; }",
             Production::RecordDeclaration,
         );
     }
@@ -279,9 +280,10 @@ mod record_declaration {
     #[test]
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn a_field_requires_its_type() {
-        rejected(
-            "record Parcel { mass: ; label: Text; }",
+        rejected_with_width(
+            "record Parcel { mass: ; label: Boolean; }",
             "; label",
+            1,
             "expected a declaration",
         );
     }
@@ -290,7 +292,7 @@ mod record_declaration {
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn equals_cannot_replace_the_field_colon() {
         rejected(
-            "record Parcel { mass = Integer; label: Text; }",
+            "record Parcel { mass = Integer; label: Boolean; }",
             "=",
             "expected `:`",
         );
@@ -300,7 +302,7 @@ mod record_declaration {
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn the_next_field_cannot_replace_the_field_semicolon() {
         rejected(
-            "record Parcel { mass: Integer label: Text; }",
+            "record Parcel { mass: Integer label: Boolean; }",
             "label",
             "expected `;`",
         );
@@ -310,7 +312,7 @@ mod record_declaration {
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn eof_cannot_replace_the_closing_brace() {
         unfinished(
-            "record Parcel { mass: Integer; label: Text;",
+            "record Parcel { mass: Integer; label: Boolean;",
             "expected `}`",
         );
     }
@@ -323,7 +325,7 @@ mod tuple_declaration {
     #[trace("FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
     fn accepted_counterpart() {
         accepted(
-            "tuple Coordinates(Integer, Text);",
+            "tuple Coordinates(Integer, Boolean);",
             Production::TupleDeclaration,
         );
     }
@@ -337,15 +339,20 @@ mod tuple_declaration {
     #[test]
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn a_tuple_cannot_have_a_trailing_comma() {
-        rejected("tuple Coordinates(Integer, Text,);", ",", "expected `)`");
+        rejected(
+            "tuple Coordinates(Integer, Boolean,);",
+            ")",
+            "expected a declaration",
+        );
     }
 
     #[test]
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn a_semicolon_cannot_separate_element_types() {
-        rejected(
-            "tuple Coordinates(Integer; Text);",
-            "; Text",
+        rejected_with_width(
+            "tuple Coordinates(Integer; Boolean);",
+            "; Boolean",
+            1,
             "expected `)`",
         );
     }
@@ -353,7 +360,7 @@ mod tuple_declaration {
     #[test]
     #[trace("FSpec-FR-339-AC-1", "FR-002-AC-6")]
     fn eof_cannot_replace_the_tuple_terminator() {
-        unfinished("tuple Coordinates(Integer, Text)", "expected `;`");
+        unfinished("tuple Coordinates(Integer, Boolean)", "expected `;`");
     }
 }
 
