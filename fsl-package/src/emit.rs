@@ -7813,14 +7813,14 @@ fn source_object_rows(
                     _ => None,
                 })
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            members.push(SelectedSourceObjectMember {
-                name: name.into(),
-                type_node: emitted
+            members.push(SelectedSourceObjectMember::data(
+                name,
+                emitted
                     .get(&target)
                     .cloned()
                     .ok_or(EmitRefusal::SourceMapInvariant)?,
                 optional,
-            });
+            ));
             member_facts.push(SourceObjectMemberFacts {
                 original_member_identity: original_member_identity.into(),
                 admitted_name: name.into(),
@@ -7900,6 +7900,37 @@ fn source_object_rows(
                         .ok_or(EmitRefusal::SourceMapInvariant)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // FSpec FR-610 "Identity rows": a data entry for a parameter whose
+            // type has a node, a clock entry (the type's rendering) for one
+            // whose type has none.
+            let parameters = operation
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    let name = parameter
+                        .key
+                        .node
+                        .strip_prefix(&parameter_prefix)
+                        .filter(|name| !name.is_empty() && !name.contains('/'))
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    let node = parameter
+                        .value_type
+                        .as_package()
+                        .and_then(|key| fsl_semantics::model::key::object_type_node_key(key).ok())
+                        .and_then(|key| emitted.get(&key));
+                    Ok(match node {
+                        Some(node) => SelectedSourceObjectMember::data(
+                            name,
+                            node.clone(),
+                            parameter.presence == filament_exact::Presence::Optional,
+                        ),
+                        None => SelectedSourceObjectMember::clock(
+                            name,
+                            parameter.value_type.to_string(),
+                        ),
+                    })
+                })
+                .collect::<Result<Vec<_>, EmitRefusal>>()?;
             operations.push(SourceObjectOperationFacts {
                 identity: identity.clone(),
                 query,
@@ -7908,6 +7939,7 @@ fn source_object_rows(
                 identity,
                 query,
                 clock_parameters,
+                parameters,
             });
         }
         rows.push((

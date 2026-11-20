@@ -715,7 +715,7 @@ impl SourceObjectJson {
                         Presence::Required => SourceObjectPresenceJson::Required,
                         Presence::Optional => SourceObjectPresenceJson::Optional,
                     },
-                    type_node: member.type_node.clone(),
+                    type_node: member.type_node.clone().ok_or_else(malformed)?,
                     value_type: OriginalValueType::of(&facts.value_type)
                         .map_err(|_| malformed())?,
                 })
@@ -772,11 +772,11 @@ impl SourceObjectJson {
                 SourceObjectPresenceJson::Optional => Presence::Optional,
             };
             let value_type = member.value_type.value().map_err(|_| malformed())?;
-            members.push(filament_contract_model::SelectedSourceObjectMember {
-                name: member.admitted_name.clone().into(),
-                type_node: member.type_node,
-                optional: presence == Presence::Optional,
-            });
+            members.push(filament_contract_model::SelectedSourceObjectMember::data(
+                member.admitted_name.clone(),
+                member.type_node,
+                presence == Presence::Optional,
+            ));
             facts.push(crate::emit::SourceObjectMemberFacts {
                 original_member_identity: member.original_member_identity.into(),
                 admitted_name: member.admitted_name.into(),
@@ -792,6 +792,7 @@ impl SourceObjectJson {
                     identity: operation.identity.as_str().into(),
                     query: operation.query,
                     clock_parameters: Vec::new(),
+                    parameters: Vec::new(),
                 },
             )
             .collect();

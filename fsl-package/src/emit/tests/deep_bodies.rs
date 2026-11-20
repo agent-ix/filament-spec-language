@@ -158,8 +158,8 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                         "{label}: refused at the output limit: {emitted:?}"
                     );
                 } else {
-                    let emission = emitted
-                        .unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
+                    let emission =
+                        emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));
                     let written = wire(&emission);
                     let written = nodes(&written);
                     assert!(written.len() >= DEEP, "{label}: one node per level");

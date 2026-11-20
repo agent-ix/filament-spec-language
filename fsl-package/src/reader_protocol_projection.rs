@@ -2117,7 +2117,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 else {
                     return Err(fault("reader-let-binder-has-name").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), body)?;
+                let binder = self.binder_of(id, name.as_ref(), body, locals)?;
                 let slot = self.next_slot(context, locals);
                 let value = self.project_argument(id, value, context, locals)?;
                 let mut body_locals = locals.clone();
@@ -2404,7 +2404,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 else {
                     return Err(fault("reader-collection-query-binder-has-name").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), value)?;
+                let binder = self.binder_of(id, name.as_ref(), value, locals)?;
                 let slot = self.next_slot(context, locals);
                 let source = self.project_argument(id, source_term, context, locals)?;
                 let mut body_locals = locals.clone();
@@ -2923,11 +2923,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         id: &CheckedNodeId,
         name: &str,
         scope: &CheckedTerm,
+        bound: &BTreeMap<CheckedNodeId, usize>,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         if let Some(binder) = self.binders.get(id) {
             return Ok(binder.clone());
         }
-        let binder = self.binder_node(name, scope)?;
+        let binder = self.binder_node(name, scope, bound)?;
         self.binders.insert(id.clone(), binder.clone());
         Ok(binder)
     }
@@ -2937,6 +2938,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         &self,
         name: &str,
         scope: &CheckedTerm,
+        bound: &BTreeMap<CheckedNodeId, usize>,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         let mut found = BTreeSet::new();
         let lookup = |id: &CheckedNodeId| self.index.node(id);
@@ -2945,6 +2947,17 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 found.insert(node.node_id.clone());
             }
         });
+        if name == IEEE_OPERAND {
+            // The checker names every operand binder of an IEEE ordering
+            // lowering `#ieee_operand` and nests them, so a scope reads the
+            // binders of its enclosing lets by that one name; each let binds
+            // the lowest-level one no enclosing let has bound.
+            return Ok(found
+                .into_iter()
+                .filter(|node| !bound.contains_key(node))
+                .min_by_key(|node| self.index.node(node).and_then(|n| parameter_level(&n.body)))
+                .or(None));
+        }
         let mut found = found.into_iter();
         match (found.next(), found.next()) {
             (binder, None) => Ok(binder),
@@ -3568,6 +3581,29 @@ fn collection_node_type(
 /// `#[string_edge]`: `name` is an admitted binding key in the parameter wire
 /// form.
 #[ix_trace_rs::string_edge]
+/// The checker's reserved name of the operand binders an IEEE ordering lowers
+/// to.
+const IEEE_OPERAND: &str = "#ieee_operand";
+
+/// The `level` binding of a parameter node's body.
+fn parameter_level(term: &CheckedTerm) -> Option<u64> {
+    let CheckedTerm::Aggregate { members } = term else {
+        return None;
+    };
+    members.iter().find_map(|member| {
+        let CheckedTerm::Binding { name, value } = member else {
+            return None;
+        };
+        if name.as_ref() != "level" {
+            return None;
+        }
+        match value.literal_read()?.value {
+            filament_contract_model::CheckedLiteralValue::Integer(level) => level.to_string().parse().ok(),
+            _ => None,
+        }
+    })
+}
+
 pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
     let CheckedTerm::Aggregate { members } = term else {
         return None;

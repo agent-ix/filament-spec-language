@@ -261,6 +261,11 @@ impl<'w> Walk<'_, 'w> {
 
     /// `shadow` with the scope of a binder named `name` opened.
     fn scoped(&self, shadow: &Rc<Shadow>, name: &str) -> Rc<Shadow> {
+        // The checker nests IEEE operand binders under one reserved name and
+        // tells them apart by level, so no scope of it hides another.
+        if name == "#ieee_operand" {
+            return Rc::clone(shadow);
+        }
         match self.watch {
             Some(watched) if watched != name => Rc::clone(shadow),
             _ => Rc::new(shadow.with_name(name)),

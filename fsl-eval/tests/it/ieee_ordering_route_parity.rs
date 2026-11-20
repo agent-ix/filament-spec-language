@@ -418,8 +418,14 @@ fn a_call_through_a_function_locates_the_loss_in_the_callee_body() {
             "{}",
             source.losses
         );
-        let first = source.losses.find("depth: 1, last_index: Some(0)").expect("a loss at [0]");
-        let second = source.losses.find("depth: 1, last_index: Some(1)").expect("a loss at [1]");
+        let first = source
+            .losses
+            .find("depth: 1, last_index: Some(0)")
+            .expect("a loss at [0]");
+        let second = source
+            .losses
+            .find("depth: 1, last_index: Some(1)")
+            .expect("a loss at [1]");
         assert!(first < second, "{}", source.losses);
         assert!(
             !source.losses.contains("depth: 2") && !source.losses.contains("\"g\""),
@@ -686,14 +692,14 @@ fn a_denied_charge_in_a_body_is_located_alike_on_both_routes() {
         located.insert(source.location);
     }
     assert!(
-        located
-            .iter()
-            .any(|location| location.contains("\"f\"") && location.contains("depth: 1, last_index: Some(1)")),
+        located.iter().any(|location| location.contains("\"f\"")
+            && location.contains("depth: 1, last_index: Some(1)")),
         "{located:?}"
     );
     assert!(
-        located.iter().all(|location| !location.contains("depth: 2")),
+        located
+            .iter()
+            .all(|location| !location.contains("depth: 2")),
         "{located:?}"
     );
 }
-

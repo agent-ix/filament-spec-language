@@ -844,7 +844,10 @@ fn a_boolean_valued_random_parameter_is_emitted_and_read_back() {
         .map(|row| {
             let value = &row["members"][0]["value"];
             assert_eq!(value["value_kind"], "boolean", "{value}");
-            (value["value"].clone(), row["members"][1]["value"]["value"].clone())
+            (
+                value["value"].clone(),
+                row["members"][1]["value"]["value"].clone(),
+            )
         })
         .collect();
     assert_eq!(

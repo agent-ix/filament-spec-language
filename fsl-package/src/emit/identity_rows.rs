@@ -235,10 +235,20 @@ fn copy_source_object(
     }
     charge::texts(budget, locus, &row.identity_fields)?;
     charge::items(budget, locus, row.members.len())?;
-    for member in &row.members {
+    for member in row.members.iter().chain(
+        row.operations
+            .iter()
+            .flat_map(|operation| &operation.parameters),
+    ) {
         charge::work(budget, locus, 1)?;
         charge::text(budget, locus, &member.name)?;
-        charge::node(budget, locus, &member.type_node)?;
+        if let Some(node) = &member.type_node {
+            charge::node(budget, locus, node)?;
+        }
+        if let Some(rendering) = &member.member_type {
+            charge::text(budget, locus, rendering)?;
+        }
+        charge::items(budget, locus, member.collections.len())?;
     }
     charge::items(budget, locus, row.populations.len())?;
     for population in &row.populations {

@@ -141,7 +141,9 @@ pub(super) fn term_rows<L>(
         }
         // A literal and a `Local` read lower to no application of their own.
         let application = match applications.get(at) {
-            Some(candidates) if !matches!(node.kind(), NodeKind::Literal(_) | NodeKind::Local(_)) => {
+            Some(candidates)
+                if !matches!(node.kind(), NodeKind::Literal(_) | NodeKind::Local(_)) =>
+            {
                 term_application(graph, candidates, &taken, under)?
             }
             _ => None,
@@ -180,33 +182,33 @@ pub(super) fn term_rows<L>(
             );
         }
         for application in claimed_here {
-        // The `j`th visit of one position takes the `j`th occurrence
-        // recorded there; a position recorded once keeps that one.
-        let recorded: Vec<&filament_exact::Origin> = applications
-            .get(at)
-            .into_iter()
-            .flatten()
-            .filter(|(key, _)| key == application)
-            .map(|(_, origin)| origin)
-            .collect();
-        let seen = visits.entry((at, application)).or_default();
-        let origin = recorded
-            .get(*seen)
-            .or_else(|| recorded.last())
-            .copied()
-            .ok_or_else(|| refusal(application))?;
-        *seen += 1;
-        let (origin_name, location) = wire(at).ok_or_else(|| refusal(application))?;
-        pending.push(PendingRow {
-            application: emitted_node_ids
-                .get(application)
-                .cloned()
-                .ok_or_else(|| refusal(application))?,
-            occurrence: checked_occurrence(origin).ok_or_else(|| refusal(application))?,
-            origin_name,
-            visit: pending.len(),
-            location,
-        });
+            // The `j`th visit of one position takes the `j`th occurrence
+            // recorded there; a position recorded once keeps that one.
+            let recorded: Vec<&filament_exact::Origin> = applications
+                .get(at)
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| key == application)
+                .map(|(_, origin)| origin)
+                .collect();
+            let seen = visits.entry((at, application)).or_default();
+            let origin = recorded
+                .get(*seen)
+                .or_else(|| recorded.last())
+                .copied()
+                .ok_or_else(|| refusal(application))?;
+            *seen += 1;
+            let (origin_name, location) = wire(at).ok_or_else(|| refusal(application))?;
+            pending.push(PendingRow {
+                application: emitted_node_ids
+                    .get(application)
+                    .cloned()
+                    .ok_or_else(|| refusal(application))?,
+                occurrence: checked_occurrence(origin).ok_or_else(|| refusal(application))?,
+                origin_name,
+                visit: pending.len(),
+                location,
+            });
         }
     }
     Ok(())
