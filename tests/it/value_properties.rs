@@ -512,29 +512,17 @@ fn agreement_case(case: &AgreementCase) -> (String, Reference) {
             let (result, expression, expected) = match op {
                 0 => (
                     "Integer",
-                    format!("size({a_source})"),
+                    "size(left)",
                     Reference::Integer(i128::try_from(a.chars().count()).unwrap()),
                 ),
-                1 => (
-                    "Boolean",
-                    format!("{a_source} = {b_source}"),
-                    Reference::Boolean(a == b),
-                ),
-                2 => (
-                    "Boolean",
-                    format!("{a_source} < {b_source}"),
-                    Reference::Boolean(a < b),
-                ),
-                3 => (
-                    "Boolean",
-                    format!("{a_source} != {b_source}"),
-                    Reference::Boolean(a != b),
-                ),
+                1 => ("Boolean", "left = right", Reference::Boolean(a == b)),
+                2 => ("Boolean", "left < right", Reference::Boolean(a < b)),
+                3 => ("Boolean", "left != right", Reference::Boolean(a != b)),
                 _ => unreachable!("text strategy domain"),
             };
             (
                 format!(
-                    "{}function invoke using v(): {result} pure {{ {expression} }}\n",
+                    "{}function invoke using v(): {result} pure {{ let left: Text[0, 16; unicode-scalars] = {a_source} in let right: Text[0, 16; unicode-scalars] = {b_source} in {expression} }}\n",
                     value::VALUE_HEADER
                 ),
                 expected,
@@ -889,28 +877,54 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
     .unwrap();
 }
 
-/// Provenance: QSL-2055 P5 boundary. Scalar extrema require nonempty source domains.
+/// Provenance: QSL-2055 P5 boundary. A present collection bound is enforced at construction.
+#[ix_trace_rs::trace("FSpec-FR-144-AC-3")]
 #[test]
-fn empty_extrema_input_is_refused_before_evaluation() {
-    for kind in [value::CollectionKind::Set, value::CollectionKind::Bag] {
-        for operation in [2, 3] {
-            let (source, _) = aggregate_source(kind, &[0], operation);
-            let empty = source
-                .replace("set[0]", "set[]")
-                .replace("bag[0]", "bag[]")
-                .replace("sequence[0]", "sequence[]");
-            let refusals = match compile(&empty) {
-                Err(CompileFailure::Check(refusals)) => refusals,
-                Err(other) => panic!("a checker cardinality refusal, got {other:?}\n{empty}"),
-                Ok(_) => panic!("empty input must not enter scalar extrema\n{empty}"),
-            };
-            assert!(!refusals.is_empty());
-            assert!(
-                refusals
+fn nonempty_collection_bound_refuses_empty_at_runtime() {
+    let (source, _) = aggregate_source(value::CollectionKind::Set, &[0], 2);
+    let empty = source.replace("set[0]", "set[]");
+    let package = compile(&empty).unwrap();
+    let outcome = call(&package);
+    let Outcome::Refused(refusal) = outcome else {
+        panic!("empty construction must refuse before scalar extrema: {outcome:?}");
+    };
+    assert_eq!(refusal.code(), Some("cardinality_out_of_bound"));
+    assert_eq!(refusal.cause(), Some("below-minimum"));
+    let Refusal::CardinalityOutOfBound {
+        kind, bound, count, ..
+    } = refusal
+    else {
+        panic!("a cardinality refusal, got {refusal:?}");
+    };
+    assert_eq!(kind, filament_exact::CollectionKind::Set);
+    assert_eq!(bound.minimum(), 1);
+    assert_eq!(bound.maximum(), 4);
+    assert_eq!(count, 0);
+}
+
+/// Provenance: QSL-2055 P5 empty contract. Admitted empty collections have no extremum.
+#[test]
+fn empty_unordered_extrema_return_none() {
+    for (kind, constructor) in [("Set", "set"), ("Bag", "bag")] {
+        for minimum in [true, false] {
+            for values in [Vec::<i64>::new(), vec![-3, 2]] {
+                let expression = bounded_extremum(minimum);
+                let expected = if minimum {
+                    values.iter().min()
+                } else {
+                    values.iter().max()
+                };
+                let expected = Reference::Option(
+                    expected.map(|number| Box::new(Reference::Integer(i128::from(*number)))),
+                );
+                let members = values
                     .iter()
-                    .all(|refusal| matches!(refusal.cause, CheckCause::Unproved(_))),
-                "{refusals:?}\n{empty}"
-            );
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let source = format!("{}function f using v(xs: {kind}<Int[-5, 5]>[0, 4]): Option<Integer> pure {{ if size(xs) = 0 then absent else (let optimum: Integer = ({expression}) in Some(optimum)) }}\nfunction invoke using v(): Option<Integer> pure {{ let xs: {kind}<Int[-5, 5]>[0, 4] = {constructor}[{members}] in f(xs) }}\n", value::VALUE_HEADER);
+                evaluate_agreement(&source, &expected).unwrap();
+            }
         }
     }
 }
