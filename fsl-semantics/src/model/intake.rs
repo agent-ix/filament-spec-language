@@ -2963,6 +2963,8 @@ pub(super) fn read_operation_member(
         None => None,
         Some(returns) => {
             let returns_ctx = NodeCtx::new(operation, at);
+            let returns_at = format!("{at}.returns");
+            let returns_value_ctx = NodeCtx::new(returns, &returns_at);
             let type_ref = returns
                 .get("typeRef")
                 .and_then(Value::as_str)
@@ -2970,7 +2972,18 @@ pub(super) fn read_operation_member(
                     returns_ctx.malformed_in("returns.typeRef", "missing or not a string")
                 })?;
             // A `Clock` result is a place (FR-230 "Results").
-            let value_type = read_value_type_ref(package, &returns_ctx, type_ref, true)?;
+            let mut value_type = read_value_type_ref(package, &returns_ctx, type_ref, true)?;
+            if returns.get("decimal").is_some() {
+                if value_type != ValueTypeRef::Native(NativeValueType::Decimal) {
+                    return Err(returns_ctx.malformed_in(
+                        "returns.decimal",
+                        "a result-level Decimal policy types only a native Decimal typeRef",
+                    ));
+                }
+                let decimal =
+                    read_decimal_value_type(package, node, &returns_value_ctx, &returns_at, None)?;
+                value_type = ValueTypeRef::Resolved(Box::new(ValueType::Decimal(decimal)));
+            }
             let multiplicity = returns_ctx.multiplicity_of(returns, "returns.multiplicity")?;
             Some(OperationResult {
                 value_type,
