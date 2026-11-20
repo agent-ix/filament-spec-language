@@ -254,7 +254,23 @@ fn normalized_claim_path(
     path
 }
 
-fn assert_probability_claim(wire: &Value, claim: &Value, direction: &str, threshold: &str) {
+fn formula_operand<'a>(wire: &'a Value, formula: &Value, index: usize) -> &'a Value {
+    let operands = reference_targets(&formula["body"]["arguments"][index]);
+    let [operand] = operands.as_slice() else {
+        panic!("formula has one reference at operand {index}: {formula}");
+    };
+    node_with_id(wire, operand)
+}
+
+fn assert_probability_claim(
+    wire: &Value,
+    claim: &Value,
+    direction: &str,
+    threshold: &str,
+    operator: &str,
+    upper_bound: &str,
+    predicate_field: &str,
+) {
     let body = &claim["body"];
     let form = binding(body, "form");
     let form_text = form.to_string();
@@ -273,6 +289,30 @@ fn assert_probability_claim(wire: &Value, claim: &Value, direction: &str, thresh
     let formula = node_with_id(wire, formula_node);
     assert_eq!(formula["node_tag"], "temporal");
     assert_eq!(formula["semantic_form"], "formula");
+    assert_eq!(
+        formula["body"]["operation"]["identity"],
+        format!("filament.op.temporal.{operator}")
+    );
+    assert_eq!(
+        formula["body"]["operation"]["member"],
+        serde_json::json!({"kind":"temporal_interval", "interval":{"lower":"0", "upper":upper_bound}})
+    );
+    let holds = formula_operand(wire, formula, 0);
+    assert_eq!(
+        holds["body"]["operation"]["identity"],
+        "filament.op.temporal.holds"
+    );
+    assert!(holds["body"]["operation"]["member"].is_null());
+    let expression = formula_operand(wire, holds, 0);
+    assert_eq!(expression["node_tag"], "expression");
+    assert!(
+        expression["body"].to_string().contains(predicate_field)
+            || expression["node_id"]["path"]
+                .to_string()
+                .contains(predicate_field),
+        "expected holds predicate over {predicate_field}: {}",
+        expression["body"]
+    );
     assert_eq!(claim["node_id"]["ordinal"], 0);
     assert!(binding(body, "activation").to_string().contains("origin"));
     assert!(binding(body, "confidence")["members"]
@@ -351,6 +391,9 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Driving",
             "example/rover",
             true,
+            "eventually",
+            "100",
+            "voteWrong",
             "at_most",
             "1/10000",
         ),
@@ -361,6 +404,9 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Driving",
             "example/rover",
             true,
+            "eventually",
+            "100",
+            "voteWrong",
             "at_most",
             "1/1000000",
         ),
@@ -371,6 +417,9 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Traffic",
             "example/architecture",
             false,
+            "always",
+            "10",
+            "up",
             "at_least",
             "99/100",
         ),
@@ -381,6 +430,9 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Traffic",
             "example/architecture",
             false,
+            "always",
+            "10",
+            "up",
             "at_least",
             "999/1000",
         ),
@@ -393,6 +445,9 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
         workload_name,
         model_package,
         rover,
+        operator,
+        upper_bound,
+        predicate_field,
         direction,
         threshold,
     ) in cases
@@ -447,7 +502,15 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             model_package,
         );
         assert_eq!(claim["occurrences"].as_array().map(Vec::len), Some(1));
-        assert_probability_claim(&example.wire, claim, direction, threshold);
+        assert_probability_claim(
+            &example.wire,
+            claim,
+            direction,
+            threshold,
+            operator,
+            upper_bound,
+            predicate_field,
+        );
         emitted.push(example);
     }
 
