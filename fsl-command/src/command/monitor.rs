@@ -769,7 +769,7 @@ fn stream(
     sink: &mut dyn FnMut(&MonitorEvent),
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
-    let mut observed = 0_u64;
+    let mut observed = session.observations_seen();
     let mut read = 0_u64;
     let mut refused = 0_u64;
     let mut emit = |value: Value| {
@@ -828,7 +828,7 @@ fn stream(
                     cancel,
                 );
                 if step.is_ok() {
-                    observed += 1;
+                    observed = session.observations_seen();
                 }
                 step
             }

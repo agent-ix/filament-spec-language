@@ -2112,6 +2112,7 @@ fn refusal_kind(refused: &TemporalRefusal) -> (&'static str, Vec<(String, String
         }
         TemporalRefusal::NegativeStamp { position: at } => ("negative-stamp", position(at)),
         TemporalRefusal::DecreasingStamp { position: at } => ("decreasing-stamp", position(at)),
+        TemporalRefusal::ThroughBeforeLastStamp => ("through-before-last-stamp", Vec::new()),
         TemporalRefusal::Position(inner) => (
             "position-refusal",
             pair(

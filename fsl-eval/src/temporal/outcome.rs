@@ -181,6 +181,9 @@ pub enum TemporalRefusal {
         /// The first position whose stamp decreases.
         position: TemporalPosition,
     },
+    /// A finite recording whose completeness boundary precedes its last stamp.
+    #[error("the timed trace's through stamp precedes its last position")]
+    ThroughBeforeLastStamp,
     /// A position is outside the represented trace (FR-327 "Positions").
     #[error(transparent)]
     Position(#[from] PositionRefusal),
@@ -216,6 +219,7 @@ impl TemporalRefusal {
             | Self::TupleArity { .. }
             | Self::NegativeStamp { .. }
             | Self::DecreasingStamp { .. }
+            | Self::ThroughBeforeLastStamp
             | Self::NonPositiveLoopDelay
             | Self::LoopReentersBeforeLastStamp
             | Self::NotFiniteWindowProfile { .. }
