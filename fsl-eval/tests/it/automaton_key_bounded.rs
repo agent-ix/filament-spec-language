@@ -11,8 +11,8 @@
 
 use filament_exact::{Origin, Role};
 use fsl_eval::automaton::{
-    bounded_shape, BoundedKind, BoundedState, BoundedTranslation, KeyRefusal, StateContext,
-    TranslationRefusal,
+    bounded_shape, closure_shape, BoundedKind, BoundedState, BoundedTranslation, KeyRefusal,
+    StateContext, TranslationRefusal,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use ix_trace_rs::trace;
@@ -303,7 +303,8 @@ fn a_bounded_key_is_admitted_against_its_own_context_only() {
 }
 
 /// Only `eventually[0,u]` and `always[0,u]` over one `holds(A)`, on origin
-/// under a step-measured bounded profile, have a bounded translation.
+/// under a step-measured bounded profile or the infinite-trace one, have a
+/// bounded translation.
 #[trace("TC-525")]
 #[test]
 fn another_shape_has_no_bounded_translation() {
@@ -316,8 +317,6 @@ fn another_shape_has_no_bounded_translation() {
         ),
         (EVENT, "on origin", "once[0,2] holds(true)"),
         (EVENT, "on origin", "holds(true) until[0,2] holds(true)"),
-        (EVENT, "on each (q: Counter)", "eventually[0,2] holds(true)"),
-        (INFINITE, "on origin", "eventually[0,2] holds(true)"),
     ] {
         let fixture = fixture(profile, "c: Counter", activation, body);
         assert!(bounded_shape(&fixture.clause).is_none(), "{body}");
@@ -330,4 +329,121 @@ fn another_shape_has_no_bounded_translation() {
             "{body}"
         );
     }
+}
+
+/// FR-125 and FR-338: the infinite-trace profile translates the same two
+/// operators, keyed under the `infinite` activation, and its terminal state
+/// stutters where a bounded profile closes with false letters.
+#[trace("TC-525")]
+#[test]
+fn the_infinite_trace_profile_translates_the_bounded_operators_and_stutters() {
+    let fixture = fixture(
+        INFINITE,
+        "c: Counter",
+        "on origin",
+        "eventually[0,2] holds(true)",
+    );
+    assert!(bounded_shape(&fixture.clause).is_none());
+    assert!(closure_shape(&fixture.clause).is_some());
+    let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
+    let translation =
+        BoundedTranslation::clause(&fixture.clause, &context).expect("an infinite translation");
+    assert!(translation.stutters());
+}
+
+/// FR-338-AC-10: the keys of an `on each` bounded monitor, whose clock is
+/// `["each"]` with no remaining distance, and whose one branch carries the
+/// merged window or none; each is admitted back as its own state, and an
+/// `["each", remaining]` clock, an `["origin", ..]` clock, a second window,
+/// a window of the other operator, an obligation, a past or an acceptance
+/// member and a distance past the horizon are refused.
+#[trace("TC-525", "FR-338-AC-10", "FR-338-AC-28")]
+#[test]
+fn an_each_key_has_a_clock_without_a_remaining_distance() {
+    let each = |body: &str| {
+        let translation = clause_in(body, "on each (q: Counter)", 0);
+        let context = context().replace(r#""origin""#, r#""each""#);
+        (translation, context)
+    };
+    let (eventually, context) = each("eventually[0,1] holds(true)");
+    let key = |body: &str| format!(r#"["filament.automaton-state-key/v1",{context},{body}]"#);
+    let idle = eventually.start_each(true, true);
+    assert_eq!(idle, BoundedState::Idle);
+    assert_eq!(
+        text(&eventually, idle),
+        key(r#"["bounded",["each"],[[[],[],[],[]]]]"#)
+    );
+    let owing = eventually.start_each(false, true);
+    assert_eq!(owing, BoundedState::Open { remaining: 1 });
+    assert_eq!(
+        text(&eventually, owing),
+        key(r#"["bounded",["each"],[[[],[],[[[],"positive","deadline","1"]],[]]]]"#)
+    );
+    for state in [idle, owing, BoundedState::Accept, BoundedState::Reject] {
+        let octets = eventually.key(state).expect("encodes");
+        assert_eq!(
+            eventually.admit(octets.as_bytes()),
+            Ok((octets.clone(), state))
+        );
+    }
+    let refused = [
+        // A stray remaining distance in the clock.
+        (
+            key(r#"["bounded",["each","1"],[[[],[],[[[],"positive","deadline","1"]],[]]]]"#),
+            KeyRefusal::Members,
+        ),
+        (
+            key(r#"["bounded",["each","1"],[[[],[],[],[]]]]"#),
+            KeyRefusal::Members,
+        ),
+        (
+            key(r#"["bounded",[],[[[],[],[],[]]]]"#),
+            KeyRefusal::Members,
+        ),
+        // The clock of another activation.
+        (
+            key(r#"["bounded",["origin","1"],[[[],[],[[[],"positive","deadline","1"]],[]]]]"#),
+            KeyRefusal::ForeignContext,
+        ),
+        // A distance past the horizon, a window of the other operator and a
+        // second window.
+        (
+            key(r#"["bounded",["each"],[[[],[],[[[],"positive","deadline","2"]],[]]]]"#),
+            KeyRefusal::Unreachable,
+        ),
+        (
+            key(r#"["bounded",["each"],[[[],[],[[[],"positive","extent","1"]],[]]]]"#),
+            KeyRefusal::Unresolved,
+        ),
+        (
+            key(
+                r#"["bounded",["each"],[[[],[],[[[],"positive","deadline","0"],[[],"positive","deadline","1"]],[]]]]"#,
+            ),
+            KeyRefusal::Unresolved,
+        ),
+        // A member the clause has no occurrence for, and no branch at all.
+        (
+            key(r#"["bounded",["each"],[[[[[],"positive"]],[],[],[]]]]"#),
+            KeyRefusal::Unresolved,
+        ),
+        (key(r#"["bounded",["each"],[]]"#), KeyRefusal::Unreachable),
+    ];
+    for (octets, why) in refused {
+        assert_eq!(eventually.admit(octets.as_bytes()), Err(why), "{octets}");
+    }
+    // An `on origin` translation refuses the idle key, which it cannot reach.
+    let origin = clause("eventually[0,1] holds(true)");
+    assert_eq!(origin.key(BoundedState::Idle), Err(KeyRefusal::Unreachable));
+    assert_eq!(
+        origin.admit(key(r#"["bounded",["each"],[[[],[],[],[]]]]"#).as_bytes()),
+        Err(KeyRefusal::ForeignContext)
+    );
+    let (always, context) = each("always[0,2] holds(true)");
+    let extent = always.start_each(true, true);
+    assert_eq!(
+        text(&always, extent),
+        format!(
+            r#"["filament.automaton-state-key/v1",{context},["bounded",["each"],[[[],[],[[[],"positive","extent","2"]],[]]]]]"#
+        )
+    );
 }

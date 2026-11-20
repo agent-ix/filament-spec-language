@@ -107,7 +107,7 @@ pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredi
 #[cfg(feature = "std")]
 pub use bare_term::{
     BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
-    BareStateClauseDeclaration, ClauseBinder,
+    BareStateClauseDeclaration, ClauseBinder, DeclaredComposite, DeclaredShape,
 };
 #[cfg(feature = "std")]
 pub use bare_world::BareWorld;

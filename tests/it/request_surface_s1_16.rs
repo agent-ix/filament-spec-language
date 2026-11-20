@@ -37,44 +37,37 @@ fn source(file: &str) -> Value {
 /// and a `native-run/1` request whose `request` carries `member`, runs it
 /// through the command adapter, and returns its exit code and document.
 fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
-    run_with_domain_package(unit, with_model, member, None)
+    run_with(unit, with_model, member, None)
 }
 
-fn run_with_members(
-    unit: &str,
-    with_model: bool,
-    members: Vec<(&str, Value)>,
-) -> (u8, Value) {
-    run_with_members_and_domain_package(unit, with_model, members, None)
-}
-
-/// Runs against a private domain-package string when a request-surface case
-/// needs a smaller model than the shared spine fixture.
-fn run_with_domain_package(
+/// [`run`] over the model document `model` in place of the spine model when
+/// one is given.
+fn run_with(
     unit: &str,
     with_model: bool,
     member: (&str, Value),
-    domain_package: Option<&str>,
+    model: Option<&[u8]>,
 ) -> (u8, Value) {
-    run_with_members_and_domain_package(unit, with_model, vec![member], domain_package)
+    run_with_model(unit, with_model, vec![member], model)
 }
 
-fn run_with_members_and_domain_package(
+/// [`run`] with several request members at once.
+fn run_with_members(unit: &str, with_model: bool, members: Vec<(&str, Value)>) -> (u8, Value) {
+    run_with_model(unit, with_model, members, None)
+}
+
+fn run_with_model(
     unit: &str,
     with_model: bool,
     members: Vec<(&str, Value)>,
-    domain_package: Option<&str>,
+    model: Option<&[u8]>,
 ) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
-    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    if let Some(domain_package) = domain_package {
-        std::fs::write(
-            directory.path().join("spine-model.semantic-ir.json"),
-            domain_package,
-        )
-        .unwrap();
+    if let Some(model) = model {
+        std::fs::write(directory.path().join("spine-model.semantic-ir.json"), model).unwrap();
     }
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
     let models = if with_model {
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}])
     } else {
@@ -203,7 +196,7 @@ fn a_passing_run_records_tested_and_never_proved() {
         .expect("VersionNumber has a maximum");
     max["operands"]["value"] = json!("2");
     let domain_package = serde_json::to_string(&domain_package).expect("the model serializes");
-    let (code, value) = run_with_domain_package(
+    let (code, value) = run_with(
         &unit,
         true,
         (
@@ -212,7 +205,7 @@ fn a_passing_run_records_tested_and_never_proved() {
         "clause": "Always", "seed": 7, "max_cases": 50, "max_trace_length": 4,
         "initial": "spine-snapshot.json"}),
         ),
-        Some(&domain_package),
+        Some(domain_package.as_bytes()),
     );
     assert_eq!(code, 0, "{value}");
     let result = &value["model_based_test"];
@@ -438,7 +431,6 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -450,7 +442,7 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
         true,
         (
             "verification_plan",
-            json!({"plan": "Release", "emit": true}),
+            json!({"plan": "Release", "emit": true, "execute": false}),
         ),
     );
     let document = &value["verification_plan"]["document"];
@@ -475,20 +467,34 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[test]
 #[trace("TC-2103", "FR-753-AC-4")]
 #[trace("TC-3018", "FR-1038-AC-1")]
-#[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
-#[ignore = "QSL-2511: the plan coordinator (execute_plan) and QSL-2509 plan documents are not on main yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
-    let (exit, value) = run(
-        &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
-        true,
-        (
-            "verification_plan",
-            json!({"plan": "Release", "execute": true,
-            "initial": "spine-snapshot.json", "seed": 7}),
-        ),
+    // FSpec FR-824: `initial` is the state each consuming step starts from,
+    // so it is a snapshot anchored at an initialization (FR-120).
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{MODEL_HEADER}{RELEASE_PLAN}"),
+    )
+    .unwrap();
+    let initial = snapshot_of(directory.path(), &["c1"], true);
+    std::fs::write(
+        directory.path().join("initial.json"),
+        serde_json::to_vec(&initial).unwrap(),
+    )
+    .unwrap();
+    let (exit, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "verification_plan": {"plan": "Release", "execute": true,
+                "initial": "initial.json", "seed": 7, "max_trace_length": 8}}}),
     );
     let nodes = &value["verification_plan"]["dispositions"];
     assert_eq!(nodes["safe"]["status"], "refuted", "{value}");
+    assert_eq!(nodes["tested"]["status"], "tested", "{value}");
     assert_eq!(nodes["tested"]["evidence"], "tested", "{value}");
     assert_eq!(nodes["timely"]["status"], "blocked", "{value}");
     assert_eq!(nodes["timely"]["blocked_by"], "safe", "{value}");
@@ -499,8 +505,53 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
         "{value}"
     );
     assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
-    assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
+    assert_eq!(
+        outcome["inputs"],
+        json!({"initial": "initial.json", "seed": 7, "max_trace_length": 8,
+            "max_value_bits": null}),
+        "{value}"
+    );
     assert_eq!(exit, 22, "{value}");
+}
+
+/// FSpec FR-824-AC-1's request, with no `initial`: no step settles `failed` for
+/// want of an initial state. FSpec expects `tested` to run from every state
+/// its domain admits; the FR-752 entry cannot enumerate them yet.
+#[test]
+fn a_step_consuming_initial_with_none_is_unsupported_never_failed() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{MODEL_HEADER}{RELEASE_PLAN}"),
+    )
+    .unwrap();
+    let (exit, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "verification_plan": {"plan": "Release", "seed": 7, "max_trace_length": 8}}}),
+    );
+    let outcome = &value["verification_plan"];
+    // The FR-752 entry cannot enumerate a domain's initial states, so the step
+    // is `unsupported` with its cause stated, and no step is `failed`.
+    let tested = &outcome["dispositions"]["tested"];
+    assert_eq!(tested["status"], "unsupported", "{value}");
+    assert_eq!(
+        tested["result"]["refusal"],
+        json!({"code": "unsupported_projection",
+            "cause": "unsupported-requested-capability", "member": "initial"}),
+        "{value}"
+    );
+    assert_eq!(outcome["failed_steps"], json!([]), "{value}");
+    assert_ne!(exit, 30, "{value}");
+    assert_eq!(
+        outcome["inputs"],
+        json!({"initial": null, "seed": 7, "max_trace_length": 8, "max_value_bits": null}),
+        "{value}"
+    );
 }
 
 /// The `details.path` of a refused run's document.
@@ -592,13 +643,19 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
         true,
         (
             "verification_plan",
-            json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+            json!({"plan": "Release", "seed": null, "emit": null, "initial": null,
+                "max_value_bits": null, "max_trace_length": 8}),
         ),
     );
     let path = value["details"]["path"].as_str().unwrap_or_default();
     assert!(
         !path.starts_with("/request/verification_plan/"),
         "the reader refused a null member: {value}"
+    );
+    assert_eq!(
+        value["verification_plan"]["inputs"],
+        json!({"initial": null, "seed": 0, "max_trace_length": 8, "max_value_bits": null}),
+        "{value}"
     );
 }
 
@@ -609,7 +666,6 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let (_, value) = run(
@@ -1359,10 +1415,21 @@ fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
 /// [`unit_both_routes`] with `edit` run over the compiled directory before the
 /// package route reads it.
 fn unit_both_routes_with(unit: &str, package: Value, edit: impl FnOnce(&Path)) -> (String, String) {
+    unit_both_routes_over_model(unit, package, None, edit)
+}
+
+/// [`unit_both_routes_with`] over the model document `model` in place of the
+/// spine model when one is given.
+fn unit_both_routes_over_model(
+    unit: &str,
+    package: Value,
+    model: Option<&[u8]>,
+    edit: impl FnOnce(&Path),
+) -> (String, String) {
     let unit = unit.to_owned();
     let lower = json!({"clause": "Low"});
-    let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
-    assert_eq!(code, 0, "{value}");
+    let (code, value) = run_with(&unit, true, ("tl_lowering", lower.clone()), model);
+    assert_eq!(code, 0, "{value}\n{unit}");
     let from_source = value["tl_lowering"]["atoms"]["p0"]
         .as_str()
         .unwrap()
@@ -1370,6 +1437,9 @@ fn unit_both_routes_with(unit: &str, package: Value, edit: impl FnOnce(&Path)) -
 
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
+    if let Some(model) = model {
+        std::fs::write(directory.path().join("spine-model.semantic-ir.json"), model).unwrap();
+    }
     std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
     let models =
         json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
@@ -1437,13 +1507,18 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
         json!({"clause": "Nothing"}),
     ] {
         let (source_code, from_source) = run(&unit, true, ("tl_lowering", lowering.clone()));
-        let (code, from_package) = write_request(
-            directory.path(),
-            &json!({"format": "native-run/1", "request": {"models": models,
-                "package": {"directory": "handoff"}, "tl_lowering": lowering}}),
-        );
-        assert_eq!(code, source_code, "{lowering}: {from_package}");
-        assert_eq!(from_package, from_source, "{lowering}");
+        for package in [
+            json!({"directory": "handoff"}),
+            json!({"file": "package.json", "equality": "handoff/equality.json"}),
+        ] {
+            let (code, from_package) = write_request(
+                directory.path(),
+                &json!({"format": "native-run/1", "request": {"models": models,
+                    "package": package, "tl_lowering": lowering}}),
+            );
+            assert_eq!(code, source_code, "{package} {lowering}: {from_package}");
+            assert_eq!(from_package, from_source, "{package} {lowering}");
+        }
     }
     let (code, value) = write_request(
         directory.path(),
@@ -1518,16 +1593,20 @@ fn case_binders_match_across_the_source_and_package_routes() {
     }
 }
 
-/// FR-931-AC-18 and FR-1039 (`{file}` form): the atom text of a clause that
-/// reads a model object is built from the package alone, so the `{file}`
-/// selection returns the source route's atom.
+/// FR-931-AC-18 and FR-1039 (`{file}` and `{file, equality}` forms): the atom
+/// text of a clause that reads a model object and a source union is built
+/// from the package alone, so each selection returns the source route's atom.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-6")]
-#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object declaration or source union (FR-533 takes both from the handoff identity file); the package route has no derivation of them from the models and nodes"]
 fn the_file_form_prints_the_source_routes_atoms() {
     let leaf = "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })";
-    let (from_source, from_package) = both_routes_over(leaf, json!({"file": "package.json"}));
-    assert_eq!(from_source, from_package);
+    for package in [
+        json!({"file": "package.json"}),
+        json!({"file": "package.json", "equality": "handoff/equality.json"}),
+    ] {
+        let (from_source, from_package) = both_routes_over(leaf, package.clone());
+        assert_eq!(from_source, from_package, "{package}");
+    }
 }
 
 /// The unit of `a_reading_clause_with_a_capture_lowers_alike_on_both_routes`:
@@ -2260,9 +2339,7 @@ fn declaring_low(declarations: &str, leaf: &str) -> String {
 /// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630): the source
 /// route prints the declaration key a `count` type argument names, and a
 /// chain of aliases at the outer alias. The package half and the
-/// alias-removed copy need a model with a collection field, which no fixture
-/// here declares: a `seq` source in a clause is refused by the strict read of
-/// the emitted package, and the projection has no `sequence` literal.
+/// alias-removed copy are `a_named_count_type_argument_prints_over_the_package`.
 #[test]
 #[trace("TC-2601", "FR-931-AC-16")]
 fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
@@ -2290,4 +2367,224 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
             "{declarations}: {from_source}"
         );
     }
+}
+
+/// QSL-2726 item 15: a `seq` source inside a temporal clause emits a package
+/// the strict read admits, and both routes print its atom alike.
+#[test]
+#[trace("TC-2601")]
+#[ignore = "waits for the contract-ir reader to resolve a seq binder level inside a temporal clause leaf (arch ruling 2026-11-20: FR-322 general binder level rule governs; reader gap)"]
+fn a_seq_source_inside_a_clause_emits_a_package_the_strict_read_admits() {
+    let leaf = "holds(size(seq(i in 0 .. 3: i)) >= 1)";
+    let (from_source, from_package) = both_routes(leaf);
+    assert_eq!(from_source, from_package);
+}
+
+/// The units the model's alias `D` needs.
+const MS_UNITS: &str =
+    "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n";
+
+/// The spine model with `ConfigVersion` also holding `xs: Sequence<Digit>[0, 4]`
+/// (FR-931-AC-16's fixture, `Digit` being `Int[0, 9]`) and `ds: Sequence<D>[0, 2]`
+/// with `D` an alias of the unit `ms`, and the scalars `Quad` (`Int[0, 4]`) and
+/// `Total` (`Int[0, 36]`).
+fn model_with_xs() -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/config-version/model.semantic-ir.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let types = model["types"].as_array_mut().unwrap();
+    let scalar = |name: &str, maximum: &str| -> Value {
+        serde_json::from_str(
+            &types[0]
+                .to_string()
+                .replace("VersionNumber", name)
+                .replace("\"1000\"", &format!("\"{maximum}\"")),
+        )
+        .unwrap()
+    };
+    let field = |name: &str, type_ref: &str, upper: u64| -> Value {
+        let mut field: Value = serde_json::from_str(
+            &types[1]["fields"][0]
+                .to_string()
+                .replace("versionNumber", name)
+                .replace("ix://example/config-version/VersionNumber", type_ref),
+        )
+        .unwrap();
+        field["multiplicity"] =
+            json!({"lower": 0, "upper": upper, "ordered": true, "unique": false});
+        field
+    };
+    let added = [
+        scalar("Digit", "9"),
+        scalar("Quad", "4"),
+        scalar("Total", "36"),
+    ];
+    let identity = "ix://example/config-version/D";
+    let alias = json!({"identity": identity, "displayName": identity, "kind": "alias",
+        "roles": [], "constraints": [], "extensions": [], "unknownPolicy": "reject",
+        "target": "ix://filament/unit/ms",
+        "origin": {"generated": {"generatorIdentity": identity,
+            "generatorVersion": "1.0.0", "inputIdentities": [identity]}}});
+    let xs = field("xs", "ix://example/config-version/Digit", 4);
+    let ds = field("ds", identity, 2);
+    let fields = types[1]["fields"].as_array_mut().unwrap();
+    fields.push(xs);
+    fields.push(ds);
+    types.extend(added);
+    types.push(alias);
+    serde_json::to_vec(&model).unwrap()
+}
+
+/// Removes every `type_argument` member's `alias` from the package files of
+/// a compiled directory.
+fn remove_type_argument_aliases(directory: &Path) {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                if map.get("kind") == Some(&json!("type_argument")) {
+                    map.remove("alias");
+                }
+                map.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    for file in ["package.json", "handoff/checked-package.json"] {
+        let path = directory.join(file);
+        let mut package: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        strip(&mut package);
+        std::fs::write(&path, serde_json::to_vec(&package).unwrap()).unwrap();
+    }
+}
+
+/// FR-931-AC-16's package half (QSL-2630): over a model whose `c` also holds
+/// `xs`, the unit's checked package selected as `package` with the source
+/// removed prints each leaf as the source route does, `count<Small>` from
+/// the `alias` of its `type_argument` member (also through a chain of
+/// aliases), and a copy of the package with the alias removed prints
+/// `count<Int[0, 4]>`.
+#[test]
+#[trace("TC-2601", "FR-931-AC-16")]
+fn a_named_count_type_argument_prints_over_the_package() {
+    let model = model_with_xs();
+    let identity = "test:s1-16:unit.native";
+    let plain = "holds(count<Config::Quad>(x in c.xs: x>1) >= 1)";
+    let leaves = [
+        (
+            "type Small = Int[0, 4];",
+            "holds(count<Small>(x in c.xs: x>1) >= 1)",
+        ),
+        (
+            "type Small = Tiny;\ntype Tiny = Int[0, 4];",
+            "holds(count<Small>(x in c.xs: x>1) >= 1)",
+        ),
+        ("type Small = Int[0, 4];", plain),
+        (
+            "type Small = Int[0, 4];",
+            "holds(sum<Config::Total>(x in c.xs: x) <= 9)",
+        ),
+    ];
+    for (declarations, leaf) in leaves {
+        let unit = declaring_low(&format!("{MS_UNITS}{declarations}"), leaf);
+        let (from_source, from_package) = unit_both_routes_over_model(
+            &unit,
+            json!({"directory": "handoff"}),
+            Some(&model),
+            |_| {},
+        );
+        assert_eq!(from_source, from_package, "{declarations}: {leaf}");
+        let printed = if leaf.contains("count<Small>") {
+            format!("count<ix://{identity}/Small>(x in c.xs: x > 1)")
+        } else if leaf.contains("count<Config::Quad>") {
+            "count<Int[0, 4]>(x in c.xs: x > 1)".to_owned()
+        } else if leaf.contains("sum<Config::Total>") {
+            "sum<Int[0, 36]>(x in c.xs: x)".to_owned()
+        } else {
+            continue;
+        };
+        assert!(from_package.contains(&printed), "{from_package}");
+    }
+    let unit = declaring_low(
+        &format!("{MS_UNITS}type Small = Int[0, 4];"),
+        "holds(count<Small>(x in c.xs: x>1) >= 1)",
+    );
+    let (_, without_alias) = unit_both_routes_over_model(
+        &unit,
+        json!({"directory": "handoff"}),
+        Some(&model),
+        remove_type_argument_aliases,
+    );
+    assert_eq!(
+        without_alias,
+        "holds(count<Int[0, 4]>(x in c.xs: x > 1) >= 1)"
+    );
+}
+
+/// FSpec FR-322 "Named type arguments" end to end (QSL-2726): over a real
+/// domain package, `sum<Config::D>` names the model's alias `D` of `ms`, so
+/// its `type_argument` member carries the alias keyed by the model's
+/// identity, and `count<Config::Quad>` names a model scalar, which carries
+/// none.
+#[test]
+#[trace("TC-2601", "FR-931-AC-16")]
+fn a_model_alias_type_argument_carries_the_model_key_and_a_model_scalar_none() {
+    let model = model_with_xs();
+    let unit = declaring_low(
+        MS_UNITS,
+        "holds(sum<Config::D>(x in c.ds: x) >= 0 ms and count<Config::Quad>(x in c.xs: x>1) >= 1)",
+    );
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(
+        directory.path().join("spine-model.semantic-ir.json"),
+        &model,
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    let package: Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("package.json")).unwrap())
+            .unwrap();
+    let mut arguments: Vec<(String, Option<Value>)> = package["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["body"]["operation"]["member"]["kind"] == "type_argument")
+        .map(|node| {
+            (
+                node["body"]["operation"]["identity"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                node["body"]["operation"]["member"].get("alias").cloned(),
+            )
+        })
+        .collect();
+    arguments.sort_by(|left, right| left.0.cmp(&right.0));
+    let model_key = "ix://example/config-version/D";
+    let [(count, count_alias), (sum, sum_alias)] = arguments.as_slice() else {
+        panic!("one count and one sum: {arguments:?}");
+    };
+    assert!(
+        count.ends_with("count") && sum.contains(".sum"),
+        "{arguments:?}"
+    );
+    assert_eq!(count_alias, &None, "a model scalar gets no alias");
+    assert_eq!(
+        sum_alias,
+        &Some(json!({"package": "example/config-version", "node": model_key})),
+        "a model alias gets the model key"
+    );
 }

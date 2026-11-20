@@ -77,6 +77,24 @@ fn entries(document: &Value) -> Vec<Value> {
         .unwrap_or_else(|| panic!("a `requirements` member: {document}"))
 }
 
+/// The `execute` document with FR-963 requirement items (FR-621 item spelling,
+/// no top-level item `result`) validates against the published schema
+/// (FR-286-AC-31).
+fn assert_execute_document_valid(document: &Value) {
+    let schema: Value = serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    let compiled = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .expect("schema compiles");
+    let result = compiled.validate(document);
+    if let Err(errors) = result {
+        let errors: Vec<String> = errors
+            .map(|error| format!("{error} at {}", error.instance_path))
+            .collect();
+        panic!("the execute document fails the published schema: {errors:?}\n{document}");
+    }
+}
+
 /// FR-960-AC-1, FR-960-AC-2, FR-960-AC-4, FR-963-AC-1, FR-963-AC-3,
 /// FR-963-AC-4: `call.requirements` asks for settlement and names each
 /// item's backend; the three outcome forms report the items.
@@ -86,6 +104,7 @@ fn entries(document: &Value) -> Vec<Value> {
 #[trace("TC-2703", "FR-963-AC-1")]
 #[trace("TC-2703", "FR-963-AC-3")]
 #[trace("TC-2703", "FR-963-AC-4")]
+#[trace("TC-3110", "FR-286-AC-31")]
 #[test]
 fn a_run_call_names_the_backend_of_its_requirement_items() {
     let directory = tempfile::tempdir().unwrap();
@@ -119,6 +138,7 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
         json!(items),
         "the execute items equal the entries"
     );
+    assert_execute_document_valid(&outcome);
     assert_eq!(result.exit_code, 0);
     let first_claim = items[0]["request"]["claim"].clone();
 

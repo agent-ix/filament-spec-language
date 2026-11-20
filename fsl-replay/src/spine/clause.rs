@@ -2795,6 +2795,10 @@ pub(crate) struct ClauseCheck {
     pub(crate) observations: Option<AdmittedObservations>,
     /// The evaluation meter, after the clause's evaluation.
     pub(crate) meter: Meter,
+    /// FR-269 (TC-3121): the clause-side location of the call inside whose
+    /// body the evaluation stopped; `None` when it completed or stopped on
+    /// the clause's own frame.
+    pub(crate) stopped_call: Option<filament_semantic_value::location::ExpressionLocation>,
 }
 
 /// [`check_frame`]'s report and the documents admission read.
@@ -2838,6 +2842,7 @@ pub(crate) fn check_clause_admitted(
                 documents: vec![clause_input_document(&selection.input).clone()],
                 observations: None,
                 meter: Meter::new(run.accounting),
+                stopped_call: None,
             };
         }
     };
@@ -2851,15 +2856,18 @@ pub(crate) fn check_clause_admitted(
             documents,
             observations: Some(observations),
             meter,
+            stopped_call: None,
         };
     };
     let mut derived = None;
+    let mut stopped_call = None;
     let mut consequent_source_events = ConsequentSourceEvents::Unavailable;
     let disposition = match run
         .package
         .evaluate_clause(&qualified, &observations, &mut meter)
     {
         Ok(evaluation) => {
+            stopped_call = evaluation.stopped_call().cloned();
             consequent_source_events = derive_consequent_source_events(graph, clause, &evaluation);
             match derive_separating_witness(graph, clause, &evaluation) {
                 Err(fault) => ClauseDisposition::EvaluateFault(fault),
@@ -2945,6 +2953,7 @@ pub(crate) fn check_clause_admitted(
         documents,
         observations: Some(observations),
         meter,
+        stopped_call,
     }
 }
 

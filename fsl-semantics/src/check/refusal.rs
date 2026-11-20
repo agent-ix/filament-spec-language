@@ -965,12 +965,6 @@ pub enum ProtocolConstruct {
     /// scope" reads them at the repeat's entry only (a `repeat` is
     /// pre-test), so they have no node form (STD-539).
     RepeatDecisionReadsBody,
-    /// A `repeat` whose body steps only through a nested `repeat` whose
-    /// guard cannot be false (FSL FR-218-AC-32). FSpec #481 (STD-539) now
-    /// supports it (FR-464 "Nested `repeat` rule"); it is withheld until
-    /// IR's reader decides that rule (IR-1100), which today refuses the
-    /// outer repeat.
-    RepeatStepsThroughRepeat,
     /// A reference, from a function or a clause, to a protocol that holds an
     /// `attempt`: that protocol's node is written after the state clauses
     /// its attempts list, which are written after the functions. QSL-1121g.
@@ -988,7 +982,6 @@ impl ProtocolConstruct {
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
-            Self::RepeatStepsThroughRepeat => "IR-1100",
         }
     }
 }
@@ -1068,6 +1061,8 @@ pub enum TimedConstruct {
     Response,
     /// A `release` declaration (FSpec FR-419, FSL FR-249).
     Release,
+    /// A `mode` switch declaration (FSpec FR-419, FSL FR-249).
+    ModeSwitch,
     /// A clock-reading declaration whose expansion reaches its own call
     /// (FR-230 "Clock-reading declarations").
     RecursiveClockReading,
@@ -1089,6 +1084,7 @@ impl TimedConstruct {
             Self::Schedulable => "a `schedulable` claim",
             Self::Response => "a `response` claim",
             Self::Release => "a `release` declaration",
+            Self::ModeSwitch => "a `mode` switch declaration",
             Self::RecursiveClockReading => "a recursive clock-reading declaration",
             Self::ReferencedClock => "a clock of another object",
         }
@@ -2037,6 +2033,45 @@ pub enum TemporalCause {
         /// The second declaration's span.
         span: Span,
     },
+    /// FSL FR-249, FSpec FR-419: a `mode S hi on M::o;` names no task set of
+    /// the unit. Located at the task set name the declaration wrote.
+    UnknownModeSwitchTaskSet {
+        /// The task set as written.
+        name: String,
+        /// The operation the declaration switches on, as written.
+        operation: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: a mode switch names no operation of a model. Located at
+    /// the operation name.
+    UnresolvedModeSwitchOperation {
+        /// The operation as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: a mode switch names operations of several declaring
+    /// types, none more derived than the others. Located at the operation
+    /// name.
+    AmbiguousModeSwitchOperation {
+        /// The operation as written.
+        name: String,
+        /// The name's span.
+        span: Span,
+    },
+    /// FSL FR-249: a second `mode S hi` on one operation. Located at the
+    /// second declaration.
+    DuplicateModeSwitch {
+        /// The task set.
+        task_set: String,
+        /// The operation as written.
+        operation: String,
+        /// The first declaration's span.
+        first: Span,
+        /// The second declaration's span.
+        span: Span,
+    },
 }
 
 /// A time member of a task, for a refusal to name (FSL FR-246).
@@ -2267,7 +2302,11 @@ impl TemporalCause {
             | Self::UnknownReleaseTask { span, .. }
             | Self::UnresolvedReleaseOperation { span, .. }
             | Self::AmbiguousReleaseOperation { span, .. }
-            | Self::DuplicateRelease { span, .. } => *span,
+            | Self::DuplicateRelease { span, .. }
+            | Self::UnknownModeSwitchTaskSet { span, .. }
+            | Self::UnresolvedModeSwitchOperation { span, .. }
+            | Self::AmbiguousModeSwitchOperation { span, .. }
+            | Self::DuplicateModeSwitch { span, .. } => *span,
         }
     }
 
@@ -2340,13 +2379,18 @@ impl TemporalCause {
             Self::ClockSelection { .. } => Code::InvalidRequest,
             Self::DuplicateTask { .. }
             | Self::DuplicateTaskSet { .. }
-            | Self::DuplicateRelease { .. } => Code::ConflictingDeclaration,
+            | Self::DuplicateRelease { .. }
+            | Self::DuplicateModeSwitch { .. } => Code::ConflictingDeclaration,
             Self::MissingTaskSet { .. }
             | Self::UnknownResponseTask { .. }
             | Self::UnknownReleaseTaskSet { .. }
             | Self::UnknownReleaseTask { .. }
-            | Self::UnresolvedReleaseOperation { .. } => Code::MissingDeclaration,
-            Self::AmbiguousReleaseOperation { .. } => Code::AmbiguousDeclaration,
+            | Self::UnresolvedReleaseOperation { .. }
+            | Self::UnknownModeSwitchTaskSet { .. }
+            | Self::UnresolvedModeSwitchOperation { .. } => Code::MissingDeclaration,
+            Self::AmbiguousReleaseOperation { .. } | Self::AmbiguousModeSwitchOperation { .. } => {
+                Code::AmbiguousDeclaration
+            }
             Self::UnitlessTimedBound { .. }
             | Self::TimedIntervalUnderStepCount { .. }
             | Self::NotAPlaceExpression { .. } => Code::IllTyped,
@@ -2418,14 +2462,19 @@ impl TemporalCause {
             | Self::DuplicateCapture { .. }
             | Self::DuplicateTask { .. }
             | Self::DuplicateTaskSet { .. }
-            | Self::DuplicateRelease { .. } => "duplicate-declaration",
+            | Self::DuplicateRelease { .. }
+            | Self::DuplicateModeSwitch { .. } => "duplicate-declaration",
             Self::InvalidTaskSet { .. } => "invalid-task-set",
             Self::MissingTaskSet { .. }
             | Self::UnknownResponseTask { .. }
             | Self::UnknownReleaseTaskSet { .. }
             | Self::UnknownReleaseTask { .. }
-            | Self::UnresolvedReleaseOperation { .. } => "missing-name",
-            Self::AmbiguousReleaseOperation { .. } => "ambiguous-name",
+            | Self::UnresolvedReleaseOperation { .. }
+            | Self::UnknownModeSwitchTaskSet { .. }
+            | Self::UnresolvedModeSwitchOperation { .. } => "missing-name",
+            Self::AmbiguousReleaseOperation { .. } | Self::AmbiguousModeSwitchOperation { .. } => {
+                "ambiguous-name"
+            }
             Self::TimedIntervalNotChecked { .. }
             | Self::NotEmitted { .. }
             | Self::ProtocolFairnessNotEmitted { .. }

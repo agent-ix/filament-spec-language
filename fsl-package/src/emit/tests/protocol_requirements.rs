@@ -899,15 +899,8 @@ fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::Check
 #[test]
 fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
     let unit = format!(
-        "record Ack {{ ok: Boolean; }}\n\
-         function refers using v(): Boolean pure {{ protocol Bad }}\n\
-         protocol Bad using p over (input: M::Order) on origin {{\n\
-         role R on M::Order;\n\
-         run sequence Main {{ repeat Again by R visible (e.ok) while {{ not e.ok }} \
-         sequence Body {{ event E by R as (e: Ack) {{ true }}; }} }}\n\
-         finish End as (outcome: Boolean) {{ true }};\n}}\n\
-         temporal Due using t over (c: M::Order) clock \"model-steps\" \
-         on origin {{ always holds(refers()) }}\n{}",
+        "temporal Due using t over (c: M::Order) clock \"model-steps\" \
+         on origin {{ always holds(ref(c.trail.next) = ref(c.trail.next)) }}\n{}",
         flow_over(
             "M::Order",
             "on origin",
@@ -941,5 +934,5 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
         )),
         "{refusals:?}"
     );
-    assert_eq!(refusals.len(), 3, "{refusals:?}");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
 }

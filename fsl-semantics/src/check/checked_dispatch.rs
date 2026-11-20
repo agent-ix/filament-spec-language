@@ -1135,7 +1135,13 @@ pub(crate) fn checked_dispatch_core(
 
         let terms = effective_terms(candidate, clauses, &redefinitions, &mut memo, &mut steps)?;
         if let Some(terms) = terms {
-            let precondition_function = if terms.len() == 1 {
+            // A source model's effective precondition is its own clause function,
+            // named `[<type>, <operation>, "effective_precondition"]` (FSpec
+            // FR-322 "Clause functions" item 5), even where one term contributes.
+            let source_effective = clauses
+                .source_effective_precondition_declarations
+                .contains_key(candidate);
+            let precondition_function = if terms.len() == 1 && !source_effective {
                 // The candidate's own clause is the only contributing term:
                 // reuse the shared authored function directly, no combinator.
                 *authored_index

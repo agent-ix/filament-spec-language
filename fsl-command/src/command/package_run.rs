@@ -144,6 +144,7 @@ pub(super) fn prepare(
     for (present, member) in [
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
+        (request.verification_plan.is_some(), "verification_plan"),
         (request.model_based_test.is_some(), "model_based_test"),
     ] {
         if present {
@@ -475,12 +476,15 @@ fn read_equality_file(
             format!("no equality file is at {path}"),
         ));
     }
-    let bytes = intake.file(path, intake.remaining).map_err(|_| {
-        invalid(
-            "package.equality",
-            format!("the equality file at {path} cannot be read"),
-        )
-    })?;
+    let bytes = intake
+        .file(path, intake.remaining)
+        .map_err(|cause| match cause {
+            limit @ RunCause::Limit(_) => limit,
+            _ => invalid(
+                "package.equality",
+                format!("the equality file at {path} cannot be read"),
+            ),
+        })?;
     fsl_package::ReadEqualityRows::read(&bytes, package)
         .map(Some)
         .map_err(|refusal| {

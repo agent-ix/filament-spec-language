@@ -3,8 +3,10 @@
 //! so Make never interprets checkout path bytes as source.
 
 use std::ffi::OsStr;
+use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::Instant;
 
 use ix_trace_rs::string_edge;
 
@@ -95,13 +97,14 @@ fn matches_summary(line: &str, pieces: &[&str], mode: SummaryMode) -> bool {
     true
 }
 
+/// Checks one selection's finished output. The output was already echoed
+/// while the child ran (see [`run_echoed`]), so this only judges it.
 fn check_output(check: &Check, output: &std::process::Output) -> Result<()> {
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    print!("{combined}");
     if !output.status.success() {
         return Err(Error::ConformanceCheck {
             selection: check.selection,
@@ -139,8 +142,68 @@ fn check_output(check: &Check, output: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
+/// Copies every chunk `source` yields to `sink` as it arrives and returns
+/// all of it. A failed write to `sink` stops the echo, not the capture.
+fn echo_and_capture(mut source: impl Read, mut sink: impl Write) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let mut echo = true;
+    loop {
+        let read = match source.read(&mut buffer) {
+            Ok(0) => return Ok(captured),
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        let chunk = &buffer[..read];
+        if echo {
+            echo = sink.write_all(chunk).and_then(|()| sink.flush()).is_ok();
+        }
+        captured.extend_from_slice(chunk);
+    }
+}
+
+/// Runs `command` with its stdout and stderr echoed live and captured.
+///
+/// Cargo writes `Compiling …` and `Blocking waiting for file lock …` to
+/// stderr while it builds the test binary. Capturing with
+/// [`Command::output`] alone held those lines back until the child exited, so
+/// a long compile or a lock wait read as a hung test (QSL-2270).
+fn run_echoed(command: &mut Command) -> io::Result<Output> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(io::Error::other("child pipes were not created"));
+    };
+    let stderr = std::thread::spawn(move || echo_and_capture(stderr, io::stderr()));
+    let stdout = echo_and_capture(stdout, io::stdout());
+    let stderr = stderr
+        .join()
+        .unwrap_or_else(|_| Err(io::Error::other("stderr echo thread panicked")));
+    let status = child.wait()?;
+    Ok(Output {
+        status,
+        stdout: stdout?,
+        stderr: stderr?,
+    })
+}
+
 fn run_with(cargo: &Path, workspace: &Path, child_env: &[(&str, &OsStr)]) -> Result<String> {
-    for check in CHECKS {
+    let total = CHECKS.len();
+    for (position, check) in CHECKS.iter().enumerate() {
+        let ordinal = position + 1;
+        eprintln!(
+            "conformance: [{ordinal}/{total}] {} {}: {} (cargo builds the test binary first; its progress follows)",
+            check.package,
+            check.target.argument(),
+            check.selection,
+        );
+        let started = Instant::now();
         let mut command = Command::new(cargo);
         command.current_dir(workspace).args([
             "test",
@@ -152,7 +215,7 @@ fn run_with(cargo: &Path, workspace: &Path, child_env: &[(&str, &OsStr)]) -> Res
         if matches!(check.target, Target::Test) {
             command.arg("it");
         }
-        let output = command
+        command
             .args([
                 "--",
                 "--exact",
@@ -161,12 +224,16 @@ fn run_with(cargo: &Path, workspace: &Path, child_env: &[(&str, &OsStr)]) -> Res
                 "terse",
                 "--nocapture",
             ])
-            .envs(child_env.iter().copied())
-            .output()
-            .map_err(|source| Error::ConformanceSpawn {
-                selection: check.selection,
-                source,
-            })?;
+            .envs(child_env.iter().copied());
+        let output = run_echoed(&mut command).map_err(|source| Error::ConformanceSpawn {
+            selection: check.selection,
+            source,
+        })?;
+        eprintln!(
+            "conformance: [{ordinal}/{total}] {} finished in {:.1}s (build and run)",
+            check.selection,
+            started.elapsed().as_secs_f64(),
+        );
         check_output(check, &output)?;
     }
     Ok(String::new())

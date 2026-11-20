@@ -201,6 +201,7 @@ pub fn replay_state_clause(
         documents: read_documents,
         observations,
         mut meter,
+        stopped_call: _,
     } = check;
 
     let fault = |invariant| {
@@ -531,7 +532,7 @@ fn compare_witness(
                 sources,
                 meter,
             )?;
-            Ok(settle_separation(outcome, derived_record))
+            Ok(settle_separation(outcome, given, derived_record))
         }
         (Some(given_record), Some(derived_record)) if given_record == derived_record => {
             let outcome = separate(
@@ -542,7 +543,7 @@ fn compare_witness(
                 sources,
                 meter,
             )?;
-            Ok(settle_separation(outcome, derived_record))
+            Ok(settle_separation(outcome, given, derived_record))
         }
         _ => Ok(Some(WitnessCheck::Disagrees {
             given: given.cloned().map(Box::new),
@@ -558,12 +559,13 @@ fn compare_witness(
 /// exhausted.
 pub(crate) fn settle_separation(
     outcome: SeparationOutcome,
+    given: Option<&SeparatingWitnessRecord>,
     record: &SeparatingWitnessRecord,
 ) -> Option<WitnessCheck> {
     match outcome {
         SeparationOutcome::Holds => Some(WitnessCheck::Agrees(Some(Box::new(record.clone())))),
         SeparationOutcome::Failed(step, reason) => Some(WitnessCheck::Disagrees {
-            given: Some(Box::new(record.clone())),
+            given: given.cloned().map(Box::new),
             derived: Some(Box::new(record.clone())),
             failure: WitnessFailure::Separation { step, reason },
         }),
@@ -763,19 +765,26 @@ pub(crate) fn stopped_reason(
             cause: reason.to_owned(),
         }),
         CallOutcome::Refused(refusal) => {
-            let (code, fields) = match refusal {
-                CallRefusal::Record { code, fields, .. } => (code, fields),
-                CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
-            };
-            Some(SeparationReason::Refused(SeparationRefusal {
-                code: code.code().to_owned(),
-                cause: code.cause().to_owned(),
-                fields: fields
-                    .into_iter()
-                    .map(|(name, value)| (name.to_owned(), value))
-                    .collect(),
-            }))
+            Some(SeparationReason::Refused(separation_refusal(refusal)))
         }
         CallOutcome::Completed(_) => return Err(fault("stopped-evaluation-completes-no-value")),
     })
+}
+
+/// Convert one evaluated-call refusal to its public separation record.
+/// Shared by the separation check and the FR-269 derivation entry so both
+/// preserve the same code, cause and fields.
+pub(crate) fn separation_refusal(refusal: CallRefusal) -> SeparationRefusal {
+    let (code, fields) = match refusal {
+        CallRefusal::Record { code, fields, .. } => (code, fields),
+        CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
+    };
+    SeparationRefusal {
+        code: code.code().to_owned(),
+        cause: code.cause().to_owned(),
+        fields: fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+    }
 }

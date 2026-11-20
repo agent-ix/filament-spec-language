@@ -770,6 +770,9 @@ pub enum RunCause {
     PlanRequest {
         /// The JSON pointer of the member at fault.
         path: String,
+        /// The FR-805 code: `invalid_runtime_input` for a member defect, the
+        /// selection's `missing_declaration` or `ambiguous_declaration`.
+        code: Code,
         /// The FR-805 cause.
         cause: &'static str,
         /// Why the member is refused.
@@ -1115,8 +1118,8 @@ impl RunCause {
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
-            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
-            Self::ModelBasedTestRequest { code, .. } => *code,
+            Self::ExportRequest { .. } => Code::InvalidRuntimeInput,
+            Self::PlanRequest { code, .. } | Self::ModelBasedTestRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1244,6 +1247,10 @@ impl RunError {
         &self,
         operation: fsl_replay::Operation,
     ) -> fsl_replay::OutcomeDocument {
+        self.refusal_document(operation).with_empty_analyze_members()
+    }
+
+    fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
         match &self.cause {
@@ -1793,6 +1800,9 @@ fn run_configured(
             replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
         } else {
             plan::check_member(bytes)?;
+            if let Some(result) = plan::run_bytes(directory, bytes, limits, &settle)? {
+                return Ok(Some(result));
+            }
             if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
                 return Ok(Some(result));
             }
@@ -3401,12 +3411,11 @@ fn check_sources<T>(
             );
         }
         let checked = checked_result.map_err(failure)?.into_value();
-        let selections = match &request.clocks {
-            Some(clocks) => clocks
-                .package_selections(&checked, &[&parsed])
-                .map_err(|refusal| spine_failure(*refusal))?,
-            None => Vec::new(),
-        };
+        // An absent `clocks` member selects like an empty one: a clause whose
+        // clock needs no configuration still binds its default selection.
+        let selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|refusal| spine_failure(*refusal))?;
         (checked, selections)
     };
     finish(
@@ -3776,6 +3785,12 @@ fn prepare_run_bytes_with_sources(
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
             reason: "items is handled by the multi-selection runner".to_owned(),
+        });
+    }
+    if request.verification_plan.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "verification_plan".to_owned(),
+            reason: "a verification plan is run by the plan coordinator route".to_owned(),
         });
     }
     let mut intake = intake_with_bytes(

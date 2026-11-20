@@ -1198,6 +1198,9 @@ impl Unit {
                 DeclarationForm::Release(release) => unit
                     .task_sets
                     .push(super::task_set::TaskSetDeclaration::Release(release)),
+                DeclarationForm::ModeSwitch(switch) => unit
+                    .task_sets
+                    .push(super::task_set::TaskSetDeclaration::ModeSwitch(switch)),
                 DeclarationForm::HyperBehaviours(clause) => unit
                     .hyper_clauses
                     .push(super::hyper_clause::HyperDeclaration::Behaviours(*clause)),
@@ -4295,6 +4298,7 @@ impl PackageDeclarations {
                         | fsl_forms::DeclarationForm::Schedulable(_)
                         | fsl_forms::DeclarationForm::Response(_)
                         | fsl_forms::DeclarationForm::Release(_)
+                        | fsl_forms::DeclarationForm::ModeSwitch(_)
                 ) {
                     source_owners.insert(format!("task_set {task_set_index}"), source.clone());
                     task_set_index += 1;

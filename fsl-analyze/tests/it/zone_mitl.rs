@@ -416,6 +416,99 @@ temporal Boundary using tt over (c: M::Call) clock \"model-time\" on origin {{ {
         }
     }
 
+    /// A model with a `late` step only after the claim's outer window has
+    /// closed, so only the subject's own product, which no claim prunes,
+    /// reaches phase 3, where the claim's first atom is undefined.
+    fn nested_with_a_late_phase() -> World {
+        let model = document(
+            &["x"],
+            &[
+                ("rise", &["phase"]),
+                ("pulse", &["phase"]),
+                ("delay", &["phase"]),
+                ("idle", &["phase"]),
+            ],
+        );
+        crate::timed_world::world_with_mode(
+            &model,
+            TIMED,
+            &format!(
+                "{DENSE}
+function mod_defined using v(n: Int[0, 3]): Boolean pure {{ 6 mod (3 - n) >= 0 }}
+pre RiseAtOne using v on M::Call::rise {{ self.phase = 0 and self.x >= 1 ms }}
+post Rose using v on M::Call::rise {{ self.phase = 1 }}
+pre PulseAtInstant using v on M::Call::pulse {{ self.phase = 1 and self.x >= 3 ms }}
+post Pulsed using v on M::Call::pulse {{ self.phase = 2 }}
+pre DelayAllowed using v on M::Call::delay {{ self.phase = 2 and self.x >= 7 ms }}
+post Delayed using v on M::Call::delay {{ self.phase = 3 }}
+pre IdleAllowed using v on M::Call::idle {{ self.phase = 3 }}
+post Idled using v on M::Call::idle {{ self.phase = 3 }}
+time invariant FirstDeadline when {{ self.phase = 0 }} {{ self.x <= 1 ms }}
+time invariant SecondDeadline when {{ self.phase = 1 }} {{ self.x <= 3 ms }}
+temporal NestedIntervals using tt over (c: M::Call) clock \"model-time\" on origin {{
+    holds(c.phase = 0 or (c.phase = 3 and mod_defined(c.phase))) until[0 ms, 5 ms] (holds(c.phase = 1) until[1 ms, 2 ms] holds(c.phase = 2))
+}}
+",
+            ),
+            CheckMode::Kernel,
+        )
+    }
+
+    /// FR-245: the admission instance reads no claim, so an atom undefined
+    /// at a state only the subject's own product reaches does not reject a
+    /// certificate the search proved.
+    #[trace("FR-245", "FR-244")]
+    #[test]
+    fn an_atom_undefined_only_past_the_claims_window_leaves_the_certificate_accepted() {
+        checked_verdict(&nested_with_a_late_phase(), true);
+    }
+
+    /// FR-245: the admission instance is evidence for `admitted` alone. A
+    /// certificate whose witness is moved off its initial node, ends on a
+    /// node that is not quiescent, or whose admission nodes are relabelled
+    /// as the claim's own is rejected, never accepted on trust.
+    #[trace("FR-245", "FR-244")]
+    #[test]
+    fn a_tampered_admission_instance_is_rejected() {
+        use fsl_replay::DivergentTarget;
+        let world = nested(3);
+        let certificate = proved(decide(&world));
+        let admission: Vec<usize> = certificate
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.product.is_some_and(|mark| mark.instance > 0))
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!admission.is_empty(), "an admission instance is carried");
+        let rejects = |tampered: &crate::zone_search::Certificate| {
+            matches!(
+                check(&world, tampered, CertificateCheckLimits::default()),
+                Ok(ZoneCertificateVerdict::Rejected(_))
+            )
+        };
+        let mut moved = certificate.clone();
+        let witness = moved.admitted.as_mut().expect("a witness");
+        witness.start = (0..moved.nodes.len())
+            .find(|node| !moved.initials.contains(node))
+            .expect("a non-initial node");
+        assert!(rejects(&moved));
+        let mut unmet = certificate.clone();
+        let witness = unmet.admitted.as_mut().expect("a witness");
+        witness.target = DivergentTarget::Quiescent(witness.start);
+        assert!(rejects(&unmet));
+        let mut relabelled = certificate.clone();
+        for &node in &admission {
+            if let Some(mark) = relabelled.nodes[node].product.as_mut() {
+                mark.instance = 0;
+            }
+        }
+        assert!(rejects(&relabelled));
+        let mut dropped = certificate.clone();
+        dropped.initials.retain(|node| !admission.contains(node));
+        assert!(rejects(&dropped));
+    }
+
     fn nested(c_event: u32) -> World {
         let model = document(
             &["x"],

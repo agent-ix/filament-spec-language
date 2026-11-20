@@ -1081,22 +1081,54 @@ fn cwd_child_runs_request() {
 /// Run `request` from `directory` in a fresh process and return the child's
 /// result line.
 fn run_from(directory: &Path, request: &str) -> String {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    run_child(directory, request, None)
+}
+
+/// Run `request` from `directory` in a fresh process whose libtest thread
+/// count is `threads` (the parent's own count is never inherited), and return
+/// the child's result line.
+///
+/// QSL-2276: a single-threaded libtest writes `test <name> ... ` before the
+/// test body runs, so under `--nocapture` the body's `child-result` text can
+/// share that line. The marker is found anywhere in a line.
+fn run_child(directory: &Path, request: &str, threads: Option<&str>) -> String {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
         .args([
             "--exact",
             "spine_run::cwd_child_runs_request",
             "--nocapture",
         ])
+        .env_remove("RUST_TEST_THREADS")
         .env(CWD_CHILD_REQUEST, request)
-        .current_dir(directory)
-        .output()
-        .unwrap();
+        .current_dir(directory);
+    if let Some(threads) = threads {
+        command.env("RUST_TEST_THREADS", threads);
+    }
+    let output = command.output().unwrap();
     assert!(output.status.success(), "{output:?}");
     String::from_utf8_lossy(&output.stdout)
         .lines()
-        .find(|line| line.starts_with("child-result "))
+        .find_map(|line| {
+            line.find("child-result ")
+                .map(|start| line[start..].to_owned())
+        })
         .unwrap_or_else(|| panic!("no child result: {output:?}"))
-        .to_owned()
+}
+
+/// QSL-2276 regression: the child result is read whether the child's libtest
+/// runs on one thread (the full gate's `RUST_TEST_THREADS=1`) or the default
+/// count, and both reads agree.
+#[test]
+#[trace("TC-104", "FR-026-AC-5")]
+fn child_result_is_read_under_single_threaded_libtest() {
+    let directory = tempfile::tempdir().unwrap();
+    let program = std::fs::read(SEVEN_FIXTURE).unwrap();
+    spine_run_request(directory.path(), &program, call("seven", json!([])));
+    let single = run_child(directory.path(), "request.json", Some("1"));
+    assert!(single.starts_with("child-result 0 "), "{single}");
+    assert!(single.contains("\"integer\":\"7\""), "{single}");
+    assert_eq!(run_child(directory.path(), "request.json", None), single);
 }
 
 /// FR-026-AC-5: one request file given by its relative, parent-relative and

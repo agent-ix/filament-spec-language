@@ -36,6 +36,12 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-1038 plan run result: FSpec FR-824's outcome as the
+    /// `verification_plan` member.
+    pub(super) fn plan_document(document: Value) -> Self {
+        Self(serde_json::json!({"verification_plan": document}))
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)

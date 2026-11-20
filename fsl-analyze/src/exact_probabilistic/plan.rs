@@ -429,7 +429,8 @@ impl<'c> Plan<'c> {
             return Ok(match closed {
                 fsl_eval::automaton::BoundedState::Accept => MonitorVerdict::Accept,
                 fsl_eval::automaton::BoundedState::Reject => MonitorVerdict::Reject,
-                fsl_eval::automaton::BoundedState::Open { .. } => {
+                fsl_eval::automaton::BoundedState::Open { .. }
+                | fsl_eval::automaton::BoundedState::Idle => {
                     return Err(PlanFault::Broken("terminal-has-no-open-debt"))
                 }
             });

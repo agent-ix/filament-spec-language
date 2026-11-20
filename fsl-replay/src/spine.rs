@@ -2194,6 +2194,24 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 } => format!(
                     "{message}: `{operation}` already releases task `{task}` of task set `{task_set}`"
                 ),
+                TemporalCause::UnknownModeSwitchTaskSet {
+                    name, operation, ..
+                } => format!(
+                    "{message}: the mode switch on `{operation}` names no task set `{name}`"
+                ),
+                TemporalCause::UnresolvedModeSwitchOperation { name, .. } => format!(
+                    "{message}: the mode switch operation `{name}` names no model operation"
+                ),
+                TemporalCause::AmbiguousModeSwitchOperation { name, .. } => format!(
+                    "{message}: the mode switch operation `{name}` names operations of several types"
+                ),
+                TemporalCause::DuplicateModeSwitch {
+                    task_set,
+                    operation,
+                    ..
+                } => format!(
+                    "{message}: `{operation}` already switches task set `{task_set}` to `hi` mode"
+                ),
                 TemporalCause::UnresolvedFairnessOperation { name, .. } => {
                     format!("{message}: the fairness operation `{name}` names no model operation")
                 }

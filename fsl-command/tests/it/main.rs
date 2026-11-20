@@ -3,6 +3,7 @@
 
 mod check_imports;
 mod check_source_identity;
+mod cli_contract;
 mod compile_limits;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
@@ -15,10 +16,10 @@ mod native_workflow_family_cases;
 mod negotiation;
 mod package_run;
 mod prepared_command;
-mod reaches_optional_reference;
-mod protocol_refusal_text;
 mod probabilistic_package_locus;
 mod protocol_refusal_names;
+mod protocol_refusal_text;
+mod reaches_optional_reference;
 mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;

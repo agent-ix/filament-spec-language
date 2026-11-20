@@ -54,7 +54,7 @@ impl Control {
             .state(state)
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?
         {
-            BoundedState::Open { .. } => Ok(Self::Running(state)),
+            BoundedState::Open { .. } | BoundedState::Idle => Ok(Self::Running(state)),
             BoundedState::Accept => Ok(Self::Decided(true)),
             BoundedState::Reject => Ok(Self::Decided(false)),
         }
@@ -314,7 +314,7 @@ fn enumerate_controlled(
             let closed = match terminal {
                 BoundedState::Accept => true,
                 BoundedState::Reject => false,
-                BoundedState::Open { .. } => {
+                BoundedState::Open { .. } | BoundedState::Idle => {
                     return Err(ExactProbabilityGraphError::ExpansionRefused.into())
                 }
             };
