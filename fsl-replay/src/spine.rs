@@ -3152,6 +3152,9 @@ impl crate::outcome::OutcomeDiagnostic {
 mod dependency_tests;
 
 #[cfg(test)]
+mod forms_message_tests;
+
+#[cfg(test)]
 pub(crate) mod fixture_ids;
 
 #[cfg(test)]

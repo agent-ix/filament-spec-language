@@ -167,6 +167,21 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
     assert_eq!(error.category().exit_code(), 21, "{value}");
     assert_eq!(value["code"], "unsupported_construct", "{value}");
     assert_eq!(value["cause"], "expression-form", "{value}");
+    assert!(
+        value["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("hyper")),
+        "{value}"
+    );
+    let source = std::fs::read_to_string(corpus().join("pending/hyper-plain-temporal-at.native"))
+        .expect("the case source");
+    let at = source.find("c.value @ a").expect("the indexed read");
+    assert_eq!(value["details"]["span"]["start"]["byte"], at, "{value}");
+    assert_eq!(
+        value["details"]["span"]["end"]["byte"],
+        at + "c.value @ a".len(),
+        "{value}"
+    );
 }
 
 #[path = "refinement_remaining_source_routes.rs"]

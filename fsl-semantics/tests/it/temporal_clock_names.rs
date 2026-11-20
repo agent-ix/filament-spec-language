@@ -211,7 +211,7 @@ fn hyper_only_forms_refuse_in_a_single_trace_clause() {
         (
             "temporal R using inf over (v: Config::ConfigVersion) clock \"model-steps\" \
              on origin { always holds(v.versionNumber @ a = v.versionNumber @ b) }",
-            "v.versionNumber @ a = v.versionNumber @ b",
+            "v.versionNumber @ a",
         ),
         (
             "temporal R using inf over (v: Config::ConfigVersion) clock \"model-steps\" \

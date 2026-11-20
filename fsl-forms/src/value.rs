@@ -119,6 +119,48 @@ pub(crate) fn unexpected(node: &CstNode) -> FormsRefusal {
     )
 }
 
+/// The refusal for a construct no `Expression` variant represents (FR-763).
+/// No source reaches the cause today: it is the specified S2 refusal for a
+/// construct that has no form yet, held ready and exercised by its unit test.
+#[cfg(test)]
+pub(crate) fn unrepresented(
+    cst: &LosslessCst,
+    production: Production,
+    span: Span,
+    construct: super::dispatch::ConstructKind,
+) -> FormsRefusal {
+    let text = source_text(cst, span);
+    FormsRefusal::at(
+        FormsCause::UnrepresentedConstruct {
+            production,
+            construct,
+            text: text.into(),
+            declaration: None,
+            profile: None,
+        },
+        span,
+    )
+}
+
+/// The construct's source text, at most 120 bytes cut on a character
+/// boundary and followed by `...` when cut.
+#[cfg(test)]
+fn source_text(cst: &LosslessCst, span: Span) -> String {
+    let text = cst
+        .source()
+        .text()
+        .get(span.start..span.end)
+        .unwrap_or_default();
+    if text.len() <= 120 {
+        return text.to_owned();
+    }
+    let mut end = 120;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
+}
+
 /// A token's spelling as text.
 pub(crate) fn text(token: &CstToken, node: &CstNode) -> Result<String, FormsRefusal> {
     std::str::from_utf8(token.spelling())
