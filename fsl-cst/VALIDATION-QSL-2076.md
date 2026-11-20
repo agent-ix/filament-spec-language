@@ -157,3 +157,33 @@ The actual diagnostic was `invalid_syntax` / `unexpected-token`, byte span
 Replacing the one-byte arm terminator yielded adjacent `r#`; this is the
 retained failure context, not a new parser bug claim. The strict location
 assertion remains unchanged. No additional trial change or runtime was made.
+
+## Final accepted corpus correction
+
+The final reviewer-directed correction removes both generic mutation-negative
+loops and their mutation-only source/token bookkeeping. Their whole-token
+recommendation above is withdrawn: `CaseArm` ends in an expression, and
+`QualifiedName#text` is valid reference-literal syntax. Arbitrary marker
+placement was a harness oracle defect, not a parser defect. QSL-2686 is
+implemented here and ready to close when this PR merges.
+
+The renamed active function is
+`complete_grammar::every_named_production_has_positive_vectors_and_exact_boundaries`.
+It keeps the production inventory, real accepted programs and ReferenceLiteral
+case, exact node spans/rendering, formatter token/tree preservation and
+idempotence. It claims positive production and exact-boundary checks; the
+negative-production criterion tag is removed from this function. Explicit
+combinator and grammar-aware near-miss refusal/location rules are unchanged.
+
+Only that renamed qualified function ran once, with the same target, profiles,
+thread and required skips. It **passed: 1 passed, 0 failed, 0 ignored**, exit 0,
+in 0.17 seconds, after a 2.16-second warm compile. Local log:
+`.agent/qsl-2076-final-positive.log`. No accepted correction, strict pending
+function, new temporal family, lint or component suite was rerun.
+
+This supersedes the unresolved vector status above while preserving every
+original failure receipt. The full component was not rerun or claimed passing.
+The original gate's 13 failures are disposed as five grounded corrected
+functions and eight required pending functions (one unit plus seven
+integration functions), owned by QSL-2679 through QSL-2685. Required pending
+cases are not coverage.

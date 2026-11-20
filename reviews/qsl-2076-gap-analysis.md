@@ -16,7 +16,7 @@ Compared the changed tests with QSL-2076's seven grammar families and the curren
 
 ## Verdict
 
-**PASS** — no missing acceptance branch or hollow assertion was found in the assigned diff. This is a PR-scoped conclusion, not a repository-wide assurance claim.
+**CONDITIONAL** — the seven new QSL-2076 functions still have no acceptance gap. QSL-2686 owns removal of the legacy unsound generic negative generator and its false coverage claim, preserving real-source positive/boundary coverage and strict grammar-aware near-miss oracles. This is a PR-scoped conclusion, not a repository-wide assurance claim.
 
 ## Findings
 
@@ -37,3 +37,24 @@ Compared the changed tests with QSL-2076's seven grammar families and the curren
 - Repository matrix and existing corpus measurements were deliberately not repeated under the user's diff-only review and peer-evidence instructions. No repository completeness claim is made.
 - Plan completion: not assessed
 - Semantic agreement was assessed over the changed cases only; no optional repository-wide semantic audit ran.
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | The legacy production-vector test mutates a word suffix but requires a diagnostic at that suffix even when the earlier remaining prefix already violates the exact-token grammar. Replace the whole final token with padded standalone `#` while keeping the strict boundary assertion. | fsl-cst/tests/it/complete_grammar.rs:587; SR-1467 FND-002 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | still-open | Source-grounded vector correction accepted by the lead; implementation and one changed-function check remain. Missing runtime diagnostic values were not invented. |
+| FND-002 | still-open | Round 3: the one changed-function run refutes the proposed generic marker repair. Remove the generic negative generator under QSL-2686, retain active positive/boundary assertions, and represent missing grammar-aware negative coverage through existing owners. No incorrect location oracle becomes a strict-pending parser bug. |
+
+## Final negative-coverage disposition (pass 3)
+
+The supplied CaseArm `r#` failure is compatible with the actual ReferenceLiteral prefix grammar; it is not evidence of a parser-location defect. No generic marker substitution proves an invalid token at the intended production boundary across arbitrary surrounding grammar. The proposed padded-token repair is withdrawn. Remove the generator and its universal negative-coverage claim, while retaining all active positive production inventory, node boundaries/rendering, formatter properties and the real ReferenceLiteral vector. Existing explicit near-miss/code/cause/span tests remain strict; any still-missing production negatives are owned by the existing QSL-2075..2078/2107 program and must not be claimed as supplied by the positive inventory. QSL-2686 is the one actual harness defect, related to QSL-2107 and blocking QSL-2076 until the same-PR correction lands. No whole-positive-test ignore, speculative parser bug, another marker experiment or additional runtime was performed or recommended.
+
+## Confined correction coverage
+
+The four grounded stale-test corrections and tracked strict-owner annotations were inspected only in the supplied correction diff at 6540b9901112b0050ad51bf8b0914753e6cf1260. Four reported corrected passes are accepted; the reverted history-oracle pass is excluded. The ReferenceLiteral inventory and authored vector are grounded. Original required oracles under QSL-2679 and QSL-2680 through QSL-2685 remain pending, not passing coverage. The original gate failure remains visible; no test, build, baseline probe, owner audit or repository matrix was run for this disposition.

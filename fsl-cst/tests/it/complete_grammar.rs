@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The complete-V1 `Production` inventory against the accepted EBNF grammar.
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 use fsl_cst::{
     CompleteCause, CompleteCode, CstElement, HostCause, Limits, ParsedSource, Production,
@@ -508,14 +508,13 @@ fn corpus() -> Vec<(&'static str, String)> {
 
 #[trace(
     "FSpec-TC-180",
-    "FSpec-FR-339-AC-1",
     "FSpec-FR-339-AC-2",
     "FR-003-AC-14"
 )]
 #[test]
-fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
+fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
-    let mut occurrences = BTreeMap::new();
+    let mut productions = BTreeSet::new();
     for (id, text) in corpus() {
         let parsed = parse(id, &text);
         assert!(
@@ -552,26 +551,7 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
                 "half-open CST boundary for {:?}",
                 node.production()
             );
-            occurrences.entry(node.production()).or_insert_with(|| {
-                let last = parsed
-                    .cst()
-                    .tokens()
-                    .iter()
-                    .rev()
-                    .find(|token| {
-                        token.class() == TokenClass::Token
-                            && token.span().start >= span.start
-                            && token.span().end <= span.end
-                    })
-                    .expect("a production occurrence has a significant token");
-                assert_eq!(
-                    last.span().end,
-                    span.end,
-                    "{id}: {:?} must end at its last significant token",
-                    node.production()
-                );
-                (id, text.clone(), span, last.span())
-            });
+            productions.insert(node.production());
         }
     }
 
@@ -583,43 +563,9 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
         .collect();
     let missing: Vec<_> = core
         .iter()
-        .filter(|production| !occurrences.contains_key(**production))
+        .filter(|production| !productions.contains(**production))
         .collect();
     assert!(missing.is_empty(), "uncovered productions: {missing:?}");
-
-    for production in core {
-        let (id, source, span, last_token) = occurrences.get(production).unwrap();
-        assert!(span.start < source.len(), "{production:?} must own a token");
-        let mut invalid = source.clone().into_bytes();
-        invalid[span.start] = b'#';
-        let invalid = String::from_utf8(invalid).unwrap();
-        let parsed = parse(id, &invalid);
-        assert!(!parsed.is_admissible(), "{production:?} mutation admitted");
-        assert_eq!(
-            parsed.diagnostics()[0].byte_span().unwrap().start,
-            span.start,
-            "{production:?} negative vector must retain its exact locus"
-        );
-
-        let boundary = span.end - 1;
-        let mut invalid = source.clone().into_bytes();
-        invalid[last_token.start..last_token.end].fill(b' ');
-        invalid[boundary] = b'#';
-        let invalid = String::from_utf8(invalid).unwrap();
-        let parsed = parse(id, &invalid);
-        assert!(
-            !parsed.is_admissible(),
-            "{production:?} right-boundary mutation admitted"
-        );
-        assert!(
-            parsed.diagnostics().iter().any(|diagnostic| {
-                diagnostic.byte_span().unwrap().start <= boundary
-                    && boundary < diagnostic.byte_span().unwrap().end
-            }),
-            "{production:?} boundary vector must retain a diagnostic covering its locus: {invalid}\n{:?}",
-            parsed.diagnostics()
-        );
-    }
 }
 
 #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
