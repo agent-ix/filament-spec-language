@@ -171,16 +171,15 @@ fn compile(case: &Window) -> Result<Compiled, String> {
     let selections = forms
         .forms()
         .iter()
-        .filter_map(|form| {
-            matches!(form.form(), fsl_forms::DeclarationForm::Temporal(_)).then(|| {
-                TemporalClockSelection::new(
-                    cst.source().reference().clone(),
-                    form.span(),
-                    ClockConfiguration::TimestampedEvent {
-                        timestamp_unit: "ms".into(),
-                    },
-                )
-            })
+        .filter(|form| matches!(form.form(), fsl_forms::DeclarationForm::Temporal(_)))
+        .map(|form| {
+            TemporalClockSelection::new(
+                cst.source().reference().clone(),
+                form.span(),
+                ClockConfiguration::TimestampedEvent {
+                    timestamp_unit: "ms".into(),
+                },
+            )
         })
         .collect::<Vec<_>>();
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
