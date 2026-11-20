@@ -70,7 +70,7 @@ pub use model_check::digital_state_graph::{
 };
 mod monitor_plan;
 mod object_environment;
-mod outcome;
+pub mod outcome;
 pub mod planner;
 mod probability_certificate;
 mod product_action;

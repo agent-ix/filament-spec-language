@@ -24,6 +24,7 @@
 //! non-proof evaluation outcome such as `execute`.
 
 mod counterexample;
+pub mod hint;
 pub use counterexample::{
     assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
     temporal_wire, CounterexampleWireError, ProtocolWire,
@@ -1816,6 +1817,8 @@ pub enum OutcomeLocus {
     },
     /// An artifact and a JSON pointer into it.
     Artifact {
+        /// The FR-001 identity of the artifact.
+        identity: RawSourceRef,
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
     },
@@ -1898,7 +1901,8 @@ impl From<&Locus> for OutcomeLocus {
             Locus::Occurrence(location) => Self::Occurrence {
                 occurrence: OccurrenceKey::from(location).to_string(),
             },
-            Locus::Artifact { pointer } => Self::Artifact {
+            Locus::Artifact { identity, pointer } => Self::Artifact {
+                identity: identity.clone(),
                 pointer: pointer.to_string(),
             },
         }
@@ -1911,24 +1915,27 @@ impl From<&Locus> for OutcomeLocus {
 pub struct OutcomeDiagnostic {
     cause: Option<Box<str>>,
     code: String,
-    locus: Option<OutcomeLocus>,
-    message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     construct: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     declaration: Option<String>,
+    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
+    /// the refusal inside the request and the call.
+    details: Option<serde_json::Map<String, serde_json::Value>>,
+    /// FR-286's catalog hint for the diagnostic's code and cause.
     #[serde(skip_serializing_if = "Option::is_none")]
-    profile: Option<String>,
+    hint: Option<&'static str>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
     )]
     label: Option<SourceLabel>,
-    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
-    /// the refusal inside the request and the call.
-    details: Option<serde_json::Map<String, serde_json::Value>>,
+    locus: Option<OutcomeLocus>,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
 
 /// FSpec FR-331's `U64String`: an unsigned 64-bit integer as its canonical
@@ -1959,13 +1966,14 @@ impl OutcomeDiagnostic {
         Self {
             cause: cause.map(Into::into),
             code: code.into(),
+            construct: None,
+            declaration: None,
+            hint: None,
+            label: None,
             locus,
             message: message.into(),
-            construct: None,
-            text: None,
-            declaration: None,
             profile: None,
-            label: None,
+            text: None,
             details: None,
         }
     }
