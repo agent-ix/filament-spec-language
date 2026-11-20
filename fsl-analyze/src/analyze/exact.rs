@@ -415,7 +415,7 @@ fn mean_time_ranking(
             if ranks[index].is_some() {
                 continue;
             }
-            let outgoing = product.outgoing(crate::exact_probabilistic::ProbStateId(index));
+            let outgoing = product.outgoing(product.ids().nth(index)?);
             let mut choices: Vec<(&crate::exact_probabilistic::ProductAction, Vec<u64>)> =
                 Vec::new();
             for edge in outgoing {
@@ -429,7 +429,7 @@ fn mean_time_ranking(
                         &mut choices.last_mut()?.1
                     }
                 };
-                if edge.probability > Rational::from_integer(0_i64) {
+                if edge.probability > Rational::from_integer(0_i64.into()) {
                     if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
                         choice.push(next_rank);
                     }
