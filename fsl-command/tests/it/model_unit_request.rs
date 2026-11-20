@@ -211,11 +211,13 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
         ghost_entry,
         &[],
     );
-    let ghost_error = command::compile_outcome(&path).expect_err("Ghost refuses");
+    let ghost_error = command::compile_outcome(&path)
+        .err()
+        .expect("Ghost refuses");
     let ghost = refusal(&ghost_error);
     let ghost_outcome: Value = serde_json::from_slice(
         &ghost_error
-            .outcome_document(Operation::Compile)
+            .outcome_document(Operation::Package)
             .to_bytes()
             .unwrap(),
     )
@@ -246,13 +248,14 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
         wrong_format,
         &[],
     );
-    let malformed_error =
-        command::compile_outcome(&path).expect_err("a model unit is not a semantic-ir document");
+    let malformed_error = command::compile_outcome(&path)
+        .err()
+        .expect("a model unit is not a semantic-ir document");
     let malformed = refusal(&malformed_error);
     assert_eq!(malformed["code"], "invalid_model_binding", "{malformed}");
     let malformed_outcome: Value = serde_json::from_slice(
         &malformed_error
-            .outcome_document(Operation::Compile)
+            .outcome_document(Operation::Package)
             .to_bytes()
             .unwrap(),
     )
