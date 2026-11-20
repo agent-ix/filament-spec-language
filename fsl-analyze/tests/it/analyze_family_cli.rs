@@ -871,11 +871,52 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// clause whose two traces range over two models carries one clock row per
 /// trace, so it compiles, analyzes to a verdict and, when refuted, replays
 /// under the two rows' configurations; it is never `not-yet-implemented`.
-/// The engine test uses the existing two-alias Vault world; the separate
-/// ConfigVersion compile tests assert the exact S/N clock authority rows.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
+    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
+                       forall trace a of V forall trace b of N \
+                       { always[0,3] holds(v.l @ a = w.l @ b) }";
+    let (unit, model, other, snapshot) =
+        crate::hyper_world::two_model_request_files((1, 0), declaration);
+    let unit = unit.replace(
+        "profile p =",
+        "profile e = \"filament.temporal.event-position.false-extension/v1\";\nprofile p =",
+    );
+    let ws = Workspace::new("family-hyper-two-models");
+    ws.write("other.json", &other);
+    let mut models = request_members(None)["models"].clone();
+    models.as_array_mut().expect("models").push(
+        json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
+            "authority": "test", "identity": "vault-other-model", "document": "VaultOther",
+            "formal_revision": 1}}),
+    );
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[snapshot],
+        json!({"models": models, "items": [{"claim": "Saves"}]}),
+    ));
+    let item = run.item(0);
+    assert_ne!(
+        item["record"]["diagnostic"]["cause"], "not-yet-implemented",
+        "{item}"
+    );
+    let verdict = label(&item);
+    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
+    if verdict == "refuted" {
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    }
+}
+
+/// FR-640-AC-12 (TC-2243): the hyper model checker refutes a two-model
+/// event-position hyper clause over the two-alias Vault world, and its
+/// counterexample, one trace per trace variable, replays through
+/// `fsl_replay` and settles `refuted`.
+#[trace("TC-2243", "FR-640-AC-12")]
+#[test]
+fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     use filament_exact::Cancel;
     use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
     use fsl_eval::model_subject::ModelInstance;
