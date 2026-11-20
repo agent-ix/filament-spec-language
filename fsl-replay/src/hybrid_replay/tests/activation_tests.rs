@@ -4,6 +4,8 @@
 //! activation instant as a second real variable. Every expectation is hand
 //! derived from the point lasso's solution.
 
+use std::cmp::Ordering;
+
 use ix_trace_rs::trace;
 
 use super::*;
@@ -223,6 +225,33 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal MeetHeld using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        always [0, 2] holds(v0 * v0 * v0 != 4 or h.v != v0 + 3) }\n\
+     temporal Shared using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 - 7) * (v0 * v0 * v0 - 4) != 0 or (v0 - 7) * (h.v - 3) < 0) }\n\
+     temporal Reducible using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 2 and q.v < 4) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 - 7) * (v0 - 3) != 0 or (v0 - 7) * (h.v - 9) < 0) }\n\
+     temporal Pole using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 10) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / ((v0 - 5) * (v0 - 5) + (h.v - 3) * (h.v - 3)) != 0) }\n\
+     temporal PoleFour using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 10) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / ((v0 - 4) * (v0 - 4) + (h.v - 3) * (h.v - 3)) != 0) }\n\
+     temporal Sqrt using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 10] holds(1 / (h.v * h.v - 2) != 0 and v0 > 0) }\n\
+     temporal Back using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0 + 1) != 0) }\n\
+     temporal Irrational using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v * q.v > 2 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
+     temporal Lead using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       always [0, 5] holds((v0 * v0 - 2) * h.v != 1) }\n\
+     temporal Vanish using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
+       eventually [0, 5] holds(not ((v0 * v0 * v0 - 4) * (h.v - 3) = 0)) }\n\
      temporal Moves using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
@@ -319,9 +348,11 @@ fn the_activation_scan_is_charged_to_the_meter() {
         (&ramp, "Nested", &ramp_trace, 9224),
         (&phase, "Twice", &phase_trace, 70),
         (&ramp, "Cube", &ramp_trace, 305),
-        (&ramp, "Touch", &ramp_trace, 684),
-        (&ramp, "Moves", &ramp_trace, 281),
-        (&ramp, "Meet", &ramp_trace, 587),
+        (&ramp, "Touch", &ramp_trace, 685),
+        (&ramp, "Moves", &ramp_trace, 285),
+        (&ramp, "Meet", &ramp_trace, 588),
+        (&ramp, "Shared", &ramp_trace, 638),
+        (&ramp, "Pole", &ramp_trace, 795),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
@@ -357,7 +388,7 @@ fn undefined(graph: &Unit, name: &str, trace: &HybridTrace) -> (UndefinedCause, 
 /// `tau = 4^(1/3)`, an irrational critical value of the projection (the root
 /// of `tau^3 - 4`). The obligation is false there only, so the claim is
 /// reproduced; with `or h.v >= 0` it is true there too and the claim holds.
-#[trace("TC-1221", "FR-450-AC-12")]
+#[trace("TC-1221")]
 #[test]
 fn an_obligation_false_at_an_irrational_activation_instant_is_reproduced() {
     let graph = check(RAMP);
@@ -379,7 +410,7 @@ fn an_obligation_false_at_an_irrational_activation_instant_is_reproduced() {
 /// is false at that one activation instant and the claim is reproduced.
 /// With `v0 + 3` the instant `tau + 3` lies outside the window and every
 /// obligation holds.
-#[trace("TC-1221", "FR-450-AC-12")]
+#[trace("TC-1221")]
 #[test]
 fn an_atom_depending_on_the_activation_instant_is_read_at_an_irrational_one() {
     let graph = check(RAMP);
@@ -398,7 +429,7 @@ fn an_atom_depending_on_the_activation_instant_is_read_at_an_irrational_one() {
 /// `eventually [1, 1]` reads the atom `h.v^3 != 4` at `tau + 1`, which is the
 /// irrational `4^(1/3)` exactly at `tau = 4^(1/3) - 1`, the root of
 /// `(tau + 1)^3 - 4`, where the obligation alone is false.
-#[trace("TC-1221", "FR-450-AC-12")]
+#[trace("TC-1221")]
 #[test]
 fn an_atom_read_at_an_irrational_instant_of_an_irrational_activation_is_decided() {
     let graph = check(RAMP);
@@ -419,7 +450,7 @@ fn an_atom_read_at_an_irrational_instant_of_an_irrational_activation_is_decided(
 /// earliest instant with no value has infimum 0, not attained. With
 /// `h.v - v0 - 1` the line is `x = tau + 1` and the infimum is 1. With
 /// `h.v - 2` the instant 2 is the same for every `tau`.
-#[trace("TC-1221", "FR-450-AC-12")]
+#[trace("TC-1221")]
 #[test]
 fn an_atom_with_no_value_at_a_moving_instant_reports_its_infimum() {
     let graph = check(RAMP);
@@ -435,6 +466,109 @@ fn an_atom_with_no_value_at_a_moving_instant_reports_its_infimum() {
     assert_eq!(
         undefined(&graph, "Fixed", &trace),
         (UndefinedCause::DivisionByZero, ExactReal::Rational(q(2, 1)))
+    );
+}
+
+/// FR-450 "Exact replay" has no acceptance criterion for irrational
+/// activation instants or for the infimum of a moving instant with no
+/// value, so these tests carry the test case alone.
+///
+/// An algebraic instant's polynomial is square-free, not irreducible: the
+/// root `4^(1/3)` of `(t - 7)(t^3 - 4)` shares the factor `t - 7` with the
+/// atom `(tau - 7)(x - 3)`, whose resultant with it vanishes. The cells are
+/// cut at `x = 3` all the same: at `tau = 4^(1/3)` the atom reads
+/// `(tau - 7)(tau - 3) > 0` at `x = tau`, so the body is false there and
+/// only there, and the claim is reproduced. The root `3` of
+/// `(t - 7)(t - 3)` is a rational cut read as a root of a reducible
+/// polynomial; the body is false at `tau = 3` alone.
+#[trace("TC-1221")]
+#[test]
+fn a_shared_factor_with_the_instants_polynomial_does_not_hide_a_cut() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Shared"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Reducible"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+}
+
+/// The degenerate eliminations: the leading coefficient of `(tau^2 - 2) x - 1`
+/// in `x` vanishes at `tau = sqrt 2`, where it drops to a nonzero constant, and
+/// `(tau^3 - 4)(x - 3)` vanishes for every `x`. In the second the
+/// atom is false for every `x` at that one instant (`eventually` finds no
+/// `x`), true elsewhere. Both claims are reproduced exactly there.
+#[trace("TC-1221")]
+#[test]
+fn a_vanishing_leading_coefficient_and_a_polynomial_vanishing_everywhere_are_decided() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Lead"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Vanish"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+}
+
+/// An expression with no value only at the first-pass sample of an open
+/// cell is placed once the cell is cut: `1 / ((tau - 5)^2 + (x - 3)^2)` has
+/// no value at `(5, 3)` alone, and `(0, 10)` is sampled at 5. The record is
+/// the point `(5, 3)`, reported at 3; the same shape at `tau = 4` is
+/// reported at 3 as well.
+#[trace("TC-1221")]
+#[test]
+fn an_expression_with_no_value_at_the_first_sample_is_placed_after_the_cell_is_cut() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    for name in ["Pole", "PoleFour"] {
+        assert_eq!(
+            undefined(&graph, name, &trace),
+            (UndefinedCause::DivisionByZero, ExactReal::Rational(q(3, 1))),
+            "{name}"
+        );
+    }
+}
+
+/// An irrational instant with no value that is the same for every `tau` is
+/// kept as it is: `1 / (x^2 - 2)` has no value at `sqrt 2`, attained.
+#[trace("TC-1221")]
+#[test]
+fn an_irrational_instant_with_no_value_for_every_activation_instant_is_reported() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    let (cause, time) = undefined(&graph, "Sqrt", &trace);
+    assert_eq!(cause, UndefinedCause::DivisionByZero);
+    assert!(matches!(time, ExactReal::Root(_)));
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(-2, 1), q(0, 1), q(1, 1)])),
+        Ordering::Equal
+    );
+}
+
+/// The infimum of `x = tau + c` with a negative `c`: `1 / (x - tau + 1)` has
+/// no value at `x = tau - 1`, `tau` in `(1, 2)`, infimum 0. With an
+/// irrational start of the cell, `tau^2 > 2`, the atom `1 / (x - tau)` has
+/// infimum `sqrt 2`.
+#[trace("TC-1221")]
+#[test]
+fn the_infimum_of_a_moving_instant_shifts_a_negative_offset_and_an_irrational_start() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        undefined(&graph, "Back", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(0, 1)))
+    );
+    let (cause, time) = undefined(&graph, "Irrational", &trace);
+    assert_eq!(cause, UndefinedCause::DivisionByZero);
+    assert_eq!(
+        time.sign_of(&Poly::new(vec![q(-2, 1), q(0, 1), q(1, 1)])),
+        Ordering::Equal
     );
 }
 

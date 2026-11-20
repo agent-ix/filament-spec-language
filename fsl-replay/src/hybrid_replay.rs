@@ -389,9 +389,12 @@ pub enum ExactGap {
     /// An `on each` claim under `model-time` whose obligations read the
     /// activation position's state, where a claim atom has no value over an
     /// open cell of activation instants at an instant that moves with the
-    /// activation instant along a curve other than `x = tau + c` (the
-    /// infimum of the instant over the cell is a limit of a root curve of
-    /// degree above one). Remaining work: QSL-2690.
+    /// activation instant along a curve other than `x = tau + c` (`c`
+    /// rational): the infimum of the instant over the cell is a limit of a
+    /// root curve. It is the only remaining trigger. An instant with no value
+    /// that is the same for every activation instant of the cell, rational or
+    /// not, and one that moves along `x = tau + c` (rational or irrational
+    /// cell start), are decided. Remaining work: QSL-2706.
     #[error("the decisive activation instant of an `on each` claim is not isolated")]
     ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
@@ -513,7 +516,7 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2690 for `ActivationInfimum`, QSL-2639 for
+        // TEMPORARY (QSL-2706 for `ActivationInfimum`, QSL-2639 for
         // `CoupledReset`): both are gaps FR-750 deletes, because exact
         // replay decides those claims (the infimum of a curved instant with
         // no value; quantifier elimination over several coupled free

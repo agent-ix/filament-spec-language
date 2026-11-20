@@ -99,6 +99,7 @@ impl Probe<Bi> for SectionAt<'_, '_, '_> {
 /// resultant with `tau`'s polynomial, which hold its roots in `x` at `tau`.
 struct Atoms<'a, 'u, 'm> {
     section: &'a Section<'u, 'm>,
+    tau: &'a ExactReal,
     minimal: &'a Poly,
     atoms: &'a [Exp],
     env: &'a Env<'a, Bi>,
@@ -137,7 +138,29 @@ impl Evaluate for Atoms<'_, '_, '_> {
                 None => {
                     let section = self.section;
                     let eliminated = if decision.degree().is_some_and(|degree| degree > 0) {
-                        eliminate(self.minimal, &decision, &mut || section.charge())?
+                        section.charge()?;
+                        // `tau`'s polynomial is square-free, not irreducible:
+                        // a factor it shares with every coefficient of the
+                        // decision makes the resultant vanish. If `tau` is a
+                        // root of that factor the decision vanishes at `tau`
+                        // for every `x` and has no roots there; else `tau` is
+                        // a root of the cofactor, which shares none.
+                        let content = decision
+                            .coefficients()
+                            .iter()
+                            .fold(Poly::zero(), |common, c| common.gcd(c));
+                        let shared = self.minimal.gcd(&content);
+                        if shared.degree().is_some_and(|degree| degree > 0) {
+                            if self.tau.sign_of(&shared) == Ordering::Equal {
+                                Poly::zero()
+                            } else {
+                                eliminate(&self.minimal.exact_div(&shared), &decision, &mut || {
+                                    section.charge()
+                                })?
+                            }
+                        } else {
+                            eliminate(self.minimal, &decision, &mut || section.charge())?
+                        }
                     } else {
                         Poly::zero()
                     };
@@ -280,6 +303,10 @@ struct Outcome {
 /// One cell of a dwell's activation instants: the instant `low` when
 /// `point`, else the open interval `(low, high)`.
 type Cell = (ExactReal, ExactReal, bool);
+
+/// The activation instant an open cell was read at, and the polynomials the
+/// reading held.
+type Reading = Option<(Rational, Vec<Poly2>)>;
 
 /// A polynomial of the dwell's solution as a polynomial in `x`, the instant
 /// an atom is read at.
@@ -729,6 +756,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                         };
                         let mut atoms = Atoms {
                             section: &section,
+                            tau,
                             minimal: &minimal,
                             atoms: &self.atoms,
                             env: &env,
@@ -778,6 +806,7 @@ impl<'a, 'c> Decider<'a, 'c> {
         tau: &Rational,
         read: &[Poly2],
         segment: &ClaimSegment,
+        meter: &mut HybridReplayMeter,
     ) -> Result<Option<Record>, HybridReplayRefusal> {
         let Some(mut record) = record else {
             return Ok(None);
@@ -790,27 +819,48 @@ impl<'a, 'c> Decider<'a, 'c> {
             record.open = true;
             return Ok(Some(record));
         }
-        let Some(time) = record.time.as_rational().cloned() else {
-            return Err(ExactGap::ActivationInfimum.into());
-        };
-        let ends = self
+        let time = record.time.clone();
+        let mut ends = self
             .segments
             .iter()
             .chain(std::iter::once(segment))
-            .flat_map(|k| [k.span.low.as_rational(), k.span.high.as_rational()]);
-        if ends.flatten().any(|end| *end == time) {
+            .flat_map(|k| [&k.span.low, &k.span.high]);
+        if ends.any(|end| *end == time) {
             return Ok(Some(record));
         }
-        let at = ExactReal::Rational(time.clone());
-        let shift = time.sub(tau);
-        let moving = Poly::new(vec![shift.clone(), one()]);
         for poly in read {
-            if (Instant { tau, t: &at }).sign(poly) != Ordering::Equal {
+            meter.charge()?;
+            if (Instant { tau, t: &time }).sign(poly) != Ordering::Equal {
                 continue;
             }
-            if poly.at_x(&time).is_zero() {
+            // The instant is the same for every `tau`: `poly(tau, time)`
+            // is zero as a polynomial in `tau`, that is every coefficient of
+            // a power of `tau` vanishes at `time`.
+            let width = poly
+                .coefficients()
+                .iter()
+                .filter_map(|c| c.degree())
+                .max()
+                .map_or(0, |degree| degree + 1);
+            let stationary = (0..width).all(|power| {
+                let part = Poly::new(
+                    poly.coefficients()
+                        .iter()
+                        .map(|c| c.coefficients().get(power).cloned().unwrap_or_else(zero))
+                        .collect(),
+                );
+                time.sign_of(&part) == Ordering::Equal
+            });
+            if stationary {
                 return Ok(Some(record));
             }
+            // The instant moves along `x = tau + c`, `c` rational, when
+            // `poly(tau, tau + c)` is zero.
+            let Some(time) = time.as_rational() else {
+                continue;
+            };
+            let shift = time.sub(tau);
+            let moving = Poly::new(vec![shift.clone(), one()]);
             let along = poly.coefficients().iter().enumerate().fold(
                 Poly::zero(),
                 |sum, (power, coefficient)| {
@@ -840,15 +890,16 @@ impl<'a, 'c> Decider<'a, 'c> {
         meter: &mut HybridReplayMeter,
     ) -> Result<Vec<(Cell, Outcome)>, HybridReplayRefusal> {
         let mut cuts: Vec<ExactReal> = Vec::new();
-        let mut done: Vec<(Cell, Outcome)> = Vec::new();
+        let mut done: Vec<(Cell, Outcome, Reading)> = Vec::new();
         let (floor, ceiling) = (floor_bound(&span.low), ceiling_bound(&span.high));
         loop {
             meter.charge()?;
             let mut results = Vec::new();
             let mut grew = false;
             for cell in partition(span, cuts.clone()) {
-                if let Some((_, outcome)) = done.iter().find(|(known, _)| *known == cell) {
-                    results.push((cell, outcome.clone()));
+                if let Some((_, outcome, sample)) = done.iter().find(|(known, _, _)| *known == cell)
+                {
+                    results.push((cell, outcome.clone(), sample.clone()));
                     continue;
                 }
                 let tau: ExactReal = if cell.2 {
@@ -857,7 +908,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                     cell.0.between(&cell.1).into()
                 };
                 meter.charge()?;
-                let (mut outcome, bounds, read) = match &tau {
+                let (outcome, bounds, read) = match &tau {
                     ExactReal::Rational(tau) => self.at(j, segment, tau, meter)?,
                     ExactReal::Root(_) => self.at_algebraic(j, segment, &tau, meter)?,
                 };
@@ -870,14 +921,26 @@ impl<'a, 'c> Decider<'a, 'c> {
                         }
                     }
                 }
-                if let (false, ExactReal::Rational(tau)) = (cell.2, &tau) {
-                    outcome.record = self.over(outcome.record, &cell, tau, &read, segment)?;
-                }
-                done.push((cell.clone(), outcome.clone()));
-                results.push((cell, outcome));
+                let sample = match (&tau, cell.2) {
+                    (ExactReal::Rational(tau), false) => Some((tau.clone(), read)),
+                    _ => None,
+                };
+                done.push((cell.clone(), outcome.clone(), sample.clone()));
+                results.push((cell, outcome, sample));
             }
             if !grew {
-                return Ok(results);
+                // The cells are final: an expression with no value over an
+                // open one is placed only now, for a cell cut later may
+                // decide without it.
+                let mut cells = Vec::with_capacity(results.len());
+                for (cell, mut outcome, sample) in results {
+                    if let Some((tau, read)) = sample {
+                        outcome.record =
+                            self.over(outcome.record, &cell, &tau, &read, segment, meter)?;
+                    }
+                    cells.push((cell, outcome));
+                }
+                return Ok(cells);
             }
         }
     }
