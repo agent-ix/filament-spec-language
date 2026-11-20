@@ -7184,7 +7184,9 @@ mod tests {
                     &refusal.cause,
                     ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                         if node == "ix://acme/optionals/Holder/read/value"
-                            && *member == MemberPath::new(MemberRoot::Operation)
+                            && *member == MemberPath::type_definition()
+                                .name("operations")
+                                .index(0)
                                 .name("params")
                                 .index(0)
                                 .name("presence")
