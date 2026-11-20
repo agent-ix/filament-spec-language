@@ -54,11 +54,15 @@ struct World {
 }
 
 fn world() -> World {
+    world_of(UNIT)
+}
+
+fn world_of(unit_text: &str) -> World {
     let packages = package_input(std::iter::empty::<&[u8]>()).expect("no model documents");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:hybrid-provider"),
         "hybrid.native",
-        UNIT.as_bytes(),
+        unit_text.as_bytes(),
         fsl_cst::Limits::default(),
     )
     .expect("S1 reads the unit");
@@ -85,7 +89,7 @@ fn world() -> World {
     )
     .expect("the unit checks");
     World {
-        provision: SourceProvision::single(graph.source(), UNIT.as_bytes()),
+        provision: SourceProvision::single(graph.source(), unit_text.as_bytes()),
         package: CheckedPackage::link(graph),
         packages,
         snapshots: DocumentProvision::new(),
@@ -427,4 +431,107 @@ fn a_trace_outside_the_model_settles_invalid_result() {
             "{record:?}"
         );
     }
+}
+
+/// FR-1019's class fixture `BrakingC` with the initial condition `i`, the
+/// `Moving` flow `f` for `v` and the guard `g`.
+fn class_unit(i: &str, f: &str, g: &str) -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid BrakingC using p {{\n\
+           initial {{ mode Moving when {{ {i} }}; }}\n\
+           mode Moving invariant {{ v >= 0 and v <= 20 and a >= 1 and a <= 2 }}\n\
+             flow {{ v' = {f}; a' = 0; }}\n\
+             transition to Stopped when {{ {g} }} reset {{ v = 0 }};\n\
+           mode Stopped invariant {{ v = 0 }}\n\
+             flow {{ v' = 0; a' = 0; }}\n\
+         }}\n\
+         function half using p(x: Rational[0, 20; 1, 2], d: Rational[2, 2; 1, 1]): Rational[-100, 100; 1, 4] pure {{ x / d }}\n\
+         temporal SlowEnoughC using p over (h: BrakingC) clock \"model-time\" \
+         on origin {{ always [0, 10] holds(h.v < 30) }}\n"
+    )
+}
+
+/// The first construct of the class fixture `(i, f, g)` outside the
+/// reference provider's class, if any.
+fn class_gap(i: &str, f: &str, g: &str) -> Option<UnsupportedConstruct> {
+    let world = world_of(&class_unit(i, f, g));
+    let graph = world.package.graph();
+    let model = &graph.hybrid_models()[0];
+    fsl_replay::polynomial_class_gap(
+        graph,
+        model,
+        &mut fsl_replay::HybridReplayMeter::new(1_000_000),
+    )
+    .expect("the class check finishes")
+}
+
+/// FR-1019-AC-14: the first construct outside the class is found in source
+/// order (initial entries first), the outermost of nested constructs is
+/// reported, a construct inside an expanded call is reported inside the
+/// called function's body, and a rational coefficient and a Boolean `if`
+/// stay inside the class.
+#[trace("TC-2869", "FR-1019-AC-14")]
+#[test]
+fn the_class_check_locates_the_first_construct_in_source_order() {
+    let moving = ModeIndex::new(0);
+    let v = Some(VariableIndex::new(0));
+    // C1: the initial entry's `/`, not the later flow's.
+    let c1 = class_gap("v = 40 / 2 and a = 1", "-a / (1 + v)", "v = 0").expect("C1");
+    assert_eq!(c1.form, "division");
+    assert_eq!(c1.site, ExpressionSite::Initial { entry: 0 });
+    assert_eq!(c1.term.term, vec![0, 1]);
+    assert!(c1.term.body.is_empty());
+    assert_eq!((c1.mode, c1.variable), (moving, None));
+    // C2: the outer `/`, the first node of the pre-order walk.
+    let c2 = class_gap("v = 20 and a = 1", "-a / (1 + v / 2)", "v = 0").expect("C2");
+    assert_eq!(c2.form, "division");
+    assert_eq!(
+        c2.site,
+        ExpressionSite::Rate {
+            mode: 0,
+            variable: 0
+        }
+    );
+    assert!(
+        c2.term.term.is_empty() || c2.term.term == [0],
+        "the outer quotient, not the inner: {:?}",
+        c2.term
+    );
+    assert_eq!((c2.mode, c2.variable), (moving, v));
+    // C3: the numeric `if`.
+    let c3 = class_gap("v = 20 and a = 1", "if v > 1 then -a else 0", "v = 0").expect("C3");
+    assert_eq!(c3.form, "conditional");
+    assert_eq!(
+        c3.site,
+        ExpressionSite::Rate {
+            mode: 0,
+            variable: 0
+        }
+    );
+    assert!(c3.term.term.is_empty(), "{:?}", c3.term);
+    assert_eq!((c3.mode, c3.variable), (moving, v));
+    // C4: the `/` in `half`'s body, at its own node inside the function.
+    let c4 = class_gap("v = 20 and a = 1", "-a", "half(v, rational(2, 1)) <= 0").expect("C4");
+    assert_eq!(c4.form, "division");
+    assert_eq!(
+        c4.site,
+        ExpressionSite::Guard {
+            mode: 0,
+            transition: 0
+        }
+    );
+    assert_eq!(c4.term.term, vec![0]);
+    assert_eq!(c4.term.body.len(), 1, "inside half's body: {:?}", c4.term);
+    assert_eq!((c4.mode, c4.variable), (moving, None));
+    // C5 and C6 are inside the class.
+    assert_eq!(
+        class_gap("v = 20 and a = 1", "-rational(1, 2) * a", "v = 0"),
+        None
+    );
+    assert_eq!(
+        class_gap("v = 20 and a = 1", "-a", "if a > 1 then v = 0 else v <= 0"),
+        None
+    );
 }

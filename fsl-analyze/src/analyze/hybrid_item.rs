@@ -73,6 +73,14 @@ pub(super) fn hybrid_item<'a>(
                         "tool-unavailable",
                     )));
                 };
+                // FSpec FR-779: an option value outside its domain settles
+                // before any solver step.
+                if let Err(refusal) = provider.check_options(&form.options) {
+                    return EngineReport::Refused(Refusal::InvalidOptionValue {
+                        option: refusal.option,
+                        value: refusal.value,
+                    });
+                }
                 let bounds = engine.descriptor().solver_bounds();
                 let budget = form.limits.resolved_budget(
                     bounds

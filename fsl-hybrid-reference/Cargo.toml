@@ -16,6 +16,9 @@ filament-exact = { workspace = true }
 fsl-replay = { path = "../fsl-replay" }
 fsl-semantics = { path = "../fsl-semantics" }
 
+[dev-dependencies]
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
