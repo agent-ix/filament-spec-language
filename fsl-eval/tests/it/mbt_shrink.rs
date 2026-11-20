@@ -63,15 +63,9 @@ fn a_seeded_counterexample_shrinks_to_the_shortest_failing_prefix() {
             fsl_foundation::IdentityLimits::default(),
         )
         .is_ok());
-        let shorter = fsl_eval::simulation::model::sample_model(
-            &system,
-            10_000,
-            &sampler(),
-            seed,
-            0,
-            3,
-        )
-        .expect("the shorter candidate is generated");
+        let shorter =
+            fsl_eval::simulation::model::sample_model(&system, 10_000, &sampler(), seed, 0, 3)
+                .expect("the shorter candidate is generated");
         assert!(
             !violates_small(&shorter),
             "three increments do not reproduce the same Small failure"

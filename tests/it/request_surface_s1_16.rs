@@ -128,10 +128,20 @@ fn false_initial_state_remains_one_minimal_across_seeds() {
         let result = &value["model_based_test"];
         assert_eq!(result["clause"], "Never", "{value}");
         assert_eq!(result["status"], "refuted", "{value}");
-        assert_eq!(result["counterexample"]["minimality"], "1-minimal", "{value}");
+        assert_eq!(
+            result["counterexample"]["minimality"], "1-minimal",
+            "{value}"
+        );
         assert_eq!(result["counterexample"]["replay"], "reproduced", "{value}");
-        assert_eq!(result["counterexample"]["disposition"], "invariant-violated", "{value}");
-        assert_eq!(result["counterexample"]["invocations"], json!([]), "{value}");
+        assert_eq!(
+            result["counterexample"]["disposition"], "invariant-violated",
+            "{value}"
+        );
+        assert_eq!(
+            result["counterexample"]["invocations"],
+            json!([]),
+            "{value}"
+        );
     }
 }
 
@@ -925,8 +935,7 @@ fn model_based_test_request_rules() {
         "{first}"
     );
     assert_eq!(
-        first["model_based_test"]["provenance"]["size_bounded"][0]["values"],
-        "511",
+        first["model_based_test"]["provenance"]["size_bounded"][0]["values"], "511",
         "{first}"
     );
     assert_eq!(first, mbt(bounded.clone()), "deterministic");
@@ -937,9 +946,8 @@ fn model_based_test_request_rules() {
     unknown["clause"] = json!("Nothing");
     refusal_names(&mbt(unknown), "Nothing");
 
-    let bounded_unit = format!(
-        "{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n"
-    );
+    let bounded_unit =
+        format!("{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n");
     let (_, bounded_value) = run(
         &bounded_unit,
         false,
@@ -982,7 +990,10 @@ fn model_based_test_value_clause_runs_and_shrinks_natively() {
     let record = &value["model_based_test"];
     assert_eq!(record["status"], "refuted", "{value}");
     assert_eq!(record["cases"]["generated"], 5, "{value}");
-    assert_eq!(record["counterexample"]["minimality"], "1-minimal", "{value}");
+    assert_eq!(
+        record["counterexample"]["minimality"], "1-minimal",
+        "{value}"
+    );
     assert_eq!(record["counterexample"]["replay"], "reproduced", "{value}");
     assert_eq!(
         record["counterexample"]["assignment"][0]["value"],

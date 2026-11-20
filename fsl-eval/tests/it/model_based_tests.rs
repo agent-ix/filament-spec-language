@@ -114,7 +114,10 @@ fn an_operation_beyond_the_trace_bound_is_uncovered_within_the_bound() {
 fn operation_coverage_is_deterministic_and_settles_no_verdict() {
     let first = generated_coverage(8).expect("the run's result record carries `operations`");
     let second = generated_coverage(8).expect("the run's result record carries `operations`");
-    assert_eq!(first, second, "same seed and inputs reproduce the full record");
+    assert_eq!(
+        first, second,
+        "same seed and inputs reproduce the full record"
+    );
     assert_eq!(first["cases"]["generated"], 100, "{first}");
     assert_eq!(first["cases"]["passed"], 100, "{first}");
     assert_eq!(first["evidence"], "tested", "{first}");
@@ -122,4 +125,44 @@ fn operation_coverage_is_deterministic_and_settles_no_verdict() {
         first.get("verdict").is_none_or(serde_json::Value::is_null),
         "{first}"
     );
+}
+
+/// A huge requested case bound does not preallocate the value run: the first
+/// failing boundary case is evaluated and retained without building the rest.
+/// Provenance: QSL-2237 FND-002.
+#[trace("FR-752-AC-11")]
+#[test]
+fn a_huge_value_case_bound_evaluates_cases_incrementally() {
+    let parameters = vec!["x".to_owned()];
+    let mut oracle_calls = 0_u64;
+    let record = fsl_eval::simulation::model::run_model_based_test(
+        fsl_eval::simulation::model::ModelBasedTestRequest::Values {
+            clause: "AlwaysFails",
+            domain: "fixture",
+            parameters: &parameters,
+            max_cases: u64::MAX,
+            seed: 7,
+            max_value_bits: Some(8),
+        },
+        |case| {
+            oracle_calls += 1;
+            let fsl_eval::simulation::model::ModelBasedTestCase::Values(values) = case else {
+                return fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                    reason: "unexpected-model-case-kind".to_owned(),
+                };
+            };
+            assert_eq!(values.len(), 1);
+            fsl_eval::simulation::model::ModelBasedTestOutcome::Failed {
+                disposition: "predicate-false".to_owned(),
+            }
+        },
+    )
+    .expect("one case can be run under an unbounded positive request ceiling");
+
+    assert_eq!(
+        oracle_calls, 1,
+        "the first case fails at zero and shrinks no further"
+    );
+    assert_eq!(record["cases"]["generated"], 1);
+    assert_eq!(record["status"], "refuted");
 }

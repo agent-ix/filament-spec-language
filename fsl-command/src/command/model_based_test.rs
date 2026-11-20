@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use super::{
-    package_name, wire, FormalSource, Intake, PreparedRun, PreparedModelBasedTestRun, Result,
+    package_name, wire, FormalSource, Intake, PreparedModelBasedTestRun, PreparedRun, Result,
     RunCause,
 };
 
@@ -136,18 +136,17 @@ fn model_test_error(error: fsl_eval::simulation::model::ModelBasedTestError) -> 
     use fsl_eval::simulation::model::ModelBasedTestError;
 
     match error {
-        ModelBasedTestError::EmptyCaseBound => {
-            invalid("max_cases", "must be a positive integer")
-        }
+        ModelBasedTestError::EmptyCaseBound => invalid("max_cases", "must be a positive integer"),
         ModelBasedTestError::EmptyTraceBound => {
             invalid("max_trace_length", "must be a positive integer")
         }
         ModelBasedTestError::InvalidValueBits => {
             invalid("max_value_bits", "must be between 1 and 64")
         }
-        ModelBasedTestError::MissingValueBits => {
-            invalid("max_value_bits", "required for an unbounded integer parameter")
-        }
+        ModelBasedTestError::MissingValueBits => invalid(
+            "max_value_bits",
+            "required for an unbounded integer parameter",
+        ),
         ModelBasedTestError::EmptyValueRoots => {
             invalid("clause", "value-clause request has no parameter roots")
         }
@@ -199,13 +198,9 @@ pub(super) fn prepare(
         path: source.source().path(),
         bytes: source.source().text().as_bytes(),
     };
-    let parsed = fsl_replay::spine::parse(
-        &parse_request,
-        fsl_cst::Limits::default(),
-        &cancel,
-    )
-    .map_err(route_error)?
-    .into_value();
+    let parsed = fsl_replay::spine::parse(&parse_request, fsl_cst::Limits::default(), &cancel)
+        .map_err(route_error)?
+        .into_value();
     let admitted = fsl_replay::spine::select(
         &parsed,
         &packages,
@@ -289,9 +284,8 @@ pub(super) fn prepare(
                 use fsl_eval::value::CheckedPackageEvaluation;
 
                 let values = arguments.to_vec();
-                let mut meter = filament_exact::Meter::new(
-                    fsl_replay::spine::default_accounting(10_000),
-                );
+                let mut meter =
+                    filament_exact::Meter::new(fsl_replay::spine::default_accounting(10_000));
                 match package.call(
                     &function,
                     values,
@@ -345,13 +339,19 @@ pub(super) fn prepare(
         .populations
         .into_iter()
         .filter(|population| population.complete)
-        .map(|population| fsl_eval::simulation::model::PopulationUniverse {
-            population: filament_checked::key::DeclarationKey {
-                package: snapshot.model.identity.clone(),
-                node: population.population,
+        .map(
+            |population| fsl_eval::simulation::model::PopulationUniverse {
+                population: filament_checked::key::DeclarationKey {
+                    package: snapshot.model.identity.clone(),
+                    node: population.population,
+                },
+                keys: population
+                    .objects
+                    .into_iter()
+                    .map(|object| object.key)
+                    .collect(),
             },
-            keys: population.objects.into_iter().map(|object| object.key).collect(),
-        })
+        )
         .collect();
     let snapshots = fsl_semantics::model::observation::DocumentProvision::from([(
         initial.clone(),
@@ -374,11 +374,9 @@ pub(super) fn prepare(
         },
     )
     .map_err(route_error)?;
-    let sampler = fsl_foundation::selection::DefinitionRef::new(
-        "agent-ix",
-        "filament.simulation.sampler/v1",
-    )
-    .map_err(route_error)?;
+    let sampler =
+        fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
+            .map_err(route_error)?;
     let domain = model_system
         .populations()
         .first()
