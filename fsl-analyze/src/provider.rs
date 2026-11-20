@@ -85,6 +85,14 @@ pub fn run(
                     Some(ProofRefusalCause::IncompleteInput),
                     refusal.catalog_code(),
                 ),
+                StageFailure::Refused(AnalyzeRefusal::Package(refusal)) => (
+                    Some(if refusal.code == Code::ResourceExhausted {
+                        ProofRefusalCause::IncompleteInput
+                    } else {
+                        ProofRefusalCause::InvalidInput
+                    }),
+                    CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
+                ),
                 StageFailure::Refused(AnalyzeRefusal::Binding(failure)) => match failure {
                     fsl_semantics::model::observation::AdmissionFailure::Refused(record) => {
                         (Some(ProofRefusalCause::InvalidInput), record.catalog)
@@ -590,6 +598,7 @@ pub struct ProviderItemInput<'a> {
 /// [`settle_items`] sends its request.
 pub(crate) struct ProviderWork<'a> {
     package: &'a CheckedPackage,
+    shared: Option<Shared<'a>>,
     packages: &'a PackageInput,
     routed: Option<RequirementItem>,
     emit: EmitLimits,
@@ -607,6 +616,17 @@ pub fn provider_item<'a>(
     backend: &BackendId,
     input: ProviderItemInput<'a>,
 ) -> AnalyzeItem<'a> {
+    provider_item_over(index, backend, input, None)
+}
+
+/// [`provider_item`] over the run's one strict read of its package, when the
+/// run holds it.
+pub(crate) fn provider_item_over<'a>(
+    index: RequestIndex,
+    backend: &BackendId,
+    input: ProviderItemInput<'a>,
+    shared: Option<Shared<'a>>,
+) -> AnalyzeItem<'a> {
     let family = claim_family(input.package, ItemKind::Formula, input.claim);
     AnalyzeItem::new_with_provider(
         index,
@@ -614,6 +634,7 @@ pub fn provider_item<'a>(
         backend.as_str(),
         ProviderWork {
             package: input.package,
+            shared,
             packages: input.packages,
             routed: input.routed,
             emit: input.emit,
@@ -634,17 +655,74 @@ pub(crate) fn admitted_bytes(
     package: &CheckedPackage,
     packages: &PackageInput,
     emit: EmitLimits,
-) -> Option<EmittedPackage> {
-    let identity = LibraryName::new(package.graph().package_name()).ok()?;
-    let read = fsl_package::read_evaluation_package(
+) -> Result<EmittedPackage, NotAdmitted> {
+    let read = read_package(package, packages, emit)?;
+    Ok(read.emission().package().clone())
+}
+
+/// Why a compiled package has no admitted read.
+pub(crate) enum NotAdmitted {
+    /// The strict reader refused the package it was given back: the typed
+    /// refusal, with the reader's code, cause and pointer.
+    Refused(fsl_package::PackageAdmissionRefusal),
+    /// The package did not emit, or the read failed for a reason that is no
+    /// admission refusal.
+    Other,
+}
+
+/// `package` emitted and read back through the strict reader against
+/// `packages`.
+pub(crate) fn read_package<'p>(
+    package: &'p CheckedPackage,
+    packages: &PackageInput,
+    emit: EmitLimits,
+) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
+    let identity =
+        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other)?;
+    fsl_package::read_evaluation_package(
         package,
         identity,
         packages,
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
         emit,
     )
-    .ok()?;
-    Some(read.emission().package().clone())
+    .map_err(|refusal| {
+        let typed = fsl_package::PackageAdmissionRefusal::of_import_view(&refusal, None);
+        // A missing import names its identity from the package bytes it
+        // refused; the read does not return them, so they are emitted again
+        // on this error path only.
+        let typed = match typed {
+            Some(typed) if typed.code == Code::MissingImport => {
+                let emitted = fsl_package::emit_checked(package, emit).ok();
+                fsl_package::PackageAdmissionRefusal::of_import_view(
+                    &refusal,
+                    emitted.as_ref().map(|emission| emission.package().bytes()),
+                )
+            }
+            other => other,
+        };
+        typed.map_or(NotAdmitted::Other, NotAdmitted::Refused)
+    })
+}
+
+/// The one strict read of a run's package, borrowed by every item that
+/// needs the admitted package or its bytes.
+#[derive(Clone, Copy)]
+pub(crate) struct Shared<'r> {
+    /// The package as the strict reader admitted it.
+    pub(crate) admitted: &'r filament_contract_model::CheckedPackageV2,
+    /// The bytes that were read.
+    pub(crate) emitted: &'r EmittedPackage,
+}
+
+impl<'r> Shared<'r> {
+    /// The borrow of `read`.
+    pub(crate) fn of(read: &'r fsl_package::AdmittedPackageRead<'_>) -> Self {
+        Self {
+            admitted: read.admitted(),
+            emitted: read.emission().package(),
+        }
+    }
 }
 
 /// The provider items of one backend over one package, in request order.
@@ -712,11 +790,21 @@ pub(crate) fn settle_items(
         let Some((_, first)) = members.first() else {
             continue;
         };
-        let Some(bytes) = admitted_bytes(package, first.packages, first.emit) else {
-            for index in indices {
-                settled.insert(index, Err(Refusal::NotEmitted));
-            }
-            continue;
+        let owned;
+        let bytes = match first.shared {
+            Some(shared) => shared.emitted,
+            None => match admitted_bytes(package, first.packages, first.emit) {
+                Ok(bytes) => {
+                    owned = bytes;
+                    &owned
+                }
+                Err(_) => {
+                    for index in indices {
+                        settled.insert(index, Err(Refusal::NotEmitted));
+                    }
+                    continue;
+                }
+            },
         };
         let Ok(graph) = WireGraph::of_package_bytes(bytes.bytes()) else {
             for index in indices {
@@ -726,7 +814,7 @@ pub(crate) fn settle_items(
         };
         let request = ProviderRequest {
             graph,
-            package: &bytes,
+            package: bytes,
             items: routed,
             targets,
             manifest: engines.registrations().collect(),
