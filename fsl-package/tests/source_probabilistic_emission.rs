@@ -923,9 +923,7 @@ fn a_release_on_another_units_source_operation_is_refused() {
             ("test:second", OWN_B),
         ],
     ] {
-        let refusals = check_units(&units)
-            .err()
-            .expect("a cross-unit release is refused");
+        let refusals = check_units(&units).expect_err("a cross-unit release is refused");
         assert!(
             refusals.iter().any(
                 |refusal| format!("{:?}", refusal.cause).contains("UnresolvedReleaseOperation")
@@ -937,7 +935,7 @@ fn a_release_on_another_units_source_operation_is_refused() {
 
 /// FSpec FR-322: the source map region of each node of a later unit's `time`
 /// declaration names that unit, with offsets inside its text.
-#[trace("FSpec-TC-233", "FSpec-FR-322-AC-281")]
+#[trace("TC-426", "FR-096-AC-1")]
 #[test]
 fn the_source_map_regions_of_a_later_units_time_nodes_name_that_unit() {
     let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)])

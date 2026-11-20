@@ -84,6 +84,7 @@ pub(crate) fn timed_on(activation: &str, body: &str) -> Fixture {
     package.time_sources = vec![ModelTimeSource {
         model: "M".to_owned(),
         span: fsl_foundation::Span { start: 0, end: 1 },
+        declared_in: None,
         // The model node of `M`'s state object, which names the timed
         // model's package.
         model_node: fsl_semantics::model::key::object_type_node_key(

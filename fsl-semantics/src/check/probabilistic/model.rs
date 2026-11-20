@@ -763,7 +763,6 @@ pub(crate) enum Unresolved {
 }
 
 impl<'a> ProbabilisticInput<'a> {
-    /// The source unit probabilistic declaration `declaration` was written in.
     /// The source unit task-set declaration `declaration` was written in.
     pub(crate) fn seen_by_task_set(&self, declaration: usize) -> Seen<'_> {
         Seen(
@@ -773,6 +772,7 @@ impl<'a> ProbabilisticInput<'a> {
         )
     }
 
+    /// The source unit probabilistic declaration `declaration` was written in.
     pub(crate) fn seen_by(&self, declaration: usize) -> Seen<'_> {
         Seen(
             self.declaration_owners
