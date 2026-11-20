@@ -151,11 +151,10 @@ fn package_call_items_run_from_the_checked_artifact_without_source() {
     );
 }
 
-/// FR-1039-AC-2: a package synthesis still refuses until QSL-2235 lowers the
-/// checked synthesis's S1-S3 records; the refusal precedes package reads.
+/// FR-1039: a package request with two run members refuses before package reads.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-2")]
-fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
+fn package_synthesis_conflicts_with_a_call_before_package_read() {
     let directory = tempfile::tempdir().unwrap();
     let (exit, value) = run(
         directory.path(),
@@ -166,7 +165,7 @@ fn package_synthesis_refusal_names_qsl_2235_before_reading_the_package() {
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["stage"], "request", "{value}");
     names(&value, "synthesis");
-    names(&value, "QSL-2235");
+    names(&value, "mutually exclusive");
     assert!(!value.to_string().contains("absent.json"), "{value}");
 }
 
