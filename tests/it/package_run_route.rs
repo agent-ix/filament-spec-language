@@ -149,8 +149,7 @@ fn a_package_run_selects_its_form_by_the_member() {
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "package.json"},
-            "clause": {"selection": {"clause": {"name": "Pick", "observation": "current"}},
-                "observations": {}}}),
+            "clause": {"selection": {"clause": "Pick"}, "observations": {}}}),
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "\"requires\":\"directory\"");

@@ -108,7 +108,7 @@ fn pick_builds_a_synthesis_form() {
     assert!(form.domain.span.start < form.domain.span.end);
     assert!(form.objective.is_none());
     assert!(form.satisfies_span.start < form.satisfies_span.end);
-    assert!(!form.satisfies.spans.is_empty());
+    assert!(form.satisfies.spans.span(form.satisfies.spans.root()).is_some());
     assert!(format!("{:?}", form.satisfies.expression).contains("Multiply"));
 }
 
@@ -124,7 +124,7 @@ fn pick_with_minimize_builds_a_synthesis_form_holding_its_objective() {
     assert_eq!(objective.direction, SynthesisDirectionForm::Minimize);
     assert!(format!("{:?}", objective.expression.expression).contains("Pick"));
     assert!(objective.span.start < objective.span.end);
-    assert!(!objective.expression.spans.is_empty());
+    assert!(objective.expression.spans.span(objective.expression.spans.root()).is_some());
 }
 
 /// FR-754-AC-1: `maximize Pick` parses and its objective direction is retained.
