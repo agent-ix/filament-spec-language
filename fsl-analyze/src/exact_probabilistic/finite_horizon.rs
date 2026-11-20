@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-197: exact backward induction for the bounded acyclic product.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use num_bigint::BigInt;
@@ -9,6 +9,7 @@ use num_integer::Integer as _;
 use num_traits::Zero as _;
 
 use super::rows::Evaluation;
+use super::unbounded::{Choice, Graph, UnboundedError, maximal_end_components_from};
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
@@ -166,6 +167,14 @@ pub fn backward_induction(
     }
     let evaluation = Evaluation::of(product).map_err(|_| FhError::InvalidProbability)?;
     let terminal = evaluation.extend(terminal).ok_or(FhError::InvalidState)?;
+    if let Some(result) =
+        collapse_zero_time_components(&evaluation.product, &terminal, objective, max_rational_bits)?
+    {
+        return Ok(FhResult::Exact {
+            values: evaluation.restrict(result.0),
+            policy: result.1,
+        });
+    }
     let result = induction(
         &evaluation.product,
         &terminal,
@@ -192,6 +201,268 @@ pub fn backward_induction(
         },
         budget @ FhResult::PrecisionBudget { .. } => budget,
     })
+}
+
+/// Evaluate zero-time end components before ordinary backward induction.
+/// Every component state has the same value: the optimal exact expectation of
+/// an exit action after the scheduler uses internal zero-time actions to reach
+/// its chosen exit. A component without an exit is a terminal time-lock.
+fn collapse_zero_time_components(
+    product: &ProbProduct,
+    terminal: &[Option<Rational>],
+    objective: FhObjective,
+    max_rational_bits: u64,
+) -> Result<Option<(Vec<Rational>, Vec<Option<usize>>)>, FhError> {
+    let graph = Graph::new(product).map_err(|error| match error {
+        UnboundedError::InvalidState => FhError::InvalidState,
+        _ => FhError::InvalidProbability,
+    })?;
+    let zero_choices = graph
+        .choices
+        .iter()
+        .map(|choices| {
+            choices
+                .iter()
+                .filter(|choice| choice.edges.iter().all(|edge| edge.elapsed.is_zero()))
+                .cloned()
+                .collect()
+        })
+        .collect();
+    let zero_graph = Graph {
+        product,
+        choices: zero_choices,
+    };
+    let components = maximal_end_components_from(
+        &zero_graph,
+        (0..product.states.len()).collect::<BTreeSet<_>>(),
+    )
+    .map_err(|_| FhError::InvalidState)?;
+    if components.is_empty() {
+        return Ok(None);
+    }
+    let mut solver = ZeroTimeSolver {
+        product,
+        terminal,
+        objective,
+        max_rational_bits,
+        component_of: vec![None; product.states.len()],
+        components,
+        values: vec![None; product.states.len()],
+        policy: vec![None; product.states.len()],
+        visiting: vec![false; product.states.len()],
+        solved_components: vec![false; product.states.len()],
+    };
+    for (component, states) in solver.components.iter().enumerate() {
+        for state in states {
+            let Some(slot) = solver.component_of.get_mut(*state) else {
+                return Err(FhError::InvalidState);
+            };
+            *slot = Some(component);
+        }
+    }
+    for state in 0..product.states.len() {
+        solver.value(state)?;
+    }
+    let values = solver
+        .values
+        .into_iter()
+        .map(|value| value.ok_or(FhError::InvalidState))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some((values, solver.policy)))
+}
+
+struct ZeroTimeSolver<'p> {
+    product: &'p ProbProduct,
+    terminal: &'p [Option<Rational>],
+    objective: FhObjective,
+    max_rational_bits: u64,
+    component_of: Vec<Option<usize>>,
+    components: Vec<Vec<usize>>,
+    values: Vec<Option<Rational>>,
+    policy: Vec<Option<usize>>,
+    visiting: Vec<bool>,
+    solved_components: Vec<bool>,
+}
+
+impl ZeroTimeSolver<'_> {
+    fn value(&mut self, state: usize) -> Result<Rational, FhError> {
+        if let Some(value) = self.values.get(state).and_then(Clone::clone) {
+            return Ok(value);
+        }
+        if self.visiting.get(state).copied().unwrap_or(true) {
+            return Err(FhError::Cycle);
+        }
+        let Some(component) = self.component_of.get(state).copied().flatten() else {
+            return self.ordinary_value(state);
+        };
+        self.component_value(component)?;
+        self.values
+            .get(state)
+            .and_then(Clone::clone)
+            .ok_or(FhError::InvalidState)
+    }
+
+    fn ordinary_value(&mut self, state: usize) -> Result<Rational, FhError> {
+        if let Some(value) = self.values.get(state).and_then(Clone::clone) {
+            return Ok(value);
+        }
+        if self.visiting.get(state).copied().unwrap_or(true) {
+            return Err(FhError::Cycle);
+        }
+        if let Some(slot) = self.visiting.get_mut(state) {
+            *slot = true;
+        }
+        let value = if let Some(value) = self.terminal.get(state).cloned().flatten() {
+            value
+        } else {
+            let state_id = ProbStateId(state);
+            let groups = action_groups(self.product, state_id)?;
+            if groups.is_empty() {
+                return Err(FhError::MissingAction);
+            }
+            let mut candidates = Vec::with_capacity(groups.len());
+            for (choice_index, edges) in groups.iter().enumerate() {
+                let value = self.expectation(edges)?;
+                candidates.push((choice_index, value));
+            }
+            let (choice, value) = self.extreme(candidates).ok_or(FhError::InvalidState)?;
+            if let Some(slot) = self.policy.get_mut(state) {
+                *slot = Some(choice);
+            }
+            value
+        };
+        if !rational_fits(&value, self.max_rational_bits) {
+            return Err(FhError::InvalidProbability);
+        }
+        if let Some(slot) = self.values.get_mut(state) {
+            *slot = Some(value.clone());
+        }
+        if let Some(slot) = self.visiting.get_mut(state) {
+            *slot = false;
+        }
+        Ok(value)
+    }
+
+    fn component_value(&mut self, component: usize) -> Result<(), FhError> {
+        if self
+            .solved_components
+            .get(component)
+            .copied()
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let members = self
+            .components
+            .get(component)
+            .cloned()
+            .ok_or(FhError::InvalidState)?;
+        let member_set = members.iter().copied().collect::<BTreeSet<_>>();
+        for state in &members {
+            if let Some(slot) = self.visiting.get_mut(*state) {
+                *slot = true;
+            }
+        }
+        let mut exits = Vec::new();
+        let mut internal_policy = Vec::new();
+        for state in &members {
+            let groups = action_groups(self.product, ProbStateId(*state))?;
+            for (choice_index, edges) in groups.iter().enumerate() {
+                let internal = edges
+                    .iter()
+                    .all(|edge| edge.elapsed.is_zero() && member_set.contains(&edge.to.index()));
+                if internal {
+                    internal_policy.push((*state, choice_index));
+                    continue;
+                }
+                let (exit_value, internal_mass) = self.exit_expectation(edges, &member_set)?;
+                let denominator = rational_one().sub(&internal_mass);
+                if denominator.is_zero() {
+                    continue;
+                }
+                let value = exit_value.div(&denominator);
+                if !rational_fits(&value, self.max_rational_bits) {
+                    return Err(FhError::InvalidProbability);
+                }
+                exits.push((*state, choice_index, value));
+            }
+        }
+        let best = match self.objective {
+            FhObjective::Min => exits.iter().min_by(|left, right| left.2.cmp(&right.2)),
+            FhObjective::Max => exits.iter().max_by(|left, right| left.2.cmp(&right.2)),
+        }
+        .cloned();
+        let value = best
+            .as_ref()
+            .map(|exit| exit.2.clone())
+            .unwrap_or_else(rational_zero);
+        for state in &members {
+            if let Some(slot) = self.values.get_mut(*state) {
+                *slot = Some(value.clone());
+            }
+            if let Some(slot) = self.visiting.get_mut(*state) {
+                *slot = false;
+            }
+        }
+        if let Some((exit_state, exit_choice, _)) = best {
+            if let Some(slot) = self.policy.get_mut(exit_state) {
+                *slot = Some(exit_choice);
+            }
+            for (state, choice) in internal_policy {
+                if self.policy.get(state).is_some_and(Option::is_none) {
+                    if let Some(slot) = self.policy.get_mut(state) {
+                        *slot = Some(choice);
+                    }
+                }
+            }
+        }
+        if let Some(slot) = self.solved_components.get_mut(component) {
+            *slot = true;
+        }
+        Ok(())
+    }
+
+    fn exit_expectation(
+        &mut self,
+        edges: &[&super::ProbEdge],
+        members: &BTreeSet<usize>,
+    ) -> Result<(Rational, Rational), FhError> {
+        let mut outside = rational_zero();
+        let mut internal = rational_zero();
+        for edge in edges {
+            if members.contains(&edge.to.index()) {
+                internal = internal.add(&edge.probability);
+            } else {
+                let value = self.value(edge.to.index())?;
+                outside = outside.add(&edge.probability.mul(&value));
+            }
+        }
+        Ok((outside, internal))
+    }
+
+    fn expectation(&mut self, edges: &[&super::ProbEdge]) -> Result<Rational, FhError> {
+        let mut mass = rational_zero();
+        let mut value = rational_zero();
+        for edge in edges {
+            mass = mass.add(&edge.probability);
+            value = value.add(&edge.probability.mul(&self.value(edge.to.index())?));
+        }
+        if mass != rational_one() {
+            return Err(FhError::InvalidProbability);
+        }
+        Ok(value)
+    }
+
+    fn extreme(&self, candidates: Vec<(usize, Rational)>) -> Option<(usize, Rational)> {
+        match self.objective {
+            FhObjective::Min => candidates
+                .into_iter()
+                .min_by(|left, right| left.1.cmp(&right.1)),
+            FhObjective::Max => candidates
+                .into_iter()
+                .max_by(|left, right| left.1.cmp(&right.1)),
+        }
+    }
 }
 
 fn induction(
@@ -669,6 +940,77 @@ mod tests {
             fairness_operations: Vec::new(),
             fairness: Vec::new(),
         }
+    }
+
+    #[test]
+    fn zero_time_mec_collapses_to_the_objectives_best_exit() {
+        let key = |model| super::super::ProbKey {
+            binding: None,
+            model: vec![model],
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        };
+        let zero = key(2);
+        let one = key(1);
+        let product = ProbProduct {
+            states: vec![key(0), one.clone(), zero.clone()],
+            kind: ProductKind::Mdp,
+            edges: vec![
+                ProbEdge {
+                    from: ProbStateId(0),
+                    choice: ProductAction::PostState(Box::new(key(0))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(0),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+                ProbEdge {
+                    from: ProbStateId(0),
+                    choice: ProductAction::PostState(Box::new(one)),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(1),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+                ProbEdge {
+                    from: ProbStateId(0),
+                    choice: ProductAction::PostState(Box::new(zero)),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(2),
+                    probability: rational(1, 1),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                },
+            ],
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: vec![
+                (ProbStateId(1), MonitorVerdict::Accept),
+                (ProbStateId(2), MonitorVerdict::Reject),
+            ],
+            labels: vec![Vec::new(); 3],
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let limits = ExactProbLimits::default();
+        let minimum = decide_bounded_event(&product, &Bound::AtLeast(rational(1, 2)), &limits)
+            .expect("zero-time MEC min exit is finite");
+        let maximum = decide_bounded_event(&product, &Bound::AtMost(rational(1, 2)), &limits)
+            .expect("zero-time MEC max exit is finite");
+        assert!(matches!(
+            minimum,
+            FhResult::Exact { values, .. } if values[0] == rational(0, 1)
+        ));
+        assert!(matches!(
+            maximum,
+            FhResult::Exact { values, .. } if values[0] == rational(1, 1)
+        ));
     }
 
     /// Trace: TC-632

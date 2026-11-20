@@ -2575,12 +2575,7 @@ impl<'c> Builder<'_, '_, 'c> {
                 })
             });
             if has_exit {
-                return Err(ProductRefusal::ZeroDelayCycle {
-                    states: component
-                        .into_iter()
-                        .map(|member| self.nodes[member].key.clone())
-                        .collect(),
-                });
+                continue;
             }
             self.time_locked.extend(component);
         }
@@ -2614,9 +2609,7 @@ impl<'c> Builder<'_, '_, 'c> {
         // never be met: ADR-026 TD-2 reports the lock, and the event closes
         // as a rejection (FR-196 "Canonical probability product key").
         for state in &self.time_locked {
-            if matches!(self.form, Form::Deadline { .. }) {
-                decided.push((ProbStateId(*state), MonitorVerdict::Reject));
-            }
+            decided.push((ProbStateId(*state), MonitorVerdict::Reject));
         }
         decided.sort_by_key(|(state, _)| state.index());
         decided.dedup_by_key(|(state, _)| state.index());
