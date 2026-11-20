@@ -1017,11 +1017,14 @@ pub(crate) const GUARDED: Vault = Vault::Custom(
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
 
-const KERNEL_GUARDED: Vault = Vault::Custom(
+/// The guarded vault with its division inside a Kernel-checked call.
+pub(crate) const KERNEL_GUARDED: Vault = Vault::Custom(
     "pre Guard using v on V::Vault::step { q(1 - self.l + self.h) >= 0 }\n\
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
-const KERNEL_DIV_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 1 div x }\n";
+/// A Kernel-checked division callable from Linked contracts.
+pub(crate) const KERNEL_DIV_FUNCTION: &str =
+    "function q using v(x: Integer): Integer pure { 1 div x }\n";
 /// A Kernel-checked remainder function callable from a Linked match body.
 pub(crate) const KERNEL_MOD_FUNCTION: &str =
     "function q using v(x: Integer): Integer pure { 1 mod x }\n";

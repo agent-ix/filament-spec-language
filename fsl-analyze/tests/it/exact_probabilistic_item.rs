@@ -25,6 +25,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::prob_world::{self, World};
 
+mod certificate_boundary_cases;
+
 /// `Link` delivers within two attempts: the least delivery probability over
 /// every scheduler is 24/25 (send_b twice), the greatest 99/100.
 const CLAIMS: &str =
