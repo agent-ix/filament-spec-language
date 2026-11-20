@@ -224,8 +224,10 @@ fn a_refinement_budget_of_one_state_is_incomplete() {
 }
 
 /// FR-630, FR-143: a strong abstract fairness constraint gives the
-/// liveness half the typed result the library gives it, through the wire;
-/// the item is never `proved` (QSL-2243 decides the strong reading).
+/// liveness half the typed result the library gives it, through the wire. The
+/// only concrete step maps to the strongly fair abstract `inc`, so no
+/// abstract-unfair loop exists and the claim is decided `proved`; the refuted
+/// reading is covered by the refinement liveness tests.
 #[trace("TC-1590", "FR-630")]
 #[test]
 fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
@@ -241,8 +243,7 @@ fn a_strong_abstract_fairness_refinement_settles_the_library_result() {
             "temporal": {"item_kind": "refinement"}}]),
     ));
     let item = run.item(0);
-    assert_ne!(label(&item), "proved", "{item}");
-    assert_eq!(label(&item), "unsupported", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
 }
 
 /// FR-630, FSpec FR-368: an `abstract_subject` whose `identity` is not the
