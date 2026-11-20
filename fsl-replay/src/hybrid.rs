@@ -15,8 +15,7 @@ use std::collections::BTreeSet;
 
 use crate::hybrid_replay::{
     exact_replay, static_replay, ExactReal, ExactRecord, ExactReplay, HybridCounterexample,
-    HybridCounterexampleKind, HybridReplayMeter,
-    HybridReplayRefusal, HybridTrace, ReplayRecord,
+    HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal, HybridTrace, ReplayRecord,
 };
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::{
@@ -27,20 +26,20 @@ use crate::result::{DisagreementCause, HybridTraceDisagreement};
 use filament_exact::LimitKind;
 use fsl_semantics::check::{CheckedGraph, CheckedHybridClaim, HybridClock, HybridHorizon};
 
-mod process_request;
 mod locus;
+mod process_request;
 mod provider;
 pub use locus::{
     hybrid_counterexample_locus, hybrid_locus_site, hybrid_locus_wire, hybrid_term_at_locus,
-};
-pub use provider::{
-    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
-    UnsupportedConstruct,
 };
 pub use process_request::{
     AdmittedHybridProcessItem, AdmittedHybridProcessRequest, HybridProcessDependencyPackage,
     HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest,
     HybridProcessRequestRefusal,
+};
+pub use provider::{
+    HybridAnswer, HybridEntryRefusal, HybridProvider, HybridSolveRequest, HybridVerdict,
+    OptionRefusal, UnsupportedConstruct,
 };
 
 /// The kind of method a provider ran. FSL decides soundness from the kind
@@ -477,7 +476,9 @@ impl HybridSettlement {
             }))
         };
         match exact_replay(graph, claim, &counterexample.trace, meter) {
-            Ok(ExactReplay::Reproduced(replayed)) if agrees(&counterexample.kind, &replayed.kind) => {
+            Ok(ExactReplay::Reproduced(replayed))
+                if agrees(&counterexample.kind, &replayed.kind) =>
+            {
                 Ok(Self {
                     value: TerminalValue::Refuted,
                     counterexample: Some(counterexample),
@@ -513,8 +514,14 @@ fn agrees(claimed: &HybridCounterexampleKind, replayed: &HybridCounterexampleKin
     match (claimed, replayed) {
         (HybridCounterexampleKind::Formula, HybridCounterexampleKind::Formula) => true,
         (
-            HybridCounterexampleKind::UndefinedEvaluation { at: claim, cause: claim_cause },
-            HybridCounterexampleKind::UndefinedEvaluation { at: found, cause: found_cause },
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: claim,
+                cause: claim_cause,
+            },
+            HybridCounterexampleKind::UndefinedEvaluation {
+                at: found,
+                cause: found_cause,
+            },
         ) => {
             let (lower, upper) = if let Some(interval) = &claim.time_interval {
                 (&interval.lower, &interval.upper)

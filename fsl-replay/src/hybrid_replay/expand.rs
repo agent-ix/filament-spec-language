@@ -127,7 +127,7 @@ pub(crate) enum Exp {
     Compare(CompareOp, Box<Exp>, Box<Exp>),
     Not(Box<Exp>),
     Logic(LogicOp, Box<Exp>, Box<Exp>),
-    Conditional(Box<Exp>, Box<Exp>, Box<Exp>),
+    Conditional(Box<Exp>, Box<Exp>, Box<Exp>, TermLocus),
     Ranged {
         value: Box<Exp>,
         range: ValueRange,
@@ -159,7 +159,7 @@ impl Exp {
                 Self::Arithmetic(_, a, b, _) | Self::Compare(_, a, b) | Self::Logic(_, a, b) => {
                     pending.extend([a.as_ref(), b.as_ref()])
                 }
-                Self::Conditional(a, b, c) => {
+                Self::Conditional(a, b, c, _) => {
                     pending.extend([a.as_ref(), b.as_ref(), c.as_ref()]);
                 }
                 Self::Recursive(call) => pending.extend(call.arguments.iter()),
@@ -197,7 +197,9 @@ impl Exp {
             }
             Self::Compare(op, a, b) => Self::Compare(*op, map(a), map(b)),
             Self::Logic(op, a, b) => Self::Logic(*op, map(a), map(b)),
-            Self::Conditional(a, b, c) => Self::Conditional(map(a), map(b), map(c)),
+            Self::Conditional(a, b, c, locus) => {
+                Self::Conditional(map(a), map(b), map(c), locus.clone())
+            }
             Self::Ranged {
                 value,
                 range,
@@ -248,7 +250,9 @@ impl Exp {
             }
             Self::Compare(op, a, b) => Self::Compare(*op, map(a), map(b)),
             Self::Logic(op, a, b) => Self::Logic(*op, map(a), map(b)),
-            Self::Conditional(a, b, c) => Self::Conditional(map(a), map(b), map(c)),
+            Self::Conditional(a, b, c, locus) => {
+                Self::Conditional(map(a), map(b), map(c), locus.clone())
+            }
             Self::Recursive(call) => Self::Recursive(RecursiveCall {
                 arguments: call
                     .arguments
@@ -290,7 +294,7 @@ enum Build {
     Arithmetic(ArithmeticOp, TermLocus),
     Compare(CompareOp),
     Logic(LogicOp),
-    Conditional,
+    Conditional(TermLocus),
 }
 
 /// The explicit work stack for expanding source and checked-body terms.
@@ -415,7 +419,7 @@ impl<'g> Expander<'g> {
                             }
                         }
                         HybridTerm::Conditional(condition, yes, no) => {
-                            pending.push(Task::Build(Build::Conditional));
+                            pending.push(Task::Build(Build::Conditional(locus.clone())));
                             for (position, child) in
                                 [(0, condition.as_ref()), (1, yes.as_ref()), (2, no.as_ref())]
                                     .into_iter()
@@ -491,7 +495,7 @@ impl<'g> Expander<'g> {
                         }
                         kind => {
                             let build = match kind {
-                                NodeKind::If { .. } => Some(Build::Conditional),
+                                NodeKind::If { .. } => Some(Build::Conditional(locus.clone())),
                                 NodeKind::Arithmetic(op, _, _) => Some(Build::Arithmetic(
                                     match op {
                                         Arithmetic::Add => ArithmeticOp::Add,
@@ -581,11 +585,16 @@ impl<'g> Expander<'g> {
                             let left = values.pop().expect("left operand");
                             Exp::Logic(op, Box::new(left), Box::new(right))
                         }
-                        Build::Conditional => {
+                        Build::Conditional(locus) => {
                             let no = values.pop().expect("otherwise branch");
                             let yes = values.pop().expect("then branch");
                             let condition = values.pop().expect("condition");
-                            Exp::Conditional(Box::new(condition), Box::new(yes), Box::new(no))
+                            Exp::Conditional(
+                                Box::new(condition),
+                                Box::new(yes),
+                                Box::new(no),
+                                locus,
+                            )
                         }
                     };
                     values.push(value);

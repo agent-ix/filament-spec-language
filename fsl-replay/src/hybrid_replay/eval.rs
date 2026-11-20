@@ -268,7 +268,7 @@ pub(crate) fn eval_in<A: Algebra, P: Probe<A>>(
                 (LogicOp::And | LogicOp::Or | LogicOp::Implies, _) => Ev::Boolean(truth!(b)),
             }
         }
-        Exp::Conditional(c, a, b) => {
+        Exp::Conditional(c, a, b, _) => {
             if truth!(c) {
                 eval_in::<A, P>(a, env, at, decisions)?
             } else {
