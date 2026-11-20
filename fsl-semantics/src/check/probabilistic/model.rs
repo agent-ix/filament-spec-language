@@ -853,16 +853,6 @@ impl<'a> ProbabilisticInput<'a> {
         ))
     }
 
-    /// Whether the object type `key` is the object type `of` or one of its
-    /// ancestors: the operations a source-object workload on `of` weighs are
-    /// those `of` declares or inherits.
-    fn in_lineage(&self, of: &DeclarationKey, key: &DeclarationKey) -> bool {
-        match (self.object_types.get(of), self.object_types.get(key)) {
-            (Some(of), Some(key)) => self.scope.types().conforms(of.clone(), key.clone()),
-            _ => false,
-        }
-    }
-
     /// Every operation of the model `alias`, each with its spelling
     /// `Type::op`, in object type then declaration order.
     fn model_operations(
@@ -874,10 +864,33 @@ impl<'a> ProbabilisticInput<'a> {
             return Vec::new();
         };
         let mut operations = Vec::new();
-        for (artifact, key) in objects {
-            if only.is_some_and(|only| !self.in_lineage(only, key)) {
-                continue;
+        if let Some(only) = only {
+            // A source-object workload weighs the type's effective view: what
+            // it declares or inherits, an ancestor's redefined operation
+            // hidden by the type's own.
+            let Some(of) = self.object_types.get(only) else {
+                return operations;
+            };
+            for (declaring, operation) in self
+                .scope
+                .operations()
+                .effective(self.scope.types(), of.clone())
+            {
+                let Some((artifact, _)) = objects
+                    .iter()
+                    .find(|(_, key)| self.object_types.get(*key) == Some(&declaring))
+                else {
+                    continue;
+                };
+                operations.push((
+                    declaring,
+                    operation.name(),
+                    format!("{}::{}", artifact.as_str(), operation.name()),
+                ));
             }
+            return operations;
+        }
+        for (artifact, key) in objects {
             let Some(declaring) = self.object_types.get(key).cloned() else {
                 continue;
             };
@@ -1492,10 +1505,12 @@ impl Pass<'_, '_> {
             let operation = match self.input.operation(&written.operation, Some(model)) {
                 Ok((operation, _))
                     if only.as_ref().is_none_or(|only| {
-                        operation
-                            .declaring_key
-                            .as_ref()
-                            .is_some_and(|declaring| self.input.in_lineage(only, declaring))
+                        self.input.model_operations(model, Some(only)).iter().any(
+                            |(declaring, name, _)| {
+                                *declaring == operation.declaring
+                                    && *name == operation.name.as_str()
+                            },
+                        )
                     }) =>
                 {
                     operation

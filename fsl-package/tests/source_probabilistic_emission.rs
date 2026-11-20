@@ -171,7 +171,7 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
 #[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2463: a delay on an untimed source model is refused by S3 as invalid_timed_model, not invalid_probabilistic_model/delay-on-untimed-model; the expected cause needs an arch ruling"]
+#[ignore = "QSL-2699: S3 refuses a delay on an untimed source model as invalid_timed_model, where FR-740-AC-5 states invalid_probabilistic_model/delay-on-untimed-model"]
 fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
     let Err(refusals) = check(&format!("{TIMED}delay O::step ~ uniform;\n")) else {
         panic!("a delay on an untimed source model checks");
@@ -339,4 +339,50 @@ fn a_workload_on_a_source_subtype_weighs_and_requires_its_inherited_operations()
             if operation == "Sub::b"),
         "{cause:?}"
     );
+}
+
+/// A subtype's redefinition hides the ancestor's operation of that name, for a
+/// pure operation and for one that modifies state.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_workload_on_a_source_subtype_weighs_a_redefined_operation_once() {
+    for (base, redefinition) in [
+        (
+            "operation f(p: Int[0, 9]): Integer;",
+            "operation f(p: Int[0, 9]): Integer redefines Base::f;",
+        ),
+        (
+            "operation f() modifies self.n;",
+            "operation f() redefines Base::f modifies self.n;",
+        ),
+    ] {
+        let units = format!(
+            "object Base {{ n: Integer; {base} }}\n\
+             object Sub extends Base {{ {redefinition} operation g() modifies self.n; }}\n"
+        );
+        let package = check(&format!(
+            "{units}workload W on Sub {{ weight Sub::f = 1; weight Sub::g = 1; }}\n"
+        ))
+        .unwrap_or_else(|refusals| panic!("{base}: S3 admits: {refusals:?}"));
+        let [workload] = package.graph().probabilistic_model().workloads() else {
+            panic!("one checked workload");
+        };
+        assert_eq!(workload.weights().len(), 2, "{base}");
+        let cause = refused(&format!(
+            "{units}workload W on Sub {{ weight Sub::g = 1; }}\n"
+        ));
+        assert!(
+            matches!(&cause, ProbabilisticCause::IncompleteWorkload { operation, .. }
+                if operation == "Sub::f"),
+            "{base}: {cause:?}"
+        );
+        let cause = refused(&format!(
+            "{units}workload W on Sub {{ weight Sub::f = 1; weight Sub::g = 1; weight Base::f = 1; }}\n"
+        ));
+        assert!(
+            matches!(&cause, ProbabilisticCause::UnknownOperation { operation, .. }
+                if operation == "Base::f"),
+            "{base}: {cause:?}"
+        );
+    }
 }
