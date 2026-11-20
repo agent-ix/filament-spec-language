@@ -283,7 +283,6 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             result: ValueType::Boolean,
             selected_operation_owner: owner.clone(),
             selected_operation: "step".to_owned(),
-            required_arity: 0,
             table: 0,
         }];
         declarations.dispatch_tables = vec![DispatchTable::new(
