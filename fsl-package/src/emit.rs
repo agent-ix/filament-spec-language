@@ -7233,7 +7233,7 @@ fn emit_package_inner(
         &source_map,
         temporal_selections,
     )?;
-    let claim_names = claim_name_rows(graph, &emitted_node_ids, &nodes, &source_map)?;
+    let claim_names = claim_name_rows(graph, ids, &emitted_node_ids, &nodes, &source_map)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &emitted_node_ids,
@@ -8563,6 +8563,7 @@ fn claim_bearing(node: &CheckedSemanticNodeV2) -> bool {
 /// region, a node path or the clause body.
 fn claim_name_rows(
     graph: &CheckedGraph,
+    ids: &StructuralIds,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
@@ -8680,24 +8681,21 @@ fn claim_name_rows(
             }
         }
     }
-    // The reader orders rows by the graph's own node order, which resolves
-    // operand IDs and so need not agree with the plain `CheckedNodeId` order.
-    let position: BTreeMap<&CheckedNodeId, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(at, node)| (&node.node_id, at))
-        .collect();
-    // Every row's declaration was taken from an emitted node, so a miss is an
+    // The reader orders rows by the declaration's resolved structural key
+    // (`CheckedNodeId::cmp` with every operand expanded), then occurrence.
+    // That is neither the graph position nor the order of the package-local
+    // ids the rows carry, so each row is ranked by its resolved id. Every
+    // row's declaration was taken from an emitted node, so a miss is an
     // emitter fault, not an ordering to guess.
     let mut ranked = Vec::with_capacity(rows.len());
     for row in rows {
-        let at = *position
+        let key = keys
             .get(&row.declaration)
             .ok_or(EmitRefusal::UnresolvedNodeReference)?;
-        ranked.push((at, row));
+        ranked.push((node_id(ids, *key), row));
     }
-    ranked.sort_by(|(left_at, left), (right_at, right)| {
-        (left_at, &left.occurrence).cmp(&(right_at, &right.occurrence))
+    ranked.sort_by(|(left_id, left), (right_id, right)| {
+        (left_id, &left.occurrence).cmp(&(right_id, &right.occurrence))
     });
     let mut rows: Vec<_> = ranked.into_iter().map(|(_, row)| row).collect();
     rows.dedup_by(|later, earlier| {

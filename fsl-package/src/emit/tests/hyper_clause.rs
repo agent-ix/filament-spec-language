@@ -1323,3 +1323,46 @@ fn a_clocked_hyper_clause_binds_each_quantifier_on_its_hyperproperty_node() {
     assert_eq!(code, "InvalidPackage", "{path}");
     assert_eq!(path, "/temporal_bindings/0/declaration");
 }
+
+/// FR-322 "Claim declaration names": a unit mixing a state-clause (`post`)
+/// claim, a temporal claim and a hyper clause writes its name rows in the
+/// strict reader's order (resolved structural key, then occurrence), so the
+/// I2 read admits the package. The temporal claim is named by its own
+/// sidecar; the hyper clause's `claim` node sorts before the `state_clause` node although
+/// it is placed later in the graph.
+#[trace("TC-1266", "FR-488-AC-10")]
+#[test]
+fn state_temporal_and_hyper_claims_are_named_in_the_readers_order() {
+    let declarations = format!(
+        "post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {{ \
+         self.versionNumber = pre(self.versionNumber) }}\n\
+         temporal ReachesTwo using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ \
+         fair weak each Config::ConfigVersion::attemptUpdate; \
+         always eventually holds(c.versionNumber = 2) }}\n{}",
+        non_interference()
+    );
+    let compiled = compile(&unit(INFINITE, &declarations));
+    let named: Vec<&str> = compiled.wire["claim_names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(named, ["NonInterference", "VersionUnchanged"]);
+    admit(&compiled);
+}
+
+/// The rover mode-machine shape (a state-clause postcondition beside a
+/// fair-weak `temporal` claim over `behaviours` of one model) is admitted by
+/// the package route's strict read.
+#[trace("TC-1266", "FR-488-AC-10")]
+#[test]
+fn a_postcondition_beside_a_fair_temporal_claim_is_admitted() {
+    let declarations = "pre Ready using v on Config::ConfigVersion::attemptUpdate { true }\n\
+         post Bumped using v on Config::ConfigVersion::attemptUpdate { \
+         self.versionNumber >= pre(self.versionNumber) }\n\
+         temporal Settles using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
+         fair weak Config::ConfigVersion::attemptUpdate; \
+         always (holds(c.versionNumber = 0) implies eventually holds(c.versionNumber = 2)) }\n";
+    admit(&compile(&unit(INFINITE, declarations)));
+}
