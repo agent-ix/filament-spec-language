@@ -577,6 +577,9 @@ fn mean_time_component_policy_valid(
                         continue;
                     }
                     for edge in choice {
+                        if edge.probability <= zero {
+                            continue;
+                        }
                         if let Some(next) = distance.get(&edge.target).copied().flatten() {
                             let candidate_distance = next + 1;
                             nearest = Some(nearest.map_or(candidate_distance, |current| {
@@ -627,11 +630,12 @@ fn mean_time_component_policy_valid(
                         &indices,
                         &zero,
                     )? && choice.iter().any(|edge| {
-                        distance
-                            .get(&edge.target)
-                            .copied()
-                            .flatten()
-                            .is_some_and(|next| next < current)
+                        edge.probability > zero
+                            && distance
+                                .get(&edge.target)
+                                .copied()
+                                .flatten()
+                                .is_some_and(|next| next < current)
                     }) {
                         selected = Some(choice_index);
                         break;

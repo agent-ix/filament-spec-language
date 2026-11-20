@@ -367,9 +367,10 @@ impl ZeroTimeSolver<'_> {
         for state in &members {
             let groups = action_groups(self.product, ProbStateId(*state))?;
             for (choice_index, edges) in groups.iter().enumerate() {
-                let internal = edges
-                    .iter()
-                    .all(|edge| edge.elapsed.is_zero() && member_set.contains(&edge.to.index()));
+                let internal = edges.iter().all(|edge| {
+                    edge.probability.is_zero()
+                        || (edge.elapsed.is_zero() && member_set.contains(&edge.to.index()))
+                });
                 if internal {
                     continue;
                 }
@@ -484,11 +485,17 @@ fn expand_zero_time_component_policy(
             let nearest = groups
                 .iter()
                 .filter(|edges| {
+                    edges.iter().all(|edge| {
+                        edge.probability.is_zero()
+                            || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                    })
+                })
+                .flat_map(|edges| {
                     edges
                         .iter()
-                        .all(|edge| edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                        .filter(|edge| !edge.probability.is_zero())
+                        .map(|edge| edge.to.index())
                 })
-                .flat_map(|edges| edges.iter().map(|edge| edge.to.index()))
                 .filter_map(|target| distance.get(target).copied().flatten().map(|d| d + 1))
                 .min();
             if let Some(nearest) = nearest {
@@ -513,16 +520,17 @@ fn expand_zero_time_component_policy(
         let selected = groups
             .iter()
             .position(|edges| {
-                edges
-                    .iter()
-                    .all(|edge| edge.elapsed.is_zero() && members.contains(&edge.to.index()))
-                    && edges.iter().any(|edge| {
-                        distance
+                edges.iter().all(|edge| {
+                    edge.probability.is_zero()
+                        || (edge.elapsed.is_zero() && members.contains(&edge.to.index()))
+                }) && edges.iter().any(|edge| {
+                    !edge.probability.is_zero()
+                        && distance
                             .get(edge.to.index())
                             .copied()
                             .flatten()
                             .is_some_and(|next| next < current)
-                    })
+                })
             })
             .ok_or(FhError::InvalidState)?;
         *policy.get_mut(*state).ok_or(FhError::InvalidState)? = Some(selected);
