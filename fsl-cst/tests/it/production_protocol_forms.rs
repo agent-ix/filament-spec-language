@@ -113,7 +113,7 @@ fn direct_identifiers<'a>(
         .collect()
 }
 
-fn rejected(source: &str, marker: &str, width: usize) {
+fn rejected(source: &str, marker: &str, width: usize) -> ParsedSource {
     let result = parsed(source);
     assert!(!result.is_admissible(), "{source}");
     let diagnostic = result
@@ -139,6 +139,18 @@ fn rejected(source: &str, marker: &str, width: usize) {
         }),
         "{source}: {diagnostic:?}"
     );
+    result
+}
+
+fn rejected_with_expected(source: &str, marker: &str, width: usize, expected: &str) {
+    let result = rejected(source, marker, width);
+    assert_eq!(result.cst().render(), source.as_bytes());
+    let [diagnostic] = result.diagnostics() else {
+        panic!("one independent syntax error: {:?}", result.diagnostics());
+    };
+    // The public diagnostic renders its deterministic expected alternatives.
+    // Code, cause and location remain separate typed assertions in rejected.
+    assert_eq!(diagnostic.message, expected, "{source}: {diagnostic:?}");
 }
 
 #[test]
@@ -671,4 +683,242 @@ fn malformed_loops_and_fences_refuse_their_own_illegal_keyword() {
         6,
     );
     rejected(&unit("", "fence Publish ordering relaxed;"), "relaxed", 7);
+}
+
+const NEAR_COMPENSATION: &str = "compensate UndoUpdate for Work::Applied as (saved: Offer) by Agent on Ledger::Ticket::restore using t clock \"ticks\" { activate first (signal: Signal) when { true } {} within [0, 2]; attempts 2 of RetryOffer; retry (leftState: Before, rightState: After) { true }; commit never; recover (fixed: State) { true }; }";
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_compensation_members_refuse_order_omission_unknown_word_and_missing_separator() {
+    let good = unit(NEAR_COMPENSATION, "sequence Work {}");
+    let result = admitted(&good);
+    node(&result, &good, Production::Compensation, NEAR_COMPENSATION);
+    for (bad, marker, width, expected) in [
+        (
+            NEAR_COMPENSATION.replace(
+                "retry (leftState: Before, rightState: After) { true }; commit never;",
+                "commit never; retry (leftState: Before, rightState: After) { true };",
+            ),
+            "commit never",
+            6,
+            "expected `retry`",
+        ),
+        (
+            NEAR_COMPENSATION.replace("attempts 2 of RetryOffer; ", ""),
+            "retry (",
+            5,
+            "expected `attempts`",
+        ),
+        (
+            NEAR_COMPENSATION.replace("attempts 2", "attempt_budget 2"),
+            "attempt_budget",
+            14,
+            "expected `attempts`",
+        ),
+        (
+            NEAR_COMPENSATION.replace(
+                "attempts 2 of RetryOffer; retry",
+                "attempts 2 of RetryOffer retry",
+            ),
+            "retry (",
+            5,
+            "expected `;`",
+        ),
+    ] {
+        rejected_with_expected(&unit(&bad, "sequence Work {}"), marker, width, expected);
+    }
+}
+
+const NEAR_REPEAT: &str = "repeat Drain by Agent visible () max 2 invariant { true } variant { 2 } while { true } sequence Step {} exhausted sequence Stop {}";
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_repetitions_refuse_missing_bounds_arms_proof_order_and_body_delimiters() {
+    let good = unit("", NEAR_REPEAT);
+    let result = admitted(&good);
+    let repetition = node(&result, &good, Production::Repetition, NEAR_REPEAT);
+    assert_eq!(
+        child_texts(&result, &good, repetition, Production::Control),
+        ["sequence Step {}", "sequence Stop {}"]
+    );
+    for (bad, marker, width, expected) in [
+        (
+            NEAR_REPEAT.replace("max 2", "max ;"),
+            "; invariant",
+            1,
+            "expected unsigned 64-bit integer",
+        ),
+        (
+            NEAR_REPEAT.replace("exhausted sequence Stop {}", "exhausted ;"),
+            ";\nfinish",
+            1,
+            "expected a declaration",
+        ),
+        (
+            NEAR_REPEAT.replace(
+                "invariant { true } variant { 2 }",
+                "variant { 2 } invariant { true }",
+            ),
+            "variant { 2 }",
+            7,
+            "expected `while`",
+        ),
+        (
+            NEAR_REPEAT.replace("sequence Step {}", "sequence Step"),
+            "exhausted sequence",
+            9,
+            "expected `{`",
+        ),
+    ] {
+        rejected_with_expected(&unit("", &bad), marker, width, expected);
+    }
+}
+
+const NEAR_AWAIT: &str = "await Receipt after Work::Sent using t clock \"ticks\" within [0, 2] match receive Arrived via Inbox of Work::Sent as (packet: Envelope) { true }; then sequence Continue {} timeout sequence Expire {}";
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_awaits_refuse_missing_match_bounds_then_keyword_and_timeout_body() {
+    let good = unit("", NEAR_AWAIT);
+    let result = admitted(&good);
+    let awaiting = node(&result, &good, Production::AwaitControl, NEAR_AWAIT);
+    assert_eq!(
+        child_texts(&result, &good, awaiting, Production::Control),
+        ["sequence Continue {}", "sequence Expire {}"]
+    );
+    for (bad, marker, width, expected) in [
+        (
+            NEAR_AWAIT.replace(
+                "match receive Arrived via Inbox of Work::Sent as (packet: Envelope) { true };",
+                "match ;",
+            ),
+            "; then",
+            1,
+            "expected `attempt` or `effect` or `event` or `receive` or `recommend` or `send`",
+        ),
+        (
+            NEAR_AWAIT.replace("within [0, 2]", "within [0, ]"),
+            "] match",
+            1,
+            "expected `*` or `decimal` or `rational` or decimal literal or unsigned integer",
+        ),
+        (
+            NEAR_AWAIT.replace("then sequence Continue", "otherwise sequence Continue"),
+            "otherwise",
+            9,
+            "expected `then`",
+        ),
+        (
+            NEAR_AWAIT.replace("timeout sequence Expire {}", "timeout sequence Expire"),
+            "finish Closed",
+            6,
+            "expected `{`",
+        ),
+    ] {
+        rejected_with_expected(&unit("", &bad), marker, width, expected);
+    }
+}
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_event_nodes_refuse_missing_channels_binders_names_and_invalid_memory_order() {
+    for (good, bad, marker, width, expected) in [
+        ("send Offer via Inbox as (saved: Envelope) { true };", "send Offer via ; as (saved: Envelope) { true };", "; as", 1, "expected identifier"),
+        ("receive Seen via Inbox of Work::Offer as (saved: Envelope) { true };", "receive Seen via Inbox of Work::Offer as () { true };", ") { true };", 1, "expected identifier"),
+        ("attempt Apply by Agent on Ledger::Ticket::apply ordering acquire contracts [] as (receipt: Receipt) { true };", "attempt Apply by Agent on Ledger::Ticket::apply ordering consume contracts [] as (receipt: Receipt) { true };", "consume", 7, "expected `acq_rel` or `acquire` or `relaxed` or `release` or `seq_cst`"),
+        ("effect Recorded of Work::Applied as (receipt: Receipt) { true };", "effect ; of Work::Applied as (receipt: Receipt) { true };", "; of", 1, "expected identifier"),
+        ("event Retired by Agent as (receipt: Receipt) { true };", "event Retired by ; as (receipt: Receipt) { true };", "; as", 1, "expected identifier"),
+    ] {
+        let source = unit("", good);
+        let result = admitted(&source);
+        node(&result, &source, Production::EventNode, good);
+        rejected_with_expected(&unit("", bad), marker, width, expected);
+    }
+}
+
+const NEAR_PARALLEL: &str = "parallel Split { branch Alpha sequence First {} branch Beta sequence Second {} } join quorum(1) [Alpha, Beta];";
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_joins_refuse_unknown_policy_trailing_name_separator_missing_branch_and_predicate() {
+    let source = unit("", NEAR_PARALLEL);
+    let result = admitted(&source);
+    let parallel = node(&result, &source, Production::Parallel, NEAR_PARALLEL);
+    assert_eq!(
+        child_texts(&result, &source, parallel, Production::JoinPolicy),
+        ["quorum(1)"]
+    );
+    for (bad, marker, width, expected) in [
+        (
+            NEAR_PARALLEL.replace("join quorum(1)", "join consensus"),
+            "consensus",
+            9,
+            "expected `all` or `any` or `predicate` or `quorum`",
+        ),
+        (
+            NEAR_PARALLEL.replace("[Alpha, Beta]", "[Alpha, Beta,]"),
+            "];",
+            1,
+            "expected identifier",
+        ),
+        (
+            NEAR_PARALLEL.replace("branch Beta sequence Second {}", "branch Beta"),
+            "} join",
+            1,
+            "expected a declaration",
+        ),
+        (
+            NEAR_PARALLEL.replace("quorum(1)", "predicate()"),
+            ") [Alpha",
+            1,
+            "expected identifier",
+        ),
+    ] {
+        rejected_with_expected(&unit("", &bad), marker, width, expected);
+    }
+}
+
+#[test]
+#[trace(
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FSpec-FR-339-AC-4",
+    "FR-002-AC-6"
+)]
+fn near_miss_empty_join_rosters_match_the_current_nonempty_standard() {
+    // The current shared grammar requires ident before any optional comma tail.
+    // These policies complement the already-qualified `all []` refusal.
+    for policy in ["any", "quorum(1)", "predicate(ready)"] {
+        let good = NEAR_PARALLEL.replace("quorum(1)", policy);
+        let source = unit("", &good);
+        let result = admitted(&source);
+        node(&result, &source, Production::JoinPolicy, policy);
+        let bad = good.replace("[Alpha, Beta]", "[]");
+        rejected_with_expected(&unit("", &bad), "];", 1, "expected identifier");
+    }
 }
