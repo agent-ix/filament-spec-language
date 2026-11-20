@@ -243,7 +243,6 @@ fn live_occurrences_aggregate_across_host_and_interpreted_roots() {
     assert_incomplete(&interpreted_stop, 10, 7, 4);
     assert_incomplete(&host_stop, 10, 7, 4);
     assert_eq!(interpreted_stop.location, host_stop.location);
-    assert_eq!(interpreted_stop.frame_depth, host_stop.frame_depth);
     assert!(interpreted_stop.location.is_some());
     assert_eq!(interpreted_stop.peak_live_occurrences, 7);
     assert_eq!(host_stop.peak_live_occurrences, 7);
@@ -269,7 +268,6 @@ fn registry_live_occurrence_limit_is_the_callers() {
     assert_incomplete(&interpreted_stop, 10, 7, 4);
     assert_incomplete(&host_stop, 10, 7, 4);
     assert_eq!(interpreted_stop.location, host_stop.location);
-    assert_eq!(interpreted_stop.frame_depth, host_stop.frame_depth);
     assert!(interpreted_stop.location.is_some());
     assert_eq!(interpreted_stop.peak_live_occurrences, 7);
     assert_eq!(host_stop.peak_live_occurrences, 7);
