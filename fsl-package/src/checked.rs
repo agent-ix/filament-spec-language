@@ -843,29 +843,56 @@ impl EmittedPackage {
 #[cfg(feature = "std")]
 pub(crate) fn dependency_chain(length: usize) -> CheckedPackage {
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    };
+    use filament_exact::{NodeKey, PathSegment, Presence, ValueType};
     use fsl_semantics::check::PackageDeclarations;
-    let source = fsl_foundation::Source::read(
-        fsl_foundation::SourceIdentity::new("a", "u"),
-        "u".to_owned(),
-        b"",
-        0,
-    )
-    .expect("an empty source reads")
-    .reference()
-    .clone();
-    let graph = Arc::new(
-        PackageDeclarations::new(
+    static GRAPH: OnceLock<Arc<CheckedGraph>> = OnceLock::new();
+    let graph = Arc::clone(GRAPH.get_or_init(|| {
+        let source = fsl_foundation::Source::read(
+            fsl_foundation::SourceIdentity::new("a", "u"),
+            "u".to_owned(),
+            b"",
+            0,
+        )
+        .expect("an empty source reads")
+        .reference()
+        .clone();
+        let marker = NodeKey::new(
+            "test/package",
+            vec![PathSegment::Text("Marker".to_owned())],
+            0,
+        )
+        .expect("the fixture type has a structural key");
+        let mut declarations = PackageDeclarations::new(
             source,
             "test/package",
             fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = TypeEnvironment::new(
+            [CompositeDeclaration::new(
+                marker,
+                "Marker",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    "ready",
+                    ValueType::Boolean,
+                    Presence::Required,
+                )]),
+            )],
+            [],
         )
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        .expect("the minimal type fixture is admitted");
+        Arc::new(
+            declarations
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                )
+                .expect("the minimal package checks"),
         )
-        .expect("an empty package checks"),
-    );
+    }));
     (0..length).fold(
         CheckedPackage {
             graph: Arc::clone(&graph),

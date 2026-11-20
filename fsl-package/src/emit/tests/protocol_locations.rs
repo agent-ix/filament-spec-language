@@ -448,7 +448,7 @@ fn a_duplicated_row_is_refused_at_i2_at_the_duplicate() {
 }
 
 /// E-C's `Tried` and `Picked` controls (TC-1070 E-C) with its `Composed.if`
-/// shape, over fixture E's `M::Tick{ready, count}`; `LET` is where
+/// shape, over fixture E's `M::Flag{ready, count}`; `LET` is where
 /// [`e_c_with_let`] adds the `Composed.let` shape.
 const E_C_LET_IF: &str = r#"
 language "ix:native" edition "1-draft";
@@ -464,7 +464,7 @@ protocol Composed using P over (view: M::Node) on origin {
         as (p: M::Flag) { order >= 0 };
     LET
     attempt Branch by Service on M::Node::step contracts []
-        as (im: M::Tick) { if im.ready then im.count >= 1 else im.count + 1 >= 2 };
+        as (im: M::Flag) { if im.ready then im.count >= 1 else im.count + 1 >= 2 };
   }
   finish Closed as (closed: M::Flag) { true };
 }
@@ -476,7 +476,7 @@ fn e_c_with_let(with: bool) -> String {
         "    LET\n",
         if with {
             "attempt Bound by Service on M::Node::step contracts [] \
-             as (lm: M::Tick) { let c = lm.count in c + c >= 1 };\n"
+             as (lm: M::Flag) { let c = lm.count in c + c >= 1 };\n"
         } else {
             ""
         },
@@ -1022,7 +1022,7 @@ fn with_deep_control(prelude: &str, constraint: &str) -> String {
             "    LET\n",
             &format!(
                 "attempt Deep by Service on M::Node::step contracts [] \
-                 as (dm: M::Tick) {{ {constraint} }};\n"
+                 as (dm: M::Flag) {{ {constraint} }};\n"
             ),
         )
 }
@@ -1191,7 +1191,7 @@ fn nested_lets_2000_deep_project_on_the_next_frame_slots_on_a_small_stack() {
                 "    LET\n",
                 &format!(
                     "attempt Deep by Service on M::Node::step contracts [] \
-                     as (dm: M::Tick) {{ {chain} }};\n"
+                     as (dm: M::Flag) {{ {chain} }};\n"
                 ),
             );
             reader_view_over(
