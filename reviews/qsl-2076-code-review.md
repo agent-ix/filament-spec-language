@@ -16,7 +16,7 @@ Reviewed only the seven new behavioral tests, their parser assertion helpers and
 
 ## Verdict
 
-**CONDITIONAL** — the original formatting finding and four grounded corrections remain accepted. QSL-2686 owns the demonstrated harness defect: remove the unsound generic negative generator while preserving active positive/boundary assertions and the strict location oracles of explicit grammar-aware fixtures. The previous whole-token marker repair is withdrawn.
+**PASS** — accepted the author’s in-lane receipt at 818adf75bda50dbd049177ad524869196be0dbc8: both generic mutation loops and mutation-only bookkeeping are removed; active positive/exact-boundary coverage and strict explicit near-miss oracles remain. The one changed qualified function passed 1/0. This is a record-only disposition, with no extra code read, review sweep or runtime.
 
 ## Findings
 
@@ -40,6 +40,7 @@ Reviewed only the seven new behavioral tests, their parser assertion helpers and
 | FND-001 | fixed | Author's in-lane receipt reports scoped rustfmt at 861fde0009d65000cb71bd5b65378b151cdb3ae4; tuple-binding and loop-body spacing only, with all inputs, assertions and semantics unchanged. Accepted without another code read, test, lint or review sweep. |
 | FND-002 | still-open | Replace the whole original final significant token with equal-width spaces and a final standalone `#`, retaining the strict diagnostic-covering-boundary assertion. A suffix-byte mutation of a word can instead invalidate an earlier token prefix. |
 | FND-002 | still-open | Round 3 supersedes the proposed whole-token marker repair: `#` can create a valid ReferenceLiteral prefix after a CaseArm expression. Remove the generic negative loops and their false coverage claim; retain positive production/boundary checks and strict grammar-aware near-miss fixtures. QSL-2686 blocks QSL-2076 until this harness correction lands in PR3146. |
+| FND-002 | fixed | Accepted the author's in-lane implementation receipt at 818adf75bda50dbd049177ad524869196be0dbc8: both generic mutation loops and mutation-only bookkeeping removed; active function renamed for positive/exact-boundary assertions; negative-production criterion tag removed; explicit located negative fixtures unchanged. The only changed qualified function passed 1/0. |
 
 ## New findings (disposition pass 2)
 
@@ -68,3 +69,7 @@ QSL-2686 records the actual defect in the owning examples/corpus project, blocks
 Do not ignore the entire production inventory or retain a strict-pending parser regression asserting a location the grammar does not require. No dedicated product regression is justified by this evidence. Preserve existing explicit grammar-combinator and near-miss fixtures with their strict typed diagnostic and byte-span assertions; additional grammar-aware negatives belong to the already-owned QSL-2075..2078/2107 program, with unimplemented coverage stated truthfully. No arbitrary replacement marker, per-production exception or runtime trial loop is recommended.
 
 This final disposition ran no tests, builds, full review, baseline probes or owner audits. The seven new feature functions, four grounded stale corrections, strict product-owner annotations and original failed-gate receipt remain accepted and unchanged.
+
+## Final record-only disposition (pass 4)
+
+The retained active function still checks the independent production inventory, actual positive parsing, node rendering and exact byte spans, formatter significant-token/tree identity and idempotence, including the real ReferenceLiteral vector. No false generic negative-coverage claim remains. The original failed full gate and all attempts remain public; eight strict functions under QSL-2679 through QSL-2685 stay excluded from coverage. The seven new feature functions and four grounded corrections remain accepted. This disposition uses the author's receipt without another code read, review sweep, test, build or runtime probe. QSL-2686 can be closed when the same-PR correction merges.

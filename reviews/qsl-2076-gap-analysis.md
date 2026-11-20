@@ -16,7 +16,7 @@ Compared the changed tests with QSL-2076's seven grammar families and the curren
 
 ## Verdict
 
-**CONDITIONAL** — the seven new QSL-2076 functions still have no acceptance gap. QSL-2686 owns removal of the legacy unsound generic negative generator and its false coverage claim, preserving real-source positive/boundary coverage and strict grammar-aware near-miss oracles. This is a PR-scoped conclusion, not a repository-wide assurance claim.
+**PASS** — accepted the author’s implementation receipt at 818adf75bda50dbd049177ad524869196be0dbc8 for the QSL-2686 harness correction. False generic negative coverage and its criterion binding are removed; real-source positive/boundary checks and explicit grammar-aware located negatives remain active. This is a PR-scoped conclusion, not a full-component or repository-wide assurance claim.
 
 ## Findings
 
@@ -50,6 +50,7 @@ Compared the changed tests with QSL-2076's seven grammar families and the curren
 | --- | --- | --- |
 | FND-002 | still-open | Source-grounded vector correction accepted by the lead; implementation and one changed-function check remain. Missing runtime diagnostic values were not invented. |
 | FND-002 | still-open | Round 3: the one changed-function run refutes the proposed generic marker repair. Remove the generic negative generator under QSL-2686, retain active positive/boundary assertions, and represent missing grammar-aware negative coverage through existing owners. No incorrect location oracle becomes a strict-pending parser bug. |
+| FND-002 | fixed | Accepted the author's in-lane implementation receipt at 818adf75bda50dbd049177ad524869196be0dbc8: both generic mutation loops and mutation-only bookkeeping removed; active function renamed for positive/exact-boundary assertions; negative-production criterion tag removed; explicit located negative fixtures unchanged. The only changed qualified function passed 1/0. |
 
 ## Final negative-coverage disposition (pass 3)
 
@@ -58,3 +59,7 @@ The supplied CaseArm `r#` failure is compatible with the actual ReferenceLiteral
 ## Confined correction coverage
 
 The four grounded stale-test corrections and tracked strict-owner annotations were inspected only in the supplied correction diff at 6540b9901112b0050ad51bf8b0914753e6cf1260. Four reported corrected passes are accepted; the reverted history-oracle pass is excluded. The ReferenceLiteral inventory and authored vector are grounded. Original required oracles under QSL-2679 and QSL-2680 through QSL-2685 remain pending, not passing coverage. The original gate failure remains visible; no test, build, baseline probe, owner audit or repository matrix was run for this disposition.
+
+## Final record-only disposition (pass 4)
+
+The retained active function still checks the independent production inventory, actual positive parsing, node rendering and exact byte spans, formatter significant-token/tree identity and idempotence, including the real ReferenceLiteral vector. No false generic negative-coverage claim remains. The original failed full gate and all attempts remain public; eight strict functions under QSL-2679 through QSL-2685 stay excluded from coverage. The seven new feature functions and four grounded corrections remain accepted. This disposition uses the author's receipt without another code read, review sweep, test, build or runtime probe. QSL-2686 can be closed when the same-PR correction merges.
