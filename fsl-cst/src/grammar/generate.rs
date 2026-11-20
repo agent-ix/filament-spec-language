@@ -119,7 +119,10 @@ impl Builder {
                 );
                 if matches!(
                     production,
-                    Production::Hex32 | Production::Hex64 | Production::ReferenceLiteral
+                    Production::Hex32
+                        | Production::Hex64
+                        | Production::ReferenceLiteral
+                        | Production::StepLabel
                 ) {
                     let hex = tokens.drain(start..).collect::<String>();
                     tokens.push(hex);
@@ -187,7 +190,7 @@ impl Builder {
     }
 }
 
-/// Derive one size-minimal complete-unit context per grammar-table production.
+/// Derive one bounded complete-unit context per grammar-table production.
 ///
 /// The finite least-cost calculation bounds recursion without filtering parser
 /// results. The caller must check admission and actual CST coverage: ambiguous

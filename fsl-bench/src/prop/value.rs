@@ -187,7 +187,7 @@ impl Expr {
             Self::Parameter(name) => name.clone(),
             Self::Integer(value) => value.to_string(),
             Self::Boolean(value) => value.to_string(),
-            Self::Text(value) => format!("{value:?}"),
+            Self::Text(value) => format!("Text({value:?})"),
             Self::Rational {
                 numerator,
                 denominator,

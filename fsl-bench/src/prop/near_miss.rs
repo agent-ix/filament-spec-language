@@ -61,7 +61,12 @@ pub fn near_misses() -> BoxedStrategy<NearMiss> {
                     "unproved-nonzero",
                 ),
             };
-            let prefix = format!("{VALUE_HEADER}function f using v(): {result} pure {{ ");
+            let division = if kind == NearMissKind::DivisionByZero {
+                "profile d = \"filament.value.integer-division.euclidean/v1\";\n"
+            } else {
+                ""
+            };
+            let prefix = format!("{VALUE_HEADER}{division}function f using v(): {result} pure {{ ");
             let start = prefix.len();
             let end = start + expression.len();
             NearMiss {
