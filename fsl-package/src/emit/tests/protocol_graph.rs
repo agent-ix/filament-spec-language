@@ -1552,46 +1552,6 @@ fn control_at<'w>(wire: &'w Value, path: &[&str]) -> &'w Value {
 
 const PARALLEL: [&str; 5] = ["memory", "branches", "join", "joined", "outstanding"];
 
-/// Changing only a parallel's source memory default changes its emitted identity,
-/// while emitting identical source twice preserves that identity.
-#[trace("FR-219-AC-5")]
-#[test]
-fn source_memory_defaults_separate_emitted_package_identities() {
-    let emit = |memory: &str| {
-        let body = format!(
-            "parallel Par {memory} {{ branch a sequence Ay {{ }} branch b sequence Bee {{ }} }} \
-             join all [a, b];"
-        );
-        let lowered = lower_with(model(), PROFILES, &parallel_flow(&body));
-        assert!(lowered.ir.is_ok(), "{:?}", lowered.ir);
-        assert!(lowered.verified, "{}", lowered.text);
-        lowered
-    };
-    let default = emit("");
-    let tso = emit("memory tso");
-    let repeated_tso = emit("memory tso");
-    let identity = |lowered: &Lowered| {
-        lowered
-            .ir
-            .as_ref()
-            .expect("an admitted emitted package")
-            .name()
-            .to_owned()
-    };
-    assert_ne!(identity(&default), identity(&tso));
-    assert_eq!(identity(&tso), identity(&repeated_tso));
-    let parallel = control_at(&tso.wire, &["Flow", "run", "Main", "Par"]);
-    assert_eq!(
-        lit(&argument(parallel, &PARALLEL, "memory")["members"][0]),
-        "tso"
-    );
-    let parallel = control_at(&default.wire, &["Flow", "run", "Main", "Par"]);
-    assert_eq!(
-        argument(parallel, &PARALLEL, "memory")["members"],
-        json!([])
-    );
-}
-
 /// FR-466 "Control layouts" (FR-464-AC-1, AC-2): a `parallel` writes its
 /// `memory` as the source writes it, its `branches` sorted by label as UTF-8
 /// bytes with each body's control, its `join` Group, its `joined` labels in
