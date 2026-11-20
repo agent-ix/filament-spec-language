@@ -9262,6 +9262,14 @@ impl CheckedGraph {
         self.sources.iter().collect()
     }
 
+    /// The raw source document that declared a source-owned name.
+    pub fn source_owner(
+        &self,
+        declaration: &str,
+    ) -> Option<&fsl_foundation::source::provenance::RawSourceRef> {
+        self.source_owners.get(declaration)
+    }
+
     /// The package manifest's top-level name this package was checked under:
     /// the `package` of every structural node id of the graph.
     pub fn package_name(&self) -> &str {

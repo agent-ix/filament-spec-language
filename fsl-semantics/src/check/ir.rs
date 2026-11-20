@@ -81,6 +81,16 @@ pub struct Node {
     /// Equality operand context used to explain an unproved contextual
     /// integer range refusal.
     pub(in crate::check) equality_range_context: Option<EqualityRangeContext>,
+    /// Authored named aggregate type argument, retained separately from its
+    /// structural checked type for canonical expression labels.
+    pub(in crate::check) type_argument: Option<String>,
+}
+
+impl Node {
+    pub(in crate::check) fn with_type_argument(mut self, name: String) -> Self {
+        self.type_argument = Some(name);
+        self
+    }
 }
 
 /// The peer that supplied a bounded integer type to an equality operand.
@@ -461,6 +471,7 @@ impl CheckedBody {
                 equality_producer: None,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             })
             .collect();
         nodes.push(Node {
@@ -472,6 +483,7 @@ impl CheckedBody {
             equality_producer: None,
             field_population: None,
             equality_range_context: None,
+            type_argument: None,
         });
         Self::new(nodes)
     }
@@ -508,6 +520,7 @@ impl CheckedBody {
                 equality_producer: None,
                 field_population: None,
                 equality_range_context: None,
+                type_argument: None,
             })
             .collect::<Vec<_>>();
         Self::new(nodes)
@@ -666,6 +679,11 @@ impl<'a> CheckedNode<'a> {
     /// The node's checked static type.
     pub fn value_type(self) -> &'a ValueType {
         &self.node().value_type
+    }
+
+    /// The authored named type argument on an aggregate, when retained.
+    pub fn type_argument(self) -> Option<&'a str> {
+        self.node().type_argument.as_deref()
     }
 
     /// FR-495's lowered integer type, including division-bound locals and
@@ -1305,6 +1323,7 @@ mod tests {
             equality_producer: None,
             field_population: None,
             equality_range_context: None,
+            type_argument: None,
         };
         let mut builder = BodyBuilder::default();
         let mut operand = builder.push(node(NodeKind::Local(slot)));

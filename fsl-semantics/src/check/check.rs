@@ -2695,6 +2695,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         equality_producer: None,
         field_population: None,
         equality_range_context: None,
+        type_argument: None,
     }
 }
 
@@ -2853,6 +2854,7 @@ impl Typer<'_> {
                         equality_producer: None,
                         field_population: None,
                         equality_range_context: None,
+                        type_argument: None,
                     });
                 }
             }
@@ -2889,6 +2891,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2905,6 +2908,7 @@ impl Typer<'_> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -5340,6 +5344,7 @@ impl<'a> Typer<'a> {
                     equality_producer: None,
                     field_population: None,
                     equality_range_context: None,
+                    type_argument: None,
                 });
             }
             return Ok(typed);

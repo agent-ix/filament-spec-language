@@ -125,7 +125,9 @@ mod compound_quantity_types;
 mod fairness_item_path;
 mod hybrid_request_items;
 mod layer_crate_reexports;
+mod lifecycle_boundaries;
 mod limit_name_patterns;
+mod lowering_intake_boundaries;
 #[cfg(feature = "checked-handoff")]
 mod mapping_support;
 mod mapping_support_occurrences;

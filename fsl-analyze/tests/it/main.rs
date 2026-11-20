@@ -155,6 +155,7 @@ mod schedulability_routing;
 mod scheduler_fairness;
 mod simulation_findings;
 mod smt_query;
+mod source_model_boundaries;
 mod state_graph;
 mod state_graph_certificate;
 mod state_graph_settle;

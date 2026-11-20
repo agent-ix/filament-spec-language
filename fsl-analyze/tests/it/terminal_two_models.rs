@@ -51,6 +51,10 @@ const OTHER_FALSE: &str = "terminal Stop using v on N when { false };\n";
 /// The declaration on `test/vault-other` that is undefined at `l = 1`.
 const OTHER_UNDEFINED_WHEN: &str = "terminal Done using v on N when { q(1 - self.l) = 0 };\n";
 
+const ONE_IDENTITY_CONTRACTS: &str = "pre Fresh using v on M::Vault::step { self.l = 0 }\n\
+     post Step using v on M::Vault::step { self.l = i }\n";
+const ONE_IDENTITY_DISABLED_STEP: &str = "pre Disabled using v on M::Vault::step { false }\n";
+
 /// A two-model unit, its package and its initial snapshot: each vault at
 /// `(h, l) = (0, 0)`; a `step` sets `l`, and a vault is terminal once `l` is 1.
 struct Two {
@@ -60,6 +64,8 @@ struct Two {
     packages: fsl_semantics::model::intake::PackageInput,
     snapshots: DocumentProvision,
     initial: Vec<DocumentRef>,
+    /// Whether the subject's universes also cover `test/vault-other`.
+    reads_other: bool,
 }
 
 fn two_models(terminals: &str) -> Two {
@@ -96,13 +102,25 @@ fn two_models(terminals: &str) -> Two {
         packages: package_input(documents.iter().copied()).unwrap(),
         snapshots,
         initial: vec![start],
+        reads_other: true,
     }
 }
 
 impl Two {
+    /// The same unit read by a subject whose universes cover `test/vault`
+    /// alone.
+    fn reading_vault_only(mut self) -> Self {
+        self.reads_other = false;
+        self.snapshots = DocumentProvision::new();
+        let start = snapshot(&mut self.snapshots, "s0", &[("v", (0, 0))], None, None);
+        self.initial = vec![start];
+        self
+    }
+
     fn universes(&self) -> Vec<PopulationUniverse> {
-        [key("vaults"), other_key("vaults")]
-            .into_iter()
+        let other = self.reads_other.then(|| other_key("vaults"));
+        std::iter::once(key("vaults"))
+            .chain(other)
             .map(|population| PopulationUniverse {
                 population,
                 keys: vec!["v".to_owned()],
@@ -140,6 +158,98 @@ impl Two {
     }
 }
 
+/// One selected vault identity under two aliases, used by FR-124-AC-11.
+struct OneIdentity {
+    text: String,
+    source: SourceProvision,
+    package: CheckedPackage,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: DocumentProvision,
+    initial: Vec<DocumentRef>,
+    vault_keys: Vec<String>,
+}
+
+fn one_identity(terminals: &str) -> OneIdentity {
+    one_identity_with(terminals, ONE_IDENTITY_CONTRACTS, &[("v", (0, 0))], "")
+}
+
+fn one_identity_with(
+    terminals: &str,
+    contracts: &'static str,
+    vaults: &[(&str, (i64, i64))],
+    bounds: &str,
+) -> OneIdentity {
+    let document = document(false, false);
+    let text = unit_text_with_functions(
+        None,
+        Vault::Custom(contracts),
+        false,
+        FUNCTIONS,
+        &format!("{bounds}{terminals}"),
+    )
+    .replace(
+        "model V = \"test/vault\";",
+        "model M = \"test/vault\";\nmodel N = \"test/vault\";",
+    );
+    let documents: [&[u8]; 1] = [&document];
+    let graph = declarations(&documents, &text)
+        .check(
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
+    let source = SourceProvision::single(graph.source(), text.as_bytes());
+    let mut snapshots = DocumentProvision::new();
+    let start = snapshot(&mut snapshots, "one-identity-start", vaults, None, None);
+    OneIdentity {
+        text,
+        source,
+        package: CheckedPackage::link(graph),
+        packages: package_input(documents.iter().copied()).unwrap(),
+        snapshots,
+        initial: vec![start],
+        vault_keys: vaults.iter().map(|(key, _)| (*key).to_owned()).collect(),
+    }
+}
+
+impl OneIdentity {
+    fn binding(&self) -> SubjectBinding<'_> {
+        SubjectBinding {
+            packages: &self.packages,
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: key("vaults"),
+                keys: self.vault_keys.clone(),
+            }],
+        }
+    }
+
+    fn simulation<'a>(
+        &'a self,
+        input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    ) -> ModelSimulationRequest<'a> {
+        ModelSimulationRequest {
+            emit: EmitLimits::fixture(),
+            input,
+            packages: &self.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: key("vaults"),
+                keys: self.vault_keys.clone(),
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: UNLIMITED,
+        }
+    }
+}
+
 /// The package written to its handoff bytes, with the rows of its supply.
 struct Handoff {
     bytes: Vec<u8>,
@@ -151,11 +261,17 @@ struct Handoff {
 }
 
 fn handoff(world: &Two) -> Handoff {
-    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emits");
+    handoff_package(&world.package, &world.packages)
+}
+
+fn handoff_package(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> Handoff {
+    let emission = fsl_package::emit_checked(package, EmitLimits::fixture()).expect("emits");
     let bytes = emission.package().bytes().to_vec();
-    let admitted =
-        fsl_package::admit_checked_package(&bytes, &world.packages, V2ReadLimits::fixture())
-            .expect("the strict reader admits the bytes");
+    let admitted = fsl_package::admit_checked_package(&bytes, packages, V2ReadLimits::fixture())
+        .expect("the strict reader admits the bytes");
     let mut budget = V2ReadLimits::fixture().native_join_budget();
     let identities = emission
         .identity_rows(&admitted, &mut budget)
@@ -221,7 +337,7 @@ fn classes(system: &ModelSystem<'_>) -> Vec<(Vec<u8>, TerminalClass)> {
 /// declarations for a subject and FSpec FR-368-AC-22 gives a package with
 /// several model roots no derived deadlock-freedom item, so what a joint
 /// state classifies as is not asserted here, only that both routes agree.
-#[trace("TC-2958", "FR-940-AC-6", "TC-519", "FR-124-AC-11")]
+#[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn two_models_read_their_terminals_in_selection_identity_order_on_both_routes() {
     for terminals in [
@@ -376,14 +492,46 @@ fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::Pac
     )
 }
 
+fn bare_terminal_keys(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> fsl_semantics::check::TerminalKeys {
+    let emission = fsl_package::emit_checked(package, EmitLimits::fixture()).expect("emits");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("the strict reader admits the package");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the identity rows");
+    let equality = emission
+        .equality_witness(&admitted, &mut budget)
+        .expect("the equality rows");
+    let mut budget = V2ReadLimits::fixture().native_join_budget();
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget,
+        )
+        .expect("the package witnesses join");
+    fsl_semantics::check::TerminalKeys::of(
+        bare.terminal_declarations()
+            .expect("the bare terminal rows read")
+            .into_iter()
+            .map(|terminal| ((terminal.model, terminal.ordinal), terminal.node)),
+    )
+}
+
 /// FR-411 "Deadlock-freedom verdict join", FR-124: two aliases that select one
-/// package identity each declare a terminal. The source route keys the two
-/// declarations by (identity, ordinal), so neither replaces the other, and a
-/// request written under both is refused `TerminalDeclaration` over a package
-/// that carries only the first. A package holds both: emission writes two
-/// terminal nodes on the one model node and the reader admits them as two
-/// terminal rows, (model, 0) and (model, 1) in terminal node key order
-/// (FSpec FR-476-AC-5/6).
+/// package identity each declare a terminal. Both routes key the declarations
+/// by (identity, ordinal in terminal node key order), so neither replaces the
+/// other when source placement changes.
 #[trace("TC-1142", "FR-411-AC-5")]
 #[trace("TC-519", "FR-124-AC-11")]
 #[test]
@@ -399,19 +547,43 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
     let second = only_second.graph().terminal_keys();
     assert_ne!(keys, first, "the second alias's declaration is not dropped");
     assert_ne!(keys, second, "the first alias's declaration is not dropped");
-    let refused = keys
-        .mismatch(&first)
-        .expect("the second declaration is missing");
-    assert_eq!(refused.model, "test/counter#1");
-    assert!(refused.requested.is_some());
-    assert_eq!(refused.recompiled, None);
-    assert_eq!(
-        keys.mismatch(&second)
-            .expect("the first declaration is missing")
-            .model,
-        "test/counter",
-        "the ordinals count the identity's declarations in alias order"
-    );
+    let resolved = fsl_package::resolve_terminals(&both).expect("the source nodes resolve");
+    let mut by_node: Vec<_> = resolved.iter().collect();
+    by_node.sort_by(|left, right| left.node.cmp(&right.node));
+    for (ordinal, terminal) in by_node.into_iter().enumerate() {
+        assert_eq!(
+            terminal.ordinal, ordinal,
+            "{} takes its ordinal in terminal node key order",
+            terminal.name
+        );
+    }
+    // The one declaration each single-declaration unit keeps sits at ordinal
+    // 0, so the mismatch names the first ordinal whose node differs: 0 when
+    // the kept node sorts second, 1 (the node that is missing) when first.
+    let by_name = |name: &str| {
+        resolved
+            .iter()
+            .find(|terminal| terminal.name == name)
+            .expect("the terminal resolves")
+    };
+    let sorted: Vec<_> = {
+        let mut sorted: Vec<_> = resolved.iter().map(|terminal| &terminal.node).collect();
+        sorted.sort();
+        sorted
+    };
+    for (kept, alone) in [("Done", &first), ("Halt", &second)] {
+        let kept = by_name(kept);
+        let mismatch = keys.mismatch(alone).expect("the dropped declaration shows");
+        if kept.node == *sorted[0] {
+            assert_eq!(mismatch.model, "test/counter#1");
+            assert_eq!(mismatch.requested, Some(sorted[1].clone()));
+            assert_eq!(mismatch.recompiled, None);
+        } else {
+            assert_eq!(mismatch.model, "test/counter");
+            assert_eq!(mismatch.requested, Some(sorted[0].clone()));
+            assert_eq!(mismatch.recompiled, Some(kept.node.clone()));
+        }
+    }
     assert_eq!(
         fsl_eval::simulation::model::ModelCheckInput::source(&both).terminal_keys(),
         keys,
@@ -431,10 +603,655 @@ fn two_aliases_of_one_identity_keep_their_terminals_apart() {
     };
     assert_eq!(first_row.model, second_row.model);
     assert_eq!((first_row.ordinal, second_row.ordinal), (0, 1));
+    assert!(first_row.node < second_row.node);
     assert_ne!(first_row.node, second_row.node);
     assert_eq!(
         fsl_package::read_terminal(&admitted, &second_row.model, 1),
         Ok(second_row.declaration.clone())
     );
     assert_ne!(first_row.declaration, second_row.declaration);
+}
+
+/// FR-124-AC-11: swapping the source placement of two aliases leaves the
+/// source route, package resolver and bare package reader on the same
+/// (identity, terminal node key order) ordinal assignment.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn terminal_ordinals_are_stable_when_source_placements_swap() {
+    let when = "terminal Done using v on M when { self.value = 3 };\n";
+    let any = "terminal Halt using v on N any;\n";
+    let (first, packages) = two_aliases(&format!("{when}{any}"));
+    let (swapped, swapped_packages) = two_aliases(&format!("{any}{when}"));
+
+    let keys = |package: &CheckedPackage, packages: &fsl_semantics::model::intake::PackageInput| {
+        let source = package.graph().terminal_keys();
+        let resolved = fsl_package::resolve_terminals(package)
+            .expect("the source terminal nodes resolve")
+            .into_iter()
+            .map(|terminal| {
+                (
+                    (terminal.package.to_owned(), terminal.ordinal),
+                    terminal.node,
+                )
+            });
+        assert_eq!(source, fsl_semantics::check::TerminalKeys::of(resolved));
+        assert_eq!(source, bare_terminal_keys(package, packages));
+        source
+    };
+
+    assert_eq!(keys(&first, &packages), keys(&swapped, &swapped_packages));
+}
+
+/// FR-124-AC-11: the same identity selected by two aliases keeps the
+/// undefined declaration's identity+ordinal key while the source label
+/// follows the alias that owns `Done`; a false sibling does not make it
+/// intended.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn one_identity_undefined_terminal_keeps_key_and_source_label_across_routes() {
+    for (done_alias, stop_alias) in [("M", "N"), ("N", "M")] {
+        let terminals = format!(
+            "terminal Done using v on {done_alias} when {{ q(1 - self.l) = 0 }};\n\
+             terminal Stop using v on {stop_alias} when {{ false }};\n"
+        );
+        let world = one_identity(&terminals);
+        let selection = world
+            .package
+            .graph()
+            .model_selections()
+            .first()
+            .expect("the shared model identity is selected")
+            .clone();
+        let claim = OccurrenceKey::generated(
+            fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+        );
+        let form = TemporalItem {
+            item_kind: ItemKind::DeadlockFreedom,
+            ..TemporalItem::default()
+        };
+        let run = RunInput::source(&world.package);
+        let source_item = || {
+            deadlock_model_item(
+                &run,
+                &world.binding(),
+                AnalyzeLimits::unbounded(),
+                &world.source,
+                &claim,
+                &form,
+            )
+            .expect("the derived target is formed")
+        };
+        let handoff = handoff_package(&world.package, &world.packages);
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+                .expect("the package route reads both terminal nodes");
+        let package_item = || {
+            PackageDeadlockSubject::new(
+                &input,
+                &handoff.bytes,
+                handoff.supply(),
+                world.binding(),
+                AnalyzeLimits::unbounded(),
+                &claim,
+                &form,
+            )
+            .model_item()
+        };
+        let check = |item: fsl_analyze::analyze::ModelItem<'_>| {
+            fsl_analyze::model_check::check_model(item.request, &Cancel::new())
+        };
+        let from_source = check(source_item()).expect("the source checks");
+        let from_package = check(package_item()).expect("the package checks");
+        assert_eq!(format!("{from_package:?}"), format!("{from_source:?}"));
+        let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = from_source else {
+            panic!("the undefined terminal refutes the item: {from_source:?}");
+        };
+        let fsl_replay::CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind
+        else {
+            panic!("the counterexample names undefined evaluation: {counterexample:?}");
+        };
+        let fsl_replay::UndefinedLocus::Terminal(model) = &evaluation.site.locus else {
+            panic!("the undefined site names a terminal declaration: {evaluation:?}");
+        };
+        let done = fsl_package::resolve_terminals(&world.package)
+            .expect("the source terminal nodes resolve")
+            .into_iter()
+            .find(|terminal| terminal.name == "Done")
+            .expect("Done resolves");
+        assert_eq!(model.identity(), "test/vault");
+        assert_eq!(model.ordinal(), done.ordinal);
+        assert_eq!(model.label(), done_alias);
+        assert!(world.text.contains(&format!("model {done_alias}")));
+    }
+}
+
+/// FR-124-AC-11: a refused `Done` predicate paired with false `Stop` is
+/// undecided, retaining Done's identity, ordinal and source alias in the
+/// source model class, and settles inconclusive on both routes.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn one_identity_refused_terminal_is_inconclusive_and_names_done() {
+    let world = one_identity_with(
+        "terminal Done using v on M when { exists(p in M::vaults : true) };\n\
+         terminal Stop using v on N when { false };\n",
+        ONE_IDENTITY_DISABLED_STEP,
+        &[("a", (0, 0)), ("b", (0, 0))],
+        "bound OnePerSet on M::vaults [1]\n",
+    );
+    let selection = world
+        .package
+        .graph()
+        .model_selections()
+        .first()
+        .expect("the shared model identity is selected")
+        .clone();
+    let claim = OccurrenceKey::generated(
+        fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+    );
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let run = RunInput::source(&world.package);
+    let source_item = || {
+        deadlock_model_item(
+            &run,
+            &world.binding(),
+            AnalyzeLimits::unbounded(),
+            &world.source,
+            &claim,
+            &form,
+        )
+        .expect("the derived target is formed")
+    };
+    let handoff = handoff_package(&world.package, &world.packages);
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+        .expect("the package route reads both terminal nodes");
+    let package_item = || {
+        PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(),
+            AnalyzeLimits::unbounded(),
+            &claim,
+            &form,
+        )
+        .model_item()
+    };
+    let check = |item: fsl_analyze::analyze::ModelItem<'_>| {
+        fsl_analyze::model_check::check_model(item.request, &Cancel::new())
+    };
+    let from_source = check(source_item()).expect("the source check completes");
+    let from_package = check(package_item()).expect("the package check completes");
+    assert_eq!(format!("{from_package:?}"), format!("{from_source:?}"));
+    assert!(matches!(
+        from_source,
+        fsl_replay::ModelCheckOutcome::Undecided {
+            cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
+            ..
+        }
+    ));
+
+    let source_system = ModelSystem::new(world.simulation(
+        fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+    ))
+    .expect("the source admits");
+    let package_system =
+        ModelSystem::new(world.simulation(input.input())).expect("the package admits");
+    let classify = |system: &ModelSystem<'_>| {
+        let state = system.initial().into_iter().next().expect("initial state");
+        let expansion = system.successors(&state).expect("expands");
+        system
+            .terminal_class(&state, !expansion.successors.is_empty())
+            .expect("the terminal predicates read")
+    };
+    let fsl_eval::simulation::model::TerminalClass::Undecided {
+        model: source_model,
+    } = classify(&source_system)
+    else {
+        panic!("the source class is undecided");
+    };
+    let fsl_eval::simulation::model::TerminalClass::Undecided {
+        model: package_model,
+    } = classify(&package_system)
+    else {
+        panic!("the package class is undecided");
+    };
+    let done = fsl_package::resolve_terminals(&world.package)
+        .expect("the source terminal nodes resolve")
+        .into_iter()
+        .find(|terminal| terminal.name == "Done")
+        .expect("Done resolves");
+    assert_eq!(source_model.identity(), "test/vault");
+    assert_eq!(source_model.ordinal(), done.ordinal);
+    assert_eq!(source_model.label(), "M");
+    assert_eq!(package_model.identity(), source_model.identity());
+    assert_eq!(package_model.ordinal(), source_model.ordinal());
+    assert_eq!(source_model, package_model);
+}
+
+/// The deadlock-freedom item of the model with selection identity `identity`
+/// settled on the source route and on the package route, which agree.
+fn deadlock_outcome<'w>(
+    package: &CheckedPackage,
+    source: &SourceProvision,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    binding: &dyn Fn() -> SubjectBinding<'w>,
+    identity: &str,
+) -> fsl_replay::ModelCheckOutcome {
+    let selection = package
+        .graph()
+        .model_selections()
+        .iter()
+        .find(|selection| selection.identity == identity)
+        .expect("the identity is selected")
+        .clone();
+    let claim = OccurrenceKey::generated(
+        fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+    );
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let run = RunInput::source(package);
+    let source_item = deadlock_model_item(
+        &run,
+        &binding(),
+        AnalyzeLimits::unbounded(),
+        source,
+        &claim,
+        &form,
+    )
+    .expect("the derived target is formed");
+    let handoff = handoff_package(package, packages);
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(&bare, packages, ModelNormalizationLimits::default())
+        .expect("the package route reads the terminal nodes");
+    let package_item = PackageDeadlockSubject::new(
+        &input,
+        &handoff.bytes,
+        handoff.supply(),
+        binding(),
+        AnalyzeLimits::unbounded(),
+        &claim,
+        &form,
+    )
+    .model_item();
+    let check = |item: fsl_analyze::analyze::ModelItem<'_>| {
+        fsl_analyze::model_check::check_model(item.request, &Cancel::new())
+            .expect("the item completes")
+    };
+    let from_source = check(source_item);
+    let from_package = check(package_item);
+    assert_eq!(format!("{from_package:?}"), format!("{from_source:?}"));
+    from_source
+}
+
+/// The terminal key and label an `UndefinedEvaluation` refutation names.
+fn undefined_terminal(outcome: &fsl_replay::ModelCheckOutcome) -> (String, usize, String) {
+    let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the item is refuted: {outcome:?}");
+    };
+    let fsl_replay::CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind
+    else {
+        panic!("the counterexample names undefined evaluation: {counterexample:?}");
+    };
+    let fsl_replay::UndefinedLocus::Terminal(model) = &evaluation.site.locus else {
+        panic!("the undefined site names a terminal declaration: {evaluation:?}");
+    };
+    (
+        model.identity().to_owned(),
+        model.ordinal(),
+        model.label().to_owned(),
+    )
+}
+
+/// The class of the one terminal state of `world` read by a subject whose
+/// universes are `world`'s, over the source route.
+fn terminal_class_of(world: &Two) -> TerminalClass {
+    let system = ModelSystem::new(world.simulation(
+        fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+    ))
+    .expect("the source admits");
+    classes(&system)
+        .into_iter()
+        .map(|(_, class)| class)
+        .find(|class| *class != TerminalClass::NotTerminal)
+        .expect("a terminal state is reached")
+}
+
+/// FR-124-AC-12: a subject that reads `test/vault` only consults that
+/// identity's declarations. A declaration of `test/vault-other`, its
+/// `terminal any` included, never intends the subject's terminal state, and
+/// an undefined `when` of it is never read.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_subject_reads_only_the_terminals_of_its_own_identities() {
+    for terminals in [
+        format!("terminal Stop using v on V when {{ false }};\n{OTHER_ANY}"),
+        OTHER_ANY.to_owned(),
+        format!("terminal Stop using v on V when {{ false }};\n{OTHER_UNDEFINED_WHEN}"),
+    ] {
+        let world = two_models(&terminals).reading_vault_only();
+        assert_eq!(
+            terminal_class_of(&world),
+            TerminalClass::Deadlocked,
+            "{terminals}"
+        );
+        let outcome = deadlock_outcome(
+            &world.package,
+            &world.source,
+            &world.packages,
+            &|| world.binding(),
+            "test/vault",
+        );
+        assert!(is_deadlock(&outcome), "{terminals}: {outcome:?}");
+        let reading = fsl_route::deadlock::SubjectReading::read(world.package.graph(), |identity| {
+            identity == "test/vault"
+        });
+        assert!(!reading.opted_out(), "{terminals}");
+        assert!(reading.anchor().is_ok(), "{terminals}");
+    }
+}
+
+/// FR-124-AC-12: the subject's own `terminal any` still intends its terminal
+/// state, whichever alias of the identity writes it.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_subjects_own_terminal_any_intends_its_terminal_state() {
+    let world = two_models(&format!("{ANY}{OTHER_FALSE}")).reading_vault_only();
+    assert_eq!(terminal_class_of(&world), TerminalClass::Intended);
+}
+
+/// FR-124-AC-12: a subject that reads both identities reads both identities'
+/// declarations, so `Done` on `V` is read beside `Stop` on `N`.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_subject_reading_both_identities_reads_both_declarations() {
+    let world = two_models(&format!("{UNDEFINED_WHEN}{OTHER_FALSE}"));
+    let outcome = deadlock_outcome(
+        &world.package,
+        &world.source,
+        &world.packages,
+        &|| world.binding(),
+        "test/vault",
+    );
+    assert_eq!(
+        undefined_terminal(&outcome),
+        ("test/vault".to_owned(), 0, "V".to_owned())
+    );
+}
+
+/// FR-124-AC-11: one identity under two aliases, `Stop` written `when
+/// { true }`, settles `proved` with `Done` on either alias, and a `terminal
+/// any` on the other alias leaves no deadlocked state.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn one_identity_with_a_true_sibling_or_any_is_never_deadlocked() {
+    for terminals in [
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { true };\n",
+        "terminal Done using v on N when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on M when { true };\n",
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Halt using v on N any;\n",
+    ] {
+        let world = one_identity(terminals);
+        let outcome = deadlock_outcome(
+            &world.package,
+            &world.source,
+            &world.packages,
+            &|| world.binding(),
+            "test/vault",
+        );
+        assert!(
+            matches!(outcome, fsl_replay::ModelCheckOutcome::Holds { .. }),
+            "{terminals}: {outcome:?}"
+        );
+    }
+}
+
+/// FR-124-AC-11: swapping the two declarations leaves the terminal keys and the report equal.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn swapping_declarations_leaves_the_report_equal() {
+    let done = "terminal Done using v on M when { q(1 - self.l) = 0 };\n";
+    let stop = "terminal Stop using v on N when { false };\n";
+    let render = |terminals: String| {
+        let world = one_identity(&terminals);
+        let outcome = deadlock_outcome(
+            &world.package,
+            &world.source,
+            &world.packages,
+            &|| world.binding(),
+            "test/vault",
+        );
+        (
+            world.package.graph().terminal_keys(),
+            undefined_terminal(&outcome),
+        )
+    };
+    let first = render(format!("{done}{stop}"));
+    assert_eq!(first, render(format!("{stop}{done}")));
+    let world = one_identity(&format!("{done}{stop}"));
+    let ordinal = fsl_package::resolve_terminals(&world.package)
+        .expect("the source terminal nodes resolve")
+        .into_iter()
+        .find(|terminal| terminal.name == "Done")
+        .expect("Done resolves")
+        .ordinal;
+    assert_eq!(first.1, ("test/vault".to_owned(), ordinal, "M".to_owned()));
+}
+
+/// Whether `outcome` is the deadlock refutation of FR-124.
+fn is_deadlock(outcome: &fsl_replay::ModelCheckOutcome) -> bool {
+    matches!(
+        outcome,
+        fsl_replay::ModelCheckOutcome::Violated { counterexample, .. }
+            if matches!(counterexample.kind, fsl_replay::CounterexampleKind::Deadlock)
+    )
+}
+
+/// FR-124-AC-12: a `terminal any` on the subject's own identity opts the
+/// subject out of the deadlock-freedom item; one on another identity does
+/// not, and a subject that reads both identities has no anchor for the item.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn the_deadlock_item_is_written_for_the_subjects_own_identities() {
+    let vault = |identity: &str| identity == "test/vault";
+    let own = two_models(ANY);
+    let reading = fsl_route::deadlock::SubjectReading::read(own.package.graph(), vault);
+    assert!(reading.opted_out(), "Halt any on V writes no item");
+    let other = two_models(&format!("{UNDEFINED_WHEN}{OTHER_ANY}"));
+    let reading = fsl_route::deadlock::SubjectReading::read(other.package.graph(), vault);
+    assert!(!reading.opted_out(), "Halt any on N still writes the item");
+    assert!(reading.anchor().is_ok());
+    let both = fsl_route::deadlock::SubjectReading::read(other.package.graph(), |_| true);
+    assert!(
+        matches!(
+            both.anchor(),
+            Err(fsl_route::deadlock::NoAnchor::SeveralSelections { rows: 2 })
+        ),
+        "a subject reading both identities has no item"
+    );
+}
+
+/// The derived deadlock-freedom item of the model with selection identity
+/// `test/vault`, written over its subject and settled through the whole
+/// request: its run, certificate check and counterexample replay
+/// (`derived_model_item` and `analyze_items`), on the source route and on the
+/// package route.
+fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
+    use fsl_analyze::analyze::{analyze_items, derived_model_item, Engines};
+    use fsl_route::deadlock::ModelStateGraphItem;
+
+    let selection = world
+        .package
+        .graph()
+        .model_selections()
+        .iter()
+        .find(|selection| selection.identity == "test/vault")
+        .expect("the identity is selected")
+        .clone();
+    let claim = OccurrenceKey::generated(
+        fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+    );
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let handoff = handoff_package(&world.package, &world.packages);
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+        .expect("the package route reads the terminal nodes");
+    let items = [
+        deadlock_model_item(
+            &RunInput::source(&world.package),
+            &world.binding(),
+            AnalyzeLimits::unbounded(),
+            &world.source,
+            &claim,
+            &form,
+        )
+        .expect("the derived target is formed"),
+        PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(),
+            AnalyzeLimits::unbounded(),
+            &claim,
+            &form,
+        )
+        .model_item(),
+    ];
+    items.map(|item| {
+        let identity = fsl_replay::SubjectIdentity::of(&item.request.subject);
+        let derived = crate::derived_request::derived_items(
+            &[],
+            &[],
+            &[ModelStateGraphItem {
+                subject: &identity,
+                package: world.package.graph(),
+            }],
+            &["test/vault"],
+        );
+        let (request, obligation) = derived
+            .iter()
+            .find(|(request, _)| request.item_kind() == Some(ItemKind::DeadlockFreedom))
+            .expect("a subject that reads one identity has its deadlock item");
+        let run = derived_model_item(request, obligation, item).expect("the deadlock-freedom run");
+        analyze_items(
+            &Engines::fsl().expect("the layer-A manifests register"),
+            vec![run],
+            &Cancel::new(),
+        )
+        .remove(0)
+    })
+}
+
+/// FR-124-AC-12: the derived deadlock item of a subject that reads
+/// `test/vault` alone settles `refuted` through the whole request, its
+/// counterexample replayed, one step from `l = 0` to the terminal state
+/// `l = 1`, on the source and on the package route, whatever the other
+/// identity's declarations say.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_vault_only_deadlock_item_settles_refuted_and_replays_on_both_routes() {
+    let terminals = format!("terminal Stop using v on V when {{ false }};\n{OTHER_ANY}");
+    let world = two_models(&terminals).reading_vault_only();
+    for record in settled_records(&world) {
+        let (_, value) = crate::derived_request::settled(&record);
+        assert_eq!(value, fsl_replay::TerminalValue::Refuted, "{record:?}");
+        let found = record.model_check.expect("EN-1's record");
+        let counterexample = found.counterexample.expect("the refutation's counterexample");
+        assert!(
+            matches!(counterexample.kind, fsl_replay::CounterexampleKind::Deadlock),
+            "{:?}",
+            counterexample.kind
+        );
+        assert_eq!(counterexample.prefix.len(), 1, "l = 0 steps to l = 1");
+    }
+}
+
+/// FR-124-AC-12: the vault-only deadlock item `proved` with its certificate
+/// admitted, on both routes.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn a_vault_only_deadlock_item_proves_with_an_admitted_certificate_on_both_routes() {
+    let terminals = format!("terminal Done using v on V when {{ self.l = 1 }};\n{OTHER_FALSE}");
+    let world = two_models(&terminals).reading_vault_only();
+    for record in settled_records(&world) {
+        let (_, value) = crate::derived_request::settled(&record);
+        assert!(
+            matches!(
+                value,
+                fsl_replay::TerminalValue::Proved {
+                    certification: fsl_replay::Certification::Certified,
+                    ..
+                }
+            ),
+            "{value:?}"
+        );
+    }
+}
+
+/// FR-124-AC-12 reads only the derived deadlock item over the identities a
+/// subject covers. Every other system is built over every selection, so over
+/// a unit whose universes cover `test/vault` alone, an authored invariant of
+/// `test/vault-other` is refused for want of a bound exactly as the unit's
+/// own subject covering both would be, never settled `proved` over an empty
+/// context; and a snapshot that lists the uncovered identity's population is
+/// admitted.
+#[trace("TC-519", "FR-124-AC-12")]
+#[test]
+fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
+    use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
+    use fsl_eval::model_subject::ModelSubject;
+    use fsl_replay::{InvariantClause, ModelCheckItem, ModelCheckLimits};
+
+    let terminals = "invariant OtherSmall using v on N::Vault at current { self.l <= 0 }\n";
+    // The snapshot lists both populations; the universes cover the vault.
+    let world = two_models(terminals);
+    let mut covered = world.simulation(fsl_eval::simulation::model::ModelCheckInput::source(
+        &world.package,
+    ));
+    covered.universes = vec![PopulationUniverse {
+        population: key("vaults"),
+        keys: vec!["v".to_owned()],
+    }];
+    assert!(
+        ModelSystem::new(covered.clone()).is_ok(),
+        "a snapshot listing the uncovered identity's population is admitted"
+    );
+    let clause = world
+        .package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "OtherSmall")
+        .expect("the invariant is checked");
+    let outcome = check_model(
+        ModelCheckRequest {
+            temporal_clock_selections: &[],
+            subject: ModelSubject {
+                simulation: covered,
+                proof_bounds: Vec::new(),
+            },
+            item: ModelCheckItem::Invariant {
+                clause: InvariantClause::of(clause),
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(outcome, Err(ModelCheckRefusal::RequiresBound(_))),
+        "{outcome:?}"
+    );
 }

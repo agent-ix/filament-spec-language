@@ -845,7 +845,7 @@ pub fn replay_model_trace_from_package(
     let payload = envelope.family_payload();
     let documents = request.byte_provision().snapshots();
     let meter = request.accounting_limits();
-    let system = ModelSystem::new(ModelSimulationRequest {
+    let admission = ModelSimulationRequest {
         input: input.input(),
         packages: &packages,
         normalization: limits.spine.model,
@@ -856,9 +856,14 @@ pub fn replay_model_trace_from_package(
         expansion: subject.expansion,
         meter,
         emit: limits.spine.package.emit(),
-    })
-    .map_err(ReplayRefusal::Admission)?;
+    };
     let (for_deadlock, for_race) = derived_items(payload);
+    let system = if for_deadlock {
+        ModelSystem::new_over_read_identities(admission)
+    } else {
+        ModelSystem::new(admission)
+    }
+    .map_err(ReplayRefusal::Admission)?;
     if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
         // A package-level freedom item over a model subject is anchored at
         // the `model_root` node of a model selection the package records, with
@@ -974,7 +979,12 @@ pub fn replay_model_trace_with_temporal_selections(
                     recompiled: clause.fairness().to_vec(),
                 }))
             })?;
-            let system = ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
+            let system = if resolved_deadlock(envelope.family_payload(), clause.is_none()) {
+                ModelSystem::new_over_read_identities(simulation(subject))
+            } else {
+                ModelSystem::new(simulation(subject))
+            }
+            .map_err(ReplayRefusal::Admission)?;
             let formula = clause.map(|clause| FormulaReplay {
                 clause,
                 letters,
@@ -1517,6 +1527,16 @@ fn resolve_item<'p, T: SubjectTransition>(
     let clause = found.clause();
     check_fairness(clause)?;
     Ok(Some(clause))
+}
+
+/// Whether a source-route replay of `payload` is of the derived deadlock
+/// item: a counterexample of a deadlock, or of an undefined derived
+/// evaluation, over a request item that is no authored clause.
+fn resolved_deadlock<T: SubjectTransition>(
+    payload: &TemporalCounterexample<T>,
+    no_clause: bool,
+) -> bool {
+    no_clause && derived_items(payload).0
 }
 
 /// Which derived items the payload's shape belongs to, as (deadlock-freedom,
