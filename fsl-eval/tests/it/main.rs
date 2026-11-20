@@ -72,6 +72,7 @@ mod one_occurrence;
 mod option_values;
 mod package_aggregate_route;
 mod property_automata;
+mod qualification_vectors_from_source;
 mod protocol_delivery_interval;
 mod protocol_duplicate_effect;
 mod protocol_observe_only;
