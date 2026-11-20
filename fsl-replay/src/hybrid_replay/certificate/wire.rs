@@ -216,8 +216,8 @@ fn canonical_integer(text: &str) -> Option<Integer> {
     }
 }
 
-/// An FSpec FR-331 `Rational`: `{numerator, denominator}` decimal strings in
-/// lowest terms.
+/// An FSpec FR-331 `Rational`: `{numerator, denominator}` decimal strings, the
+/// denominator positive; the value is normalised here, not required reduced.
 fn rational(value: &Value, pointer: &str) -> Result<Rational, CertificateRefusal> {
     let members = object(value, &["denominator", "numerator"], pointer)?;
     let part = |name: &str| {
@@ -229,12 +229,16 @@ fn rational(value: &Value, pointer: &str) -> Result<Rational, CertificateRefusal
     let (Some(numerator), Some(denominator)) = (part("numerator"), part("denominator")) else {
         return refuse(pointer, RefusalCode::InvalidValue);
     };
+    if members
+        .get("denominator")
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.starts_with('-'))
+    {
+        return refuse(pointer, RefusalCode::InvalidValue);
+    }
     let Ok(reduced) = Rational::new(numerator.clone(), denominator.clone()) else {
         return refuse(pointer, RefusalCode::InvalidValue);
     };
-    if reduced.numerator() != &numerator || reduced.denominator() != &denominator {
-        return refuse(pointer, RefusalCode::InvalidValue);
-    }
     Ok(reduced)
 }
 

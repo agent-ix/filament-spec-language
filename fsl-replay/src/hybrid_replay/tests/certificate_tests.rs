@@ -435,6 +435,7 @@ fn a_box_missing_a_variable_is_rejected_at_box_shape() {
 
 /// FSpec FR-652-AC-4 and FR-751-AC-8: a check the work limit stops.
 #[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-193-AC-29")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-18")]
 #[trace("TC-2101", "FR-751-AC-8")]
 fn a_check_the_work_limit_stops_is_rejected_at_work_limit_never_accepted() {
@@ -790,6 +791,7 @@ fn a_self_loop_needs_from_to_continue_as_a_child_dwell() {
 
 /// FSpec FR-652-AC-13.
 #[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-193-AC-29")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-13")]
 #[trace("TC-2101", "FR-751-AC-5")]
 fn coverage_is_checked_against_jumps_and_exhaustive() {
@@ -1465,6 +1467,7 @@ fn settle_provider(
 /// claimed kind that disagrees with the witness's kind does not refute.
 #[test]
 #[trace("TC-1221", "FR-450-AC-11")]
+#[trace("TC-1221", "FR-450-AC-13")]
 #[trace("TC-2101", "FR-751-AC-8")]
 fn a_witness_settles_a_not_exact_provider_refutation() {
     use crate::hybrid::CertificateStatus;
@@ -1554,4 +1557,135 @@ fn a_witness_settles_a_not_exact_provider_refutation() {
             ..
         })
     ));
+}
+
+// -- Soundness regressions (review of the first PR head) ---------------------
+
+/// A closing dwell's last step covers every later instant, so a jump step
+/// whose `time` stops at the dwell's last step omits later jumps.
+#[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-22")]
+fn a_jump_step_must_cover_the_later_jumps_of_a_closing_dwell() {
+    let unit = check(&format!(
+        "hybrid Late using p {{ initial {{ mode A when {{ x = 1 and y = 0 }}; }} \
+         mode A invariant {{ x = 1 and y = 0 }} flow {{ x' = 0; y' = 0; }} \
+         transition to B when {{ y = 0 }} reset {{ x = 0 }}; \
+         mode B invariant {{ x >= 0 and x <= 100 and y = 0 }} flow {{ x' = 1; y' = 0; }} }}\n{}",
+        claim_text(
+            "Late",
+            "Late",
+            "model-time",
+            "always [5, 10] holds(h.x >= 1)"
+        )
+    ));
+    let a = bx(&[("x", "1", "1"), ("y", "0", "0")]);
+    let build = |jump_time: (&str, &str)| {
+        let mut steps = vec![step("A", ("0", "1"), "1", &a, &a)];
+        let b0 = bx(&[("x", "0", "0"), ("y", "0", "0")]);
+        let b1 = bx(&[("x", "0", "1"), ("y", "0", "0")]);
+        steps.push(jump("B", (0, 0), jump_time, "1", &b0, &b1));
+        for i in 1..10_u32 {
+            steps.push(step(
+                "B",
+                (&i.to_string(), &(i + 2).to_string()),
+                "1",
+                &bx(&[("x", &i.to_string(), &i.to_string()), ("y", "0", "0")]),
+                &bx(&[("x", &i.to_string(), &(i + 1).to_string()), ("y", "0", "0")]),
+            ));
+        }
+        flowpipe(steps)
+    };
+    assert_eq!(
+        bounded(&unit, "Late", &build(("0", "1")), cover("10", 1, TIME)),
+        rejected(R::Jump, "/certificate/steps/1")
+    );
+}
+
+/// A last step of length 0 does not close its dwell, so its `B` holds only at
+/// its own instant.
+#[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-20")]
+fn a_zero_length_last_step_does_not_close_its_dwell() {
+    let unit = check(&format!(
+        "hybrid Z using p {{ initial {{ mode M when {{ x = 0 }}; }} \
+         mode M invariant {{ x >= 0 and x <= 100 }} flow {{ x' = 2; }} }}\n{}",
+        claim_text("Z", "Z", "model-time", "always [0, 10] holds(h.x <= 0)")
+    ));
+    let b = bx(&[("x", "0", "0")]);
+    assert_eq!(
+        bounded(
+            &unit,
+            "Z",
+            &flowpipe(vec![step("M", ("0", "0"), "0", &b, &b)]),
+            cover("10", 0, TIME)
+        ),
+        rejected(R::Coverage, "/certificate/steps/0")
+    );
+    // Sibling: a zero-length step after a real one ends the dwell the same way.
+    let wide = bx(&[("x", "0", "2")]);
+    let unit_claim = check(&format!(
+        "hybrid Z using p {{ initial {{ mode M when {{ x = 0 }}; }} \
+         mode M invariant {{ x >= 0 and x <= 100 }} flow {{ x' = 2; }} }}\n{}",
+        claim_text("Z", "Z", "model-time", "always [0, 10] holds(h.x <= 2)")
+    ));
+    assert_eq!(
+        bounded(
+            &unit_claim,
+            "Z",
+            &flowpipe(vec![
+                step("M", ("0", "1"), "1", &b, &wide),
+                step("M", ("1", "1"), "0", &wide, &wide),
+            ]),
+            cover("10", 0, TIME)
+        ),
+        rejected(R::Coverage, "/certificate/steps/1")
+    );
+}
+
+/// Rule (d) reads only the current state, so an `on each` atom comparing the
+/// state with the activation's `q.x` is not decided over a mode box.
+#[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-21")]
+fn an_atom_reading_the_activation_state_is_rejected_at_d() {
+    let unit = check(
+        "hybrid Sw using p { initial { mode A when { x = 0 }; } \
+         mode A invariant { x = 0 } flow { x' = 0; } \
+         transition to B when { x = 0 } reset { x = 10 }; \
+         mode B invariant { x = 10 } flow { x' = 0; } }\n\
+         temporal Same using p over (h: Sw) clock \"model-time\" \
+         on each (q: Sw) { always holds(h.x = q.x) }\n",
+    );
+    let boxes = enclosure(&[
+        ("A", bx(&[("x", "0", "0")])),
+        ("B", bx(&[("x", "10", "10")])),
+    ]);
+    assert_eq!(
+        inductive(&unit, "Same", &boxes),
+        rejected(R::D, "/certificate")
+    );
+    let guarded = check(
+        "hybrid Sw using p { initial { mode A when { x = 0 }; } \
+         mode A invariant { x = 0 } flow { x' = 0; } \
+         transition to B when { x = 0 } reset { x = 10 }; \
+         mode B invariant { x = 10 } flow { x' = 0; } }\n\
+         temporal Guarded using p over (h: Sw) clock \"model-time\" \
+         on each (q: Sw) when (q.x = 0) { always holds(h.x >= 0) }\n",
+    );
+    assert_eq!(inductive(&guarded, "Guarded", &boxes), Verdict::Accepted);
+}
+
+/// An unreduced `Rational` is a schema-valid value (FSpec FR-331).
+#[test]
+#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-6")]
+fn an_unreduced_rational_is_read_and_normalised() {
+    let unit = braking_unit_no_t();
+    let mut pipe = braking_pipe(("0", "10"));
+    pipe["steps"][1]["step"] = json!({"numerator": "2", "denominator": "32"});
+    pipe["steps"][1]["time"] = json!({
+        "lower": {"numerator": "2", "denominator": "32"},
+        "upper": {"numerator": "4", "denominator": "32"}});
+    assert_eq!(
+        bounded(&unit, "SlowEnough", &pipe, horizon_ten()),
+        Verdict::Accepted
+    );
 }

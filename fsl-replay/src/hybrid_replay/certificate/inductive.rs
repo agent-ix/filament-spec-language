@@ -170,7 +170,7 @@ pub(super) fn check(
         return reject(Rule::D, ROOT);
     }
     if eval.atoms.iter().any(|atom| {
-        atom.any_node(|node| matches!(node, super::super::expand::Exp::Variable(i) if *i >= 2 * n))
+        atom.any_node(|node| matches!(node, super::super::expand::Exp::Variable(i) if *i >= n))
     }) {
         return reject(Rule::D, ROOT);
     }

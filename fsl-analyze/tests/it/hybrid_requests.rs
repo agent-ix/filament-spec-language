@@ -532,6 +532,7 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
 /// rule (a) at the `Moving` box and stays `uncertified`.
 #[test]
 #[trace("TC-2101", "FR-751-AC-1")]
+#[trace("FSpec-TC-2049", "FSpec-FR-652-AC-6")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
 fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
@@ -795,26 +796,14 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
     assert!(rejected.get("counterexample").is_none(), "{rejected}");
 }
 
-/// `n/16` in lowest terms, the form FSpec FR-331 `Rational` objects take.
-fn sixteenths(n: u32) -> String {
-    let divisor = (1..=16_u32)
-        .rev()
-        .find(|d| n % d == 0 && 16 % d == 0)
-        .unwrap_or(1);
-    match 16 / divisor {
-        1 => (n / divisor).to_string(),
-        denominator => format!("{}/{denominator}", n / divisor),
-    }
-}
-
 /// `Braking`'s flowpipe: 160 `Moving` steps of 1/16 s contracted to
 /// `v >= 0`, then one `Stopped` jump step whose time is `jump_time`.
 fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
     let mut steps = Vec::new();
     for k in 0..160_u32 {
-        let start = sixteenths(k);
-        let end = sixteenths(k + 1);
-        let upper = sixteenths(320 - k);
+        let start = format!("{k}/16");
+        let end = format!("{}/16", k + 1);
+        let upper = format!("{}/16", 320 - k);
         steps.push(
             json!({"mode": "Moving", "time": interval(&start, &end), "step": rational("1/16"),
             "box": {"v": interval("0", &upper), "a": interval("1", "2")},
@@ -1084,6 +1073,7 @@ fn grow_replay(certificate: Option<Value>) -> fsl_replay::ReplayRequestWire {
 /// `unknown-member` at `/replay/certificate`.
 #[test]
 #[trace("TC-3035", "FR-750-AC-15")]
+#[trace("FSpec-TC-2049", "FSpec-FR-323-AC-48")]
 fn a_witness_refuted_hybrid_item_replays_with_validated_witness() {
     let row = |certificate: Option<Value>| -> Value {
         let result = fsl_replay::replay(

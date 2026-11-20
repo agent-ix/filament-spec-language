@@ -147,7 +147,7 @@ fn endings(
         let next = next_box(machine, mx, lay, dwell.last).at(&pointer)?;
         let (empties, closes) = match next {
             None => (true, false),
-            Some(next) => (false, within(&next, &last.bx)),
+            Some(next) => (false, last.h > zero() && within(&next, &last.bx)),
         };
         out.push(Ending {
             reaches,
@@ -329,6 +329,7 @@ pub(super) fn check(
         }
     }
 
+    let ends = endings(machine, mx, &lay, horizon)?;
     // 5: jump
     for (d, dwell) in lay.dw.iter().enumerate() {
         if dwell.depth >= jumps {
@@ -385,7 +386,7 @@ pub(super) fn check(
                     let mut low: Option<Rational> = None;
                     let mut high: Option<Rational> = Some(zero());
                     for (k, _) in &fired {
-                        let (lo, hi) = lay.covered(*k, false);
+                        let (lo, hi) = lay.covered(*k, ends[d].closes);
                         low = Some(low.map_or(lo.clone(), |l| l.min(lo)));
                         high = match (high, hi) {
                             (Some(a), Some(b)) => Some(a.max(b)),
@@ -409,7 +410,6 @@ pub(super) fn check(
     }
 
     // 6: coverage
-    let ends = endings(machine, mx, &lay, horizon)?;
     for (d, dwell) in lay.dw.iter().enumerate() {
         if dwell.depth > jumps {
             return reject(Rule::Coverage, step_pointer(dwell.first));
@@ -513,7 +513,7 @@ fn claim_rule(
     }
     let mut readings: Vec<Reading> = Vec::new();
     let region_end: Rational;
-    let (spans, clock_steps) = match (claim.clock, horizon) {
+    let spans = match (claim.clock, horizon) {
         (HybridClock::ModelTime, HybridHorizon::Seconds(r)) => {
             region_end = r.clone();
             for (k, step) in lay.st.iter().enumerate() {
@@ -533,7 +533,7 @@ fn claim_rule(
                     vals,
                 });
             }
-            (vec![span(&zero(), r)], false)
+            vec![span(&zero(), r)]
         }
         (HybridClock::ModelSteps, HybridHorizon::Positions(count)) => {
             let positions = usize::try_from(*count).unwrap_or(usize::MAX);
@@ -581,11 +581,10 @@ fn claim_rule(
                     }
                 }
             }
-            (spans, true)
+            spans
         }
         _ => return reject(Rule::Claim, root),
     };
-    let _ = clock_steps;
     let all: Vec<usize> = (0..readings.len()).collect();
     let (_, _, value) = eval.value(&readings, &all, &spans, None);
     let in_region = |reading: &Reading| reading.lo <= region_end;

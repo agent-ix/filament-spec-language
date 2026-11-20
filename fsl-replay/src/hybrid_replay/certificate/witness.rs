@@ -414,14 +414,7 @@ pub(super) fn check(
     };
     let decisive_of = |meta: &Meta, kind: HybridCounterexampleKind| Decisive {
         position: meta.dwell,
-        time: ExactInterval::new(
-            if steps_clock {
-                meta.time.0.clone()
-            } else {
-                meta.time.0.clone()
-            },
-            meta.time.1.clone(),
-        ),
+        time: ExactInterval::new(meta.time.0.clone(), meta.time.1.clone()),
         enclosure: exact(&meta.state),
         kind,
     };
