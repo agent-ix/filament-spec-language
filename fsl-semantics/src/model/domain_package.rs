@@ -449,6 +449,9 @@ pub enum ScalarValueDomain {
     },
     /// A bounded text `Text[min, max; profile]` (FR-056's Text value type).
     Text(TextType),
+    /// An exact bounded Decimal value type from a filament-core-data policy
+    /// and the constraints on its resolution walk (FR-056).
+    Decimal(filament_exact::DecimalType),
     /// A bounded or unbounded exact Rational value type (FR-505), optionally
     /// carrying a nominal unit. An absent domain is the unbounded Rational.
     Rational {

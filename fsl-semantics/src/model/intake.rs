@@ -61,7 +61,10 @@ use crate::model::domain_package::{
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause, Refusals};
 use crate::model::refusal::{Inexact, IntakeLimit, MemberPath, MemberRoot};
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, IntegerInterval, Presence, RationalDomain, TextProfile, TextType};
+use filament_exact::{
+    DecimalType, Integer, IntegerInterval, Presence, RationalDomain, RoundingMode, TextProfile,
+    TextType, ValueType,
+};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 use fsl_foundation::source::{LocatedSpan, Position};
 use fsl_foundation::IntakeLimits;
@@ -2728,7 +2731,7 @@ fn read_operation_parameter(
     }
     let type_ref = ctx.str_field("typeRef")?;
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     let presence = match ctx.str_field("presence")? {
         "required" => Presence::Required,
@@ -3246,6 +3249,32 @@ fn read_value_type_ref(
     Ok(ValueTypeRef::Package(declaration_key(package, type_ref)))
 }
 
+/// Resolve a field or operation parameter's declared type, including the
+/// filament-core-data policy that types a direct native Decimal member.
+#[ix_trace_rs::string_edge]
+fn read_member_value_type_ref(
+    package: &str,
+    ctx: &NodeCtx<'_>,
+    type_ref: &str,
+    allow_clock: bool,
+) -> Result<ValueTypeRef, ModelRefusal> {
+    let value_type = read_value_type_ref(package, ctx, type_ref, allow_clock)?;
+    if ctx.value.get("decimal").is_none() {
+        return Ok(value_type);
+    }
+    if value_type != ValueTypeRef::Native(NativeValueType::Decimal) {
+        return Err(ctx.malformed_in(
+            "decimal",
+            "a member-level Decimal policy types only a native Decimal typeRef",
+        ));
+    }
+    let node = ctx.str_field("identity")?;
+    let decimal = read_decimal_value_type(package, node, ctx, &ctx.at, None)?;
+    Ok(ValueTypeRef::Resolved(Box::new(ValueType::Decimal(
+        decimal,
+    ))))
+}
+
 /// The `bound` of a map type `type_value` (FR-154 "Map types"): an object of
 /// exactly an integer `lower` of at least `0` and, when present, an integer
 /// `upper` of at least `0`. A `lower` above `upper`, or above `0` with no
@@ -3433,6 +3462,164 @@ fn canonical_rational(text: &str) -> Option<filament_exact::Rational> {
     .ok()
 }
 
+/// Read one Decimal policy and its value bounds as the exact coefficient
+/// interval used by the checked type. `base` is the Decimal value type an
+/// alias narrows; a policy-carrying node starts from the precision domain.
+#[ix_trace_rs::string_edge]
+fn read_decimal_value_type(
+    package: &str,
+    node: &str,
+    ctx: &NodeCtx<'_>,
+    at: &str,
+    base: Option<&DecimalType>,
+) -> Result<DecimalType, ModelRefusal> {
+    if ctx.value.get("unit").is_some() {
+        return Err(ctx.malformed_in(
+            "unit",
+            "a unit-bearing exact number is a Rational value type",
+        ));
+    }
+
+    let (mut lower, mut upper, scale) = if let Some(base) = base {
+        if ctx.value.get("decimal").is_some() {
+            return Err(ctx.malformed_in(
+                "decimal",
+                "an alias carries a policy only when it directly targets native Decimal",
+            ));
+        }
+        (
+            base.lower().clone(),
+            base.upper().clone(),
+            u64::from(base.max_scale()),
+        )
+    } else {
+        let policy = ctx
+            .value
+            .get("decimal")
+            .and_then(Value::as_object)
+            .ok_or_else(|| ctx.malformed_in("decimal", "missing Decimal policy"))?;
+        let precision = policy
+            .get("precision")
+            .and_then(Value::as_u64)
+            .filter(|precision| (1..=38).contains(precision))
+            .ok_or_else(|| ctx.malformed_in("decimal.precision", "expected 1..=38"))?;
+        let scale = policy
+            .get("scale")
+            .and_then(Value::as_u64)
+            .filter(|scale| *scale <= precision)
+            .ok_or_else(|| {
+                ctx.malformed_in(
+                    "decimal.scale",
+                    "expected a non-negative scale no greater than precision",
+                )
+            })?;
+        let maximum = Integer::power_of_ten(precision).sub(&Integer::one());
+        (maximum.neg(), maximum, scale)
+    };
+
+    const KEYWORDS: [&str; 4] = ["min", "max", "exclusiveMin", "exclusiveMax"];
+    let constraints = ctx.array_field("constraints")?;
+    // Preserve the specified validation order: unsupported keyword before a
+    // duplicate, then range consistency after every bound has been applied.
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let constraint_ctx = NodeCtx::new(constraint, constraint_at.clone());
+        let keyword = constraint_ctx.str_field("keyword")?;
+        if !KEYWORDS.contains(&keyword) {
+            return Err(unsupported_member(
+                constraint,
+                &constraint_at,
+                MemberPath::from_document_location(&constraint_at).child("keyword"),
+                format!("{}:constraints:{keyword}", meaning::VALUE_TYPE),
+            ));
+        }
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    for (position, constraint) in constraints.iter().enumerate() {
+        let constraint_at = format!("{at}.constraints[{position}]");
+        let constraint_ctx = NodeCtx::new(constraint, constraint_at);
+        let keyword = constraint_ctx.str_field("keyword")?;
+        if !seen.insert(keyword) {
+            return Err(
+                constraint_ctx.malformed_in("keyword", format!("{keyword:?} is declared twice"))
+            );
+        }
+        if let Some(applies_to) = constraint.get("appliesTo").and_then(Value::as_str) {
+            if applies_to != node {
+                return Err(constraint_ctx.malformed_in(
+                    "appliesTo",
+                    format!("{keyword} applies to {applies_to:?}, not this Decimal node"),
+                ));
+            }
+        }
+        let operand = constraint
+            .get("operands")
+            .and_then(|operands| operands.get("value"))
+            .and_then(Value::as_str)
+            .and_then(|text| decimal_coefficient(text, scale))
+            .ok_or_else(|| {
+                constraint_ctx.malformed_in(
+                    "operands.value",
+                    format!("{keyword}: expected a canonical Decimal value at scale {scale}"),
+                )
+            })?;
+        match keyword {
+            "min" => lower = lower.max(operand),
+            "exclusiveMin" => {
+                let successor = operand.add(&Integer::one());
+                lower = lower.max(successor);
+            }
+            "max" => upper = upper.min(operand),
+            "exclusiveMax" => {
+                let predecessor = operand.sub(&Integer::one());
+                upper = upper.min(predecessor);
+            }
+            _ => unreachable!("Decimal constraint keyword was checked above"),
+        }
+    }
+    if lower > upper {
+        return Err(ctx.malformed_in(
+            "constraints",
+            format!("coefficient lower bound {lower} is greater than upper bound {upper}"),
+        ));
+    }
+    DecimalType::new(lower, upper, scale, scale, RoundingMode::Exact)
+        .map_err(|_| ctx.malformed_in("constraints", "invalid Decimal coefficient bounds"))
+}
+
+/// Convert a canonical decimal string into its coefficient at `scale`,
+/// without passing through a floating-point value.
+fn decimal_coefficient(text: &str, scale: u64) -> Option<Integer> {
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(unsigned) => (true, unsigned),
+        None => (false, text),
+    };
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || (whole.len() > 1 && whole.starts_with('0'))
+        || fraction.bytes().any(|byte| !byte.is_ascii_digit())
+        || fraction.len() as u64 > scale
+        || text == "-0"
+        || text.ends_with('.')
+        || text.starts_with('+')
+    {
+        return None;
+    }
+    let whole = whole.parse::<Integer>().ok()?;
+    let mut coefficient = whole.mul(&Integer::power_of_ten(scale));
+    if !fraction.is_empty() {
+        let fraction_value = fraction.parse::<Integer>().ok()?;
+        coefficient = coefficient
+            .add(&fraction_value.mul(&Integer::power_of_ten(scale - fraction.len() as u64)));
+    }
+    if negative {
+        coefficient = coefficient.neg();
+    }
+    Some(coefficient)
+}
+
 #[ix_trace_rs::string_edge]
 fn read_field_member(
     package: &str,
@@ -3452,7 +3639,7 @@ fn read_field_member(
     let type_ref = ctx.str_field("typeRef")?;
     // FR-230 models Clock as a place, so only a field reader can admit it;
     // parameters and results use the ordinary data value algebra.
-    let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
+    let value_type = read_member_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
     // FSpec's own Presence row (`model-complete.md`:158): `presence` is
     // exactly `required` or `optional`, independent of `multiplicity`'s
@@ -3859,6 +4046,14 @@ fn read_value_type(
     }
     if scalar == "rational" {
         return read_rational_value_type(package, node, &ctx, at);
+    }
+    if scalar == "decimal" {
+        return Ok(ScalarTypeRecord {
+            key: declaration_key(package, node),
+            domain: ScalarValueDomain::Decimal(read_decimal_value_type(
+                package, node, &ctx, at, None,
+            )?),
+        });
     }
     if scalar != "integer" {
         return Err(unsupported_at(
@@ -5128,6 +5323,7 @@ fn shape_index(document: &Value) -> HashMap<(String, String), String> {
 #[ix_trace_rs::string_edge]
 struct TypeNodeReader<'a> {
     package: &'a str,
+    raw_types: &'a [Value],
     meanings: &'a HashMap<(String, String), String>,
     shapes: &'a HashMap<(String, String), String>,
     type_meanings: &'a HashMap<&'a str, &'a str>,
@@ -5140,6 +5336,56 @@ struct TypeNodeReader<'a> {
     semantic_members: &'a HashMap<&'a str, &'a agent_ix_semantic_ir::json::Json>,
 }
 
+/// Resolve the Decimal type a package declaration contributes to its alias
+/// walk. Only scalar `decimal` declarations, policy-carrying aliases of native
+/// Decimal, and aliases that reach either form are Decimal subjects; a
+/// `target`-bound value type remains an untyped native alias.
+#[ix_trace_rs::string_edge]
+fn decimal_type_for_identity(
+    package: &str,
+    types: &[Value],
+    identity: &str,
+    visiting: &mut Vec<String>,
+) -> Result<Option<DecimalType>, ModelRefusal> {
+    if visiting.iter().any(|visited| visited == identity) {
+        return Ok(None);
+    }
+    let Some((position, type_value)) = types
+        .iter()
+        .enumerate()
+        .find(|(_, value)| value.get("identity").and_then(Value::as_str) == Some(identity))
+    else {
+        return Ok(None);
+    };
+    let at = format!("$.types[{position}]");
+    let ctx = NodeCtx::new(type_value, &at);
+    let node = ctx.str_field("identity")?;
+    if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
+        return read_decimal_value_type(package, node, &ctx, &at, None).map(Some);
+    }
+    if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
+        return Ok(None);
+    }
+    let Some(target) = type_value.get("target").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if target == "ix://filament/native/Decimal" {
+        return if type_value.get("decimal").is_some() {
+            read_decimal_value_type(package, node, &ctx, &at, None).map(Some)
+        } else {
+            Ok(None)
+        };
+    }
+    if type_identity_segment(package, target).is_none() {
+        return Ok(None);
+    }
+    visiting.push(identity.to_owned());
+    let base = decimal_type_for_identity(package, types, target, visiting)?;
+    visiting.pop();
+    base.map(|base| read_decimal_value_type(package, node, &ctx, &at, Some(&base)))
+        .transpose()
+}
+
 #[ix_trace_rs::string_edge]
 fn read_type_node(
     reader: &TypeNodeReader<'_>,
@@ -5149,6 +5395,7 @@ fn read_type_node(
 ) -> Result<Vec<DomainPackageRecord>, Refusals> {
     let TypeNodeReader {
         package,
+        raw_types,
         meanings,
         shapes,
         type_meanings,
@@ -5215,6 +5462,22 @@ fn read_type_node(
         }
     }
     if type_value.get("kind").and_then(Value::as_str) == Some("alias") {
+        if let Some(decimal) = decimal_type_for_identity(package, raw_types, node, &mut Vec::new())?
+        {
+            if !ctx.array_field("fields")?.is_empty()
+                || !ctx.array_field("operations")?.is_empty()
+                || !ctx.array_field("relationships")?.is_empty()
+                || !ctx.array_field("supertypes")?.is_empty()
+            {
+                return Err(ctx
+                    .malformed("a Decimal alias declares no fields, operations, relationships or supertypes")
+                    .into());
+            }
+            return Ok(vec![DomainPackageRecord::ScalarType(ScalarTypeRecord {
+                key,
+                domain: ScalarValueDomain::Decimal(decimal),
+            })]);
+        }
         // FCD #315: an alias of `ix://filament/native/Clock` or of a unit
         // `ix://filament/unit/<name>` is that type under its own name
         // (FR-230-AC-16, FR-230-AC-17). Its constraints give a clock time
@@ -6451,6 +6714,7 @@ fn read_nodes_partial(
                 match read_type_node(
                     &TypeNodeReader {
                         package: package_identity,
+                        raw_types: types,
                         meanings: &meanings,
                         shapes: &shapes,
                         type_meanings: &type_meanings,
@@ -6891,6 +7155,7 @@ mod tests {
         let semantic_members = HashMap::new();
         let reader = TypeNodeReader {
             package: "acme/orders",
+            raw_types: &[],
             meanings: &meanings,
             shapes: &shapes,
             type_meanings: &type_meanings,

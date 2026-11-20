@@ -2705,6 +2705,7 @@ fn model_value_type(
                         .map_err(|_| Unmapped::Unsupported)?,
                 ),
                 ScalarValueDomain::Text(text) => ValueType::Text(*text),
+                ScalarValueDomain::Decimal(decimal) => ValueType::Decimal(decimal.clone()),
                 ScalarValueDomain::Rational {
                     domain: Some(domain),
                     unit: None,
