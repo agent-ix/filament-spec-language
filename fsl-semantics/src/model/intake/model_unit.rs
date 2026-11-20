@@ -2,6 +2,7 @@
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
 use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
+use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
 use serde_json::{Value, json};
 
@@ -77,32 +78,33 @@ pub(super) fn compile_model_unit_bytes(
     .map_err(|error| refusal(format!("{error}")))?;
     let parsed = cst::parse_source(source, cst::Limits::default())
         .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
-    compile_model_unit(&parsed, ModelNormalizationLimits::default()).map_err(|diagnostics| {
-        refusal(diagnostics.first().map_or_else(
-            || "model-unit compilation failed".to_owned(),
-            ToString::to_string,
-        ))
-    })
+    compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default()).map_err(
+        |diagnostics| {
+            refusal(diagnostics.first().map_or_else(
+                || "model-unit compilation failed".to_owned(),
+                ToString::to_string,
+            ))
+        },
+    )
 }
 
 /// Compile already-labelled sources to package input, preserving each source
 /// identity in node origins.
 pub fn package_input_from_sources<'a>(
-    sources: impl IntoIterator<Item = &'a Source>,
+    sources: impl IntoIterator<Item = (&'a str, &'a Source)>,
 ) -> Result<super::PackageInput, super::ModelRefusal> {
     let mut documents = Vec::new();
-    for source in sources {
+    for (selected_identity, source) in sources {
         let parsed = cst::parse_source(source.clone(), cst::Limits::default())
             .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
-        let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default()).map_err(
-            |diagnostics| {
+        let compiled = compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default())
+            .map_err(|diagnostics| {
                 refusal(diagnostics.first().map_or_else(
                     || "model-unit compilation failed".to_owned(),
                     ToString::to_string,
                 ))
-            },
-        )?;
-        documents.push((compiled.identity().to_owned(), compiled.bytes().to_vec()));
+            })?;
+        documents.push((selected_identity.to_owned(), compiled.bytes().to_vec()));
     }
     let mut packages = super::PackageInput::new();
     for (identity, bytes) in documents {
@@ -148,6 +150,20 @@ struct Token {
 /// Compile an admitted model unit. Source labels and declaration spans are
 /// retained in each document node's `origin`.
 pub fn compile_model_unit(
+    parsed: &ParsedSource,
+    limits: ModelNormalizationLimits,
+) -> Result<CompiledModelUnit, Vec<Diagnostic>> {
+    compile_model_unit_with_causes(parsed, limits).map_err(|diagnostics| {
+        diagnostics
+            .iter()
+            .map(|diagnostic| project_diagnostic(parsed.source(), diagnostic))
+            .collect()
+    })
+}
+
+/// Compile a model unit while retaining the complete-V1 diagnostic causes
+/// needed by command outcome projection.
+pub fn compile_model_unit_with_causes(
     parsed: &ParsedSource,
     limits: ModelNormalizationLimits,
 ) -> Result<CompiledModelUnit, Vec<CompleteDiagnostic>> {
@@ -2530,5 +2546,18 @@ fn diagnostic(
         span.start,
         span.end,
         message,
+    )
+}
+
+fn project_diagnostic(source: &Source, diagnostic: &CompleteDiagnostic) -> Diagnostic {
+    let code = Code::from_code(diagnostic.code.as_str()).unwrap_or(Code::InvalidModelBinding);
+    let span = diagnostic.byte_span().unwrap_or(Span { start: 0, end: 0 });
+    *fsl_foundation::diagnostic::error(
+        source,
+        code,
+        diagnostic.phase,
+        span.start,
+        span.end,
+        diagnostic.message.clone(),
     )
 }

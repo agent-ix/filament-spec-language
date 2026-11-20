@@ -339,12 +339,12 @@ pub(super) fn admit(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let supplied = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| invalid("models", refusal.detail))?;
+    let supplied = super::package_input_from_selected_models(&request.models, &documents).map_err(
+        |cause| match cause {
+            RunCause::ClauseRequest { member, reason } => invalid(&member, reason),
+            cause => cause,
+        },
+    )?;
     let limits =
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted =

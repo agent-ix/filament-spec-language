@@ -97,12 +97,12 @@ fn read_with_source(
         .enumerate()
         .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
-    let packages = fsl_semantics::model::intake::package_input(
-        documents
-            .iter()
-            .map(|document| document.source().text().as_bytes()),
-    )
-    .map_err(|refusal| invalid("models", refusal.detail))?;
+    let packages = super::package_input_from_selected_models(&request.models, &documents).map_err(
+        |cause| match cause {
+            RunCause::ClauseRequest { member, reason } => invalid(member, reason),
+            cause => cause,
+        },
+    )?;
     let libraries = request
         .libraries
         .iter()

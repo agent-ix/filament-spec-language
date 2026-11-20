@@ -94,6 +94,10 @@ fn selected_unit_declarations(
 #[test]
 fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
     let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let compiled = packages["example/shop"].clone();
+    let checked_packages =
+        package_input([compiled.as_slice()]).expect("the compiled package document is admitted");
+    assert_eq!(packages, checked_packages);
     let mut declarations =
         selected_unit_declarations("example/shop", &packages).expect("the model unit is admitted");
     declarations
@@ -111,10 +115,18 @@ fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
 fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
-    let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let source = fsl_cst::diagnostic::read_source(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("source metadata admitted");
+    let packages = package_input_from_sources([("example/other", &source)])
+        .expect("the selected identity is retained for FR-154 admission");
     let refusal =
         selected_unit_declarations("example/other", &packages).expect_err("the identities differ");
-    assert!(refusal.contains("MissingSelection"), "{refusal}");
+    assert!(refusal.contains("WrongModelSelection"), "{refusal}");
 }
 
 #[trace("FR-710-AC-6", "TC-2998")]
@@ -205,8 +217,8 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         ])
     );
     let admitted = package_input([SHOP.as_bytes()]).expect("model unit compiles to package input");
-    let source_packages =
-        package_input_from_sources([&source]).expect("source-labelled model compiles");
+    let source_packages = package_input_from_sources([("example/shop", &source)])
+        .expect("source-labelled model compiles");
     let mut declarations = selected_unit_declarations("example/shop", &source_packages)
         .expect("the source-supplied AC-1 model with its invariant is admitted");
     declarations
@@ -238,7 +250,8 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("source metadata admitted");
-    let packages = package_input_from_sources([&source]).expect("source compiles to input");
+    let packages =
+        package_input_from_sources([("example/shop", &source)]).expect("source compiles to input");
     let document: serde_json::Value =
         serde_json::from_slice(&packages["example/shop"]).expect("compiled document is JSON");
     assert_origin_sources(&document, "ix://agent-ix/test:shop-model");

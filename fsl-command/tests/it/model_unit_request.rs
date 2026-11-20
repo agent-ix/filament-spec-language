@@ -140,7 +140,7 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("the model source metadata is admitted");
-    let document = package_input_from_sources([&model_source])
+    let document = package_input_from_sources([("example/shop", &model_source)])
         .expect("the source compiles to its Semantic IR document")["example/shop"]
         .clone();
     std::fs::write(directory.path().join("shop.semantic-ir.json"), &document).unwrap();
@@ -343,6 +343,12 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
             json!([{"identity": "test/geometry", "source": source("shop.fsl")}]),
         ),
         ("clocks", json!({})),
+        (
+            "handoff",
+            json!({"directory": "handoff", "package_name": "shop"}),
+        ),
+        ("refinement_internals", json!({})),
+        ("integer_division", json!("floor")),
     ] {
         let output_path = format!("refused-{member}.json");
         let path = compile_request(

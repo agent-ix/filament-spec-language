@@ -395,7 +395,7 @@ fn check_outcome_inner(
             .iter()
             .map(|model| intake.source(&model.source, "models"))
             .collect::<Result<Vec<_>>>()?;
-        let packages = package_input_from_formal_sources(&model_documents)?;
+        let packages = package_input_from_formal_sources(&inputs.models, &model_documents)?;
         let admitted_models =
             match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
                 Ok(models) => models.into_value(),
@@ -2513,6 +2513,12 @@ fn compile_outcome_inner(
                 ("models", request.models.is_some()),
                 ("libraries", request.libraries.is_some()),
                 ("clocks", request.clocks.is_some()),
+                ("handoff", request.handoff.is_some()),
+                (
+                    "refinement_internals",
+                    request.refinement_internals.is_some(),
+                ),
+                ("integer_division", request.integer_division.is_some()),
             ] {
                 if present {
                     return Err(RunCause::ClauseRequest {
@@ -2828,7 +2834,7 @@ fn compile_formal_model_unit(
 ) -> std::result::Result<fsl_semantics::model::intake::CompiledModelUnit, RunCause> {
     let parsed = fsl_cst::parse_source(source.source().clone(), fsl_cst::Limits::default())
         .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
-    fsl_semantics::model::intake::compile_model_unit(
+    fsl_semantics::model::intake::compile_model_unit_with_causes(
         &parsed,
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
     )
@@ -2863,24 +2869,39 @@ fn malformed_model_unit_format(source: &Source) -> RunCause {
 }
 
 fn package_input_from_formal_sources(
+    selections: &[(String, PathBuf)],
     sources: &[FormalSource],
 ) -> Result<fsl_semantics::model::intake::PackageInput> {
-    let documents = sources
-        .iter()
-        .map(|source| {
-            if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes())
-            {
-                return compile_formal_model_unit(source).map(|compiled| compiled.bytes().to_vec());
+    let mut packages = fsl_semantics::model::intake::PackageInput::new();
+    for ((selected_identity, _), source) in selections.iter().zip(sources) {
+        let bytes = if fsl_semantics::model::intake::is_model_unit_source(
+            source.source().text().as_bytes(),
+        ) {
+            fsl_semantics::model::intake::package_input_from_sources([(
+                selected_identity.as_str(),
+                source.source(),
+            )])
+            .map_err(|refusal| RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: refusal.detail,
+            })?
+        } else {
+            fsl_semantics::model::intake::package_input([source.source().text().as_bytes()])
+                .map_err(|refusal| RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: refusal.detail,
+                })?
+        };
+        for (identity, document) in bytes {
+            if packages.insert(identity.clone(), document).is_some() {
+                return Err(RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: format!("two supplied model documents select {identity:?}"),
+                });
             }
-            Ok(source.source().text().as_bytes().to_vec())
-        })
-        .collect::<Result<Vec<_>>>()?;
-    fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).map_err(
-        |refusal| RunCause::ClauseRequest {
-            member: "models".to_owned(),
-            reason: refusal.detail,
-        },
-    )
+        }
+    }
+    Ok(packages)
 }
 
 fn package_input_from_selected_models(
