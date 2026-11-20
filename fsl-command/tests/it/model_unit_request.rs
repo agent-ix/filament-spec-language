@@ -180,7 +180,13 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
     std::fs::write(directory.path().join("shop.semantic-ir.json"), &document).unwrap();
     let document_entry =
         json!([{"format": "semantic-ir/2.0.0", "source": source("shop.semantic-ir.json")}]);
-    let path = compile_request(directory.path(), &[], "program.fsl", document_entry, &[]);
+    let path = compile_request(
+        directory.path(),
+        &[],
+        "program.fsl",
+        document_entry.clone(),
+        &[],
+    );
     let from_document = command::compile_outcome(&path).expect("the document route compiles");
     assert_eq!(from_unit.package_bytes(), from_document.package_bytes());
 
