@@ -238,7 +238,7 @@ fn handoff(directory: &Path, file: &Path) -> fsl_command::checked_handoff::Compi
         .expect("read and compile the real handoff")
 }
 
-fn project(
+pub(super) fn project(
     handoff: &fsl_command::checked_handoff::CompiledHandoff,
     role: &str,
 ) -> fsl_analyze::protocol_analysis::ProjectionOutcome {
@@ -535,7 +535,7 @@ fn source_projection_refutes_a_choice_hidden_from_the_target() {
     assert_eq!(witness.merge_evidence.len(), 1, "{witness:?}");
 }
 
-fn root_wire() -> Value {
+pub(super) fn root_wire() -> Value {
     use filament_exact::{NodeKey, PathSegment};
     let universe = NodeKey::new(
         "example/parts",
@@ -656,7 +656,7 @@ fn original_boolean_result_compensation_handoff_is_strictly_admitted() {
 #[test]
 #[trace("FR-892-AC-1", "TC-2525")]
 fn original_await_uses_its_timestamped_event_request_clock() {
-    let request = corpus("staged/await.request.json");
+    let request = corpus("await.request.json");
     let output =
         command::compile_outcome(&request).expect("the configured original await compiles");
     let bytes = output.package_bytes();

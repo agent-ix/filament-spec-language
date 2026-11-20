@@ -1,0 +1,13 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Parts = "example/parts";
+
+// A part goes back for rework at most twice; after that it is scrapped.
+invariant ReworkAtMostTwice using v on Parts::Job at current {
+  self.reworks <= 2
+}
+
+// A scrapped part never reaches assembly; an assembled part was never scrapped.
+invariant ReworkedPartsAreTracked using v on Parts::Job at current {
+  self.status = Parts::PartStatus::Rework implies self.reworks >= 1
+}

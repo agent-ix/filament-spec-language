@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Shop = "example/shop";
+invariant I using v on Shop::Order at current { reaches(self, self, Shop::Order::charges) }

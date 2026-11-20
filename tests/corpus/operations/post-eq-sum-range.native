@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model Shop = "example/shop";
+post P using v on Shop::Order::charge { self.charged = pre(self.charged) + amount }

@@ -1,0 +1,43 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+// Releasing a machine leaves it free and idle.
+post MachineReleased using v on Parts::MachiningStation::release { not self.reserved and not self.busy }
+
+// Machining hands a part to inspection. Inspection passes it to assembly,
+// sends it back for rework at most twice, or scraps it, which frees the
+// machine.
+protocol Inspect using p over (job: Parts::Job) on origin {
+  role Machining on Parts::MachiningStation;
+  role Inspection on Parts::InspectionStation;
+  role Assembly on Parts::AssemblyStation;
+  channel ToInspect from Machining to Inspection carries Parts::Handoff
+    ordering fifo by (m: Parts::Handoff) { m.part } delivery at-least-once capacity 4 overflow block;
+  channel ToAssemble from Inspection to Assembly carries Parts::Handoff
+    ordering fifo by (m: Parts::Handoff) { m.part } delivery at-least-once capacity 4 overflow block;
+  run sequence Main {
+    send Handed via ToInspect as (handed: Parts::Handoff) { handed.part = job.part };
+    receive Inspected via ToInspect of Handed as (inspected: Parts::Handoff) { inspected.ok };
+    choice Verdict by Inspection visible (inspected.pass, inspected.rework) {
+      case pass when { inspected.pass } sequence Pass {
+        send ToAssembly via ToAssemble as (onward: Parts::Handoff) { onward.part = job.part };
+        receive AtAssembly via ToAssemble of ToAssembly as (arrived: Parts::Handoff) { arrived.ok };
+      }
+      case rework when { not inspected.pass and inspected.rework } sequence Rework {
+        repeat Again by Inspection visible (inspected.rework) max 2 while { inspected.rework }
+          sequence Remachine {
+            attempt Remachined by Machining on Parts::MachiningStation::process contracts []
+              as (again: Boolean) { again };
+          }
+          exhausted sequence GiveUp {}
+      }
+      case scrap when { not inspected.pass and not inspected.rework } sequence Scrap {
+        attempt Freed by Machining on Parts::MachiningStation::release contracts [MachineReleased]
+          as (freed: Boolean) { freed };
+      }
+    }
+  }
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

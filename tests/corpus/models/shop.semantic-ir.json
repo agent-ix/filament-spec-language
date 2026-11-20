@@ -1,0 +1,948 @@
+{
+  "contractVersion": "2.0.0",
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "source": {
+    "identity": "ix://example/shop/spec",
+    "version": "1.0.0",
+    "dialect": "spec-bundle"
+  },
+  "package": {
+    "identity": "example/shop",
+    "version": "1.0.0",
+    "mappingVersions": [],
+    "profileVersions": []
+  },
+  "occurrences": [],
+  "extensions": [],
+  "constructs": [
+    {
+      "kind": {
+        "module": "example/shop",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.object-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/shop",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.population/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/shop",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/shop",
+        "name": "variant_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "enumeration",
+        "members": {
+          "variants": "required"
+        },
+        "meaning": "filament.meaning.model.variant-type/v1"
+      }
+    }
+  ],
+  "types": [
+    {
+      "identity": "ix://example/shop/Cents",
+      "displayName": "Cents",
+      "kind": {
+        "module": "example/shop",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Cents",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Cents"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/shop/Cents/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Cents",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Cents"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Cents/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1000000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Cents",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Cents"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/shop/Qty",
+      "displayName": "Qty",
+      "kind": {
+        "module": "example/shop",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Qty",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Qty"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/shop/Qty/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "1"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Qty",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Qty"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Qty/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "99"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Qty",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Qty"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/shop/Key",
+      "displayName": "Key",
+      "kind": {
+        "module": "example/shop",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Key",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Key"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/shop/Key/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Key",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Key"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Key/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "1000000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Key",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Key"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/shop/OrderStatus",
+      "displayName": "OrderStatus",
+      "kind": {
+        "module": "example/shop",
+        "name": "variant_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/OrderStatus",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/OrderStatus"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://example/shop/variant/OrderStatus-Open",
+          "name": "Open",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/shop/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/variant/OrderStatus-Paid",
+          "name": "Paid",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/shop/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/variant/OrderStatus-Shipped",
+          "name": "Shipped",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/shop/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/variant/OrderStatus-Cancelled",
+          "name": "Cancelled",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/shop/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/shop/Staff",
+      "displayName": "Staff",
+      "kind": {
+        "module": "example/shop",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Staff",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Staff"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/shop/Staff/badge",
+          "name": "badge",
+          "typeRef": "ix://example/shop/Key",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Staff/badge",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Staff/badge"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/shop/Charge",
+      "displayName": "Charge",
+      "kind": {
+        "module": "example/shop",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Charge",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Charge"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/shop/Charge/key",
+          "name": "key",
+          "typeRef": "ix://example/shop/Key",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Charge/key",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Charge/key"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Charge/amount",
+          "name": "amount",
+          "typeRef": "ix://example/shop/Cents",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Charge/amount",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Charge/amount"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/shop/Refund",
+      "displayName": "Refund",
+      "kind": {
+        "module": "example/shop",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Refund",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Refund"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/shop/Refund/amount",
+          "name": "amount",
+          "typeRef": "ix://example/shop/Cents",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Refund/amount",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Refund/amount"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Refund/approvedBy",
+          "name": "approvedBy",
+          "typeRef": "ix://example/shop/Staff",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Refund/approvedBy",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Refund/approvedBy"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Refund/secondApprover",
+          "name": "secondApprover",
+          "typeRef": "ix://example/shop/Staff",
+          "presence": "optional",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Refund/secondApprover",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Refund/secondApprover"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/shop/Order",
+      "displayName": "Order",
+      "kind": {
+        "module": "example/shop",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/Order",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/Order"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/shop/Order/total",
+          "name": "total",
+          "typeRef": "ix://example/shop/Cents",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/total",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/total"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/charged",
+          "name": "charged",
+          "typeRef": "ix://example/shop/Cents",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/charged",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/charged"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/status",
+          "name": "status",
+          "typeRef": "ix://example/shop/OrderStatus",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/status",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/status"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/charges",
+          "name": "charges",
+          "typeRef": "ix://example/shop/Charge",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 0,
+            "upper": 8,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/charges",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/charges"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/refunds",
+          "name": "refunds",
+          "typeRef": "ix://example/shop/Refund",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 0,
+            "upper": 8,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/refunds",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/refunds"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": [
+        {
+          "identity": "ix://example/shop/Order/charge",
+          "name": "charge",
+          "params": [
+            {
+              "identity": "ix://example/shop/Order/charge/amount",
+              "name": "amount",
+              "typeRef": "ix://example/shop/Cents",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/shop/Order/charge/amount",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/shop/Order/charge/amount"
+                  ]
+                }
+              }
+            }
+          ],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/charge",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/charge"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/shop/Order/charged",
+              "ix://example/shop/Order/status"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/refund",
+          "name": "refund",
+          "params": [
+            {
+              "identity": "ix://example/shop/Order/refund/amount",
+              "name": "amount",
+              "typeRef": "ix://example/shop/Cents",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/shop/Order/refund/amount",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/shop/Order/refund/amount"
+                  ]
+                }
+              }
+            },
+            {
+              "identity": "ix://example/shop/Order/refund/approvers",
+              "name": "approvers",
+              "typeRef": "ix://example/shop/Staff",
+              "presence": "required",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 2,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/shop/Order/refund/approvers",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/shop/Order/refund/approvers"
+                  ]
+                }
+              }
+            }
+          ],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/refund",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/refund"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/shop/Order/refunds"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/shop/Order/note",
+          "name": "note",
+          "params": [
+            {
+              "identity": "ix://example/shop/Order/note/secondApprover",
+              "name": "secondApprover",
+              "typeRef": "ix://example/shop/Staff",
+              "presence": "optional",
+              "nullable": false,
+              "defaultKind": "none",
+              "multiplicity": {
+                "lower": 1,
+                "upper": 1,
+                "ordered": false,
+                "unique": true
+              },
+              "origin": {
+                "generated": {
+                  "generatorIdentity": "ix://example/shop/Order/note/secondApprover",
+                  "generatorVersion": "1.0.0",
+                  "inputIdentities": [
+                    "ix://example/shop/Order/note/secondApprover"
+                  ]
+                }
+              }
+            }
+          ],
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/shop/Order/note",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/shop/Order/note"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [],
+            "creates": [],
+            "deletes": []
+          }
+        }
+      ]
+    }
+  ],
+  "populations": [
+    {
+      "identity": "ix://example/shop/orders",
+      "displayName": "orders",
+      "kind": {
+        "module": "example/shop",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/shop/Order"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/orders",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/orders"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/shop/charges",
+      "displayName": "charges",
+      "kind": {
+        "module": "example/shop",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/shop/Charge"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/charges",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/charges"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/shop/refunds",
+      "displayName": "refunds",
+      "kind": {
+        "module": "example/shop",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/shop/Refund"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/refunds",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/refunds"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/shop/staff",
+      "displayName": "staff",
+      "kind": {
+        "module": "example/shop",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/shop/Staff"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/shop/staff",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/shop/staff"
+          ]
+        }
+      }
+    }
+  ]
+}
