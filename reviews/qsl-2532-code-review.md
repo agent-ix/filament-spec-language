@@ -60,3 +60,17 @@ Rulings: (a) FR-750 "The driver's plugin host implements the exchange over the c
 - FND-007: retag to FSpec FR-462-AC-4/AC-5/AC-6 (TC-428), or drop the tags.
 - FND-008: `#[ignore = "QSL-1978: hybrid plan synthesis ..."]` and `todo!("QSL-1978: FR-1021-AC-3")`.
 - FND-009: drop the unused helpers or their imports.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1, head 9f1341db9d: read_entry refuses a non-solver proved basis at /basis/type; unread_entry admits only failed/unsupported/inconclusive/incomplete; covered by only_a_solver_basis_proof_settles_proved_and_it_is_trusted (11 rows) |
+| FND-002 | still-open | Round 1: request stage, manifest snapshot and the candidate set are fixed, but hybrid_item.rs:131 passes `dependencies: &[]`, so a unit with a non-empty closure still sends a request without it (FR-635 "with the dependency closure"). Medium: the provider cannot admit the package and the item settles failed, never a verdict. Wire the closure from Spelling.packages, or file a follow-up ticket and defer |
+| FND-003 | fixed | Round 1: item_entry checks the seven closed outcome-stage members, contract_version, capability_vocabulary, request_index, kind (required), backend equality and each counterexamples entry's request_index/backend |
+| FND-004 | fixed | Round 1: HybridReport.disagreement carries counterexample_wire of the provider's counterexample, inserted at record.cause.parity.disagreement.counterexample; AC-5 test compares the trace |
+| FND-005 | fixed | Round 1: host settles incomplete/cancelled for a late result and for a cancel before hello; tests a_cancelled_process_item_ignores_a_late_proof and a_cancelled_process_item_ends_the_provider_after_the_grace |
+| FND-006 | fixed | Round 1: Workspace names carry an AtomicU64 serial |
+| FND-007 | fixed | Round 1: the three wrong FR-750 tags were dropped (the recommendation allowed dropping) |
+| FND-008 | fixed | Round 1: ignore and todo! lead with QSL-1978 |
+| FND-009 | fixed | Round 1: the dead `let _ = (interval(..), PROVIDER)` line and the PROVIDER import are gone |

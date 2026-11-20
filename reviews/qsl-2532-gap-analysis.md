@@ -39,3 +39,11 @@ These ACs are now real and non-stub: FR-750-AC-5, the process halves of AC-7 and
 - FND-001: add process tests: a `bounded-solver` proof with horizon 1 for a 12 s claim settles `insufficient-horizon`; an `exhaustive` basis and a `tested` result are refused `invalid_result`.
 - FND-002: assert `record.cause.parity.disagreement.counterexample` equals the provider's counterexample once code-review FND-004 is fixed.
 - FND-003: add the cancel test described in code-review FND-005.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1, head 9f1341db9d: only_a_solver_basis_proof_settles_proved_and_it_is_trusted covers the short-horizon insufficient-horizon row, exhaustive and bounded-complete bases, tested/measured/declined, and certification claims |
+| FND-002 | fixed | Round 1: AC-5 test asserts disagreement.counterexample.trace equals the provider's point_trace("1"); hybrid_requests.rs asserts the counterexample on the not-exact path |
+| FND-003 | fixed | Round 1: two cancel tests (late result, hang, and no hello) |
