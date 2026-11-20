@@ -5406,6 +5406,8 @@ fn shape_index(document: &Value) -> HashMap<(String, String), String> {
 struct TypeNodeReader<'a> {
     package: &'a str,
     raw_types: &'a [Value],
+    type_positions: HashMap<String, usize>,
+    decimal_type_cache: std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
     meanings: &'a HashMap<(String, String), String>,
     shapes: &'a HashMap<(String, String), String>,
     type_meanings: &'a HashMap<&'a str, &'a str>,
@@ -5426,46 +5428,98 @@ struct TypeNodeReader<'a> {
 fn decimal_type_for_identity(
     package: &str,
     types: &[Value],
+    type_positions: &HashMap<String, usize>,
+    cache: &std::cell::RefCell<HashMap<String, Option<DecimalType>>>,
     identity: &str,
-    visiting: &mut Vec<String>,
 ) -> Result<Option<DecimalType>, ModelRefusal> {
-    if visiting.iter().any(|visited| visited == identity) {
-        return Ok(None);
-    }
-    let Some((position, type_value)) = types
-        .iter()
-        .enumerate()
-        .find(|(_, value)| value.get("identity").and_then(Value::as_str) == Some(identity))
-    else {
-        return Ok(None);
-    };
-    let at = format!("$.types[{position}]");
-    let ctx = NodeCtx::new(type_value, &at);
-    let node = ctx.str_field("identity")?;
-    if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
-        return read_decimal_value_type(package, node, &ctx, &at, None).map(Some);
-    }
-    if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
-        return Ok(None);
-    }
-    let Some(target) = type_value.get("target").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    if target == "ix://filament/native/Decimal" {
-        return if type_value.get("decimal").is_some() {
-            read_decimal_value_type(package, node, &ctx, &at, None).map(Some)
-        } else {
-            Ok(None)
+    // Alias chains are caller-controlled package data. Walk them iteratively
+    // so a valid long chain cannot exhaust the intake stack, and use the
+    // document's identity index instead of rescanning `types[]` at each hop.
+    let mut path = Vec::new();
+    let mut visited = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut current = identity;
+    let mut decimal = loop {
+        let cached = { cache.borrow().get(current).cloned() };
+        if let Some(cached) = cached {
+            if let Some(decimal) = cached {
+                break decimal;
+            }
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
+        }
+        if !seen.insert(current.to_owned()) {
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
+        }
+        visited.push(current.to_owned());
+        let Some(position) = type_positions.get(current).copied() else {
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
         };
+        let type_value = &types[position];
+        let at = format!("$.types[{position}]");
+        let ctx = NodeCtx::new(type_value, &at);
+        let node = ctx.str_field("identity")?;
+        if type_value.get("scalar").and_then(Value::as_str) == Some("decimal") {
+            let decimal = read_decimal_value_type(package, node, &ctx, &at, None)?;
+            cache
+                .borrow_mut()
+                .insert(current.to_owned(), Some(decimal.clone()));
+            break decimal;
+        }
+        if type_value.get("kind").and_then(Value::as_str) != Some("alias") {
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
+        }
+        let Some(target) = type_value.get("target").and_then(Value::as_str) else {
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
+        };
+        if target == "ix://filament/native/Decimal" {
+            if type_value.get("decimal").is_none() {
+                for identity in visited {
+                    cache.borrow_mut().insert(identity, None);
+                }
+                return Ok(None);
+            }
+            let decimal = read_decimal_value_type(package, node, &ctx, &at, None)?;
+            cache
+                .borrow_mut()
+                .insert(current.to_owned(), Some(decimal.clone()));
+            break decimal;
+        }
+        if type_identity_segment(package, target).is_none() {
+            for identity in visited {
+                cache.borrow_mut().insert(identity, None);
+            }
+            return Ok(None);
+        }
+        path.push(position);
+        current = target;
+    };
+
+    for position in path.into_iter().rev() {
+        let type_value = &types[position];
+        let at = format!("$.types[{position}]");
+        let ctx = NodeCtx::new(type_value, &at);
+        let node = ctx.str_field("identity")?;
+        decimal = read_decimal_value_type(package, node, &ctx, &at, Some(&decimal))?;
+        cache
+            .borrow_mut()
+            .insert(node.to_owned(), Some(decimal.clone()));
     }
-    if type_identity_segment(package, target).is_none() {
-        return Ok(None);
-    }
-    visiting.push(identity.to_owned());
-    let base = decimal_type_for_identity(package, types, target, visiting)?;
-    visiting.pop();
-    base.map(|base| read_decimal_value_type(package, node, &ctx, &at, Some(&base)))
-        .transpose()
+    Ok(Some(decimal))
 }
 
 #[ix_trace_rs::string_edge]
@@ -5478,6 +5532,8 @@ fn read_type_node(
     let TypeNodeReader {
         package,
         raw_types,
+        type_positions,
+        decimal_type_cache,
         meanings,
         shapes,
         type_meanings,
@@ -5544,7 +5600,14 @@ fn read_type_node(
         }
     }
     if type_value.get("kind").and_then(Value::as_str) == Some("alias") {
-        if let Some(decimal) = decimal_type_for_identity(package, raw_types, node, &mut Vec::new())?
+        if let Some(decimal) =
+            decimal_type_for_identity(
+                package,
+                raw_types,
+                type_positions,
+                decimal_type_cache,
+                node,
+            )?
         {
             if !ctx.array_field("fields")?.is_empty()
                 || !ctx.array_field("operations")?.is_empty()
@@ -6789,22 +6852,32 @@ fn read_nodes_partial(
     let mut refusals = Vec::new();
     let mut pending: Vec<PendingFrame> = Vec::new();
     let mut namespace_members: HashMap<DeclarationKey, DeclarationKey> = HashMap::new();
+    let type_positions: HashMap<String, usize> = types
+        .iter()
+        .enumerate()
+        .filter_map(|(position, type_value)| {
+            Some((type_value.get("identity")?.as_str()?.to_owned(), position))
+        })
+        .collect();
+    let type_reader = TypeNodeReader {
+        package: package_identity,
+        raw_types: types,
+        type_positions,
+        decimal_type_cache: std::cell::RefCell::new(HashMap::new()),
+        meanings: &meanings,
+        shapes: &shapes,
+        type_meanings: &type_meanings,
+        rational_types: &rational_types,
+        unbounded_rationals: &unbounded_rationals,
+        semantic,
+        semantic_members: &semantic_members,
+    };
     for node in nodes {
         match node {
             DocumentNode::Type(type_value, position, _) => {
                 let at = format!("$.types[{position}]");
                 match read_type_node(
-                    &TypeNodeReader {
-                        package: package_identity,
-                        raw_types: types,
-                        meanings: &meanings,
-                        shapes: &shapes,
-                        type_meanings: &type_meanings,
-                        rational_types: &rational_types,
-                        unbounded_rationals: &unbounded_rationals,
-                        semantic,
-                        semantic_members: &semantic_members,
-                    },
+                    &type_reader,
                     type_value,
                     &at,
                     &mut pending,
@@ -7227,6 +7300,74 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
+    #[test]
+    fn decimal_alias_walk_handles_long_chains_and_stops_cycles() {
+        const ALIASES: usize = 4096;
+        let package = "test/decimal-chain";
+        let identity = |position: usize| format!("ix://{package}/A{position}");
+        let mut types = (0..ALIASES)
+            .map(|position| {
+                let target = if position + 1 == ALIASES {
+                    "ix://filament/native/Decimal".to_owned()
+                } else {
+                    identity(position + 1)
+                };
+                let mut value = serde_json::json!({
+                    "identity": identity(position),
+                    "kind": "alias",
+                    "target": target,
+                    "constraints": [],
+                });
+                if position + 1 == ALIASES {
+                    value["decimal"] = serde_json::json!({"precision": 5, "scale": 2});
+                }
+                value
+            })
+            .collect::<Vec<_>>();
+        let positions = types
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                (
+                    value["identity"].as_str().expect("identity").to_owned(),
+                    position,
+                )
+            })
+            .collect();
+        let cache = std::cell::RefCell::new(HashMap::new());
+
+        let decimal = decimal_type_for_identity(package, &types, &positions, &cache, &identity(0))
+            .expect("long Decimal alias chain reads")
+            .expect("the chain reaches the policy-carrying native Decimal alias");
+        assert_eq!(decimal.lower(), &Integer::from(-99_999_i64));
+        assert_eq!(decimal.upper(), &Integer::from(99_999_i64));
+
+        types[ALIASES - 1]["target"] = identity(0).into();
+        types[ALIASES - 1].as_object_mut().expect("alias").remove("decimal");
+        let cyclic_positions = types
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                (
+                    value["identity"].as_str().expect("identity").to_owned(),
+                    position,
+                )
+            })
+            .collect();
+        let cyclic_cache = std::cell::RefCell::new(HashMap::new());
+        assert!(
+            decimal_type_for_identity(
+                package,
+                &types,
+                &cyclic_positions,
+                &cyclic_cache,
+                &identity(0),
+            )
+                .expect("a cycle is a non-Decimal result for the ordinary alias-cycle refusal")
+                .is_none()
+        );
+    }
+
     #[trace("FSpec-FR-154-AC-39", "FSpec-FR-154-AC-40", "FSpec-FR-154-AC-41")]
     #[test]
     fn reads_option_value_type_and_refuses_invalid_inner_shape() {
@@ -7238,6 +7379,8 @@ mod tests {
         let reader = TypeNodeReader {
             package: "acme/orders",
             raw_types: &[],
+            type_positions: HashMap::new(),
+            decimal_type_cache: std::cell::RefCell::new(HashMap::new()),
             meanings: &meanings,
             shapes: &shapes,
             type_meanings: &type_meanings,

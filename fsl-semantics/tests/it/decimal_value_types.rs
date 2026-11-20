@@ -253,6 +253,58 @@ fn decimal_members_have_the_golden_policy_types() {
     }
 }
 
+/// FR-056-AC-63 (TC-3031): the named Amount alias of native Decimal carries
+/// its policy into a field and supports Decimal equality in a clause.
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+fn amount_decimal_native_alias_has_its_policy_and_checks_equality() {
+    let mut document = golden();
+    let amount_identity = "ix://test/decimal/Amount";
+    let amount = type_mut(&mut document, "Rate");
+    amount["identity"] = amount_identity.into();
+    amount["displayName"] = "Amount".into();
+    amount["constraints"] = json!([]);
+    amount["decimal"] = json!({"precision": 5, "scale": 2});
+    amount["origin"]["generated"]["generatorIdentity"] = amount_identity.into();
+    amount["origin"]["generated"]["inputIdentities"] = json!([amount_identity]);
+
+    let field_identity = "ix://test/decimal/Meter/amount";
+    let amount_field = field_mut(&mut document, "rate");
+    amount_field["identity"] = field_identity.into();
+    amount_field["name"] = "amount".into();
+    amount_field["typeRef"] = amount_identity.into();
+    amount_field["origin"]["generated"]["generatorIdentity"] = field_identity.into();
+    amount_field["origin"]["generated"]["inputIdentities"] = json!([field_identity]);
+
+    let bytes = serde_json::to_vec(&document).expect("Amount fixture encoding");
+    let body = "invariant AmountEquality using v on Config::Meter at current { self.amount = self.amount }\n";
+    let checked = check(&bytes, &unit_text(PACKAGE, "Config", body));
+    assert_eq!(checked.field("amount"), decimal("-99999", "99999", 2));
+}
+
+#[trace("TC-3031", "FR-056-AC-63")]
+#[test]
+fn cyclic_decimal_alias_refuses_at_intake() {
+    let mut document = golden();
+    let amount_identity = "ix://test/decimal/Amount";
+    let amount = type_mut(&mut document, "Rate");
+    amount["identity"] = amount_identity.into();
+    amount["displayName"] = "Amount".into();
+    amount["target"] = amount_identity.into();
+    amount["constraints"] = json!([]);
+    amount["decimal"] = json!({"precision": 5, "scale": 2});
+    amount["origin"]["generated"]["generatorIdentity"] = amount_identity.into();
+    amount["origin"]["generated"]["inputIdentities"] = json!([amount_identity]);
+
+    let refusals = intake_refusals(&document);
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(
+        (refusals[0].code.as_str(), refusals[0].cause.as_str()),
+        ("invalid_model_binding", "malformed-declaration")
+    );
+    assert!(refusals[0].detail.contains("target"), "{refusals:?}");
+}
+
 /// FR-056-AC-67 (TC-3042 step 1): every bound on every node of the walk
 /// narrows the range and the tighter wins; `lo > hi` refuses.
 #[trace("TC-3042", "FR-056-AC-67")]
