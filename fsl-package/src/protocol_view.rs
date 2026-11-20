@@ -739,11 +739,20 @@ pub fn protocol_execution_view<'p>(
         constraint: finish_constraint,
     };
     drop(node_list);
-    let name = nodes
+    let protocol_path: Vec<String> = nodes
         .get(&view.clause)
         .and_then(|clause| clause.declaration.as_ref())
-        .and_then(|declaration| declaration.qualified_name.last())
-        .map(ToString::to_string)
+        .map(|declaration| {
+            declaration
+                .qualified_name
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        })
+        .ok_or_else(|| missing(view.clause, "declaration.qualified_name"))?;
+    let name = protocol_path
+        .last()
+        .cloned()
         .ok_or_else(|| missing(view.clause, "declaration.qualified_name"))?;
     let mut controls = Vec::with_capacity(view.controls.len());
     for (index, id) in view.controls.iter().enumerate() {
@@ -755,7 +764,7 @@ pub fn protocol_execution_view<'p>(
             id: ProtocolNodeId(index),
             node,
             operation: control_operation(node)?,
-            path: control_path(node, &name),
+            path: control_path(node, &protocol_path),
             memory: control_memory(node)?,
             body: control_body(node)?,
         });
@@ -771,7 +780,7 @@ pub fn protocol_execution_view<'p>(
     })
 }
 
-fn control_path(node: &CheckedSemanticNodeV2, protocol: &str) -> Vec<String> {
+fn control_path(node: &CheckedSemanticNodeV2, protocol_path: &[String]) -> Vec<String> {
     let Some(declaration) = node.declaration.as_ref() else {
         return Vec::new();
     };
@@ -780,8 +789,8 @@ fn control_path(node: &CheckedSemanticNodeV2, protocol: &str) -> Vec<String> {
         .iter()
         .map(ToString::to_string)
         .collect();
-    if path.first().is_some_and(|part| part == protocol) {
-        path.remove(0);
+    if path.starts_with(protocol_path) {
+        path.drain(..protocol_path.len());
     }
     if path.first().is_some_and(|part| part == "run") {
         path.remove(0);

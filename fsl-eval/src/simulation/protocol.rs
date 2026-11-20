@@ -61,12 +61,12 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{map_enc, reference_enc, value_enc, Canonicalizer, Enc};
 use crate::simulation::model::{
-    BROKEN, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
-    TerminalClass, Verdict, verdict,
+    verdict, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem, Observed,
+    TerminalClass, Verdict, BROKEN,
 };
-use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
+use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -77,13 +77,13 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
-pub use capacity::{Capacities, CapacityRefusal, UnboundCapacity, capacity_value};
+pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
-    protocol_constraints,
+    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
+    ProtocolTarget,
 };
 pub use footprint::{
-    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
+    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -105,7 +105,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
+pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -1709,9 +1709,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         authored_targets: &[fsl_semantics::check::CheckedProtocolFairness],
     ) -> Result<Vec<ProtocolFairness>, ProtocolFairnessError> {
         let Some(protocol) = self.protocol else {
-            return Err(ProtocolFairnessError::UnknownProtocolTarget {
-                name: self.protocol_name.clone(),
-            });
+            return self.package_fairness_set(authored, authored_targets);
         };
         let memory = self
             .memory
@@ -1727,6 +1725,90 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             },
             memory,
         )
+    }
+
+    /// Build the same fairness set from the admitted package protocol form.
+    /// Package controls use checked-package node identities, so source
+    /// `ProtocolNodeId` targets cannot be resolved against them directly.
+    fn package_fairness_set(
+        &self,
+        authored: &[filament_semantic_value::fairness::FairnessConstraint],
+        authored_targets: &[fsl_semantics::check::CheckedProtocolFairness],
+    ) -> Result<Vec<ProtocolFairness>, ProtocolFairnessError> {
+        let Some(package) = self.package_program.as_ref() else {
+            return Err(ProtocolFairnessError::UnknownProtocolTarget {
+                name: self.protocol_name.clone(),
+            });
+        };
+        if let Some(target) = authored_targets.first() {
+            return Err(ProtocolFairnessError::UnknownProtocolTarget {
+                name: target.protocol.clone(),
+            });
+        }
+
+        let mut members = Vec::new();
+        for constraint in authored {
+            let operation = constraint.operation();
+            let name = self
+                .model
+                .operation_text(operation.declaring_type(), operation.name())
+                .ok_or_else(|| ProtocolFairnessError::UnknownOperation {
+                    name: operation.name().to_owned(),
+                })?;
+            members.push(ProtocolFairness::new(
+                constraint.kind(),
+                ProtocolTarget::Operation {
+                    name: name.to_owned(),
+                },
+                constraint.granularity(),
+                FairnessOrigin::Authored,
+            ));
+        }
+
+        if package.form.protocol.scheduling()
+            != Some(fsl_package::protocol_view::Scheduling::Adversarial)
+        {
+            members.push(ProtocolFairness::scheduler(ProtocolTarget::Root));
+            for control in package.controls.values().filter(|control| {
+                control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+            }) {
+                let parallel = control.path.join("/");
+                for (branch, _) in &control.branches {
+                    members.push(ProtocolFairness::scheduler(ProtocolTarget::branch(
+                        parallel.clone(),
+                        branch.clone(),
+                    )));
+                }
+            }
+        }
+
+        let branches = self
+            .governing
+            .iter()
+            .filter_map(|(parallel, model)| {
+                let control = package.controls.get(parallel)?;
+                Some(
+                    control
+                        .branches
+                        .iter()
+                        .map(move |(branch, _)| MemoryBranch {
+                            model: *model,
+                            parallel: control.path.join("/"),
+                            branch: branch.clone(),
+                        }),
+                )
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        members.extend(self.memory.fairness(&branches));
+
+        let mut keyed = BTreeMap::new();
+        for member in members {
+            let bytes = quire_canonical::to_vec(&member, quire_canonical::Limits::new(u64::MAX))
+                .map_err(|error| ProtocolFairnessError::Encoding(error.to_string()))?;
+            keyed.entry(bytes).or_insert(member);
+        }
+        Ok(keyed.into_values().collect())
     }
 
     /// The memory model it runs under.

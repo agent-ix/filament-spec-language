@@ -3,7 +3,7 @@
 //! FR-426, FR-429, FR-430, FR-438): each is the member's typed canonical
 //! form, written through the one canonical writer.
 
-use filament_exact::{ObjectReference, Value};
+use filament_exact::{ObjectReference, Value, ValueType};
 use serde_json::Value as Json;
 
 use super::access::location_enc;
@@ -89,11 +89,23 @@ pub fn over_reference(
     protocol: &str,
     over: &ModelInstance,
 ) -> Option<ObjectReference> {
-    let evaluator = simulation.input.evaluator;
+    let input = simulation.input;
+    let evaluator = input.evaluator;
     let model = ModelSystem::new(simulation).ok()?;
-    let protocol = evaluator.protocol(protocol)?;
-    match over_value(&model, protocol, over).ok()? {
-        Value::Reference(reference) => Some(reference),
-        _ => None,
+    if let Some(protocol) = evaluator.protocol(protocol) {
+        return match over_value(&model, protocol, over).ok()? {
+            Value::Reference(reference) => Some(reference),
+            _ => None,
+        };
     }
+    input.package_protocol(protocol)?;
+    let program = super::PackageProtocolProgram::new(input, protocol, &[]).ok()?;
+    let ValueType::Reference(object_type) = &program.over_type else {
+        return None;
+    };
+    let instances = model.instances(&program.over_type).ok()?;
+    if !instances.contains(over) {
+        return None;
+    }
+    model.bound_reference(object_type.clone(), over).ok()
 }
