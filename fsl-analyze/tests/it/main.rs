@@ -89,6 +89,7 @@ mod package_probabilistic_source;
 mod package_refusal_route;
 mod partial_order;
 mod plan;
+mod plan_search;
 mod por_world;
 mod prob_world;
 mod probabilistic_replay;

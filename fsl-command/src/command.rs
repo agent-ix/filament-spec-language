@@ -12,6 +12,7 @@ mod output_file;
 mod package_run;
 pub mod plan;
 pub use package_run::PreparedPackageRun;
+pub mod plan_request;
 mod replay;
 mod requirements;
 mod settle;
