@@ -1873,7 +1873,7 @@ fn digital_discrete_delay_choice(
     if total.is_zero() {
         return Ok((Vec::new(), 0));
     }
-    let mut choice = Vec::new();
+    let mut choice: Vec<ProbabilityEdge> = Vec::new();
     let mut edges = 0_u64;
     for (_, weight, delayed, action_at_delay) in outcomes {
         let delay_probability = weight
