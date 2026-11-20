@@ -133,6 +133,9 @@ fn near_miss_generator_output_is_refused() {
 /// Provenance: QSL-2054. Plain enumeration is independent of the production model system.
 #[test]
 fn model_generator_models_are_enumerable() {
+    // Preparation is lazy inside the timed property. Only identical library
+    // bytes/selections reuse I1 setup; every source and S3 check still runs.
+    let library_setup = std::cell::RefCell::new(fsl_bench::world::ModelSetupCache::default());
     prop::run(
         "model_generator_models_are_enumerable",
         prop::config(256),
@@ -142,7 +145,9 @@ fn model_generator_models_are_enumerable() {
                 TestCaseError::fail(format!("source: {error:?}\n{}", input.source()))
             })?;
             let library = input.library();
-            let _world = fsl_bench::world::World::build(&library)
+            let _world = library_setup
+                .borrow_mut()
+                .build(&library)
                 .map_err(|error| TestCaseError::fail(format!("library: {error:?}")))?;
             let mut queue = std::collections::VecDeque::from([input.initial()]);
             let mut visited = BTreeSet::new();

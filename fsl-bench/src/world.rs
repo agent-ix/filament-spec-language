@@ -17,10 +17,13 @@ use filament_exact::ScalarLimits;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
+use fsl_foundation::selection::ModelSelection;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::intake::{admit_unit, meaning, package_input, PackageInput};
+use fsl_semantics::model::intake::{
+    admit_unit, meaning, package_input, PackageInput, SelectedModels,
+};
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
 use serde_json::{json, Value as Json};
 
@@ -338,6 +341,31 @@ pub struct World {
     package_name: String,
 }
 
+struct PreparedModel {
+    selections: Vec<ModelSelection>,
+    models: SelectedModels,
+}
+
+/// Caller-owned immutable library-model setup, keyed by exact document bytes
+/// and model selections. Every build still parses its source, constructs forms
+/// and performs S3 Linked checking with its own cloned normalization meter.
+/// Failed admissions and per-case checking results are never cached.
+#[derive(Default)]
+pub struct ModelSetupCache {
+    entries: BTreeMap<Vec<u8>, Vec<PreparedModel>>,
+}
+
+impl ModelSetupCache {
+    /// Build a fresh world, reusing only previously admitted identical library
+    /// model inputs. Cache preparation is performed on demand by this call.
+    ///
+    /// # Errors
+    /// [`WorldError`] naming the stage that refused this case.
+    pub fn build(&mut self, model: &Model) -> Result<World, WorldError> {
+        World::build_using(model, Some(self))
+    }
+}
+
 impl World {
     /// `model`, checked.
     ///
@@ -345,6 +373,10 @@ impl World {
     ///
     /// [`WorldError`] naming the stage that refused the generated unit.
     pub fn build(model: &Model) -> Result<Self, WorldError> {
+        Self::build_using(model, None)
+    }
+
+    fn build_using(model: &Model, cache: Option<&mut ModelSetupCache>) -> Result<Self, WorldError> {
         let document = model.document();
         let packages = package_input([document.as_slice()]).map_err(|e| refused("intake", e))?;
         let unit = model.unit();
@@ -359,16 +391,39 @@ impl World {
             return Err(refused("S1", parsed.diagnostics()));
         }
         let built = fsl_forms::build_unit(&parsed).map_err(|e| refused("S2", e))?;
-        let models = admit_unit(
-            &built.selections().models,
-            &packages,
-            ModelNormalizationLimits::default(),
-        )
-        .map_err(|e| refused("model selection", e))?
-        .with_parsed_operation_clauses(|text| {
-            fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
-        })
-        .map_err(|e| refused("operation clauses", e))?;
+        let prepared = cache
+            .as_ref()
+            .and_then(|cache| cache.entries.get(&document))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.selections == built.selections().models)
+            });
+        let models = if let Some(prepared) = prepared {
+            prepared.models.clone()
+        } else {
+            let models = admit_unit(
+                &built.selections().models,
+                &packages,
+                ModelNormalizationLimits::default(),
+            )
+            .map_err(|e| refused("model selection", e))?
+            .with_parsed_operation_clauses(|text| {
+                fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+            })
+            .map_err(|e| refused("operation clauses", e))?;
+            if let Some(cache) = cache {
+                cache
+                    .entries
+                    .entry(document)
+                    .or_default()
+                    .push(PreparedModel {
+                        selections: built.selections().models.clone(),
+                        models: models.clone(),
+                    });
+            }
+            models
+        };
         let graph = PackageDeclarations::assemble(
             parsed.source().reference().clone(),
             "package".to_owned(),

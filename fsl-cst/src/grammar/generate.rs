@@ -4,7 +4,9 @@
 //! This module is available only with `test-support`. It derives complete
 //! units directly from the parser's rule table; no parallel grammar is kept.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::collections::BinaryHeap;
 
 use super::{complete_v1, Grammar, Rule, Terminal};
 use crate::Production;
@@ -78,15 +80,15 @@ fn targeted_cost(
     }
 }
 
-struct Builder {
-    grammar: Grammar,
-    normal: BTreeMap<Production, usize>,
+struct Builder<'a> {
+    grammar: &'a Grammar,
+    normal: &'a BTreeMap<Production, usize>,
     targeted: BTreeMap<Production, usize>,
     target: Production,
-    replacement: Option<(Production, Box<Builder>)>,
+    replacement: Option<(Production, Box<Builder<'a>>)>,
 }
 
-impl Builder {
+impl Builder<'_> {
     fn render(&self, rule: &Rule, seek: bool, timed: bool, tokens: &mut Vec<String>) {
         match rule {
             Rule::Terminal(terminal) => {
@@ -147,9 +149,9 @@ impl Builder {
                                     .enumerate()
                                     .map(|(other, rule)| {
                                         if *index == other {
-                                            targeted_cost(rule, &self.normal, &self.targeted)
+                                            targeted_cost(rule, self.normal, &self.targeted)
                                         } else {
-                                            cost(rule, &self.normal)
+                                            cost(rule, self.normal)
                                         }
                                     })
                                     .fold(0usize, |a, b| a.saturating_add(b).min(INFINITE))
@@ -175,9 +177,9 @@ impl Builder {
                 }
                 if let Some(rule) = rules.iter().min_by_key(|rule| {
                     if seek {
-                        targeted_cost(rule, &self.normal, &self.targeted)
+                        targeted_cost(rule, self.normal, &self.targeted)
                     } else {
-                        cost(rule, &self.normal)
+                        cost(rule, self.normal)
                     }
                 }) {
                     self.render(rule, seek, timed, tokens);
@@ -197,26 +199,75 @@ impl Builder {
     }
 }
 
+fn context_edges(
+    rule: &Rule,
+    normal: &BTreeMap<Production, usize>,
+    context: usize,
+    output: &mut Vec<(Production, usize)>,
+) {
+    match rule {
+        Rule::Terminal(_) => {}
+        Rule::Production(production) => output.push((*production, context)),
+        Rule::Sequence(rules) => {
+            for (selected, rule) in rules.iter().enumerate() {
+                let siblings = rules
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != selected)
+                    .map(|(_, rule)| cost(rule, normal))
+                    .fold(context, |a, b| a.saturating_add(b).min(INFINITE));
+                context_edges(rule, normal, siblings, output);
+            }
+        }
+        Rule::Choice(rules) => {
+            for rule in rules {
+                context_edges(rule, normal, context, output);
+            }
+        }
+        Rule::Optional(rule) => context_edges(rule, normal, context, output),
+        Rule::Repeat { rule, minimum, .. } => {
+            let copies = cost(rule, normal).saturating_mul(minimum.saturating_sub(1));
+            context_edges(
+                rule,
+                normal,
+                context.saturating_add(copies).min(INFINITE),
+                output,
+            );
+        }
+    }
+}
+
+type Contexts = BTreeMap<Production, Vec<(Production, usize)>>;
+
+fn contexts(grammar: &Grammar, normal: &BTreeMap<Production, usize>) -> Contexts {
+    let mut graph = Contexts::new();
+    for (parent, rule) in grammar {
+        let mut edges = Vec::new();
+        context_edges(rule, normal, 1, &mut edges);
+        for (child, weight) in edges {
+            graph.entry(child).or_default().push((*parent, weight));
+        }
+    }
+    graph
+}
+
 fn target_costs(
-    grammar: &Grammar,
+    contexts: &Contexts,
     normal: &BTreeMap<Production, usize>,
     target: Production,
 ) -> BTreeMap<Production, usize> {
     let mut targeted = BTreeMap::from([(target, normal[&target])]);
-    for _ in 0..grammar.len() {
-        let previous = targeted.clone();
-        for (production, rule) in grammar {
-            if *production != target {
-                targeted.insert(
-                    *production,
-                    targeted_cost(rule, normal, &previous)
-                        .saturating_add(1)
-                        .min(INFINITE),
-                );
-            }
+    let mut frontier = BinaryHeap::from([Reverse((normal[&target], target))]);
+    while let Some(Reverse((distance, child))) = frontier.pop() {
+        if targeted.get(&child).copied() != Some(distance) {
+            continue;
         }
-        if targeted == previous {
-            break;
+        for &(parent, weight) in contexts.get(&child).into_iter().flatten() {
+            let candidate = distance.saturating_add(weight).min(INFINITE);
+            if candidate < targeted.get(&parent).copied().unwrap_or(INFINITE) {
+                targeted.insert(parent, candidate);
+                frontier.push(Reverse((candidate, parent)));
+            }
         }
     }
     targeted
@@ -243,9 +294,10 @@ pub fn covering_derivations() -> Vec<Derivation> {
             break;
         }
     }
+    let contexts = contexts(&grammar, &normal);
     let mut output = Vec::new();
     for target in grammar.keys().copied() {
-        let targeted = target_costs(&grammar, &normal, target);
+        let targeted = target_costs(&contexts, &normal, target);
         if targeted
             .get(&Production::CompleteUnit)
             .copied()
@@ -255,8 +307,8 @@ pub fn covering_derivations() -> Vec<Derivation> {
             continue;
         }
         let builder = Builder {
-            grammar: complete_v1(),
-            normal: normal.clone(),
+            grammar: &grammar,
+            normal: &normal,
             targeted,
             target,
             replacement: None,
@@ -266,9 +318,9 @@ pub fn covering_derivations() -> Vec<Derivation> {
         // grammar's unambiguous hyper-expression context.
         let builder = if target == Production::StepLabel {
             Builder {
-                grammar: complete_v1(),
-                normal: normal.clone(),
-                targeted: target_costs(&grammar, &normal, Production::MatchBlock),
+                grammar: &grammar,
+                normal: &normal,
+                targeted: target_costs(&contexts, &normal, Production::MatchBlock),
                 target: Production::MatchBlock,
                 replacement: Some((Production::MatchBlock, Box::new(builder))),
             }
