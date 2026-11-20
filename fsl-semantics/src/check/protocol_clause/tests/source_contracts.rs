@@ -222,7 +222,7 @@ fn nonadjacent_duplicate_roles_report_both_declaration_names() {
         .map(|(start, _)| start + "role ".len())
         .collect();
     let found = located_refusals(&invalid);
-    let mut actual: Vec<_> = found
+    let actual: Vec<_> = found
         .iter()
         .filter(|(refusal, _)| refusal.cause.code().as_str() == "ambiguous_declaration")
         .map(|(refusal, at)| {
@@ -236,7 +236,6 @@ fn nonadjacent_duplicate_roles_report_both_declaration_names() {
             span.start
         })
         .collect();
-    actual.sort_unstable();
     assert_eq!(actual, expected, "{found:?}");
 }
 
@@ -245,7 +244,7 @@ mod population_fixture {
     include!("../../../../tests/fixtures/protocol_obligations.rs");
 }
 
-#[trace("FR-218-AC-28", "FR-208-AC-1", "FR-884-AC-5")]
+#[trace("FR-218-AC-28", "FR-884-AC-5")]
 #[test]
 fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
     use crate::model::domain_package::{DomainPackageRecord, Extent, PopulationRecord};
@@ -339,4 +338,23 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
             assert_eq!(protocol.slots.roles[0].max, 2);
         }
     }
+}
+
+#[trace("FR-113-AC-3", "FR-884-AC-5")]
+#[test]
+fn await_after_an_undeclared_anchor_refuses_at_the_written_name() {
+    let members = format!(
+        "{ROLES} channel Notices from Courier to Inspector carries Boolean ordering unordered delivery at-most-once capacity 2 overflow reject;"
+    );
+    let run = format!(
+        "sequence Main {{ {ATTEMPT} send Offer via Notices as (offered: Boolean) {{ true }}; await Collect after MissingDispatch using e clock \"ticks\" within [1,4] match receive Delivered via Notices of Offer as (delivered: Boolean) {{ true }}; then sequence Arrived {{ }} timeout sequence Late {{ }} }}"
+    );
+    let source = protocol("", &members, &run);
+    assert_locus(
+        &source,
+        "missing_declaration",
+        "missing-name",
+        "MissingDispatch",
+        "MissingDispatch",
+    );
 }
