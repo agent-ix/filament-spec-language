@@ -881,7 +881,7 @@ fn scalar_type(
                     }
                 }
                 filament_exact::ValueType::Text(text) => ScalarValueDomain::Text(text),
-                filament_exact::ValueType::Decimal(decimal) => {
+                filament_exact::ValueType::Decimal(ref decimal) => {
                     ScalarValueDomain::Decimal(decimal.clone())
                 }
                 _ => return Err(unsupported()),
