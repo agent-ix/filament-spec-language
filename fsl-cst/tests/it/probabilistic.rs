@@ -342,3 +342,42 @@ fn a_claims_content_is_independent_of_its_position_and_layout() {
     let changed = claim_contents(&source(&a.replace("0.5", "0.75")));
     assert_ne!(changed[0], forward[0]);
 }
+
+/// Provenance: QSL-2076; delay-dist and weighted-delay require named distributions and weights.
+#[test]
+#[trace("FSpec-FR-339-AC-1")]
+fn delay_declaration_refuses_near_misses() {
+    use super::time_declaration::{accepts, refuses};
+    for declaration in [
+        "delay Pump::start ~ uniform;",
+        "delay Pump::start ~ uniform[2 ms, 6 ms];",
+        "delay Pump::start ~ exponential(3);",
+        "delay Pump::start ~ discrete { 2 ms: 1, 6 ms: 3, };",
+    ] {
+        accepts(declaration, Production::DelayDeclaration);
+    }
+    for (bad, token, expected) in [
+        (
+            "delay Pump::start ~ gaussian(3);",
+            "gaussian",
+            "expected `discrete` or `exponential` or `uniform`",
+        ),
+        (
+            "delay Pump::start ~ uniform[2 ms; 6 ms];",
+            ";",
+            "expected `,`",
+        ),
+        (
+            "delay Pump::start ~ discrete { 2 ms: };",
+            "}",
+            "expected an exact number or an unsigned integer",
+        ),
+        (
+            "delay Pump::start ~ discrete {};",
+            "}",
+            "expected an exact number or an unsigned integer",
+        ),
+    ] {
+        refuses(bad, token, expected);
+    }
+}
