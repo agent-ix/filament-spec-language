@@ -89,6 +89,33 @@ fn the_union_keeps_its_id_and_its_members_their_identities_through_emission_and_
     assert_eq!(recompiled.package.bytes(), emission.package.bytes());
 }
 
+/// QSL-2660: a case root selected for an unsupported call request is still a
+/// node in the emitted package graph when an arm contains a direct call.
+#[trace("FR-320-AC-1", "TC-827")]
+#[test]
+fn a_case_arm_call_keeps_the_case_root_id_in_the_emitted_graph() {
+    let declarations = format!(
+        "{SHAPE}function twice using v(x: Integer): Integer pure {{ x * 2 }}\n\
+         function area using v(s: Shape): Integer pure {{ case s {{ Empty: 0; Circle(r): twice(r); Rect(w, h): w * h; }} }}\n"
+    );
+    let (_, package) = package_from_text(&declarations);
+    let emission = emit_checked(&package).expect("the case arm call package emits");
+    let wire = wire(&emission);
+    let graph = WireGraph::of_package_value(&wire).expect("the emitted graph resolves");
+    let [case] = of_form(&wire, "case")[..] else {
+        panic!("one case node")
+    };
+    let case_key = graph
+        .key_of_value(&case["node_id"])
+        .expect("the case root id resolves in this package");
+    assert!(graph.index_of(&case_key).is_some());
+    assert!(
+        !of_form(&wire, "call").is_empty(),
+        "the case arm's direct function call is emitted"
+    );
+    verified_exports(&emission);
+}
+
 #[trace("FR-320-AC-2", "TC-827")]
 #[test]
 fn an_ir_that_cannot_decode_the_union_omits_it_and_every_node_naming_it() {
