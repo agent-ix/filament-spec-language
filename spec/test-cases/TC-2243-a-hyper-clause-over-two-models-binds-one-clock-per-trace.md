@@ -5,12 +5,14 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-173
+    type: verifies
 ---
 # TC-2243: A hyper clause over two models binds one clock per trace
 
 ## Description
 
-Verify FR-640's per-trace clock bindings for hyper clauses. Scope: FR-640-AC-12.
+Verify FR-640's per-trace clock bindings for hyper clauses. Scope: FR-640-AC-12 and FR-173-AC-6.
 
 ## Test Procedure
 
@@ -23,5 +25,5 @@ Verify FR-640's per-trace clock bindings for hyper clauses. Scope: FR-640-AC-12.
 
 - Step 1: exit 0; two rows keyed by the `hyperproperty` node and its `claim` occurrence, none by the body wrapper, `trace` `s` then `n`, each `event_position` with its own model's `ConfigVersion` declaration identity text as `sequence_authority`.
 - Step 2: two rows with equal configurations.
-- Step 3: a verdict, never `not-yet-implemented`; a refuted counterexample replays under the two rows' configurations.
+- Step 3: `proved` or `refuted`, never `not-yet-implemented`, `FormNotDecided` or V-8; a refuted counterexample holds one trace for `s` and one for `n`, neither with a loop, each ending at a terminal state or covering positions 0 to the body's horizon `h`, and replays as closed traces under the two rows' configurations.
 - Step 4: the package reader refuses it at the `hyperproperty` node's body before any recompile.

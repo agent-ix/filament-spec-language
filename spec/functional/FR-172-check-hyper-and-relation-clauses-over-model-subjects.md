@@ -161,15 +161,24 @@ pub struct CheckedModelRelation {
 - A `behaviours` clause under the infinite-trace profile SHALL check its
   body as an infinite-trace formula over indexed atoms, interval operators
   admitted as FR-123 admits them. A `behaviours` clause under any other
-  profile SHALL check and record its profile, so negotiation settles it V-8
-  (FR-173).
+  profile SHALL check and record its profile. Under the event-position
+  false-extension profile FR-173 then classifies it into a form read over
+  closed finite traces; under every other profile negotiation settles it
+  V-8 (FR-173).
 
 ### Align skip
 
 - S3 SHALL resolve each `align skip` entry to an operation of a bound
-  alias's model. An operation of no bound alias, an operation named twice
-  and an empty list SHALL refuse `unsupported_construct`/`expression-form`
-  at the entry or the list (ADR-023 PA-1).
+  alias's model. An operation of no bound alias and an operation named twice
+  SHALL refuse `unsupported_construct`/`expression-form` at the entry
+  (ADR-023 PA-1).
+- An empty list, `align skip { }`, is admitted by the grammar (FSpec FR-339
+  shared grammar `align-skip`, whose entry list is optional) and parses; it
+  is S3's to refuse, not S1's. S3 SHALL refuse it
+  `unsupported_construct`/`expression-form` at the list, the span of the
+  `align skip { }` item from `align` through its closing `}` (ADR-023
+  PA-1). The outcome has `last_stage` S3, category `unsupported` and exit
+  code 21; no S1 `invalid_syntax` diagnostic is given for it.
 - If a clause with `align skip` carries a non-empty fairness set on any
   variable, then S3 SHALL refuse `unsupported_construct`/`expression-form`
   at the constraint (ADR-023 PA-3).
@@ -218,6 +227,7 @@ pub struct CheckedModelRelation {
 | FR-172-AC-6 | FR-171-AC-3's `Det` with body `half(x.i) < rational(3, 4)`, for a function `half` over `x.i`'s type whose declared result is `Rational[0, 1; 1, 2]`, refuses `undefined_expression`/`unproved-range` at `rational(3, 4)`, as a value clause over a parameter `x` of a record type with one field `i` of `x.i`'s type refuses the same body. `Det` with body `rational(1, 2) < rational(3, 4)`, and `NonInterference` with that comparison in its body, each refuse `ill_typed`/`ambiguous-literal` at the literal a value clause with that body is refused at. `NonInterference` with `let a = 1 in a = 1` in its body refuses `ambiguous_declaration`/`ambiguous-name` at that `let`, naming trace variable `a`; with `let v = 1 in v = 1` it refuses the same at that `let`, naming object parameter `v`. `Det` with body `let x = 1 in x = 1` refuses the same at that `let`, naming execution variable `x`. | Test (TC-597) |
 | FR-172-AC-7 | Over a model whose operations with a receiver are declared by two object types, a `match` conjunct reading `a.step.receiver` refuses `unsupported_construct`/`expression-form` at that read; over the vault, `a.step.receiver = b.step.receiver` checks. `NonInterference` with the conjunct `f(a.step.Vault::step.i)`, for a declared `f(x: Option<Int[0, 1]>): Boolean`, checks with that conjunct in `mu_universal`. With `f(v.l @ a)` it refuses `unsupported_construct`/`expression-form` at `v.l @ a`. | Test (TC-1264) |
 | FR-172-AC-8 | With the `Linked` clause of FR-487's Acceptance Criteria, `B` = `(let r = v.next in present(r) and deref(value(r)).l = 1) @ a` checks: `@ a` scopes over the `let`, so the read of `next` and the read of `l` carry `a`. `B` = `deref(value(v.next @ a)).l = 1` refuses `ill_typed` at the `.l` read, which no `@` encloses, and `B` = `present(v.next @ a) and present(v.next)` refuses `ill_typed` at the bare `v.next`. | Test (TC-1264) |
+| FR-172-AC-9 | Through `command::compile` (`native-compile/1`) with the counter-step model selected, the source clause `hyper IgnoreTick using infinite over behaviours (item: CounterModel::Counter) forall trace left of CounterModel forall trace right of CounterModel align skip {} match { left.step.op = right.step.op } { always holds(item.value @ left = item.value @ right) }` gives a `filament-outcome/1` document with `last_stage` `S3`, category `unsupported`, exit code 21, and one diagnostic `unsupported_construct` with cause `expression-form` whose locus is the span of `align skip {}`; no diagnostic has code `invalid_syntax` and `last_stage` is never `S1`. The same source with the list holding one qualified name of an operation of the counter-step model gives no diagnostic at its `align skip` item. | Test (TC-597) |
 
 ## Dependencies
 

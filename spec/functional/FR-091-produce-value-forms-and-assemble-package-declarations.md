@@ -859,10 +859,13 @@ The resolution `match` has one explicit arm per type-form head:
   model field carries no mode spelling and resolves with `exact`;
 - `Reference<Q>` resolves `Q` against the admitted domain packages (I1). With
   no admitted domain package, `Q` is an unresolved name;
-- the unreserved names `String`, `UUID` and `Timestamp` resolve to the native
-  `ValueType::String`, `ValueType::Uuid` and `ValueType::Timestamp` (FR-056),
+- the unreserved names `String`, `UUID`, `Timestamp`, `Bytes` and
+  `JsonObject` resolve to the native `ValueType::String`, `ValueType::Uuid`,
+  `ValueType::Timestamp`, `ValueType::Bytes` and `ValueType::JsonObject`
+  (FR-056, the same native types a domain package's model member of that
+  name gets),
   take no bounds or arguments, and need no domain package, and are available as a parameter, result, field
-  or alias target type of the unit. They are not keywords: for these three spellings the native type is a
+  or alias target type of the unit. They are not keywords: for these five spellings the native type is a
   candidate alongside the unit's alias, record, tuple and enum forms, so a unit
   that also declares a form of the same name makes the use an ambiguous type
   name, below, and the exactly-one arms below apply only when the name is not
@@ -1312,6 +1315,7 @@ every checker of the language.
 | FR-091-AC-74 | Over admitted canonical roots `kg`, `m` and `s`, parse and check parameter, result and conversion-target types `Quantity<kg*m^2*s^-2>`. Parsed forms retain the three qualified unit factors, exponents `1`, `2`, `-2` and their source spans. The checked type has the exact compound identity whose canonical terms name those roots with those exponents; `Quantity<s^-2*kg*m*m>` resolves to that same compound identity. `Quantity<kg>` remains declared, while `Quantity<kg^1>` and `Quantity<kg*m^0>` are the same one-term compound identity, distinct from declared `kg`; `Quantity<m*m^-1>` is the empty compound. `Quantity<J>` remains a distinct declared identity when `J` has the same base-dimension map. The existing named-unit carrier `Quantity<kg, Int[0, 10]>` still parses and checks without changing its carrier or unit. | Test |
 | FR-091-AC-75 | `Quantity<>`, `Quantity<kg*>`, `Quantity<kg**m>`, `Quantity<m^>`, `Quantity<m^n>` and `Quantity<m^1.5>` refuse typed `invalid_syntax` at their malformed unit expression. `Quantity<kg*ghost^2>` and `Quantity<ghost^0>` refuse `missing_declaration`/`missing-name` naming `ghost` at its own span, and a dimension-only factor refuses the same unit-namespace lookup. Existing source-integer and stage ceilings apply to long products and large exponents, with a typed refusal or limit stop and no truncated exponent or authoritative partial compound type. | Test |
 | FR-091-AC-76 | S2 builds the function bodies `none` and `absent` as `Absent` and `result` as `Result`, refusing neither with `UnrepresentedConstruct`. Check then admits `function o using v(): Option<Integer> pure { none }` with the empty `Option<Integer>` value, refuses `function n using v(): Integer pure { none }` `ill_typed`/`type-mismatch` at `none`, refuses `let x = none in true` `ill_typed`/`ambiguous-literal` at `none`, and refuses `function r using v(): Integer pure { result }` `wrong_snapshot`/`wrong-anchor` at `result`; no refusal of the four has code `unsupported_construct`. | Test (TC-2214) |
+| FR-091-AC-77 | The unit `language "ix:native" edition "1-draft"; profile v = "filament.value.complete/v1";` with `function equal0 using v(a: UUID, b: UUID): Boolean pure { a = b }`, `function equal1 using v(a: Timestamp, b: Timestamp): Boolean pure { a = b }`, `function equal2 using v(a: Bytes, b: Bytes): Boolean pure { a = b }` and `function equal3 using v(a: JsonObject, b: JsonObject): Boolean pure { a = b }` assembles with no `UnresolvedTypeName`, resolves `equal2`'s parameters to `ValueType::Bytes` and `equal3`'s to `ValueType::JsonObject`, needs no domain package, and compiles through S4 with exit 0. `function g using v(a: Bytes, b: JsonObject): Boolean pure { a = b }` refuses `ill_typed`/`type-mismatch` (FSpec FR-149). A unit declaring `record Bytes { x: Integer; }` and using `Bytes` as a type refuses `ambiguous_declaration`/`ambiguous-name` naming the use, the span of the record declaration and the native `Bytes` candidate with no span. | Test (TC-1028) |
 
 ## Dependencies
 
