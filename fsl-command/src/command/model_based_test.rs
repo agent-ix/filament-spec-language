@@ -388,16 +388,27 @@ pub(super) fn prepare(
         selection.max_value_bits,
         10_000,
         |trace| {
-            let failed = trace.trace.findings.iter().any(|finding| {
-                finding.findings.iter().any(|finding| {
-                    matches!(finding,
-                        fsl_eval::simulation::model::ModelFinding::InvariantViolated { clause, .. }
-                            if clause == &selection.clause)
-                })
-            });
-            if failed {
+            let findings = trace
+                .trace
+                .findings
+                .iter()
+                .flat_map(|finding| finding.findings.iter())
+                .collect::<Vec<_>>();
+            if findings.iter().copied().any(|finding| {
+                matches!(finding,
+                    fsl_eval::simulation::model::ModelFinding::InvariantViolated { clause, .. }
+                        if clause == &selection.clause)
+            }) {
                 fsl_eval::simulation::model::ModelBasedTestOutcome::Failed {
                     disposition: "invariant-violated".to_owned(),
+                }
+            } else if findings.iter().copied().any(|finding| {
+                matches!(finding,
+                    fsl_eval::simulation::model::ModelFinding::InvariantUndetermined { clause, .. }
+                        if clause == &selection.clause)
+            }) {
+                fsl_eval::simulation::model::ModelBasedTestOutcome::Discarded {
+                    reason: "invariant-undetermined".to_owned(),
                 }
             } else {
                 fsl_eval::simulation::model::ModelBasedTestOutcome::Passed
