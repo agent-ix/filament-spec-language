@@ -4,7 +4,7 @@
 use super::*;
 
 #[test]
-#[trace("FR-531-AC-3", "FR-520-AC-1")]
+#[trace("FR-531", "FR-520-AC-1")]
 fn bytes_only_recovery_combines_modulo_multiplicity_sum_and_branch_selection() {
     let recipe = recipe_with(Some(
         "let n = size(recoveredFull.receipts) in if activatedFull then n mod 3 = 0 else sum<M::Total>(r in recoveredFull.receipts: r) = targetFull and n mod 3 = 1",
@@ -26,7 +26,7 @@ fn bytes_only_recovery_combines_modulo_multiplicity_sum_and_branch_selection() {
 }
 
 #[test]
-#[trace("FR-531-AC-3", "FR-520-AC-1")]
+#[trace("FR-531", "FR-520-AC-1")]
 fn bytes_only_recovery_calls_the_emitted_function_with_the_query_result() {
     let recipe = recipe_with_declarations(Some(
         "residue(size(recoveredFull.receipts)) = 2 and sum<M::Total>(r in recoveredFull.receipts: r) = targetFull and not activatedFull",
@@ -42,5 +42,85 @@ fn bytes_only_recovery_calls_the_emitted_function_with_the_query_result() {
             expected,
             "receipts={receipts:?}, target={target}, activated={activated}"
         );
+    }
+}
+
+#[test]
+#[trace("FR-531", "FR-520-AC-1")]
+fn bytes_only_recovery_reports_the_unavailable_target_only_on_the_branch_that_reads_it() {
+    use filament_semantic_value::catalog::CatalogCode;
+    use fsl_eval::value::ProtocolSlotEvaluation;
+
+    let recipe = recipe_with(Some(
+        "if activatedFull then size(recoveredFull.receipts) mod 3 = 0 else sum<M::Total>(r in recoveredFull.receipts: r) = targetFull",
+    ));
+    let bare = recipe.bare();
+    let node = recipe.compensation("Full");
+    let slot = ProtocolSlot {
+        node: node.clone(),
+        member: "recovery.predicate".into(),
+        index: None,
+    };
+    let selected = bare
+        .select_protocol_slot(&ProtocolSlotDescriptor::new(
+            node,
+            "recovery.predicate",
+            None,
+        ))
+        .unwrap();
+    let binder = |name| {
+        selected
+            .sources()
+            .iter()
+            .find(|source| source.name() == name)
+            .unwrap()
+            .binder()
+            .clone()
+    };
+    let target = binder("targetFull");
+    let cause = CatalogCode::new("unavailable_observation", "missing-required-artifact");
+    for activated in [true, false] {
+        let given = ProtocolSupply {
+            binders: vec![
+                (
+                    binder("recoveredFull"),
+                    SuppliedValue::Value(recipe.recovery(&bare, &[2, 2, 5])).into(),
+                ),
+                (
+                    target.clone(),
+                    SuppliedValue::Unavailable(cause.clone()).into(),
+                ),
+                (
+                    binder("activatedFull"),
+                    SuppliedValue::Value(Value::Boolean(activated)).into(),
+                ),
+            ],
+            observation: None,
+        };
+        let result = bare
+            .evaluate_protocol_slot(&slot, &given, &mut Meter::new(UNLIMITED))
+            .expect("unavailability is an evaluation outcome");
+        if activated {
+            let ProtocolSlotEvaluation::Evaluated(evaluation, _) = result else {
+                panic!("the chosen branch never reads the unavailable target: {result:?}");
+            };
+            assert_eq!(completed_boolean(&evaluation.outcome), Some(true));
+        } else {
+            let ProtocolSlotEvaluation::Unavailable {
+                binder,
+                cause: actual,
+                location,
+                ..
+            } = result
+            else {
+                panic!("the sum equality reads the unavailable target: {result:?}");
+            };
+            assert_eq!(binder, target);
+            assert_eq!(actual, cause);
+            assert_eq!(
+                location, None,
+                "the bytes carry no source expression location"
+            );
+        }
     }
 }

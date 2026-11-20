@@ -39,3 +39,50 @@ fn state_core_refuses_each_division_as_one_function_declaration() {
         assert!(diagnostics[0].message().contains("filament.state.core/v1"));
     }
 }
+
+#[test]
+#[trace("FR-495-AC-4")]
+fn state_core_locates_live_and_dead_division_in_each_state_clause() {
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the object is declared in the unit");
+    for (kind, target) in [
+        ("invariant", "Cell at current"),
+        ("pre", "Cell::bump"),
+        ("post", "Cell::bump"),
+    ] {
+        for operator in ["div", "rem", "mod"] {
+            for dead in [false, true] {
+                let expression = format!("7 {operator} 3");
+                let body = if dead {
+                    format!("(if true then 1 else ({expression})) = 0")
+                } else {
+                    format!("{expression} = 0")
+                };
+                let source = format!(
+                    "language \"ix:native\" edition \"1-draft\";\n\
+                     profile m = \"filament.model.complete/v1\";\n\
+                     profile v = \"filament.state.core/v1\";\n\
+                     object Cell {{ n: Int[0, 9]; population cells; operation bump(): Boolean modifies self.n; }}\n\
+                     {kind} Rule using v on {target} {{ {body} }}\n"
+                );
+                let refusal = crate::support::front_end::checked(
+                    SourceIdentity::new("state-core-tests", "original:state-clause"),
+                    "state-clause.native",
+                    source.as_bytes(),
+                    &packages,
+                    &DependencyInput::default(),
+                )
+                .expect_err("state clauses do not admit integer division");
+                let diagnostics = refusal.outcome_diagnostics();
+                assert_eq!(diagnostics.len(), 1, "{kind}, {body}: {diagnostics:?}");
+                assert_eq!(diagnostics[0].code(), "unsupported_construct");
+                assert_eq!(diagnostics[0].cause(), Some("expression-form"));
+                let region = refusal.region().expect("the operator has its source locus");
+                let start = usize::try_from(region.start()).unwrap();
+                let end = usize::try_from(region.end()).unwrap();
+                assert_eq!(&source[start..end], operator, "{kind}, {body}");
+                assert!(diagnostics[0].message().contains("filament.state.core/v1"));
+            }
+        }
+    }
+}
