@@ -1279,8 +1279,8 @@ fn incomplete_mode_switches_refuse_at_the_missing_member() {
     assert!(!parsed.is_admissible(), "{source}");
     let diagnostic = parsed.diagnostics().first().expect("located refusal");
     assert_eq!(
-        diagnostic.code,
-        CompleteCode::InvalidSyntax,
+        (diagnostic.code, diagnostic.cause),
+        (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedEnd),
         "{diagnostic:?}"
     );
     assert_eq!(
