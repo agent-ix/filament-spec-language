@@ -67,7 +67,6 @@ allocate Alloc from pump to pump;
 
 #[trace("FR-710-AC-1", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses a model unit; not implemented yet"]
 fn the_smallest_model_unit_parses_and_renders_back() {
     let text = format!("{HEADER}{SHOP}");
     let parsed = parse(&text);
@@ -77,7 +76,6 @@ fn the_smallest_model_unit_parses_and_renders_back() {
 
 #[trace("FR-710-AC-2", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses a model unit's relationships; not implemented yet"]
 fn a_model_unit_relationship_parses() {
     let text = format!(
         "{HEADER}domain \"example/graph\";\n\
@@ -90,7 +88,6 @@ fn a_model_unit_relationship_parses() {
 
 #[trace("FR-710-AC-3", "TC-1942")]
 #[test]
-#[ignore = "QSL-1980: S1 parses every model-unit declaration form; not implemented yet"]
 fn a_model_unit_with_every_declaration_form_parses() {
     let text = format!("{HEADER}{EVERY_FORM}");
     let parsed = parse(&text);
@@ -100,7 +97,6 @@ fn a_model_unit_with_every_declaration_form_parses() {
 
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
-#[ignore = "QSL-1980: a model unit's `domain` with no string refuses at `;`; not implemented yet"]
 fn a_domain_with_no_string_refuses_at_the_semicolon() {
     let text = format!("{HEADER}domain ;\n");
     let parsed = parse(&text);

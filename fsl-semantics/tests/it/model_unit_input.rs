@@ -61,7 +61,6 @@ fn admit(identity: &str) -> Result<PackageDeclarations, String> {
 
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
-#[ignore = "QSL-1980: a package input supplies a model unit in place of its document; not implemented yet"]
 fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
     let mut declarations = admit("example/shop").expect("the model unit is admitted");
     declarations
@@ -78,7 +77,6 @@ fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
 
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
-#[ignore = "QSL-1980: a model unit supplied for another identity is refused wrong-model-selection; not implemented yet"]
 fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
     let refusal = admit("example/other").expect_err("the identities differ");
     assert!(refusal.contains("WrongModelSelection"), "{refusal}");
