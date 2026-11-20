@@ -4,7 +4,7 @@
 //! (FR-753); it hands one [`StepDisposition`] per node here.
 
 use filament_semantic_value::catalog::Category;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The decision of a `measured` step (FSpec FR-409).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +126,10 @@ pub struct PlanRunOutcome {
     pub initial: Option<String>,
     /// The seed in force.
     pub seed: u64,
+    /// The model-based trace bound, when supplied.
+    pub max_trace_length: Option<u64>,
+    /// The model-based value-size bound, when supplied.
+    pub max_value_bits: Option<u64>,
     /// One disposition per node in source order; `None` when `execute` was
     /// `false`.
     pub dispositions: Option<Vec<StepDisposition>>,
@@ -186,7 +190,12 @@ impl PlanRunOutcome {
             "plan": self.plan,
             "document": self.document,
             "status": self.status(),
-            "inputs": {"initial": self.initial, "seed": self.seed},
+            "inputs": {
+                "initial": self.initial,
+                "seed": self.seed,
+                "max_trace_length": self.max_trace_length,
+                "max_value_bits": self.max_value_bits,
+            },
             "dispositions": dispositions,
             "failed_steps": self.failed_steps(),
         })
@@ -325,6 +334,8 @@ mod tests {
             document: None,
             initial: None,
             seed: 7,
+            max_trace_length: None,
+            max_value_bits: None,
             dispositions,
         }
     }
@@ -365,7 +376,15 @@ mod tests {
         assert_eq!(document["format"], "filament.verification-plan-outcome/v1");
         assert_eq!(document["status"], "failed");
         assert_eq!(document["failed_steps"], json!(["safe"]));
-        assert_eq!(document["inputs"], json!({"initial": null, "seed": 7}));
+        assert_eq!(
+            document["inputs"],
+            json!({
+                "initial": null,
+                "seed": 7,
+                "max_trace_length": null,
+                "max_value_bits": null
+            })
+        );
         assert_eq!(document["dispositions"]["safe"]["evidence"], "refutation");
         assert_eq!(document["dispositions"]["tested"]["evidence"], "tested");
         assert_eq!(document["dispositions"]["timely"]["status"], "blocked");

@@ -24,8 +24,7 @@ pub struct ModelOperationCase {
 }
 
 /// Resource limits that can stop operation-reachability exploration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelOperationCoverageLimit {
     /// Reachability exploration exhausted its state budget.
     States,
@@ -35,6 +34,23 @@ pub enum ModelOperationCoverageLimit {
     Candidates,
     /// Reachability exploration was cancelled by its caller.
     Cancelled,
+    /// A scalar accounting counter stopped generation before exploration.
+    Accounting(filament_exact::LimitKind),
+}
+
+impl Serialize for ModelOperationCoverageLimit {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match self {
+            Self::States => "states",
+            Self::Transitions => "transitions",
+            Self::Candidates => "candidates",
+            Self::Cancelled => "cancelled",
+            Self::Accounting(counter) => counter.as_str(),
+        })
+    }
 }
 
 /// Reachability information for one declared operation, obtained from the
@@ -45,18 +61,25 @@ pub enum ModelOperationCoverageReason {
     Unreachable,
     /// No state within the trace bound enables the operation, but exploration
     /// did not exhaust the reachable graph beyond that horizon.
-    UnreachableWithinBound,
+    UnreachableWithinBound {
+        /// Request bounds that limited the completed reachability search,
+        /// in FR-190 order.
+        bounds: Vec<String>,
+    },
     /// An enabling state was reached, but no evaluated case applied the
     /// operation. The path is the shortest invocation prefix to that state.
     NotGenerated {
         /// Shortest invocation prefix from an initial state to an enabling
-        /// state, in operation identity form.
+        /// state. Each entry is a canonical FR-181 transition identity text,
+        /// retaining the receiver and arguments as well as the operation.
         enabled_at: Vec<String>,
     },
     /// Exploration stopped before deciding operation reachability.
     Undetermined {
         /// The exploration limit that stopped the decision.
         limit: ModelOperationCoverageLimit,
+        /// The configured limit value used by this exploration.
+        value: u128,
     },
 }
 
@@ -103,16 +126,24 @@ impl Serialize for ModelOperationCoverageEntry {
                     ModelOperationCoverageReason::Unreachable => {
                         entry.serialize_entry("reason", "unreachable")?;
                     }
-                    ModelOperationCoverageReason::UnreachableWithinBound => {
+                    ModelOperationCoverageReason::UnreachableWithinBound { bounds } => {
                         entry.serialize_entry("reason", "unreachable-within-bound")?;
+                        entry.serialize_entry("bounds", bounds)?;
                     }
                     ModelOperationCoverageReason::NotGenerated { enabled_at } => {
                         entry.serialize_entry("reason", "not-generated")?;
                         entry.serialize_entry("enabled_at", enabled_at)?;
                     }
-                    ModelOperationCoverageReason::Undetermined { limit } => {
+                    ModelOperationCoverageReason::Undetermined { limit, value } => {
                         entry.serialize_entry("reason", "undetermined")?;
                         entry.serialize_entry("limit", limit)?;
+                        entry.serialize_entry("value", value)?;
+                        if let ModelOperationCoverageLimit::Accounting(counter) = limit {
+                            entry.serialize_entry(
+                                "setting",
+                                &format!("accounting.{}", counter.as_str()),
+                            )?;
+                        }
                     }
                 }
             }
@@ -232,7 +263,7 @@ pub fn model_operation_coverage(
                     ModelOperationCoverageReason::Unreachable => {
                         ModelOperationCoverageReasonKind::Unreachable
                     }
-                    ModelOperationCoverageReason::UnreachableWithinBound => {
+                    ModelOperationCoverageReason::UnreachableWithinBound { .. } => {
                         ModelOperationCoverageReasonKind::UnreachableWithinBound
                     }
                     ModelOperationCoverageReason::NotGenerated { .. } => {

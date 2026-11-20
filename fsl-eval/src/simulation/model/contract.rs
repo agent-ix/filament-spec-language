@@ -31,7 +31,7 @@ use fsl_semantics::model::state::{ModelState, StateObject};
 use super::application::OperationRef;
 use super::domain::{Domain, Odometer};
 use super::frames;
-use super::walk::{rows_of, walk_of, Applied};
+use super::walk::{Applied, rows_of, walk_of};
 use super::{ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
 use crate::simulation::expansion::ExpansionStop;
 
@@ -303,6 +303,8 @@ pub struct PreconditionCase {
     pub receiver: ObjectReference,
     /// The arguments, in parameter order.
     pub arguments: Vec<Value>,
+    /// Whether the precondition decided true.
+    pub satisfied: bool,
     /// The evaluation that decided no Boolean; `None` when the clause
     /// decided one.
     pub undecided: Option<ClauseOutcome>,
@@ -614,6 +616,7 @@ impl<'a> ModelSystem<'a> {
                     transition: case.transition,
                     receiver: row.reference.clone(),
                     arguments: case.arguments,
+                    satisfied: case.satisfied,
                     undecided: case.undecided,
                 });
             }

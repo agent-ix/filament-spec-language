@@ -8,8 +8,8 @@ use filament_exact::{Outcome, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::model::observation::{AdmissionUsage, AdmittedObservations, SelfKind};
 
-use super::walk::{exhausted, rows_of, stop, Row, Walk};
-use super::{ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
+use super::walk::{Row, Walk, exhausted, rows_of, stop};
+use super::{BROKEN, ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::value::ClauseSetOutcome;
 
@@ -80,7 +80,7 @@ pub(super) fn invariant_observations(
 /// of the state whose most-specific type conforms to the clause's context, in
 /// ascending reference-key order (FR-120 "Invariants").
 pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, ExpansionStop> {
-    evaluate_invariants(walk, false)
+    evaluate_invariants(walk, false, None)
 }
 
 /// [`invariants`] for a state evaluated for its findings alone (FR-634
@@ -88,7 +88,16 @@ pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, Expan
 /// invariant undetermined for that object, with the broken evaluation's
 /// cause, and the other clauses and objects are still evaluated.
 pub(super) fn invariants_alone(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, ExpansionStop> {
-    evaluate_invariants(walk, true)
+    evaluate_invariants(walk, true, None)
+}
+
+/// [`invariants_alone`] for one selected invariant, so a named model-based
+/// oracle does not evaluate unrelated clauses.
+pub(super) fn invariant_alone(
+    walk: &Walk<'_, '_>,
+    name: &str,
+) -> Result<Vec<ModelFinding>, ExpansionStop> {
+    evaluate_invariants(walk, true, Some(name))
 }
 
 /// The rows of `walk` in ascending reference order.
@@ -101,11 +110,15 @@ fn reference_order(rows: &[Row]) -> Vec<usize> {
 fn evaluate_invariants(
     walk: &Walk<'_, '_>,
     alone: bool,
+    selected: Option<&str>,
 ) -> Result<Vec<ModelFinding>, ExpansionStop> {
     let system = walk.system;
     let order = reference_order(&walk.rows);
     let mut findings = Vec::new();
     for clause in &system.clauses.invariants {
+        if selected.is_some_and(|name| clause.name != name) {
+            continue;
+        }
         for row in &order {
             let reference = &walk.rows[*row].reference;
             if !system

@@ -20,13 +20,13 @@ use fsl_semantics::model::observation::{AnchorKind, SelectedAnchor};
 use fsl_semantics::model::state::ModelState;
 use quire_canonical::Limits as CanonicalLimits;
 
-use super::{pre_observations, text_limits, text_of, transition_of, FrameRefused, Run};
+use super::{FrameRefused, Run, pre_observations, text_limits, text_of, transition_of};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
-use crate::simulation::model::contracts::{conjunction, Conjunction};
+use crate::simulation::model::contracts::{Conjunction, conjunction};
 use crate::simulation::model::domain::{Domain, Odometer};
 use crate::simulation::model::encode::{declaration_text, reference_enc};
 use crate::simulation::model::walk::{expand_state, rows_of, stop, walk_of};
-use crate::simulation::model::{ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
+use crate::simulation::model::{BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem};
 
 /// One abstract operation applied to `receiver` at `pre`, judged against the
 /// candidate post-state `post`.
@@ -183,9 +183,7 @@ impl ModelSystem<'_> {
             let parameters = application.declaration.parameters();
             let domains = parameters
                 .iter()
-                .map(|(_, value_type)| {
-                    Domain::of(value_type, &references, self.types, &self.record_orders)
-                })
+                .map(|(_, value_type)| self.value_domain(value_type, &references))
                 .collect::<Option<Vec<_>>>()
                 .ok_or_else(|| stop(BROKEN))?;
             let mut arguments = Odometer::new(domains.iter().map(Domain::len).collect());
@@ -233,7 +231,8 @@ impl ModelSystem<'_> {
             .into_iter()
             .map(|row| row.reference)
             .collect();
-        let domain = Domain::of(result_type, &references, self.types, &self.record_orders)
+        let domain = self
+            .value_domain(result_type, &references)
             .ok_or_else(|| stop(BROKEN))?;
         if domain.len() > super::RESULT_ORDER_LIMIT {
             return Err(stop(crate::simulation::model::EXHAUSTED));
@@ -288,7 +287,8 @@ impl ModelSystem<'_> {
             .zip(request.arguments)
             .map(|((_, value_type), supplied)| match supplied {
                 Some(_) => Ok(None),
-                None => Domain::of(value_type, &references, self.types, &self.record_orders)
+                None => self
+                    .value_domain(value_type, &references)
                     .map(Some)
                     .ok_or_else(|| stop(BROKEN)),
             })
@@ -367,7 +367,7 @@ impl Run<'_, '_, '_> {
         })? {
             Conjunction::True => {}
             Conjunction::False(clause) => {
-                return Ok(Judgement::Rejected(Rejection::Precondition { clause }))
+                return Ok(Judgement::Rejected(Rejection::Precondition { clause }));
             }
             Conjunction::Undecided(undecided) => return Ok(Judgement::Undecided(undecided)),
         }
