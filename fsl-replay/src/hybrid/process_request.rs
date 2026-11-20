@@ -14,6 +14,7 @@ use fsl_package::{read_hybrids, HybridRead, ReadHybridClaim};
 use quire_canonical::Limits;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -120,9 +121,18 @@ pub struct HybridProcessItem {
     extent: Value,
     candidates: Value,
     budget: SolverBudget,
+    options: BTreeMap<String, String>,
 }
 
 impl HybridProcessItem {
+    /// The item's FSpec FR-331 `options`, names and string values as the
+    /// analyze request wrote them. An item with none writes no member.
+    #[must_use]
+    pub fn with_options(mut self, options: BTreeMap<String, String>) -> Self {
+        self.options = options;
+        self
+    }
+
     /// Construct an item from the claim locus, extent and negotiated
     /// candidates already prepared by the request writer.
     /// The claim's node uses document-held indices, never node-local operand slots.
@@ -139,6 +149,7 @@ impl HybridProcessItem {
             extent,
             candidates,
             budget,
+            options: BTreeMap::new(),
         }
     }
 }
@@ -193,6 +204,8 @@ struct ProcessRequestItemWire {
     requirements: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hybrid: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    options: BTreeMap<String, String>,
 }
 
 impl HybridProcessRequest {
@@ -224,6 +237,7 @@ impl HybridProcessRequest {
                 candidates: item.candidates.clone(),
                 requirements: vec!["hybrid-dynamics".to_owned()],
                 hybrid,
+                options: item.options.clone(),
             });
         }
         if wire_items.is_empty() {
@@ -342,6 +356,7 @@ impl HybridProcessRequest {
                 ),
                 claim: claim.clone(),
                 budget,
+                options: item.options.clone(),
             });
         }
         Ok(AdmittedHybridProcessRequest {
@@ -424,6 +439,7 @@ pub struct AdmittedHybridProcessItem {
     request_index: RequestIndex,
     claim: ReadHybridClaim,
     budget: SolverBudget,
+    options: BTreeMap<String, String>,
 }
 
 impl AdmittedHybridProcessItem {
@@ -440,6 +456,11 @@ impl AdmittedHybridProcessItem {
     /// The limits the request supplied; absent fields remain unset.
     pub fn budget(&self) -> SolverBudget {
         self.budget
+    }
+
+    /// The item's FSpec FR-331 `options`.
+    pub fn options(&self) -> &BTreeMap<String, String> {
+        &self.options
     }
 }
 

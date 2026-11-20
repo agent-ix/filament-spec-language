@@ -954,6 +954,7 @@ fn work<'a>(
                 form,
                 limits.accounting.work_units,
                 limits.deadline,
+                engines.options().provider_limits,
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
