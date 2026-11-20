@@ -1536,6 +1536,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             package_program: Some(package),
             memory,
             channel_message_bound: None,
+            delivery_reads: None,
+            message_reads: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,

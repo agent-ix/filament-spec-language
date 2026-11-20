@@ -1085,6 +1085,8 @@ impl<'a> Program<'a> {
             root: package.root,
             controls,
             attempts,
+            recommendations: BTreeMap::new(),
+            related: BTreeMap::new(),
             joins,
             loops: BTreeMap::new(),
             choices: BTreeMap::new(),

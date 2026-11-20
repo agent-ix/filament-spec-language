@@ -98,8 +98,8 @@ pub fn over_reference(
             _ => None,
         };
     }
-    input.package_protocol(protocol)?;
-    let program = super::PackageProtocolProgram::new(input, protocol, &[]).ok()?;
+    input.evaluator.package_protocol(protocol)?;
+    let program = super::PackageProtocolProgram::new(&input, protocol, &[]).ok()?;
     let ValueType::Reference(object_type) = &program.over_type else {
         return None;
     };

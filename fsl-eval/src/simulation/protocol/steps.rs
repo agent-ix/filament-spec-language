@@ -954,12 +954,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .ok()?;
             let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
             else {
-                return self
-                    .protocol
-                    .relationships
-                    .iter()
-                    .find(|relationship| relationship.key == clause.relationship)
-                    .map(|relationship| relationship.name.clone());
+                return self.protocol.and_then(|protocol| {
+                    protocol
+                        .relationships
+                        .iter()
+                        .find(|relationship| relationship.key == clause.relationship)
+                        .map(|relationship| relationship.name.clone())
+                });
             };
             let holds = state.model.state().extents.iter().any(|extent| {
                 extent.relationship == clause.relationship
@@ -969,12 +970,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .any(|pair| pair.0 == source && pair.1 == target)
             });
             if !holds {
-                return self
-                    .protocol
-                    .relationships
-                    .iter()
-                    .find(|relationship| relationship.key == clause.relationship)
-                    .map(|relationship| relationship.name.clone());
+                return self.protocol.and_then(|protocol| {
+                    protocol
+                        .relationships
+                        .iter()
+                        .find(|relationship| relationship.key == clause.relationship)
+                        .map(|relationship| relationship.name.clone())
+                });
             }
         }
         None
