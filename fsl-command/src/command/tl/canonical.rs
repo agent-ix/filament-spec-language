@@ -76,6 +76,59 @@ impl CheckedExpression {
         Ok(Self { nodes, root })
     }
 
+    /// Normalize an FR-940 reader projection into the same arena used by the
+    /// source route. Reader node indices and source `NodeId`s are independent
+    /// of the printer, so both routes render the exact checked node forms
+    /// through one implementation.
+    pub(super) fn from_projection(
+        projection: &fsl_package::ReaderProtocolProjection,
+    ) -> Result<Self, String> {
+        let root = projection.root();
+        let mut pending = vec![(root, false)];
+        let mut visited = HashSet::new();
+        let mut postorder = Vec::new();
+        while let Some((index, exiting)) = pending.pop() {
+            if exiting {
+                postorder.push(index);
+                continue;
+            }
+            if !visited.insert(index) {
+                continue;
+            }
+            let children = projection
+                .children(index)
+                .ok_or_else(|| "reader projection children are retained".to_owned())?;
+            pending.push((index, true));
+            pending.extend(children.iter().rev().map(|child| (*child, false)));
+        }
+        let indices = postorder
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (*node, index))
+            .collect::<HashMap<_, _>>();
+        let nodes = postorder
+            .iter()
+            .map(|index| {
+                let kind = projection
+                    .kind(*index)
+                    .ok_or_else(|| "reader projection node is retained".to_owned())?
+                    .map_ref(
+                        |child| indices.get(child).copied().unwrap_or(usize::MAX),
+                        Clone::clone,
+                    );
+                let value_type = projection
+                    .value_type(*index)
+                    .ok_or_else(|| "reader projection type is retained".to_owned())?
+                    .clone();
+                Ok(ExpressionNode { kind, value_type })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let root = *indices
+            .get(&projection.root())
+            .ok_or_else(|| "reader projection root is retained".to_owned())?;
+        Ok(Self { nodes, root })
+    }
+
     /// Render one checked condition using the FR-003 expression precedence
     /// rules and declaration keys held by the checked tree.
     ///
