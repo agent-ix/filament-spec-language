@@ -1,0 +1,19 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {"authority": "example", "identity": "ix://example/parts/data/saga-start"},
+  "model": {"identity": "example/parts"},
+  "observation": "current",
+  "anchor": {"kind": "initialization", "name": "start"},
+  "populations": [
+    {"population": "ix://example/parts/jobs", "complete": true, "objects": [
+      {"key": "j1", "type": "ix://example/parts/Job", "fields": {"part": {"integer": "4711"}, "status": {"variant": {"type": "ix://example/parts/PartStatus", "case": "Released"}}, "reworks": {"integer": "0"}}}]},
+    {"population": "ix://example/parts/planning", "complete": true, "objects": [
+      {"key": "p1", "type": "ix://example/parts/PlanningService", "fields": {"open": {"integer": "1"}}}]},
+    {"population": "ix://example/parts/machining", "complete": true, "objects": [
+      {"key": "m1", "type": "ix://example/parts/MachiningStation", "fields": {"reserved": {"boolean": false}, "busy": {"boolean": false}}}]},
+    {"population": "ix://example/parts/inspection", "complete": true, "objects": [
+      {"key": "i1", "type": "ix://example/parts/InspectionStation", "fields": {"queue": {"integer": "0"}}}]},
+    {"population": "ix://example/parts/assembly", "complete": true, "objects": [
+      {"key": "a1", "type": "ix://example/parts/AssemblyStation", "fields": {"reserved": {"boolean": false}}}]}
+  ]
+}
