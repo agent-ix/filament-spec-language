@@ -8285,8 +8285,24 @@ fn check_selected_definition(
     Ok(())
 }
 
+/// The text of the clock argument of the body wrapper of the hyper clause whose
+/// `hyperproperty` node is `hyper` (FR-488 "Clause names and clock bindings").
+pub fn hyper_clock_name<'g>(graph: &'g CheckedGraph, hyper: &NodeKey) -> Option<&'g str> {
+    let wrapper = hyper_wrapper(graph, hyper).ok()?;
+    match graph.semantic_graph().node(wrapper)?.body() {
+        BodyTerm::Application(application) => match application.arguments.get(1)? {
+            MemberTerm::Leaf(LeafTerm::Literal {
+                value: LiteralValue::Text(name),
+                ..
+            }) => Some(name.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The wrapper node a hyper clause's `body` member references.
-fn hyper_wrapper(graph: &CheckedGraph, hyper: &NodeKey) -> Result<NodeKey, EmitRefusal> {
+pub fn hyper_wrapper(graph: &CheckedGraph, hyper: &NodeKey) -> Result<NodeKey, EmitRefusal> {
     let hyper_node = graph
         .semantic_graph()
         .node(hyper.clone())
@@ -8890,7 +8906,6 @@ fn temporal_binding_rows(
         // FSpec FR-322 "Temporal clause names": the body wrapper has no name
         // row; the clause is named on its `hyperproperty` node's
         // `claim_names` row.
-        let wrapper = hyper_wrapper(graph, occurrence.node())?;
         let profile = hyper.profile();
         if !matches!(
             profile,
@@ -8920,35 +8935,27 @@ fn temporal_binding_rows(
         };
         check_selected_definition(&source, span, profile, selection)?;
         let clock = &selection.clock;
-        let clock_name = graph
-            .semantic_graph()
-            .node(wrapper.clone())
-            .and_then(|node| match node.body() {
-                BodyTerm::Application(application) => application.arguments.get(1),
-                _ => None,
-            })
-            .and_then(|argument| match argument {
-                MemberTerm::Leaf(LeafTerm::Literal {
-                    value: LiteralValue::Text(name),
-                    ..
-                }) => Some(name.as_str()),
-                _ => None,
-            })
+        let clock_name = hyper_clock_name(graph, occurrence.node())
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         validate_temporal_clock(&source, span, clock_name, clock)?;
+        // FSpec FR-322 "Hyper clause rows": the rows are keyed on the
+        // `hyperproperty` node at its `claim` occurrence, one per quantifier
+        // in quantifier order, never on the body wrapper.
         let declaration = emitted_node_ids
-            .get(&wrapper)
+            .get(occurrence.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let row = filament_contract_model::TemporalBinding {
-            declaration,
-            occurrence: occurrence.origin().ordinal(),
-            clock_name: clock_name.into(),
-            clock: clock.clone(),
-            trace: None,
-        };
-        keyed.rows.push((wrapper.clone(), row.clone()));
-        rows.push(row);
+        for quantifier in hyper.quantifiers() {
+            let row = filament_contract_model::TemporalBinding {
+                declaration: declaration.clone(),
+                occurrence: occurrence.origin().ordinal(),
+                clock_name: clock_name.into(),
+                clock: clock.clone(),
+                trace: Some(quantifier.variable.as_str().into()),
+            };
+            keyed.rows.push((occurrence.node().clone(), row.clone()));
+            rows.push(row);
+        }
     }
 
     // FSpec FR-464: an `await` control reads a clock, so it gets one binding

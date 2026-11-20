@@ -2930,3 +2930,137 @@ fn copy_tree(from: &Path, to: &Path) {
         std::fs::write(target, contents).unwrap();
     }
 }
+
+/// A handoff request for one unit over the config-version model that declares `body` after
+/// its profiles; no library, with the clock selections `selections`.
+fn hyper_request(dir: &Path, body: &str, selections: Vec<ClockSelection>) -> CheckedHandoffRequest {
+    let source = dir.join("unit.native");
+    std::fs::write(
+        &source,
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.model.complete/v1\";\n\
+             profile i = \"filament.temporal.infinite-trace/v1\";\n\
+             profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+             model V = \"example/config-version\";\n{body}\n"
+        ),
+    )
+    .unwrap();
+    CheckedHandoffRequest {
+        emit: Request {
+            source,
+            package_name: "r".into(),
+            models: vec![PathBuf::from(
+                "examples/config-version/model.semantic-ir.json",
+            )],
+            libraries: Vec::new(),
+            execution_points: None,
+            temporal_selections: selections,
+            out: None,
+        },
+        corpus: Corpus::None,
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
+    }
+}
+
+/// `body` written over [`hyper_request`], compiled back, and its sidecar.
+fn hyper_handoff(
+    body: &str,
+    selections: Vec<ClockSelection>,
+) -> (
+    tempfile::TempDir,
+    Value,
+    fsl_command::checked_handoff::CompiledHandoff,
+) {
+    let holder = tempfile::tempdir().unwrap();
+    let out = holder.path().join("handoff");
+    write(&hyper_request(holder.path(), body, selections), &out)
+        .expect("the handoff of a unit with a hyper clause is written");
+    let sidecar = serde_json::from_slice(&tree(&out)["selection.json"]).unwrap();
+    let handoff = compile(&out).expect("the directory compiles back");
+    Selection::read(&tree(&out)["selection.json"])
+        .unwrap()
+        .check(handoff.admitted())
+        .expect("the admitted package passes its sidecar");
+    (holder, sidecar, handoff)
+}
+
+const BOUNDED: &str =
+    "temporal Bounded using i over (view: V::ConfigVersion) clock \"model-steps\" \
+     on origin { always holds(view.versionNumber = view.versionNumber) }\n";
+
+/// FR-517-AC-25 (TC-3128): the sidecar counts a hyper clause's body wrapper
+/// with the temporal clauses and its `hyperproperty` node, so the handoff
+/// compiles back and passes `Selection::check`, and a sidecar whose
+/// `temporal/temporal_clause` count is 1 is refused on `package.nodes`.
+#[trace("TC-3128", "FR-517-AC-25")]
+#[test]
+fn a_handoff_of_a_unit_with_a_hyper_clause_passes_its_selection_check() {
+    let body = format!(
+        "{BOUNDED}hyper Equal using i over behaviours (c: V::ConfigVersion) \
+         forall trace a of V forall trace b of V \
+         {{ always holds(c.versionNumber @ a = c.versionNumber @ b) }}"
+    );
+    let (_holder, sidecar, handoff) = hyper_handoff(&body, Vec::new());
+    let counts = &sidecar["package"]["node_counts"];
+    assert_eq!(counts["temporal/temporal_clause"], 2);
+    assert_eq!(counts["claim/hyperproperty"], 1);
+
+    let mut edited = sidecar.clone();
+    edited["package"]["node_counts"]["temporal/temporal_clause"] = 1.into();
+    let refusal = Selection::read(&serde_json::to_vec(&edited).unwrap())
+        .unwrap()
+        .check(handoff.admitted())
+        .expect_err("the count of one is refused");
+    assert_eq!(refusal.axis, SelectionAxis::PackageNodes);
+}
+
+/// FR-517-AC-26 (TC-3128): a hyper clause under the event-position profile
+/// writes one binding row per quantifier on its `hyperproperty` node, the
+/// sidecar expects them, and the handoff passes `Selection::check`.
+#[trace("TC-3128", "FR-517-AC-26")]
+#[test]
+fn a_clocked_hyper_clause_handoff_carries_one_binding_row_per_quantifier() {
+    let body = "hyper Ordered using t over behaviours (c: V::ConfigVersion) \
+                forall trace a of V forall trace b of V \
+                { always [0, 3] holds(c.versionNumber @ a = c.versionNumber @ b) }";
+    let clock = ClockConfiguration::EventPosition {
+        sequence_authority: "events-authority".into(),
+    };
+    let (_holder, sidecar, handoff) = hyper_handoff(
+        body,
+        vec![ClockSelection {
+            clause: "Ordered".into(),
+            clock: clock.clone(),
+        }],
+    );
+    assert_eq!(sidecar["package"]["node_counts"]["claim/hyperproperty"], 1);
+    assert_eq!(
+        sidecar["hypers"][0]["traces"],
+        serde_json::json!(["a", "b"])
+    );
+
+    let rows = handoff
+        .admitted()
+        .temporal_bindings()
+        .expect("binding rows");
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let hyperproperty = serde_json::to_value(&rows[0].declaration).unwrap();
+    assert_eq!(hyperproperty, sidecar["hypers"][0]["node"]);
+    let traces: Vec<Option<&str>> = rows.iter().map(|row| row.trace.as_deref()).collect();
+    assert_eq!(traces, [Some("a"), Some("b")]);
+    for row in rows {
+        assert_eq!(row.declaration, rows[0].declaration);
+        assert_eq!(row.clock, clock);
+        assert_eq!(row.clock_name.as_ref(), "model-steps");
+    }
+
+    // A sidecar that expects another sequence authority is refused on it.
+    let mut edited = sidecar.clone();
+    edited["hypers"][0]["binding"]["clock"]["sequence_authority"] = "other".into();
+    let refusal = Selection::read(&serde_json::to_vec(&edited).unwrap())
+        .unwrap()
+        .check(handoff.admitted())
+        .expect_err("another sequence authority is refused");
+    assert_eq!(refusal.axis, SelectionAxis::ClockSequenceAuthority);
+}
