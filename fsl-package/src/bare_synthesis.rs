@@ -2,9 +2,7 @@
 //! FR-1039: value synthesis terms read from an admitted package and its
 //! `claim_names` rows, without source recompilation.
 
-use filament_contract_model::{
-    CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
-};
+use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedTerm};
 use filament_exact::{Integer, IntegerInterval, NodeKey};
 use filament_semantic_value::location::ExpressionOwner;
 
@@ -121,7 +119,7 @@ impl BarePackage<'_> {
         let upper =
             integer_binding(&domain.body, "max").ok_or_else(|| malformed(package, declaration))?;
         let domain =
-            IntegerInterval::new(lower, upper).ok_or_else(|| malformed(package, declaration))?;
+            IntegerInterval::new(lower, upper).map_err(|_| malformed(package, declaration))?;
         let satisfies_key = graph
             .key(satisfies_id)
             .map_err(|_| fault("bare-package-has-structural-keys"))?;
