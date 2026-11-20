@@ -129,3 +129,31 @@ Confined logs are `.agent/qsl-2076-disposition-failing-names.log` and
 unqualified `--exact` command selected zero tests and supplies no pass evidence.
 No strict pending case was reprobed. This checkpoint awaits a confined review
 of the corrections and unresolved production-vector contract.
+
+## Reviewer-directed token mutation check
+
+The confined correction now retains the last significant original CST token
+span for each production occurrence and requires its end to match the
+production's end. The boundary vector replaces that whole lexeme with
+same-width spaces and a final `#`, preserving the existing strict
+boundary-covering diagnostic assertion. No prefix exception, production
+whitelist, parser change or additional original-source parse was introduced.
+
+Only the changed qualified production-vector function ran once with the same
+target, profiles, single thread and required skips. It exited **101** after
+0.94 seconds; the warm compile took 2.16 seconds. Exact local receipt:
+`.agent/qsl-2076-vector-fix.log`. No other test or gate followed.
+
+The actual failure was `CaseArm`. Its generated source was:
+
+```fsl
+language "ix:native" edition "1-draft";
+profile Complete = "filament.value.complete/v1";
+union Shape { Empty, Circle(Integer), Rect(Integer, Integer), } function area using Complete(s: Shape): Integer pure { case s { Circle(r): r# Shape::Rect(w, h): w * h; Empty: 0; } }
+```
+
+The actual diagnostic was `invalid_syntax` / `unexpected-token`, byte span
+`[231, 236)`, message `expected quoted string`, at the following `Shape`.
+Replacing the one-byte arm terminator yielded adjacent `r#`; this is the
+retained failure context, not a new parser bug claim. The strict location
+assertion remains unchanged. No additional trial change or runtime was made.

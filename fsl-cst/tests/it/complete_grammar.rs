@@ -552,9 +552,26 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
                 "half-open CST boundary for {:?}",
                 node.production()
             );
-            occurrences
-                .entry(node.production())
-                .or_insert_with(|| (id, text.clone(), span));
+            occurrences.entry(node.production()).or_insert_with(|| {
+                let last = parsed
+                    .cst()
+                    .tokens()
+                    .iter()
+                    .rev()
+                    .find(|token| {
+                        token.class() == TokenClass::Token
+                            && token.span().start >= span.start
+                            && token.span().end <= span.end
+                    })
+                    .expect("a production occurrence has a significant token");
+                assert_eq!(
+                    last.span().end,
+                    span.end,
+                    "{id}: {:?} must end at its last significant token",
+                    node.production()
+                );
+                (id, text.clone(), span, last.span())
+            });
         }
     }
 
@@ -571,7 +588,7 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
     assert!(missing.is_empty(), "uncovered productions: {missing:?}");
 
     for production in core {
-        let (id, source, span) = occurrences.get(production).unwrap();
+        let (id, source, span, last_token) = occurrences.get(production).unwrap();
         assert!(span.start < source.len(), "{production:?} must own a token");
         let mut invalid = source.clone().into_bytes();
         invalid[span.start] = b'#';
@@ -586,6 +603,7 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
 
         let boundary = span.end - 1;
         let mut invalid = source.clone().into_bytes();
+        invalid[last_token.start..last_token.end].fill(b' ');
         invalid[boundary] = b'#';
         let invalid = String::from_utf8(invalid).unwrap();
         let parsed = parse(id, &invalid);
@@ -598,7 +616,8 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
                 diagnostic.byte_span().unwrap().start <= boundary
                     && boundary < diagnostic.byte_span().unwrap().end
             }),
-            "{production:?} boundary vector must retain a diagnostic covering its locus"
+            "{production:?} boundary vector must retain a diagnostic covering its locus: {invalid}\n{:?}",
+            parsed.diagnostics()
         );
     }
 }
