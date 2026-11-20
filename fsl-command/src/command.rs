@@ -2540,6 +2540,12 @@ fn compile_outcome_inner(
             }
             return Ok(outcome);
         }
+        if request.models.is_none() {
+            return Err(RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: "is required for a complete-V1 program".to_owned(),
+            });
+        }
         let mut outcome = complete(
             &request,
             &mut intake,
