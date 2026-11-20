@@ -493,8 +493,8 @@ impl ProviderLimit {
     }
 }
 
-/// A decision procedure outside FSL that decides `value-validity` items over
-/// unbounded `Integer` operands.
+/// A decision procedure outside FSL for items of its registered capability
+/// kinds (FR-968).
 pub trait ExternalProvider: std::fmt::Debug + Send + Sync {
     /// Decide every item of `request`, stopping early when `cancel` fires:
     /// one verdict per item, in [`ProviderRequest::items`] order. An item
@@ -503,14 +503,33 @@ pub trait ExternalProvider: std::fmt::Debug + Send + Sync {
     fn settle(&self, request: &ProviderRequest<'_>, cancel: &Cancel) -> Vec<ProviderVerdict>;
 }
 
-/// `Engine::external` was given a descriptor that does not advertise
-/// `value-validity` in the `unbounded` mode.
+/// Why an external provider descriptor cannot be registered.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("{backend:?} does not advertise value-validity in the unbounded mode")]
-pub struct NotUnbounded {
+pub enum ProviderRegistrationCause {
+    /// The descriptor advertises no `(kind, mode)` pair.
+    #[error("absent-kind")]
+    AbsentKind,
+    /// The descriptor advertises value validity only for bounded operands.
+    #[error("value-validity-not-unbounded (modes: {modes:?})")]
+    ValueValidityNotUnbounded {
+        /// The FR-290 wire spellings advertised for `value-validity`.
+        modes: Vec<String>,
+    },
+}
+
+/// `Engine::external` could not register a provider descriptor.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{backend:?}: {cause}")]
+pub struct ProviderRegistrationRefusal {
     /// The descriptor's `BackendId`.
     pub backend: BackendId,
+    /// The descriptor rule that prevented registration.
+    pub cause: ProviderRegistrationCause,
 }
+
+/// Compatibility name for the previous, narrower registration refusal.
+#[deprecated(note = "use ProviderRegistrationRefusal")]
+pub type NotUnbounded = ProviderRegistrationRefusal;
 
 /// What the arm reports for one provider item.
 pub(crate) enum ProviderReport {
