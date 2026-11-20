@@ -17,7 +17,7 @@ use crate::checked_v2::{
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
-const FINITE_DET: &str = "hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
+const FINITE_DET: &str = "hyper Det using t over t in Obs bounded 3 forall trace a forall trace b \
     { (a.inp = b.inp) implies (a.out = b.out) }";
 
 /// `a` and `b` read the same version number.
