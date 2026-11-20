@@ -187,37 +187,6 @@ fn optional_note_source(argument: &str) -> String {
     )
 }
 
-fn none_literal_ids(wire: &Value) -> Vec<Value> {
-    wire["semantic_graph"]["nodes"]
-        .as_array()
-        .expect("semantic nodes")
-        .iter()
-        .filter(|node| {
-            node["semantic_form"] == "literal"
-                && node["body"]["value_kind"] == "none"
-                && node["body"]["value"].is_null()
-        })
-        .map(|node| node["node_id"].clone())
-        .collect()
-}
-
-fn references_any_target(value: &Value, targets: &[Value]) -> bool {
-    match value {
-        Value::Array(values) => values
-            .iter()
-            .any(|value| references_any_target(value, targets)),
-        Value::Object(fields) => {
-            fields
-                .get("target")
-                .is_some_and(|target| targets.contains(target))
-                || fields
-                    .values()
-                    .any(|value| references_any_target(value, targets))
-        }
-        _ => false,
-    }
-}
-
 fn capture_dispatch_decisions(checked: &CheckedUnit) -> Vec<CapturedDecision> {
     let graph = checked.package().graph();
     graph
@@ -555,8 +524,6 @@ fn an_omitted_optional_parameter_matches_an_explicit_absent_call() {
         omitted_wire["checked_term_data"], explicit_wire["checked_term_data"],
         "both calls produce the same checked term data"
     );
-    let none_ids = none_literal_ids(&omitted_wire);
-    assert_eq!(none_ids.len(), 1, "one normalized none literal is emitted");
     let dispatch_calls: Vec<_> = omitted_wire["semantic_graph"]["nodes"]
         .as_array()
         .expect("semantic nodes")
@@ -564,10 +531,21 @@ fn an_omitted_optional_parameter_matches_an_explicit_absent_call() {
         .filter(|node| node["semantic_form"] == "call")
         .collect();
     assert_eq!(dispatch_calls.len(), 1, "one dispatch call is emitted");
+    let arguments = dispatch_calls[0]["body"]["arguments"]
+        .as_array()
+        .expect("dispatch call arguments");
+    assert_eq!(arguments.len(), 2, "receiver and optional argument");
+    let normalized_absent_target = &arguments[1]["target"];
+    let normalized_absent_path = normalized_absent_target["path"]
+        .as_array()
+        .expect("normalized absent target path");
     assert!(
-        references_any_target(dispatch_calls[0], &none_ids),
-        "dispatch call {:#}; none literal ids {none_ids:#?}",
-        dispatch_calls[0]
+        arguments[1]["term"] == "reference"
+            && normalized_absent_path.iter().any(|part| part == "value")
+            && normalized_absent_path.iter().any(|part| part == "literal")
+            && normalized_absent_path.iter().any(|part| part == "none"),
+        "second dispatch argument is the normalized none literal: {:#}",
+        arguments[1]
     );
 }
 
