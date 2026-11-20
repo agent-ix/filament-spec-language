@@ -364,35 +364,35 @@ temporal Boundary using tt over (c: M::Call) clock \"model-time\" on origin {{ {
         checked_verdict(&world, holds);
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     fn open_lower_bound_excludes_the_boundary_instant() {
         eventual("(1 ms, 3 ms]", 2, true);
         eventual("(1 ms, 3 ms]", 1, false);
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     fn closed_lower_bound_includes_the_boundary_instant() {
         eventual("[1 ms, 3 ms]", 1, true);
         eventual("[1 ms, 3 ms]", 0, false);
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     fn open_upper_bound_excludes_the_boundary_instant() {
         eventual("[1 ms, 3 ms)", 2, true);
         eventual("[1 ms, 3 ms)", 3, false);
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     fn closed_upper_bound_includes_the_boundary_instant() {
         eventual("[1 ms, 3 ms]", 3, true);
         eventual("[1 ms, 3 ms]", 4, false);
     }
 
-    #[trace("FR-242-AC-2", "FR-234-AC-3", "FR-237-AC-1")]
+    #[trace("FR-242-AC-2", "FR-234-AC-3", "FR-237")]
     #[test]
     fn punctual_bound_requires_the_exact_instant() {
         eventual("[2 ms, 2 ms]", 2, true);
@@ -400,7 +400,7 @@ temporal Boundary using tt over (c: M::Call) clock \"model-time\" on origin {{ {
         eventual("[2 ms, 2 ms]", 3, false);
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     fn always_with_each_admitted_bound_kind() {
         for (interval, outside) in [
@@ -450,7 +450,7 @@ temporal NestedIntervals using tt over (c: M::Call) clock \"model-time\" on orig
         )
     }
 
-    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[trace("FR-242", "FR-234", "FR-237")]
     #[test]
     #[ignore = "QSL-2689: EN-6 faults admitting the nested-interval witness"]
     fn nested_until_with_inner_and_outer_bounds() {
@@ -531,7 +531,7 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
         }
     }
 
-    #[trace("FR-1034", "FR-242", "FR-237-AC-1")]
+    #[trace("FR-1034", "FR-242", "FR-237")]
     #[test]
     #[ignore = "QSL-2689: EN-6 faults admitting the unbounded pulse witness"]
     fn unbounded_upper_bound_matches_the_actual_untimed_checker() {
