@@ -2,6 +2,7 @@
 //! Integration tests of the lifecycle conformance matrix.
 
 mod analyze_row;
+mod catalog_coverage;
 mod execute_row;
 mod front_end_rows;
 mod fspec_vectors;
