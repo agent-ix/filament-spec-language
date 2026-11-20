@@ -322,12 +322,15 @@ fn contract_provider(
     fsl_analyze::analyze::Engine,
     std::sync::Arc<Mutex<Vec<Value>>>,
 ) {
-    use fsl_semantics::check::Capability::OperationContract;
+    use fsl_semantics::check::Capability::{OperationContract, ValueValidity};
     let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
     let engine = fsl_analyze::analyze::Engine::external(
         advertising(
             "fsl.test-contract",
-            &[(OperationContract, fsl_route::Mode::Unbounded)],
+            &[
+                (OperationContract, fsl_route::Mode::Unbounded),
+                (ValueValidity, fsl_route::Mode::Unbounded),
+            ],
         ),
         fsl_analyze::analyze::BackendTool::new("test-contract", "1").expect("a tool"),
         Box::new(Answering {
