@@ -51,6 +51,8 @@ use crate::fill::{
 };
 use crate::model_settle::{envelope_at, protocol_anchor, request};
 
+mod replay_boundary_cases;
+
 /// A replay that reads no atom: the deadlock-freedom item has none.
 const NO_ATOMS: Letters = Letters { atom: |_| None };
 
