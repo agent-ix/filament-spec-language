@@ -1,0 +1,119 @@
+---
+type: reference
+---
+# Diagnostic producer validation
+
+QSL-2079 adds 32 active public-input producer test groups in
+`tests/it/error_producer_inputs.rs`. Their focused authoring runs passed.
+Four strict functions remain ignored under implementation owners; they do
+not count as passing coverage. No final component gate has run yet.
+
+The tests use real source, request files, host edits, checked declarations,
+model documents, observation provisions and replay inputs. They assert the
+owning stage's typed result, code and cause where exposed, along with the
+specified source or document context. They do not construct diagnostics to
+make a code reachable. Bundle and model causes retain their own types rather
+than being converted into `CompleteCause`.
+
+| Behavior exercised | Public producer |
+| --- | --- |
+| Syntax, declaration forms, source identity and UTF-8 | CST parser and source preflight |
+| Original edit predecessor, character ranges, foreign nodes and document requests | Editor and CST host entries |
+| Cancellation and source/token/node/work limits | Parser and lifecycle entries |
+| Missing definitions, cycles, facets, required capabilities, authority conflicts and bundle budgets | Definition catalogue and bundle linking |
+| Request I/O, JSON, format dispatch, missing names, typing and definedness | Command compile entry |
+| Malformed and noncanonical models, duplicate model selection and abstract instances | Model intake and population admission |
+| Foreign models, closure completeness and cardinality | Bound population admission and queries |
+| Recorded deltas and permitted creation | Invocation admission |
+| Missing snapshots and wrong observation roles | Snapshot admission |
+| Present and absent protocol references in complete and incomplete populations | Admitted protocol reference seeds |
+| Lost host model input after checking | Observation admission's real internal-fault path |
+| Extraction combinations, binding count and Quire context diagnostics | Public clause-run request reader |
+| Clock declarations, random weights and fixed sequence bounds | Public S3 compile path |
+| Duplicate operation bodies and missing dispatch targets | Source assembly and checking |
+| Unsupplied execution backend | Public spine run entry |
+| Stale clause identity before observation admission | Public state-clause replay entry |
+| Protocol refusal preservation and shorthand projection refusal | Public protocol check and emission entries |
+
+The replay case uses two original checked clauses and genuine emitted package
+bytes. Its canonical-input envelope deliberately names the other clause; the
+typed refusal retains both identities before reading the unprovided snapshot.
+It claims no backend proof. The protocol projection case retains an actual
+missing-name source refusal: the shorthand emitter requires the result-preserving
+entry, which returns that original refusal and admits no unit package.
+
+## Pending implementation cases
+
+| Owner | Strict expected behavior |
+| --- | --- |
+| QSL-2687 | A malformed escape reaches its lexical diagnostic before unrelated selection-identity cascades. |
+| QSL-2688 | A diagnostic-list cut names the actionable `s1.diagnostics` setting. |
+| QSL-2692 | Public observation inputs retain source-declared model type and universe authority. |
+| QSL-2693 | An unknown request extension capability retains `unknown_required_feature`, rather than becoming `invalid_package`. |
+
+Known source causes under QSL-2680 through QSL-2685 keep their existing owner
+cases. They were not probed again by this feature.
+
+## Authoring receipts
+
+Focused commands used the owned worktree target with jobs2, debug0,
+incremental0 and one test thread:
+
+```sh
+CARGO_TARGET_DIR="$PWD/target" CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 \
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
+cargo test --locked -p filament-spec-language --test it \
+  error_producer_inputs::<qualified-function> -- --exact --test-threads=1 \
+  --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart \
+  --skip a_recovery_predicate_over_the_recovery_view_is_evaluated
+```
+
+The segmented accepted record is 32 active groups passing. Logs retain both
+original failed authoring attempts and the focused corrections; their counts
+must not be added together and called a component gate. Receipts retained in
+the local `.agent/` directory include:
+
+- `qsl-2079-source-host-focused.log`, `qsl-2079-current-producer-corrections.log`,
+  `qsl-2079-bundle-compile-model.log` and `qsl-2079-proper-selection-and-limits.log`.
+- `qsl-2079-population-producers-corrected.log`, `qsl-2079-invocation-producers.log`,
+  `qsl-2079-snapshot-producers.log` and `qsl-2079-extraction-producers-corrected.log`.
+- `qsl-2079-semantic-model-producers-corrected.log`,
+  `qsl-2079-model-producers-selected-layer.log` and
+  `qsl-2079-operation-and-backend-producers.log`.
+- `qsl-2079-selected-model-reference-producer.log` and
+  `qsl-2079-host-internal-fault-producer.log`.
+- `qsl-2079-replay-stale-producer-corrected.log`,
+  `qsl-2079-capability-closure-producer-corrected.log` and
+  `qsl-2079-protocol-projection-producer-profile-corrected.log`: each one passed,
+  exit0.
+
+The single scoped authoring lint command was:
+
+```sh
+cargo clippy --locked -p filament-spec-language --test it --no-deps -- -D warnings
+```
+
+It exited101 in `qsl-2079-root-producer-clippy.log`. The one new trivial
+`err().expect()` finding was corrected. Two unchanged integration findings
+remain: `run_wire.rs:1289` (`useless_format`) and
+`spine_retained_criteria.rs:72` (`err_expect`). No lint pass is claimed and no
+lint retry was run.
+
+## Coverage boundaries
+
+This feature does not establish complete `Code::all()` or `CompleteCause`
+reachability. Protected formatter invariants were not fabricated through
+opaque CST state. The attempted `PostalState` monitor ambiguity remains
+outside the runnable corpus: native I04 admission refused the base as
+`ambiguous_declaration` at
+`/semantic_graph/nodes/1/declaration/qualified_name`, before the later
+`MonitorPlanAmbiguous` guard. Its exact receipt is
+`qsl-2079-monitor-projection-correspondence-native-source.log`; the local
+prototype is `qsl-2079-monitor-projection-unreachable-draft.rs`. It proves
+neither guard coverage nor a separate source/emission contract violation.
+
+Host-only output/serialization failure retains the accepted QSL-2476 L3
+contract evidence for that frozen driver cohort. It was not rebuilt or run
+again here, and is not evidence for this newer language cohort. No required
+code variant was removed, no fake fault or private engine was introduced, and
+no upward crate dependency was added.
