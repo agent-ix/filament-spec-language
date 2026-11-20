@@ -737,7 +737,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
         "the typed limit outcome matches plain run"
     );
     assert_eq!(outcome["category"], "incomplete");
-    assert_eq!(outcome["diagnostics"][0]["code"], "resource_exhausted");
+    assert_eq!(outcome["diagnostics"][0]["code"], "stage_limit_exceeded");
     assert!(outcome["diagnostics"][0].to_string().contains("s1.nodes"));
     assert!(
         outcome["diagnostics"][0]["message"]
