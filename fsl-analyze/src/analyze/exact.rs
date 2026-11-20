@@ -399,20 +399,25 @@ fn run_timed(
 fn mean_time_ranking(
     product: &ProbProduct,
     targets: &[bool],
+    included: &[bool],
 ) -> Option<Vec<(ProbabilityProductKey, u64)>> {
-    if targets.len() != product.states.len() {
+    if targets.len() != product.states.len() || included.len() != product.states.len() {
         return None;
     }
     let mut ranks = vec![None; product.states.len()];
     for (index, target) in targets.iter().enumerate() {
-        if *target {
+        if included[index] && *target {
             ranks[index] = Some(0_u64);
         }
     }
-    while ranks.iter().any(Option::is_none) {
+    while included
+        .iter()
+        .zip(&ranks)
+        .any(|(included, rank)| *included && rank.is_none())
+    {
         let mut changed = false;
         for index in 0..ranks.len() {
-            if ranks[index].is_some() {
+            if !included[index] || ranks[index].is_some() {
                 continue;
             }
             let outgoing = product.outgoing(product.ids().nth(index)?);
@@ -430,7 +435,9 @@ fn mean_time_ranking(
                     }
                 };
                 if edge.probability > Rational::from_integer(0_i64.into()) {
-                    if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
+                    if included.get(edge.to.index()).copied().unwrap_or(false)
+                        && let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten()
+                    {
                         choice.push(next_rank);
                     }
                 }
@@ -453,10 +460,40 @@ fn mean_time_ranking(
         .states
         .iter()
         .zip(ranks)
-        .map(|(state, rank)| Some((state.certificate_state.clone()?, rank?)))
+        .zip(included)
+        .filter(|(_, included)| **included)
+        .map(|((state, rank), _)| Some((state.certificate_state.clone()?, rank?)))
         .collect::<Option<Vec<_>>>()?;
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     Some(entries)
+}
+
+fn mean_time_reachable_before_target(product: &ProbProduct, targets: &[bool]) -> Option<Vec<bool>> {
+    if targets.len() != product.states.len() {
+        return None;
+    }
+    let mut included = vec![false; product.states.len()];
+    let mut pending = product
+        .initial
+        .iter()
+        .map(|(_, _, state)| state.index())
+        .collect::<Vec<_>>();
+    while let Some(index) = pending.pop() {
+        let Some(seen) = included.get_mut(index) else {
+            return None;
+        };
+        if *seen {
+            continue;
+        }
+        *seen = true;
+        if targets[index] {
+            continue;
+        }
+        for edge in product.outgoing(product.ids().nth(index)?) {
+            pending.push(edge.to.index());
+        }
+    }
+    Some(included)
 }
 
 fn same_mean_time_choice(
@@ -629,6 +666,20 @@ fn run_timed_mean(
         Ok(certificate) => certificate,
         Err(error) => return document_failure(error, subject),
     };
+    let included = match mean_time_reachable_before_target(&product, &target) {
+        Some(included) => included,
+        None => return not_yet(),
+    };
+    let included_keys = product
+        .states
+        .iter()
+        .zip(&included)
+        .filter(|(_, included)| **included)
+        .filter_map(|(state, _)| state.certificate_state.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    certificate
+        .values
+        .retain(|value| included_keys.contains(&value.state));
     if let Some(tamper) = tamper {
         tamper(&mut certificate);
     }
@@ -636,12 +687,12 @@ fn run_timed_mean(
         .labels
         .iter()
         .enumerate()
-        .filter(|(_, labels)| labels.first().copied().unwrap_or(false))
+        .filter(|(index, labels)| included[*index] && labels.first().copied().unwrap_or(false))
         .filter_map(|(index, _)| product.states[index].certificate_state.clone())
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
-    let ranking = match mean_time_ranking(&product, &target) {
+    let ranking = match mean_time_ranking(&product, &target, &included) {
         Some(ranking) => ranking,
         None => return not_yet(),
     };
