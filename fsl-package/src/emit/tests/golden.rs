@@ -394,14 +394,13 @@ const NOT_LOWERED: [&str; 7] = [
 /// Plan rows and names exact missing per-fact witnesses for Text, Enum, and
 /// Quantity schedules.
 ///
-/// Fails when `pinned FSpec fixture view` is unset; `make conformance`
-/// requires it.
+/// The fixtures are read from a temporary view of the files the pinned FSpec
+/// publishes, so the test needs no external checkout.
 #[trace("FR-093-AC-13", "TC-416")]
 #[test]
 fn conformance_emitted_application_nodes_match_fspec_positive_fixtures() {
-    let directory = crate::checked_v2::tests::fspec_directory()
-        .expect("pinned FSpec publishes positive fixtures")
-        .join("proposals/checked-package-v2/fixtures");
+    let view = crate::checked_v2::tests::fspec_directory();
+    let directory = view.path().join("proposals/checked-package-v2/fixtures");
     let cases = cases();
     let mut hit = vec![false; cases.len()];
     let mut emitted = Vec::new();
