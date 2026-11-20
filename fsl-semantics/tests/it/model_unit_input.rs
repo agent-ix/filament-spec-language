@@ -772,6 +772,51 @@ allocate Alloc from pump to pump;
             "missing construct meaning {meaning}"
         );
     }
+    let types = document["types"].as_array().expect("types is an array");
+    let type_named = |name: &str| {
+        let identity = format!("ix://example/all/{name}");
+        types
+            .iter()
+            .find(|ty| ty["identity"].as_str() == Some(identity.as_str()))
+            .unwrap_or_else(|| panic!("missing compiled type {name}"))
+    };
+    let machine = type_named("Gate");
+    assert_eq!(machine["states"].as_array().unwrap().len(), 2);
+    assert_eq!(machine["transitions"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        machine["transitions"][0]["from"],
+        "ix://example/all/Gate/Open"
+    );
+    assert_eq!(
+        machine["transitions"][0]["to"],
+        "ix://example/all/Gate/Shut"
+    );
+    assert_eq!(
+        machine["transitions"][0]["trigger"],
+        "ix://example/all/Gate/toggle"
+    );
+    let process = type_named("Flow");
+    assert_eq!(process["steps"][0]["name"], "start");
+    assert_eq!(process["steps"][0]["stepKind"], "command");
+    assert_eq!(
+        process["steps"][0]["consumes"][0],
+        "ix://example/all/Placed"
+    );
+    let store = type_named("Nodes");
+    assert_eq!(store["persists"][0], "ix://example/all/Node");
+    assert_eq!(
+        store["operations"][0]["params"][0]["typeRef"],
+        "ix://example/all/Node"
+    );
+    let node = type_named("Node");
+    let option_identity = node["fields"][1]["typeRef"]
+        .as_str()
+        .expect("Option field references its option type");
+    assert!(
+        types.iter().any(|ty| {
+            ty["identity"].as_str() == Some(option_identity) && ty["kind"] == "option"
+        })
+    );
     admit(
         "example/all",
         &packages,
