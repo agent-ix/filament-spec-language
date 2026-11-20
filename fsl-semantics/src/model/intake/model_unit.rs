@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
-use fsl_cst::{CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
+use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
 use serde_json::{Value, json};
 
@@ -22,11 +22,11 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
     if !text.trim_start().starts_with("language") {
         return false;
     }
-    let Ok(parsed) = fsl_cst::parse(
+    let Ok(parsed) = cst::parse(
         SourceIdentity::new("filament", "model-unit-probe"),
         "model-unit.fsl",
         bytes,
-        fsl_cst::Limits::default(),
+        cst::Limits::default(),
     ) else {
         return false;
     };
@@ -34,7 +34,7 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
         .cst()
         .tokens()
         .iter()
-        .filter(|token| token.class() == fsl_cst::TokenClass::Token)
+        .filter(|token| token.class() == cst::TokenClass::Token)
         .map(|token| token.spelling())
         .collect::<Vec<_>>();
     tokens.get(5).is_some_and(|token| *token == b"domain")
@@ -50,32 +50,32 @@ pub fn is_model_unit_source(bytes: &[u8]) -> bool {
 pub(super) fn compile_model_unit_bytes(
     bytes: &[u8],
 ) -> Result<CompiledModelUnit, super::ModelRefusal> {
-    let probe = fsl_cst::parse(
+    let probe = cst::parse(
         SourceIdentity::new("filament", "model-unit-probe"),
         "model-unit.fsl",
         bytes,
-        fsl_cst::Limits::default(),
+        cst::Limits::default(),
     )
     .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
     let tokens = probe
         .cst()
         .tokens()
         .iter()
-        .filter(|token| token.class() == fsl_cst::TokenClass::Token)
+        .filter(|token| token.class() == cst::TokenClass::Token)
         .map(|token| String::from_utf8_lossy(token.spelling()).into_owned())
         .collect::<Vec<_>>();
     let identity = tokens
         .get(6)
         .and_then(|value| serde_json::from_str::<String>(value).ok())
         .ok_or_else(|| refusal("model-unit domain identity is missing"))?;
-    let source = fsl_cst::diagnostic::read_source(
+    let source = cst::read_source(
         SourceIdentity::new("filament", identity),
         "model-unit.fsl",
         bytes,
-        fsl_cst::Limits::default().source_bytes,
+        cst::Limits::default().source_bytes,
     )
     .map_err(|error| refusal(format!("{error}")))?;
-    let parsed = fsl_cst::parse_source(source, fsl_cst::Limits::default())
+    let parsed = cst::parse_source(source, cst::Limits::default())
         .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
     compile_model_unit(&parsed, ModelNormalizationLimits::default()).map_err(|diagnostics| {
         refusal(diagnostics.first().map_or_else(
@@ -92,7 +92,7 @@ pub fn package_input_from_sources<'a>(
 ) -> Result<super::PackageInput, super::ModelRefusal> {
     let mut documents = Vec::new();
     for source in sources {
-        let parsed = fsl_cst::parse_source(source.clone(), fsl_cst::Limits::default())
+        let parsed = cst::parse_source(source.clone(), cst::Limits::default())
             .map_err(|diagnostic| refusal(format!("{diagnostic}")))?;
         let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default()).map_err(
             |diagnostics| {
@@ -158,7 +158,7 @@ pub fn compile_model_unit(
         .cst()
         .tokens()
         .iter()
-        .filter(|token| token.class() == fsl_cst::TokenClass::Token)
+        .filter(|token| token.class() == cst::TokenClass::Token)
         .map(|token| Token {
             text: String::from_utf8_lossy(token.spelling()).into_owned(),
             span: token.span(),
@@ -2456,7 +2456,7 @@ fn diagnostic(
     span: Span,
     message: impl Into<String>,
 ) -> CompleteDiagnostic {
-    *fsl_cst::diagnostic::error(
+    *cst::error(
         parsed.source(),
         code,
         cause,
