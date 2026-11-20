@@ -30,6 +30,60 @@ fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
 }
 
+fn binding<'a>(term: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    match term {
+        serde_json::Value::Object(object) => {
+            if object.get("name").and_then(serde_json::Value::as_str) == Some(name) {
+                return &object["value"];
+            }
+            object
+                .values()
+                .map(|value| binding(value, name))
+                .find(|found| !found.is_null())
+                .unwrap_or(&serde_json::Value::Null)
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .map(|value| binding(value, name))
+            .find(|found| !found.is_null())
+            .unwrap_or(&serde_json::Value::Null),
+        _ => &serde_json::Value::Null,
+    }
+}
+
+fn reference_targets(term: &serde_json::Value) -> Vec<serde_json::Value> {
+    match term {
+        serde_json::Value::Object(object) => {
+            let mut found = object
+                .get("target")
+                .cloned()
+                .into_iter()
+                .collect::<Vec<_>>();
+            for (key, value) in object {
+                if key != "target" {
+                    found.extend(reference_targets(value));
+                }
+            }
+            found
+        }
+        serde_json::Value::Array(items) => items.iter().flat_map(reference_targets).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn claim_path_contains(claim: &serde_json::Value, node_id: &serde_json::Value) -> bool {
+    claim["node_id"]["path"]
+        .as_array()
+        .is_some_and(|path| path.iter().any(|segment| segment == node_id))
+}
+
+fn service_wire(model: &prob_world::Model) -> serde_json::Value {
+    let world = World::new(model);
+    let emission = emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the service and claims");
+    serde_json::from_slice(emission.package().bytes()).expect("emitted package JSON")
+}
+
 /// FR-740-AC-4 (TC-2062): S4 binds each claim's scheduler and probability
 /// distributions into the claim node path, and the strict reader admits them.
 #[trace("TC-2062", "FR-740-AC-4")]
@@ -52,13 +106,14 @@ fn claims_emit_their_workload_and_random_parameter_operands() {
         nodes
             .iter()
             .find(|node| {
-                node["node_tag"] == tag
-                    && node["semantic_form"] == form
-                    && node["declaration"]["qualified_name"]
-                        .as_array()
-                        .and_then(|parts| parts.last())
-                        .and_then(serde_json::Value::as_str)
-                        == Some(name)
+                if node["node_tag"] != tag || node["semantic_form"] != form {
+                    return false;
+                }
+                if tag == "claim" {
+                    node["node_id"]["path"][2].as_str() == Some(name)
+                } else {
+                    node["body"].to_string().contains(&format!("\"{name}\""))
+                }
             })
             .unwrap_or_else(|| panic!("missing {tag}/{form} node {name}"))
     };
@@ -69,42 +124,101 @@ fn claims_emit_their_workload_and_random_parameter_operands() {
     let steady_claim = node("claim", "probabilistic_claim", "SteadyClaim");
     let bursty_claim = node("claim", "probabilistic_claim", "BurstyClaim");
     let any_claim = node("claim", "probabilistic_claim", "AnyClaim");
-    let id_in =
-        |node: &serde_json::Value, haystack: &str| haystack.contains(&node["node_id"].to_string());
-    let steady_body = steady_claim["body"].to_string();
-    assert!(
-        id_in(workload, &steady_body),
-        "Steady claim scheduler/path: {steady_body}"
+    let workload_id = workload["node_id"].clone();
+    let bursty_id = bursty["node_id"].clone();
+    let mut random_ids = vec![random_d["node_id"].clone(), random_ok["node_id"].clone()];
+    random_ids.sort_by_key(serde_json::Value::to_string);
+    for (claim, expected_scheduler) in [
+        (steady_claim, Some(&workload_id)),
+        (bursty_claim, Some(&bursty_id)),
+        (any_claim, None),
+    ] {
+        let body = &claim["body"];
+        let scheduler = binding(body, "scheduler");
+        let path = &claim["node_id"]["path"];
+        match expected_scheduler {
+            Some(expected) => {
+                assert_eq!(reference_targets(scheduler), [expected.clone()]);
+                assert!(
+                    claim_path_contains(claim, expected),
+                    "scheduler workload node is a claim path operand: {path}"
+                );
+            }
+            None => {
+                assert!(reference_targets(scheduler).is_empty());
+                assert!(
+                    path.to_string().contains("every"),
+                    "every scheduler is in path: {path}"
+                );
+            }
+        }
+        let distributions = reference_targets(binding(body, "distributions"));
+        assert_eq!(distributions, random_ids);
+        for random_id in &random_ids {
+            assert!(
+                claim_path_contains(claim, random_id),
+                "random parameter is a claim path operand: {path}"
+            );
+        }
+        assert!(reference_targets(binding(body, "reward")).is_empty());
+        assert!(reference_targets(binding(body, "delays")).is_empty());
+        assert_eq!(
+            claim["dependencies"],
+            serde_json::json!(reference_targets(body))
+        );
+        assert_eq!(claim["node_id"]["ordinal"], 0);
+    }
+
+    let changed_workload = {
+        let mut model = prob_world::service("");
+        model.body = model.body.replace(
+            "weight Server::request = 1; weight Server::attempt = 1;",
+            "weight Server::request = 2; weight Server::attempt = 1;",
+        );
+        model.body.push_str(
+            "workload Bursty on M { weight Server::request = 3; weight Server::attempt = 1; weight Server::reset = 1; }\n\
+             probabilistic SteadyClaim using ev on M under Steady on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+             probabilistic BurstyClaim using ev on M under Bursty on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+             probabilistic AnyClaim using ev on M under every scheduler on origin { probability >= 0.5 [ always[0,2] holds(true) ] }",
+        );
+        service_wire(&model)
+    };
+    let changed_steady_claim = changed_workload["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("changed nodes")
+        .iter()
+        .find(|candidate| {
+            candidate["node_tag"] == "claim" && candidate["node_id"]["path"][2] == "SteadyClaim"
+        })
+        .expect("changed SteadyClaim");
+    assert_ne!(
+        steady_claim["node_id"]["path"], changed_steady_claim["node_id"]["path"],
+        "the claim path includes the changed scheduler workload node"
     );
-    assert!(
-        id_in(random_d, &steady_body),
-        "Steady claim distribution/path: {steady_body}"
-    );
-    assert!(
-        id_in(random_ok, &steady_body),
-        "Steady claim distribution/path: {steady_body}"
-    );
-    let bursty_body = bursty_claim["body"].to_string();
-    assert!(
-        id_in(bursty, &bursty_body),
-        "Bursty claim scheduler/path: {bursty_body}"
-    );
-    assert!(
-        id_in(random_d, &bursty_body),
-        "Bursty claim distribution/path: {bursty_body}"
-    );
-    assert!(
-        id_in(random_ok, &bursty_body),
-        "Bursty claim distribution/path: {bursty_body}"
-    );
-    let any_body = any_claim["body"].to_string();
-    assert!(
-        !id_in(workload, &any_body),
-        "every-scheduler claim has no workload: {any_body}"
-    );
-    assert!(
-        !id_in(bursty, &any_body),
-        "every-scheduler claim has no workload: {any_body}"
+
+    let changed_distribution = {
+        let mut model = prob_world::service(
+            "workload Bursty on M { weight Server::request = 3; weight Server::attempt = 1; weight Server::reset = 1; }\n\
+             probabilistic SteadyClaim using ev on M under Steady on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+             probabilistic BurstyClaim using ev on M under Bursty on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+             probabilistic AnyClaim using ev on M under every scheduler on origin { probability >= 0.5 [ always[0,2] holds(true) ] }",
+        );
+        model.body = model
+            .body
+            .replace("1: 90, 3: 7, 12: 3", "1: 89, 3: 8, 12: 3");
+        service_wire(&model)
+    };
+    let changed_distribution_claim = changed_distribution["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("changed nodes")
+        .iter()
+        .find(|candidate| {
+            candidate["node_tag"] == "claim" && candidate["node_id"]["path"][2] == "SteadyClaim"
+        })
+        .expect("changed SteadyClaim");
+    assert_ne!(
+        steady_claim["node_id"]["path"], changed_distribution_claim["node_id"]["path"],
+        "the claim path includes changed random parameter node identity"
     );
 
     let model_identity = serde_json::from_slice::<serde_json::Value>(&world.model_document)

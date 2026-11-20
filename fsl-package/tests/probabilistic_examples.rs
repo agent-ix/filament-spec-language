@@ -64,7 +64,7 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn compile_example(request_path: &str) -> EmittedExample {
+fn compile_example(request_path: &str, package_identity_override: Option<&str>) -> EmittedExample {
     let root = repository_root();
     let request_path = root.join(request_path);
     let request_bytes = fs::read(&request_path).expect("the vendored request reads");
@@ -96,9 +96,10 @@ fn compile_example(request_path: &str) -> EmittedExample {
         ModelNormalizationLimits::default(),
     )
     .expect("the request's model selection resolves");
+    let package_identity = package_identity_override.unwrap_or(&program.identity);
     let checked = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
-        program.identity.clone(),
+        package_identity.to_owned(),
         unit,
         selected,
         Vec::new(),
@@ -129,10 +130,10 @@ fn compile_example(request_path: &str) -> EmittedExample {
         &evidence,
     );
     let CheckedPackageV2ReadResult::Admitted(_) = read else {
-        panic!("the strict reader admits {}: {read:?}", program.identity);
+        panic!("the strict reader admits {package_identity}: {read:?}");
     };
     EmittedExample {
-        package_identity: program.identity.clone(),
+        package_identity: package_identity.to_owned(),
         wire,
     }
 }
@@ -150,9 +151,11 @@ fn node_named<'a>(wire: &'a Value, tag: &str, form: &str, name: &str) -> &'a Val
     nodes(wire, tag, form)
         .into_iter()
         .find(|node| {
-            node["declaration"]["qualified_name"]
-                .as_array()
-                .is_some_and(|parts| parts.last().and_then(Value::as_str) == Some(name))
+            if tag == "claim" {
+                node["node_id"]["path"][2].as_str() == Some(name)
+            } else {
+                node["body"].to_string().contains(&format!("\"{name}\""))
+            }
         })
         .unwrap_or_else(|| panic!("{tag}/{form} declaration {name}"))
 }
@@ -161,13 +164,133 @@ fn assert_node_package(node: &Value, package: &str) {
     assert_eq!(node["node_id"]["package"], package, "{node}");
 }
 
-fn assert_random_parameter(node: &Value, parameter: &str, weighted_support: &[(&str, &str)]) {
-    assert_eq!(
-        node["declaration"]["qualified_name"][0],
-        "Rover".to_string().as_str()
+fn binding<'a>(term: &'a Value, name: &str) -> &'a Value {
+    match term {
+        Value::Object(object) => {
+            if object.get("name").and_then(Value::as_str) == Some(name) {
+                return &object["value"];
+            }
+            object
+                .values()
+                .map(|value| binding(value, name))
+                .find(|found| !found.is_null())
+                .unwrap_or(&Value::Null)
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(|value| binding(value, name))
+            .find(|found| !found.is_null())
+            .unwrap_or(&Value::Null),
+        _ => &Value::Null,
+    }
+}
+
+fn reference_targets(term: &Value) -> Vec<Value> {
+    match term {
+        Value::Object(object) => {
+            let mut found = object
+                .get("target")
+                .cloned()
+                .into_iter()
+                .collect::<Vec<_>>();
+            for (key, value) in object {
+                if key != "target" {
+                    found.extend(reference_targets(value));
+                }
+            }
+            found
+        }
+        Value::Array(items) => items.iter().flat_map(reference_targets).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn path_contains_node(claim: &Value, node_id: &Value) -> bool {
+    claim["node_id"]["path"]
+        .as_array()
+        .is_some_and(|path| path.iter().any(|segment| segment == node_id))
+}
+
+fn node_with_id<'a>(wire: &'a Value, node_id: &Value) -> &'a Value {
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes")
+        .iter()
+        .find(|node| &node["node_id"] == node_id)
+        .unwrap_or_else(|| panic!("node id is present: {node_id}"))
+}
+
+fn normalized_claim_path(
+    claim: &Value,
+    claim_name: &str,
+    threshold: &str,
+    package_identity: &str,
+) -> Value {
+    fn normalize(value: &mut Value, claim_name: &str, threshold: &str, package_identity: &str) {
+        match value {
+            Value::String(text) if text == claim_name => *text = "<claim-name>".to_owned(),
+            Value::String(text) if text == threshold => *text = "<threshold>".to_owned(),
+            Value::Array(items) => {
+                for item in items {
+                    normalize(item, claim_name, threshold, package_identity);
+                }
+            }
+            Value::Object(items) => {
+                for item in items.values_mut() {
+                    normalize(item, claim_name, threshold, package_identity);
+                }
+                if items.get("package").and_then(Value::as_str) == Some(package_identity) {
+                    items.insert(
+                        "package".to_owned(),
+                        Value::String("<unit-package>".to_owned()),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut path = claim["node_id"]["path"].clone();
+    normalize(&mut path, claim_name, threshold, package_identity);
+    path
+}
+
+fn assert_probability_claim(wire: &Value, claim: &Value, direction: &str, threshold: &str) {
+    let body = &claim["body"];
+    let form = binding(body, "form");
+    let form_text = form.to_string();
+    assert!(form_text.contains("probability"), "{form_text}");
+    assert!(form_text.contains(direction), "{form_text}");
+    assert!(
+        form_text.contains(threshold),
+        "expected {threshold}: {form_text}"
     );
-    assert_eq!(node["body"].to_string().contains(parameter), true, "{node}");
+    let event = binding(form, "event");
+    assert!(event.to_string().contains("formula"), "{event}");
+    let formula_nodes = reference_targets(binding(event, "formula"));
+    let [formula_node] = formula_nodes.as_slice() else {
+        panic!("one formula node reference: {event}");
+    };
+    let formula = node_with_id(wire, formula_node);
+    assert_eq!(formula["node_tag"], "temporal");
+    assert_eq!(formula["semantic_form"], "formula");
+    assert_eq!(claim["node_id"]["ordinal"], 0);
+    assert!(binding(body, "activation").to_string().contains("origin"));
+    assert!(binding(body, "confidence")["members"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
+    let over_nodes = reference_targets(binding(body, "over"));
+    let [over_node] = over_nodes.as_slice() else {
+        panic!("one over parameter node: {}", binding(body, "over"));
+    };
+    assert_eq!(node_with_id(wire, over_node)["semantic_form"], "parameter");
+}
+
+fn assert_random_parameter(node: &Value, parameter: &str, weighted_support: &[(&str, &str)]) {
     let body = node["body"].to_string();
+    assert!(
+        body.contains(&format!("\"parameter\"")) && body.contains(parameter),
+        "{body}"
+    );
     for (value, weight) in weighted_support {
         assert!(
             body.contains(value) && body.contains(weight),
@@ -182,25 +305,39 @@ fn assert_claim_bindings(
     distributions: &[Value],
     subject_package: &str,
 ) {
-    let body = claim["body"].to_string();
+    let body = &claim["body"];
+    let scheduler_targets = reference_targets(binding(body, "scheduler"));
+    assert_eq!(scheduler_targets, [scheduler.clone()]);
     assert!(
-        body.contains(&scheduler.to_string()),
-        "scheduler absent: {body}"
+        path_contains_node(claim, scheduler),
+        "scheduler is a claim path operand"
     );
-    assert!(
-        body.contains(&subject_package.to_owned()),
-        "subject package absent: {body}"
-    );
-    assert!(
-        body.contains("reward") && body.contains("delays"),
-        "empty reward/delays bindings: {body}"
-    );
+
+    let mut actual_distributions = reference_targets(binding(body, "distributions"));
+    actual_distributions.sort_by_key(Value::to_string);
+    let mut expected_distributions = distributions.to_vec();
+    expected_distributions.sort_by_key(Value::to_string);
+    assert_eq!(actual_distributions, expected_distributions);
     for distribution in distributions {
         assert!(
-            body.contains(&distribution.to_string()),
-            "distribution absent: {body}"
+            path_contains_node(claim, distribution),
+            "distribution is a claim path operand"
         );
     }
+    assert!(reference_targets(binding(body, "reward")).is_empty());
+    assert!(reference_targets(binding(body, "delays")).is_empty());
+    let subject = reference_targets(binding(body, "subject"));
+    assert_eq!(subject.len(), 1);
+    assert_eq!(subject[0]["package"], subject_package);
+    assert!(
+        path_contains_node(claim, &subject[0]),
+        "subject is a claim path operand"
+    );
+    assert_eq!(
+        claim["dependencies"],
+        serde_json::json!(reference_targets(body))
+    );
+    assert_eq!(claim["node_id"]["ordinal"], 0);
 }
 
 #[trace("TC-2062", "FR-740-AC-8")]
@@ -214,7 +351,8 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Driving",
             "example/rover",
             true,
-            false,
+            "at_most",
+            "1/10000",
         ),
         (
             "examples/rover/requests/staged-vote-probability-missed.json",
@@ -223,7 +361,8 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Driving",
             "example/rover",
             true,
-            true,
+            "at_most",
+            "1/1000000",
         ),
         (
             "examples/architecture/requests/staged-availability.json",
@@ -232,7 +371,8 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Traffic",
             "example/architecture",
             false,
-            false,
+            "at_least",
+            "99/100",
         ),
         (
             "examples/architecture/requests/staged-availability-missed.json",
@@ -241,13 +381,23 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             "Traffic",
             "example/architecture",
             false,
-            true,
+            "at_least",
+            "999/1000",
         ),
     ];
-    for (request_path, package_suffix, claim_name, workload_name, model_package, rover, missed) in
-        cases
+    let mut emitted = Vec::new();
+    for (
+        request_path,
+        package_suffix,
+        claim_name,
+        workload_name,
+        model_package,
+        rover,
+        direction,
+        threshold,
+    ) in cases
     {
-        let example = compile_example(request_path);
+        let example = compile_example(request_path, None);
         assert!(example.package_identity.ends_with(package_suffix));
         let random_nodes = nodes(&example.wire, "probabilistic", "random_parameter");
         let workload = node_named(&example.wire, "probabilistic", "workload", workload_name);
@@ -297,6 +447,92 @@ fn staged_probabilistic_examples_emit_and_strict_reader_admits_all_units() {
             model_package,
         );
         assert_eq!(claim["occurrences"].as_array().map(Vec::len), Some(1));
-        assert!(!missed || claim["declaration"]["qualified_name"].as_array().is_some());
+        assert_probability_claim(&example.wire, claim, direction, threshold);
+        emitted.push(example);
     }
+
+    for (passing_at, missed_at, pass_name, missed_name, pass_bound, missed_bound) in [
+        (
+            0,
+            1,
+            "VoteRarelyWrong",
+            "VoteAlmostNeverWrong",
+            "1/10000",
+            "1/1000000",
+        ),
+        (
+            2,
+            3,
+            "CheckoutAvailable",
+            "CheckoutAvailable",
+            "99/100",
+            "999/1000",
+        ),
+    ] {
+        let passing = &emitted[passing_at];
+        let missed = &emitted[missed_at];
+        let passing_claim = node_named(&passing.wire, "claim", "probabilistic_claim", pass_name);
+        let missed_claim = node_named(&missed.wire, "claim", "probabilistic_claim", missed_name);
+        assert_ne!(passing_claim["node_id"], missed_claim["node_id"]);
+        assert_ne!(
+            passing_claim["node_id"]["path"],
+            missed_claim["node_id"]["path"]
+        );
+        assert_eq!(
+            normalized_claim_path(
+                passing_claim,
+                pass_name,
+                pass_bound,
+                &passing.package_identity,
+            ),
+            normalized_claim_path(
+                missed_claim,
+                missed_name,
+                missed_bound,
+                &missed.package_identity,
+            ),
+            "missed and passing claim paths differ only by claim name and bound"
+        );
+        let passing_subject = reference_targets(binding(&passing_claim["body"], "subject"));
+        let missed_subject = reference_targets(binding(&missed_claim["body"], "subject"));
+        assert_eq!(
+            passing_subject, missed_subject,
+            "both claims bind the same model_root"
+        );
+    }
+
+    let architecture_missed_same_package = compile_example(
+        "examples/architecture/requests/staged-availability-missed.json",
+        Some("example:architecture/staged-availability"),
+    );
+    let architecture_passing = &emitted[2];
+    let same_package_claim = node_named(
+        &architecture_missed_same_package.wire,
+        "claim",
+        "probabilistic_claim",
+        "CheckoutAvailable",
+    );
+    let passing_claim = node_named(
+        &architecture_passing.wire,
+        "claim",
+        "probabilistic_claim",
+        "CheckoutAvailable",
+    );
+    assert_ne!(passing_claim["node_id"], same_package_claim["node_id"]);
+    let unrelated_ids = |wire: &Value| {
+        let mut ids = wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("semantic graph nodes")
+            .iter()
+            .filter(|node| node["node_tag"] != "claim")
+            .map(|node| node["node_id"].clone())
+            .collect::<Vec<_>>();
+        ids.sort_by_key(Value::to_string);
+        ids
+    };
+    assert_eq!(
+        unrelated_ids(&architecture_passing.wire),
+        unrelated_ids(&architecture_missed_same_package.wire),
+        "the threshold changes only the claim identity under a shared package identity"
+    );
 }
