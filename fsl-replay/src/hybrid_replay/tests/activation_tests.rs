@@ -273,6 +273,12 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal Vanish using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 1 and q.v < 2) { capture v0: Rational[0, 10; 1, 2] = q.v; \
        eventually [0, 5] holds(not ((v0 * v0 * v0 - 4) * (h.v - 3) = 0)) }\n\
+     temporal BigAtoms using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(h.v * 369988485035126972924700782451696644186473100389722973815184405301748249 > 1) and eventually [0, 1] holds(h.v * 1109965455105380918774102347355089932559419301169168921445553215905244747 > 1) and eventually [0, 1] holds(h.v * 3329896365316142756322307042065269797678257903507506764336659647715734241 > 1) and eventually [0, 1] holds(h.v * 9989689095948428268966921126195809393034773710522520293009978943147202723 > 1) and eventually [0, 1] holds(h.v * 29969067287845284806900763378587428179104321131567560879029936829441608169 > 1) }\n\
+     temporal BigMoves using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / ((h.v - v0 - 1) * 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000) != 0) }\n\
      temporal Moves using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
@@ -378,6 +384,8 @@ fn the_activation_scan_is_charged_to_the_meter() {
         (&ramp, "CubeLeadHolds", &ramp_trace, 11660),
         (&ramp, "Lead3", &ramp_trace, 20715),
         (&ramp, "Sqrt", &ramp_trace, 992),
+        (&ramp, "BigAtoms", &ramp_trace, 13398),
+        (&ramp, "BigMoves", &ramp_trace, 2279),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
