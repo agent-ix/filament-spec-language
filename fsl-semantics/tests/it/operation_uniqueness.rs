@@ -193,10 +193,34 @@ fn repeated_frame_entries_deduplicate_without_losing_distinct_entries() {
         repeated["frame"][member] = json!([entry, entry]);
         let once = admit(&input(vec![once])).expect("one frame grant admits");
         let repeated = admit(&input(vec![repeated])).expect("repeated grants admit");
-        assert_eq!(
-            once[0].view.domain_package(),
-            repeated[0].view.domain_package()
-        );
+        let effect = |models: &fsl_semantics::model::intake::SelectedModels| {
+            models[0]
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    DomainPackageRecord::OperationMember(op) if op.key.node == key("advance") => {
+                        Some(op.effect.clone())
+                    }
+                    _ => None,
+                })
+                .expect("the declared operation survives intake")
+        };
+        let actual = effect(&repeated);
+        assert_eq!(effect(&once), actual);
+        let expected = filament_checked::key::DeclarationKey {
+            package: PACKAGE_IDENTITY.to_owned(),
+            node: entry.to_owned(),
+        };
+        match member {
+            "modifies" => assert_eq!(actual.modifies, [expected]),
+            "modifies_receiver" => assert_eq!(actual.receiver_modifies, [expected]),
+            "creates" => assert_eq!(actual.creates, [expected]),
+            "deletes" => assert_eq!(actual.deletes, [expected]),
+            "deletes_parameters" => assert_eq!(actual.deletes_arguments, ["target"]),
+            _ => unreachable!("the explicitly authored frame members"),
+        }
     }
 }
 
