@@ -298,12 +298,13 @@ fn keyed_applications(system: &ModelSystem<'_>, applications: &Applications) -> 
         .successors
         .iter()
         .map(|applied| {
+            let effect = applied
+                .state
+                .reached_by()
+                .expect("a completed assignment records its step effect");
             (
                 system.state_key(&applied.state).expect("a canonical key").0,
-                (
-                    applied.transition.clone(),
-                    applied.state.reached_by().cloned(),
-                ),
+                (applied.transition.clone(), Some(effect.clone())),
             )
         })
         .collect();
@@ -313,6 +314,13 @@ fn keyed_applications(system: &ModelSystem<'_>, applications: &Applications) -> 
         "the original fixture has no duplicate state keys"
     );
     keyed
+}
+
+fn integer_field(state: &super::super::ModelSimState, name: &str) -> Integer {
+    let Value::Integer(value) = crate::simulation::sampled::world::field(state, name) else {
+        panic!("{name} is an integer field")
+    };
+    value
 }
 
 #[trace("FR-120-AC-29")]
@@ -329,14 +337,8 @@ fn direct_swap_reads_both_pre_values_and_observes_the_candidate_budget_boundary(
     assert_eq!(full_charge, 10_001);
     assert_eq!(fast.successors.len(), 1);
     let state = &fast.successors[0].state;
-    assert_eq!(
-        crate::simulation::sampled::world::field(state, "a"),
-        filament_exact::Value::Integer(filament_exact::Integer::from(5_i64))
-    );
-    assert_eq!(
-        crate::simulation::sampled::world::field(state, "b"),
-        filament_exact::Value::Integer(filament_exact::Integer::from(3_i64))
-    );
+    assert_eq!(integer_field(state, "a"), Integer::from(5_i64));
+    assert_eq!(integer_field(state, "b"), Integer::from(3_i64));
     assert_eq!(
         keyed_applications(&solved_system, &fast),
         keyed_applications(&general_system, &full)
@@ -382,10 +384,7 @@ fn direct_partial_assignment_preserves_all_unsolved_values_and_effects() {
         .successors
         .iter()
         .map(|applied| {
-            assert_eq!(
-                crate::simulation::sampled::world::field(&applied.state, "a"),
-                filament_exact::Value::Integer(filament_exact::Integer::from(4_i64))
-            );
+            assert_eq!(integer_field(&applied.state, "a"), Integer::from(4_i64));
             let Value::Integer(b) = crate::simulation::sampled::world::field(&applied.state, "b")
             else {
                 panic!("b is an integer")
@@ -417,6 +416,28 @@ fn direct_partial_assignment_preserves_all_unsolved_values_and_effects() {
             .len(),
         100
     );
+}
+
+#[trace("FR-120-AC-30")]
+#[test]
+fn direct_assignment_and_its_reference_preserve_full_canonical_exploration() {
+    let post = "self.a = pre(self.a) + 1";
+    let solved = cell_with_bounds(post, false, 3, 0, 5, &[]);
+    let general = cell_with_bounds(post, true, 3, 0, 5, &[]);
+    let explore = |world: &World| {
+        explore_model(&world.system(), 10_000, Limits::default(), || false)
+            .expect("the finite Cell family admits")
+    };
+    let fast = explore(&solved);
+    let full = explore(&general);
+    assert_eq!(fast, full);
+    let Outcome::Exhaustive(stats) = fast.outcome else {
+        panic!("the bounded increment family must finish")
+    };
+    assert_eq!(stats.states, 301);
+    assert_eq!(stats.transitions, 20_100);
+    assert_eq!(stats.depth, 3);
+    assert!(fast.findings.is_empty());
 }
 
 #[trace("FR-120-AC-31")]
