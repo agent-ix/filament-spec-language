@@ -32,6 +32,7 @@ mod claim;
 mod exact;
 pub(crate) use exact::{value as exact_value, ExactFault};
 mod model;
+mod node_key;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
@@ -46,6 +47,7 @@ pub use model::{
     ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
     SupportValue, Workload,
 };
+pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
 use filament_semantic_value::location::{
@@ -504,6 +506,16 @@ pub enum ProbabilisticCause {
         /// The time position's span.
         span: Span,
     },
+    /// `weighted by delay` (FR-186 delay weighting): S3 records no
+    /// `Weighting::Delay` yet, and the claim has no emitted spelling for it.
+    /// Interim refusal until QSL-2551. `invalid_probabilistic_model`/
+    /// `delay-weighting-unsupported`.
+    DelayWeightingUnsupported {
+        /// The claim.
+        claim: String,
+        /// The `delay` name's span.
+        span: Span,
+    },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
     /// (FSL-proposed, STD-188).
@@ -576,6 +588,7 @@ impl ProbabilisticCause {
             | Self::FractionBound { span, .. }
             | Self::ThresholdNotLiteral { span, .. }
             | Self::TimeTypeMismatch { span, .. }
+            | Self::DelayWeightingUnsupported { span, .. }
             | Self::OverNotObjectType { span, .. }
             | Self::NotStatePredicate { span, .. } => Some(*span),
             Self::RandomReadInPrecondition { .. } | Self::NegativeReward { .. } => None,
@@ -618,6 +631,7 @@ impl ProbabilisticCause {
             | Self::ForeignWorkload { .. }
             | Self::FractionBound { .. }
             | Self::OverNotObjectType { .. }
+            | Self::DelayWeightingUnsupported { .. }
             | Self::NotStatePredicate { .. } => Code::InvalidProbabilisticModel,
             Self::InvalidDelay { .. } => Code::InvalidModelBinding,
             Self::UnitMismatch { .. }
@@ -675,6 +689,7 @@ impl ProbabilisticCause {
             Self::UnitMismatch { .. } => "unit-mismatch",
             Self::ThresholdNotLiteral { .. } => "type-mismatch",
             Self::TimeTypeMismatch { .. } => "type-mismatch",
+            Self::DelayWeightingUnsupported { .. } => "delay-weighting-unsupported",
             Self::FractionBound { .. } => "fraction-bound-out-of-range",
             Self::OverNotObjectType { .. } => "over-not-object-type",
             Self::NotStatePredicate { .. } => "not-state-predicate",

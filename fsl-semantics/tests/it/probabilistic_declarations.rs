@@ -1678,17 +1678,24 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
         fraction.weight.as_ref().map(|weight| weight.as_str()),
         Some("latency")
     );
-    for unknown in ["nothing", "delay"] {
-        assert_eq!(
-            located(&weighted(unknown)),
-            [(
-                Code::MissingDeclaration,
-                Some("missing-name"),
-                unknown.to_owned()
-            )],
-            "{unknown}"
-        );
-    }
+    assert_eq!(
+        located(&weighted("nothing")),
+        [(
+            Code::MissingDeclaration,
+            Some("missing-name"),
+            "nothing".to_owned()
+        )]
+    );
+    // FR-186: `delay` is the delay weighting, never a reward lookup; it has no
+    // emitted form until QSL-2551, so it is a typed refusal at its name.
+    assert_eq!(
+        located(&weighted("delay")),
+        [(
+            Code::InvalidProbabilisticModel,
+            Some("delay-weighting-unsupported"),
+            "delay".to_owned()
+        )]
+    );
     let long_run = |weight: &str| {
         service(
             None,

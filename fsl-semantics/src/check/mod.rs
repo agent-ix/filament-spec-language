@@ -203,11 +203,12 @@ pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
-    DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
-    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
-    Reward, SupportValue, WeightOwner, Workload,
+    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, ClaimReadFault, ClaimReads,
+    Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event, FairnessRead,
+    FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm, ProbScheduler,
+    ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,
+    QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead, Statement, SupportValue,
+    WeightOwner, Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
@@ -6596,7 +6597,7 @@ impl PackageDeclarations {
         };
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
-            match lowering.probabilistic_claims(probabilistic_model.claims()) {
+            match lowering.probabilistic_claims(&probabilistic_model, &lowered_rewards) {
                 Ok(keys) => Some(keys),
                 Err(refusal) => {
                     refusals.push(refusal);
@@ -7356,7 +7357,7 @@ impl PackageDeclarations {
         {
             reward.set_function(function);
         }
-        for (claim, (key, over_node)) in probabilistic_model
+        for (claim, (key, over_node, statement)) in probabilistic_model
             .claims_mut()
             .iter_mut()
             .zip(lowered_probabilistic)
@@ -7374,6 +7375,7 @@ impl PackageDeclarations {
             if let Some(over) = &mut claim.over {
                 over.node = over_node;
             }
+            claim.statement = Some(statement);
         }
         let lowered_temporal = lowered_temporal
             .into_iter()

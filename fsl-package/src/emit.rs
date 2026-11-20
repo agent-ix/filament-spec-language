@@ -208,6 +208,17 @@ pub enum EmitRefusal {
         /// The workload the claim is stated under.
         workload: String,
     },
+    /// A checked claim whose form reads reward `R` finds no emitted `reward`
+    /// node named `R` on its subject's model (FSpec FR-640 "Emission"): S3
+    /// admits the form only over a recorded reward and S4 emits every recorded
+    /// reward, so this is a broken invariant.
+    #[error("probabilistic claim `{claim}` reads reward `{reward}`, which has no emitted node")]
+    UnresolvedClaimReward {
+        /// The claim's declared name (diagnostic text only).
+        claim: String,
+        /// The reward the claim's form reads.
+        reward: String,
+    },
     /// The timed nodes cannot be put in FSpec FR-322's declared order.
     #[error("timed aggregate order: {0}")]
     TimedOrder(#[source] timed_order::OrderFault),
@@ -500,6 +511,7 @@ impl EmitRefusal {
             Self::TimedModelNodeSetMismatch
             | Self::UnkeyedProbabilisticClaim { .. }
             | Self::UnresolvedClaimWorkload { .. }
+            | Self::UnresolvedClaimReward { .. }
             | Self::TimedOrder(_) => Code::RuntimeInvariant,
             Self::TimedModelWriterInvariant(_)
             | Self::MonitorPlanInvariant(_)
@@ -541,6 +553,7 @@ impl EmitRefusal {
             | Self::TimedModelNodeSetMismatch
             | Self::UnkeyedProbabilisticClaim { .. }
             | Self::UnresolvedClaimWorkload { .. }
+            | Self::UnresolvedClaimReward { .. }
             | Self::TimedOrder(_)
             | Self::TimedModelWriterInvariant(_)
             | Self::MonitorPlanInvariant(_)
@@ -567,20 +580,6 @@ impl EmitRefusal {
             Self::OutputLimit(limit) => Some(limit.kind().catalog_cause()),
         }
     }
-}
-
-/// A claim `under W` and the `workload` node it resolves to (FSL FR-740,
-/// FSpec FR-640 "Emission"): the workload whose name is `W`. A claim's own
-/// node carries no body (FR-498), so this resolution is where the package
-/// states which workload a claim is checked under. TEMPORARY (QSL-2441, spec
-/// W77): in memory only, with no wire form until QSL-2546 lands how a claim
-/// references its workload.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClaimWorkload {
-    /// The claim's `claim`/`probabilistic_claim` node.
-    pub claim: CheckedNodeId,
-    /// The `probabilistic`/`workload` node the claim is stated under.
-    pub workload: CheckedNodeId,
 }
 
 /// One node the wire omits, and why.
@@ -819,8 +818,6 @@ pub struct Emission {
     pub(crate) equality_producer_identity_rows: Vec<EqualityProducerEmissionRow>,
     /// Per-fact equality witnesses joined to final structural node ids.
     pub(crate) equality_fact_witness_rows: Vec<EqualityFactWitnessRow>,
-    /// The `workload` node each claim `under W` resolves to (FSL FR-740).
-    pub(crate) claim_workloads: Vec<ClaimWorkload>,
     /// The typed graph nodes exactly as encoded into [`Self::package`], with
     /// package-level index segments. IR's typed bodies (an operation anchor's
     /// bare execution point) are not decodable through serde outside its
@@ -1066,7 +1063,6 @@ impl DebugWith for Emission {
             identity_row_selection: _,
             equality_producer_identity_rows,
             equality_fact_witness_rows,
-            claim_workloads,
             wire_nodes,
             temporal_binding_rows,
             temporal_rows,
@@ -1127,7 +1123,6 @@ impl DebugWith for Emission {
                 equality_producer_identity_rows,
             )
             .field("equality_fact_witness_rows", equality_fact_witness_rows)
-            .field("claim_workloads", claim_workloads)
             .field("wire_node_count", &wire_nodes.len())
             .field("temporal_binding_row_count", &temporal_binding_rows.len())
             .field("temporal_rows", temporal_rows)
@@ -1373,12 +1368,6 @@ impl Emission {
         &self.selected_operation_member_rows
     }
 
-    /// The `workload` node each claim `under W` resolves to, ascending by
-    /// claim node (FSL FR-740). TEMPORARY (QSL-2441, QSL-2546, spec W77): in
-    /// memory only, like [`ClaimWorkload`]; the claim body carries it later.
-    pub fn claim_workloads(&self) -> &[ClaimWorkload] {
-        &self.claim_workloads
-    }
 
     /// Selected model tuple identity rows carried by this emission.
     pub fn selected_tuple_declaration_rows(
@@ -6323,7 +6312,6 @@ pub fn emit_timed_models(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: Vec::new(),
         equality_fact_witness_rows: Vec::new(),
-        claim_workloads: Vec::new(),
         wire_nodes: document_nodes(semantic_graph)?,
         temporal_binding_rows: TemporalBindingRows::default(),
         temporal_rows: TemporalRows::default(),
@@ -7170,6 +7158,7 @@ fn emit_package_inner(
     );
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
+    probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
     let mut schedulability_claim_rows = append_schedulability_claims(
         ids,
         graph,
@@ -7265,7 +7254,6 @@ fn emit_package_inner(
         &source_map,
         &source_keys,
     )?;
-    let claim_workloads = probabilistic::claim_workloads(graph, &emitted_node_ids, &nodes)?;
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -7388,7 +7376,6 @@ fn emit_package_inner(
     supply_extension_definitions(&mut evidence, graph, &order)?;
     Ok(Emission {
         package,
-        claim_workloads,
         omitted,
         evidence,
         capability_report: capability_report.to_vec(),

@@ -132,7 +132,7 @@ pub use emit::{
     emit_checked_with_temporal_selections, emit_checked_with_temporal_selections_and_cancel,
     emit_dependency_with_temporal_selections_and_cancel, emit_monitor_plan_over, emit_package,
     emit_package_with_temporal_selections, emit_timed_models, is_model_binding_name,
-    profile_clock_kind, ClaimWorkload, ClockSelectionCause, ClockSelectionDeclaration,
+    profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration,
     ClockSelectionRefusal, Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode,
     ProtocolEmission, ProtocolEmissionAggregate, ProtocolEmissionResult,
     SelectedSourceCollectionRow, SelectedSourceRecordMemberRow, SelectedSourceRecordRow,
