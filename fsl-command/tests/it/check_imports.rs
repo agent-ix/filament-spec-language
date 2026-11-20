@@ -119,3 +119,68 @@ fn check_reports_a_missing_model_selection_at_admission() {
     assert!(message.contains("--model"), "{document}");
     assert!(message.contains("models"), "{document}");
 }
+
+/// FR-866-AC-7 / QSL-2657: the check source uses its S1 ceiling, while only
+/// selected dependent documents consume `dependent_bytes`.
+#[test]
+#[trace("TC-2457", "FR-866-AC-7")]
+fn check_dependent_bytes_excludes_source_and_counts_selected_library() {
+    let directory = tempfile::tempdir().unwrap();
+    let source_path = directory.path().join("check.fsl");
+    let source_only = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }\n";
+    std::fs::write(&source_path, source_only).unwrap();
+    let no_dependents = CheckInputs {
+        dependent_bytes: 0,
+        ..CheckInputs::default()
+    };
+    let document = document(&command::check_outcome(&source_path, &no_dependents));
+    assert_eq!(document["category"], "success", "{document}");
+    assert_eq!(document["last_stage"], "S4", "{document}");
+    assert!(document["diagnostics"].as_array().unwrap().is_empty());
+
+    let library_path = directory.path().join("geometry.fsl");
+    let library = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
+    std::fs::write(&library_path, library).unwrap();
+    let library_bytes = std::fs::metadata(&library_path).unwrap().len() as usize;
+    let mut importing_source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         import \"test/geometry\" as g;\n\
+         function Eligible using v(n: Int[0, 12]): Boolean pure {{ n >= 3 }}\n"
+    );
+    if importing_source.len() <= library_bytes {
+        importing_source.push_str(&" ".repeat(library_bytes + 1 - importing_source.len()));
+    }
+    std::fs::write(&source_path, &importing_source).unwrap();
+    assert!(importing_source.len() > library_bytes);
+    let selected_library = || CheckInputs {
+        libraries: vec![("test/geometry".to_owned(), library_path.clone())],
+        dependent_bytes: library_bytes,
+        ..CheckInputs::default()
+    };
+    let exact = document(&command::check_outcome(&source_path, &selected_library()));
+    assert_eq!(exact["category"], "success", "{exact}");
+    assert_eq!(exact["last_stage"], "S4", "{exact}");
+
+    let below = CheckInputs {
+        dependent_bytes: library_bytes - 1,
+        ..selected_library()
+    };
+    let below = document(&command::check_outcome(&source_path, &below));
+    assert_eq!(below["category"], "incomplete", "{below}");
+    assert_eq!(below["last_stage"], Value::Null, "{below}");
+    assert_eq!(below["diagnostics"].as_array().unwrap().len(), 1, "{below}");
+    let diagnostic = &below["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "resource_exhausted", "{below}");
+    assert_eq!(diagnostic["cause"], Value::Null, "{below}");
+    assert_eq!(diagnostic["locus"], Value::Null, "{below}");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.contains("dependent_bytes"), "{below}");
+    assert!(message.contains(&(library_bytes - 1).to_string()), "{below}");
+    assert!(message.contains("--dependent-bytes"), "{below}");
+    assert_ne!(below["category"], "success", "{below}");
+}

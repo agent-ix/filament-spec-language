@@ -338,9 +338,10 @@ fn check_outcome_inner(
         validate_extension_entries(&extensions)?;
 
         let source_identity = source_path.to_string_lossy();
-        let source = intake.source(
+        let source = intake.source_unmetered(
             &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
+            inputs.limits.source.source_bytes,
         )?;
         if fsl_semantics::model::intake::is_model_unit_source(source.source().text().as_bytes()) {
             compile_formal_model_unit(&source)?;
@@ -1629,17 +1630,40 @@ impl Intake<'_> {
         selected: &wire::SourceFile,
         request_member: &str,
     ) -> Result<FormalSource> {
-        let identity = selected.identity.bind(request_member)?;
         let bytes = self.file(&selected.file, self.remaining)?;
-        let source = Source::read_typed(identity.native, &selected.file, &bytes, self.maximum)
+        self.admit_source(selected, request_member, bytes, self.maximum)
+    }
+
+    fn source_unmetered(
+        &mut self,
+        selected: &wire::SourceFile,
+        request_member: &str,
+        byte_limit: usize,
+    ) -> Result<FormalSource> {
+        let bytes = read_file(
+            &self.directory.join(&selected.file),
+            byte_limit.saturating_add(1),
+        )?;
+        self.admit_source(selected, request_member, bytes, byte_limit)
+    }
+
+    fn admit_source(
+        &mut self,
+        selected: &wire::SourceFile,
+        request_member: &str,
+        bytes: Vec<u8>,
+        byte_limit: usize,
+    ) -> Result<FormalSource> {
+        let identity = selected.identity.bind(request_member)?;
+        let source = Source::read_typed(identity.native, &selected.file, &bytes, byte_limit)
             .map_err(|refusal| {
                 RunCause::Source(Box::new(SourceFailure {
                     native: fsl_foundation::diagnostic::source_refusal(
                         &refusal,
                         &bytes,
-                        self.maximum,
+                        byte_limit,
                     ),
-                    diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, self.maximum),
+                    diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, byte_limit),
                 }))
             })?;
         self.sources.push(source.clone());
