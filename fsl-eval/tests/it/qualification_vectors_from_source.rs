@@ -619,10 +619,17 @@ fn observed(case: &SourceCase) -> Expected {
                 flags,
             }
         }
-        Outcome::Refused(refusal) => Expected::Refused {
-            code: refusal.code().expect("refusal code").to_owned(),
-            cause: refusal.cause().map(str::to_owned),
-        },
+        Outcome::Refused(refusal) => {
+            assert!(
+                evaluation.losses.is_empty(),
+                "refusal exposes no partial losses: {:?}",
+                evaluation.losses
+            );
+            Expected::Refused {
+                code: refusal.code().expect("refusal code").to_owned(),
+                cause: refusal.cause().map(str::to_owned),
+            }
+        }
         other => panic!("qualification result has an unexpected shape: {other:?}"),
     }
 }
@@ -689,34 +696,57 @@ fn an_altered_standard_expectation_reports_the_vector_identity() {
 
 #[test]
 fn every_published_vector_has_an_explicit_source_qualification_status() {
-    let mut qualified = Vec::new();
+    let mut sampled = Vec::new();
     let mut unqualified = Vec::new();
+    let mut partial_samples = Vec::new();
     for vector in QUALIFICATION_VECTORS {
         let identity = format!("{}:{}", vector.test_case.id(), vector.id);
         if source_cases(vector).is_some() {
-            qualified.push(identity);
+            if vector.test_case == TestCase::Tc187
+                || matches!(
+                    vector.id,
+                    "D01" | "D26" | "D27" | "T02" | "T06b" | "F07" | "F08" | "F10" | "F11"
+                )
+            {
+                partial_samples.push(identity.clone());
+            }
+            sampled.push(identity);
         } else {
-            unqualified.push(identity);
+            let reason = match (vector.test_case, vector.id) {
+                (TestCase::Tc185, "D13" | "D18") => {
+                    "published evaluator-boundary operands explicitly have no source form"
+                }
+                (TestCase::Tc186, "T06") => {
+                    "invalid UTF-8 reader-boundary input, not a source value"
+                }
+                (TestCase::Tc192, "DIV-03" | "DIV-09") => {
+                    "mutation of an already checked wire definition closure"
+                }
+                (TestCase::Tc192, "DIV-07" | "DIV-14") => {
+                    "backend negotiation rather than source evaluation"
+                }
+                _ => "remaining source/accounting adapter not implemented",
+            };
+            unqualified.push(format!("{identity}: {reason}"));
         }
     }
-    assert!(
-        !qualified.is_empty(),
-        "zero source qualifications cannot pass"
-    );
+    assert!(!sampled.is_empty(), "zero source samples cannot pass");
     assert_eq!(
-        qualified.len() + unqualified.len(),
+        sampled.len() + unqualified.len(),
         QUALIFICATION_VECTORS.len()
     );
     eprintln!(
-        "source qualification: {} adapted, {} unqualified; unqualified ids: {}",
-        qualified.len(),
+        "source samples: {} rows, {} without an adapter; partially sampled rows: {}; unqualified ids/reasons: {}",
+        sampled.len(),
         unqualified.len(),
+        partial_samples.join(", "),
         unqualified.join(", ")
     );
     if std::env::var_os("FSL_FULL_SOURCE_QUALIFICATION").is_some() {
         assert!(
-            unqualified.is_empty(),
-            "full source qualification is incomplete: {}",
+            unqualified.is_empty() && partial_samples.is_empty(),
+            "full source qualification is incomplete; partial samples: {}; no adapter: {}",
+            partial_samples.join(", "),
             unqualified.join(", ")
         );
     }
