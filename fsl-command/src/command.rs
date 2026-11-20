@@ -1397,11 +1397,9 @@ impl RunError {
                     OutcomeDiagnostic::new(
                         Some("not-yet-implemented"),
                         self.cause.code().as_str(),
-                        locus
-                            .as_ref()
-                            .map(|occurrence| OutcomeLocus::Occurrence {
-                                occurrence: occurrence.clone(),
-                            }),
+                        locus.as_ref().map(|occurrence| OutcomeLocus::Occurrence {
+                            occurrence: occurrence.clone(),
+                        }),
                         self.outcome_message(),
                     ),
                 ])
