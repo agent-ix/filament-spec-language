@@ -151,8 +151,12 @@ pub fn run<S: Strategy>(
     if config.source_file.is_none() {
         config.source_file = Some(suite);
     }
+    let cases = config.cases;
     let start = Instant::now();
     let result = TestRunner::new(config).run(strategy, property);
-    eprintln!("property suite {suite}: {:?}", start.elapsed());
+    eprintln!(
+        "property suite {suite}: {cases} cases, {:?}",
+        start.elapsed()
+    );
     result
 }
