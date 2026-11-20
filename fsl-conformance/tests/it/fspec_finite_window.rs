@@ -287,7 +287,7 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
             },
             cover: case
                 .uncertainty
-                .map(|uncertainty| TimestampedCover::Bounded { uncertainty }),
+                .map(|uncertainty| TimestampedCover::Counter { uncertainty }),
             missing_valuations: missing,
             late: Default::default(),
         }),
@@ -322,18 +322,18 @@ fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String>
         ClauseDisposition::Temporal(TemporalVerdict::Indeterminate { at, reason }) => {
             let (name, position) = match reason {
                 TemporalIndeterminateReason::MissingValuation { position, atom, .. } => {
-                    if atom != "r.p" {
+                    if atom != "holds(r.p)" {
                         return Err(format!(
-                            "{}: missing valuation names {atom:?}, expected r.p",
+                            "{}: missing valuation names {atom:?}, expected holds(r.p)",
                             case.id
                         ));
                     }
                     ("MissingValuation", Some(*position))
                 }
                 TemporalIndeterminateReason::ConflictingValuation { position, atom } => {
-                    if atom != "r.p" {
+                    if atom != "holds(r.p)" {
                         return Err(format!(
-                            "{}: conflicting valuation names {atom:?}, expected r.p",
+                            "{}: conflicting valuation names {atom:?}, expected holds(r.p)",
                             case.id
                         ));
                     }
@@ -389,7 +389,7 @@ fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String>
                 if atom != "p" {
                     return Err(format!("{}: unsupported expected atom {atom}", case.id));
                 }
-                Ok((*position, "r.p".to_owned()))
+                Ok((*position, "holds(r.p)".to_owned()))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let actual = window
@@ -442,6 +442,25 @@ fn conformance_fspec_finite_window_source_windows() {
             .unwrap_or_else(|error| panic!("{error}"));
     } else if let Err(error) = fixtures.require_complete() {
         println!("qualification: {error}");
+    }
+}
+
+/// Provenance: QSL-2048. Evidence atoms refer to compiled holds nodes, and
+/// the fixture's uncertainty is explicitly a counter-cover uncertainty.
+#[trace("FR-350-AC-20")]
+#[test]
+fn source_evidence_and_counter_cover_examples_match_the_standard() {
+    let fixtures = standard();
+    for id in [
+        "FWV-13", "FWV-15", "FWV-48", "FWV-49", "FWV-50", "FWV-52", "FWV-53", "FWV-68",
+    ] {
+        let case = fixtures
+            .windows
+            .iter()
+            .find(|case| case.id == id)
+            .expect("the named standard case exists");
+        let report = run(case).unwrap_or_else(|error| panic!("{error}"));
+        compare(case, &report).unwrap_or_else(|error| panic!("{error}"));
     }
 }
 
