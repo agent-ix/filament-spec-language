@@ -526,6 +526,37 @@ impl<'g, 'w> Machine<'g, 'w> {
         Ok(Some((g, post)))
     }
 
+    /// FSpec FR-652 rule `picard` for one step: every rate and the invariant
+    /// definitely defined over `ap`, and the (contracted, for an admitted
+    /// mode) tube of `bx` over `h` inside `ap`.
+    pub(super) fn picard_holds(
+        &mut self,
+        mode: &ModeX,
+        bx: &Bx,
+        ap: &Bx,
+        h: &Rational,
+    ) -> Result<bool, Stop> {
+        for exp in mode.rates.iter().chain(std::iter::once(&mode.invariant)) {
+            if !self.defined(exp, ap)?.is_yes() {
+                return Ok(false);
+            }
+        }
+        let rates = self.rates(mode, ap)?;
+        let region = tube(bx, h, &rates);
+        if mode.admitted {
+            return Ok(match self.contract(&[&mode.invariant], region)? {
+                None => true,
+                Some(contracted) => within(&contracted, ap),
+            });
+        }
+        for rate in &mode.rates {
+            if !self.strictly_decided(rate, ap, false)? {
+                return Ok(false);
+            }
+        }
+        Ok(within(&region, ap))
+    }
+
     /// The rates of `mode` over `bx`.
     pub(super) fn rates(&mut self, mode: &ModeX, bx: &Bx) -> Result<Vec<Interval>, Stop> {
         mode.rates.iter().map(|rate| self.num(rate, bx)).collect()

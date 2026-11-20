@@ -21,9 +21,14 @@ mod claim;
 mod flowpipe;
 mod inductive;
 mod machine;
+mod reader;
 mod wire;
 mod witness;
 
+pub use reader::{
+    box_advance, box_hull, box_tube, box_within, Fired, HybridBox, InitialHull, ModelReader,
+    ReadStop,
+};
 pub use wire::{read_certificate, CertificateRefusal, Expect, HybridCertificate, RefusalCode};
 
 use machine::{Machine, Stop};
@@ -194,6 +199,54 @@ pub fn check_certificate(
     trace: Option<&HybridTrace>,
     meter: &mut HybridReplayMeter,
 ) -> Result<CertificateOutcome, HybridReplayRefusal> {
+    check_with(graph, claim, certificate, coverage, trace, meter, true)
+}
+
+/// Every rule of `flowpipe` except the containment half of rule `initial`
+/// (the first box covering the initial states), for a provider that wants to
+/// know whether a sub-box of the initial states still meets the claim's
+/// violation. It settles nothing: a core settlement uses
+/// [`check_certificate`] only.
+///
+/// # Errors
+///
+/// As [`check_certificate`].
+#[doc(hidden)]
+pub fn probe_flowpipe_claim(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    certificate: &HybridCertificate,
+    coverage: &ProofCoverage,
+    meter: &mut HybridReplayMeter,
+) -> Result<ProbeOutcome, HybridReplayRefusal> {
+    Ok(match check_with(graph, claim, certificate, Some(coverage), None, meter, false)? {
+        CertificateOutcome::Rejected(Rejection {
+            rule: Rule::Claim, ..
+        }) => ProbeOutcome::ClaimRejected,
+        _ => ProbeOutcome::NotRejected,
+    })
+}
+
+/// What [`probe_flowpipe_claim`] found. It is never a proof: the initial
+/// containment was not checked.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProbeOutcome {
+    /// The claim rule rejects the flowpipe.
+    ClaimRejected,
+    /// It does not (accepted by the checked rules, or another rule rejects).
+    NotRejected,
+}
+
+fn check_with(
+    graph: &CheckedGraph,
+    claim: &CheckedHybridClaim,
+    certificate: &HybridCertificate,
+    coverage: Option<&ProofCoverage>,
+    trace: Option<&HybridTrace>,
+    meter: &mut HybridReplayMeter,
+    initial_containment: bool,
+) -> Result<CertificateOutcome, HybridReplayRefusal> {
     let model: &CheckedHybridModel = graph
         .hybrid_models()
         .get(claim.model.get())
@@ -214,8 +267,16 @@ pub fn check_certificate(
             inductive::check(&mut machine, &mx, model, claim, boxes).map(|()| Acceptance::Proof)
         }
         wire::Body::Flowpipe(steps) => {
-            flowpipe::check(&mut machine, &mx, model, claim, steps, coverage)
-                .map(|()| Acceptance::Proof)
+            flowpipe::check(
+                &mut machine,
+                &mx,
+                model,
+                claim,
+                steps,
+                coverage,
+                initial_containment,
+            )
+            .map(|()| Acceptance::Proof)
         }
         wire::Body::Witness(dwells) => match trace {
             Some(trace) => witness::check(&mut machine, &mx, model, claim, dwells, trace)

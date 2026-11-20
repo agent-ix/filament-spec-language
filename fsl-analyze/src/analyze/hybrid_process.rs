@@ -136,6 +136,14 @@ fn compose(call: &ProcessCall<'_>) -> Result<HybridProcessRequest, EngineReport>
     .with_options(call.options.clone());
     let mut context = HybridProcessPackageContext::new();
     context.support_feature(SUPPORTED_FEATURE);
+    for dependency in call.dependencies {
+        let package = context
+            .read_dependency_package(&dependency.package)
+            .map_err(|_| tool_failed(ToolFailure::MalformedBody))?;
+        context
+            .insert_dependency_package(dependency.identity.as_str(), package)
+            .map_err(|_| tool_failed(ToolFailure::MalformedBody))?;
+    }
     let stage = HybridProcessStage {
         manifest: call.manifest.to_vec(),
         dependencies: call.dependencies.to_vec(),

@@ -248,9 +248,18 @@ pub struct ProviderRequest<'r> {
     /// document-held id those bytes give it (FSpec FR-322 "Operand index
     /// segments").
     graph: WireGraph,
+    /// The package's dependency closure, each after the dependencies it
+    /// imports (FSpec FR-331 `request.dependencies`).
+    dependencies: Vec<fsl_replay::HybridProcessDependency>,
 }
 
 impl<'r> ProviderRequest<'r> {
+    /// The package's dependency closure by identity with each package's v2
+    /// bytes, empty when it imports nothing.
+    pub fn dependencies(&self) -> &[fsl_replay::HybridProcessDependency] {
+        &self.dependencies
+    }
+
     /// The package's v2 bytes: those of the unit's own S4 emission that the
     /// strict reader admitted back (FR-331 `request.package`).
     pub fn package(&self) -> &'r EmittedPackage {
@@ -308,11 +317,27 @@ impl serde::Serialize for ProviderRequest<'_> {
             .map(|item| request_item_wire(&self.graph, item))
             .collect::<Result<Vec<_>, _>>()
             .map_err(S::Error::custom)?;
-        let mut map = serializer.serialize_map(Some(3))?;
+        let mut dependencies: Vec<&fsl_replay::HybridProcessDependency> =
+            self.dependencies.iter().collect();
+        dependencies.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
+        let dependencies: Vec<serde_json::Value> = dependencies
+            .into_iter()
+            .map(|dependency| {
+                serde_json::json!({
+                    "identity": dependency.identity,
+                    "package": base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .encode(&dependency.package),
+                })
+            })
+            .collect();
+        let mut map = serializer.serialize_map(Some(3 + usize::from(!dependencies.is_empty())))?;
         map.serialize_entry(
             "package",
             &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(self.package.bytes()),
         )?;
+        if !dependencies.is_empty() {
+            map.serialize_entry("dependencies", &dependencies)?;
+        }
         map.serialize_entry("deadline_ms", &self.limits.deadline_ms)?;
         map.serialize_entry("items", &items)?;
         map.end()
@@ -812,7 +837,14 @@ pub(crate) fn settle_items(
             }
             continue;
         };
+        let Some(dependencies) = crate::analyze::dependency_packages(package, first.emit) else {
+            for index in indices {
+                settled.insert(index, Err(Refusal::NotEmitted));
+            }
+            continue;
+        };
         let request = ProviderRequest {
+            dependencies,
             graph,
             package: bytes,
             items: routed,

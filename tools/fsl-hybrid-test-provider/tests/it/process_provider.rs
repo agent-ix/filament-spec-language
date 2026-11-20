@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::support::{
     braking, braking_with, claim, engine_at, interval, limits, outcome, point_trace,
-    process_engine, rational, refuted, run, run_with_cancel, Workspace, BACKEND,
+    process_engine, rational, refuted, run, run_with_cancel, run_with_library, Workspace, BACKEND,
 };
 
 fn named(claim: &str) -> Value {
@@ -584,4 +584,70 @@ fn a_cancelled_process_item_ends_the_provider_after_the_grace() {
             "{name}: {item}"
         );
     }
+}
+
+/// FSL FR-635 "How a process provider runs an item": the request carries the
+/// unit's dependency closure as `dependencies`, each package by identity, and
+/// a provider that requires it settles the item.
+#[test]
+#[trace("TC-3035", "FR-750-AC-6")]
+fn the_request_carries_the_units_dependency_closure() {
+    let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)")).replacen(
+        "hybrid Braking",
+        "import \"test/lib\" as l;\nhybrid Braking",
+        1,
+    );
+    let library = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function Early using v(): Boolean pure { true }\n";
+    let ws = Workspace::new("dependencies");
+    let recorded = ws.path("request.json");
+    let script = json!({"mode": "answer", "record_request": recorded,
+        "require_dependencies": ["test/lib"],
+        "outcome": outcome(json!({"result": "inconclusive",
+            "cause": {"type": "solver-inconclusive"}}), &[])});
+    let engine = process_engine(&ws, &script, limits());
+    let item = run_with_library(
+        &ws,
+        &unit,
+        ("test/lib", library),
+        json!({"claim": "SlowEnough", "backend": BACKEND}),
+        vec![engine],
+        limits(),
+    );
+    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(recorded).expect("the request was recorded"))
+            .expect("the request is JSON");
+    let dependencies = request["request"]["dependencies"]
+        .as_array()
+        .expect("the closure is sent");
+    assert_eq!(dependencies.len(), 1, "{request}");
+    assert_eq!(dependencies[0]["identity"], "test/lib", "{request}");
+    assert!(dependencies[0]["package"].is_string(), "{request}");
+}
+
+/// FSL FR-635: a unit with no import sends no `dependencies` member.
+#[test]
+#[trace("TC-3035", "FR-750-AC-6")]
+fn a_unit_without_imports_sends_no_dependencies() {
+    let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
+    let ws = Workspace::new("no-dependencies");
+    let recorded = ws.path("request.json");
+    let script = json!({"mode": "answer", "record_request": recorded,
+        "outcome": outcome(json!({"result": "inconclusive",
+            "cause": {"type": "solver-inconclusive"}}), &[])});
+    let engine = process_engine(&ws, &script, limits());
+    let item = run(
+        &ws,
+        &unit,
+        json!({"claim": "SlowEnough", "backend": BACKEND}),
+        vec![engine],
+        limits(),
+    );
+    assert_eq!(item["record"]["result"], "inconclusive", "{item}");
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(recorded).expect("the request was recorded"))
+            .expect("the request is JSON");
+    assert!(request["request"].get("dependencies").is_none(), "{request}");
 }

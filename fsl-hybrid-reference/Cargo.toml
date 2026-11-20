@@ -13,6 +13,7 @@ description = "ADR-011 §6.1 layer H: the first-party reference hybrid provider 
 # depend on `fsl-analyze`, which depends on it.
 [dependencies]
 filament-exact = { workspace = true }
+serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-replay = { path = "../fsl-replay" }
 fsl-semantics = { path = "../fsl-semantics" }

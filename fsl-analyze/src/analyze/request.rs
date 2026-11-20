@@ -491,6 +491,41 @@ fn check_provision(
     Ok(())
 }
 
+/// The package's dependency closure as a process hybrid request carries it
+/// (FSpec FR-331 "Package bytes", FSL FR-635): each package by identity with
+/// its v2 bytes, each after the dependencies it imports; `None` when one
+/// does not emit.
+pub(crate) fn dependency_packages(
+    package: &fsl_package::CheckedPackage,
+    emit: fsl_package::EmitLimits,
+) -> Option<Vec<fsl_replay::HybridProcessDependency>> {
+    let mut closure: Vec<fsl_replay::HybridProcessDependency> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    add_dependencies(package, emit, &mut seen, &mut closure)?;
+    Some(closure)
+}
+
+/// `package`'s dependencies after their own, each once.
+fn add_dependencies(
+    package: &fsl_package::CheckedPackage,
+    emit: fsl_package::EmitLimits,
+    seen: &mut std::collections::BTreeSet<String>,
+    closure: &mut Vec<fsl_replay::HybridProcessDependency>,
+) -> Option<()> {
+    for (identity, dependency) in package.dependencies() {
+        if !seen.insert(identity.to_string()) {
+            continue;
+        }
+        add_dependencies(dependency, emit, seen, closure)?;
+        let emission = fsl_package::emit_checked(dependency, emit).ok()?;
+        closure.push(fsl_replay::HybridProcessDependency {
+            identity: identity.to_string(),
+            package: emission.package().bytes().to_vec(),
+        });
+    }
+    Some(())
+}
+
 pub(super) fn dependency_wires(
     package: &fsl_package::CheckedPackage,
 ) -> Vec<fsl_replay::DependencyEntryWire> {
