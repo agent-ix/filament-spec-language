@@ -2074,8 +2074,8 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
 /// QSL-2726 item 15: a `seq` source inside a temporal clause emits a package
 /// the strict read admits, and both routes print its atom alike.
 #[test]
-#[trace("TC-2601", "FR-931-AC-16")]
-#[ignore = "spec/reader conflict: FSpec FR-322 \"seq\" states no owner for the binder, but the strict reader (operations.rs sequence_function_level, contract-ir af45a98 and #1098) finds a seq binder's level only inside a function body or a refinement row, so a seq in a temporal clause leaf refuses ill_typed/operator-ineligible at the seq application"]
+#[trace("TC-2601")]
+#[ignore = "waits for the contract-ir reader to resolve a seq binder level inside a temporal clause leaf (arch ruling 2026-11-20: FR-322 general binder level rule governs; reader gap)"]
 fn a_seq_source_inside_a_clause_emits_a_package_the_strict_read_admits() {
     let leaf = "holds(size(seq(i in 0 .. 3: i)) >= 1)";
     let (from_source, from_package) = both_routes(leaf);

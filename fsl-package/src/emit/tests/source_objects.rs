@@ -37,7 +37,7 @@ invariant Sized using P on Order at current { self.measure(0) >= 0 }
 ";
 
 /// S, S-R and S-P emit the source-owned object declarations.
-#[trace("FR-569-AC-6", "TC-1408")]
+#[trace("TC-1408")]
 #[test]
 fn fixtures_s_s_r_and_s_p_emit_source_objects() {
     let variants = [
@@ -1694,7 +1694,7 @@ fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
 /// FR-230 "Operation parameters" (QSL-2726): a timed source model whose
 /// operation guards a `Clock` parameter and resets it in the postcondition
 /// emits the guard's parameter constraint and the parameter reset.
-#[trace("FR-230-AC-65", "TC-1408")]
+#[trace("TC-1408")]
 #[test]
 fn a_source_clock_parameter_emits_its_constraint_and_reset() {
     let text = format!(
@@ -1729,7 +1729,7 @@ fn a_source_clock_parameter_emits_its_constraint_and_reset() {
 /// FSpec FR-789 rule 4 (QSL-2726): a source tuple position and a source union
 /// member are spelled `.../P/p0` and `.../U/armed` in a clock place's
 /// `resolved_path` rows.
-#[trace("FR-996-AC-1", "TC-2818", "FSpec-FR-789-AC-4")]
+#[trace("TC-2818", "FSpec-FR-789-AC-4")]
 #[test]
 fn a_source_tuple_and_union_clock_place_keep_the_source_spelling() {
     let text = format!("{HEADER}{CLOCK_ENTRIES}");

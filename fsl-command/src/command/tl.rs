@@ -1382,9 +1382,8 @@ pub(super) fn lower_over_package(
         .declaration_key()
         .ok_or_else(|| fault("an admitted clause node has a structural key"))?;
     // Printing an atom is not evaluation (FR-931 "The lowering input"): the
-    // names and term structure come from the package's own nodes, and a
-    // world the identity rows build only adds the declarations they select.
-    let world = bare.world().ok();
+    // names and term structure come from the package's own nodes, and no
+    // world is built.
     let declared = bare.declared_composites();
     let mut labels = BTreeMap::new();
     for (arena, position) in first_uses.iter().enumerate() {
@@ -1396,12 +1395,8 @@ pub(super) fn lower_over_package(
             .map_err(|failure| {
                 RunCause::TlFault(format!("an atom has no reader projection: {failure:?}"))
             })?;
-        let rows = canonical::CanonicalRows::from_projection(
-            term.projection(),
-            world.as_ref().map(fsl_package::BareWorld::types),
-            &declared,
-        )
-        .map_err(RunCause::TlFault)?;
+        let rows = canonical::CanonicalRows::from_projection(term.projection(), None, &declared)
+            .map_err(RunCause::TlFault)?;
         let label = canonical::package_label(&term, &rows).map_err(RunCause::TlFault)?;
         labels.insert(FormulaNodeId::from_arena_index(arena), label);
     }

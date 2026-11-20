@@ -26,7 +26,7 @@ use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{Map, json};
+use serde_json::{json, Map};
 
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -34,10 +34,10 @@ use super::super::{
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
 use super::{
-    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
-    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
-    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
-    write_run,
+    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
+    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
+    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
+    SubjectSelection,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -1504,46 +1504,85 @@ impl<'a> WorkInputs<'_, 'a> {
     }
 }
 
-/// FR-620 "Subject, compilation and default items" over a package: one item
-/// per claim the package names, in the order its source map gives each
-/// claim's declaration span, each with the published default of every
-/// setting, followed by the derived deadlock-freedom item of each model
-/// selection.
+/// FR-620 "Subject, compilation and default items" over a package, as the
+/// source route's `default_items` writes them: one item per kind each claim
+/// admits, in source order (a unit's position in the package's source list,
+/// then the start byte of the claim's declaration span), then each task-set
+/// schedulability claim, then the derived deadlock-freedom item of each model
+/// selection. Each item carries the published default of every setting.
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     use filament_contract_model::CheckedSourceRegion;
 
+    let units = &view.package().lock().sources;
     let span = |region: &CheckedSourceRegion| {
         (
-            region.source.authority.to_string(),
-            region.source.identity.to_string(),
+            units
+                .iter()
+                .position(|unit| {
+                    unit.authority == region.source.authority
+                        && unit.identity == region.source.identity
+                })
+                .unwrap_or(usize::MAX),
             region.start,
         )
     };
-    let mut claims: Vec<((String, String, u64), String)> = view
+    let mut claims: Vec<((usize, u64), String, Vec<Capability>)> = view
         .clause_names()
         .iter()
-        .map(|row| (span(&row.declaration_region), row.name.to_string()))
+        .map(|row| {
+            (
+                span(&row.declaration_region),
+                row.name.to_string(),
+                vec![Capability::TemporalSatisfaction],
+            )
+        })
         .collect();
+    let mut schedulability: Vec<((usize, u64), String)> = Vec::new();
     let mut declarations: Vec<&CheckedNodeId> = Vec::new();
     for row in view.claim_names() {
         if declarations.contains(&&row.declaration) {
             continue;
         }
         declarations.push(&row.declaration);
-        // A `pre` or `post` state clause is no claim: it has no default item.
-        if is_contract_clause(view, &row.declaration) {
+        let name = row.qualified_name.join("::");
+        let at = span(&row.declaration_region);
+        if is_schedulability(view, &row.declaration) {
+            schedulability.push((at, name));
             continue;
         }
-        claims.push((span(&row.declaration_region), row.qualified_name.join("::")));
+        let kinds = if is_state_graph(view, &row.declaration) {
+            vec![Capability::TemporalSatisfaction]
+        } else if is_state_clause(view, &row.declaration) {
+            vec![Capability::OperationContract]
+        } else {
+            Vec::new()
+        };
+        claims.push((at, name, kinds));
     }
-    claims.sort_by(|(left, _), (right, _)| left.cmp(right));
-    let mut items: Vec<ItemSelection> = claims
-        .into_iter()
-        .map(|(_, name)| ItemSelection {
-            claim: Some(name),
-            ..ItemSelection::default()
-        })
-        .collect();
+    claims.sort_by(|(left, ..), (right, ..)| left.cmp(right));
+    schedulability.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let item = |name: String, kind: Option<Capability>| ItemSelection {
+        claim: Some(name),
+        kind: kind.map(|kind| kind.to_wire().to_owned()),
+        ..ItemSelection::default()
+    };
+    let mut items: Vec<ItemSelection> = Vec::new();
+    for (_, name, kinds) in claims {
+        if kinds.is_empty() {
+            // A claim form with no package record of its kinds yet: the
+            // name alone, which the name tables settle.
+            items.push(item(name, None));
+            continue;
+        }
+        for kind in Capability::ALL.iter().filter(|kind| kinds.contains(kind)) {
+            items.push(item(name.clone(), Some(*kind)));
+        }
+    }
+    items.extend(
+        schedulability
+            .into_iter()
+            .map(|(_, name)| item(name, Some(Capability::Schedulability))),
+    );
     items.extend(
         view.model_selections()
             .into_iter()
@@ -1559,20 +1598,14 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
     items
 }
 
-/// Whether the package node `node` is a precondition or postcondition state clause, which
-/// no request names as a claim (FR-625).
-fn is_contract_clause(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
-    use filament_contract_model::CheckedNodePathSegment;
+/// Whether the package node `node` is a `claim`/`schedulability` node (FR-246).
+fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
         .nodes
         .iter()
         .find(|candidate| candidate.node_id == *node)
         .is_some_and(|candidate| {
-            candidate.semantic_form.as_ref() == "state_clause"
-                && matches!(
-                    node.path.get(2),
-                    Some(CheckedNodePathSegment::Name(kind)) if matches!(kind.as_ref(), "precondition" | "postcondition")
-                )
+            &*candidate.node_tag == "claim" && candidate.semantic_form.as_ref() == "schedulability"
         })
 }
