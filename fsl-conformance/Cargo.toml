@@ -25,6 +25,7 @@ filament-semantic-value = { workspace = true }
 thiserror = "2.0.20"
 
 [dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 filament-specification = { workspace = true }
 filament-verification-contracts = { git = "https://github.com/agent-ix/filament-verification-contracts", rev = "cd0c8ef67e5d4263ce12773831cedd771246e5e5" }
 fsl-command = { path = "../fsl-command" }
