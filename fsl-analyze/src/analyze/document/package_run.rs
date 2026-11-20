@@ -18,10 +18,10 @@ use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
 use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_eval::model_subject::{CapacityBinding, RoleBinding};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
 use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
@@ -29,12 +29,12 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use serde_json::{json, Map};
 
+use super::super::request::ProtocolBinding;
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
-use super::super::request::ProtocolBinding;
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
     unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
