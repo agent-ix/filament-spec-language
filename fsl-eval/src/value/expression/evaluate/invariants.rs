@@ -279,6 +279,7 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
             receiver_type: owner.clone(),
             member: "step".to_owned(),
             parameters: vec![],
+            required_arity: 0,
             result: ValueType::Boolean,
             selected_operation_owner: owner.clone(),
             selected_operation: "step".to_owned(),
