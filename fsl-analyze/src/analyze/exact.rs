@@ -306,24 +306,87 @@ fn run_timed(
         limits,
     };
     let built = match build_retaining_monitor(product_request, cancel) {
-        Ok((built, _)) => built,
+        Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
+    let (built, monitor) = built;
     let ProbBuild::Built(product) = built else {
         return not_yet();
     };
-    let [(_, _, _)] = product.initial.as_slice() else {
+    let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
     };
-    let outcome = match decide_bounded_event(&product, bound, &limits) {
-        Ok(FhResult::Exact { values, .. }) => values,
+    let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
+        Ok(FhResult::Exact { values, policy }) => (values, policy),
         Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) => return not_yet(),
         Err(_) => return broken(),
     };
-    let values = outcome
+    let Some(value) = values.get(start.index()) else {
+        return broken();
+    };
+    let holds = match bound {
+        Bound::AtLeast(threshold) => value >= threshold,
+        Bound::AtMost(threshold) => value <= threshold,
+    };
+    let values = values
         .into_iter()
         .map(ExtRational::Finite)
         .collect::<Vec<_>>();
+    let identity = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(identity) => identity,
+        Err(_) => return not_yet(),
+    };
+    let binding = match claim_binding(&system, claim) {
+        Ok(binding) => binding,
+        Err(_) => return not_yet(),
+    };
+    if !holds {
+        let reference = binding.as_ref().map(|binding| &binding.reference);
+        let target = product
+            .labels
+            .iter()
+            .map(|labels| labels.first().copied().unwrap_or(false))
+            .collect::<Vec<_>>();
+        let bounded_monitor = match (&claim.form, monitor) {
+            (
+                ProbForm::Probability {
+                    event: Event::Formula { formula, .. },
+                    ..
+                },
+                Some(monitor),
+            ) => {
+                let context =
+                    match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
+                        Ok(context) => context,
+                        Err(_) => return not_yet(),
+                    };
+                match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
+                    formula.formula(),
+                    &context,
+                    monitor,
+                    limits.model.max_automaton_states,
+                ) {
+                    Ok(monitor) => Some(monitor),
+                    Err(_) => return not_yet(),
+                }
+            }
+            _ => return not_yet(),
+        };
+        return replay_refutation(
+            &system,
+            claim,
+            &product,
+            &policy,
+            *start,
+            &target,
+            reference,
+            bounded_monitor.as_ref(),
+            &limits,
+            cancel,
+            subject,
+            None,
+        );
+    }
     let mut certificate = match certificate_of(
         &product,
         None,
@@ -340,10 +403,6 @@ fn run_timed(
     if let Some(tamper) = tamper {
         tamper(&mut certificate);
     }
-    let identity = match fsl_replay::probabilistic_claim_identity(claim) {
-        Ok(identity) => identity,
-        Err(_) => return not_yet(),
-    };
     let mut targets = product
         .decided
         .iter()
@@ -385,10 +444,6 @@ fn run_timed(
             cancel,
         )
     })();
-    let binding = match claim_binding(&system, claim) {
-        Ok(binding) => binding,
-        Err(_) => return not_yet(),
-    };
     let extremum = match optimization {
         ProbabilityObjective::Minimum => Some(Extremum::Min),
         ProbabilityObjective::Maximum => Some(Extremum::Max),
