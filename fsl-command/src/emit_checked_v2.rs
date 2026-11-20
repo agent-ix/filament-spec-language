@@ -654,6 +654,25 @@ pub(crate) fn clock_selections(
                     clause: selection.clause.clone(),
                 })?,
         };
+        // One request clock cannot serve traces over different models
+        // (FR-640, FR-763): the emitter does not derive one per trace.
+        if let Some(hyper) = checked
+            .package()
+            .graph()
+            .hyper_clauses()
+            .iter()
+            .find(|hyper| hyper.name() == selection.clause)
+        {
+            let mut aliases = Vec::new();
+            for quantifier in hyper.quantifiers() {
+                if !aliases.contains(&&quantifier.alias) {
+                    aliases.push(&quantifier.alias);
+                }
+            }
+            if aliases.len() > 1 {
+                return Err(per_trace_clocks(checked, &selection.clause, span));
+            }
+        }
         joined.push(fsl_package::TemporalClockSelection::new(
             checked.source().reference().clone(),
             span,
@@ -661,6 +680,26 @@ pub(crate) fn clock_selections(
         ));
     }
     Ok(joined)
+}
+
+/// The implementation-gap refusal of a hyper clause whose quantified traces
+/// range over more than one model.
+fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::Span) -> Error {
+    let region = fsl_foundation::source::provenance::SourceRegion::new(
+        checked.source().reference().clone(),
+        span.start as u64,
+        span.end as u64,
+    )
+    .ok();
+    Error::Producer(Box::new(ReplayRefusal::Recompile {
+        refusal: Box::new(spine::CompileRefusal::Emit(
+            fsl_package::EmitRefusal::PerTraceClockConfigurations {
+                declaration: clause.to_owned(),
+            },
+            region,
+        )),
+        pointer: None,
+    }))
 }
 
 /// Emit the `filament.checked-package/v2` bytes of `request`'s source through

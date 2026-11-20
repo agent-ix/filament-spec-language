@@ -152,16 +152,24 @@ struct CompensationRow {
     binding: Option<BindingRow>,
 }
 
-/// One hyper clause: its `hyperproperty` node and, when the request gives it
-/// a clock selection, the expected `TemporalBinding` row of each quantifier
-/// (FR-488 "Clause names and clock bindings"), one per `traces` entry.
+/// One quantifier of a hyper clause and the `TemporalBinding` row its trace
+/// is expected to have (FR-488 "Clause names and clock bindings").
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TraceRow {
+    trace: String,
+    binding: Option<BindingRow>,
+}
+
+/// One hyper clause: its `hyperproperty` node, the `claim` occurrence of that
+/// node it is, and one expected row per quantifier in quantifier order.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HyperRow {
     node: CheckedNodeId,
     name: String,
-    traces: Vec<String>,
-    binding: Option<BindingRow>,
+    occurrence: u64,
+    traces: Vec<TraceRow>,
 }
 
 /// The selection sidecar: what a consumer expects of the package beside it.
@@ -458,10 +466,11 @@ impl Selection {
                     | TemporalProfile::FixedSampleFalseExtension
                     | TemporalProfile::TimestampedEventFiniteWindow
             );
-            let binding = request
+            let selected = request
                 .temporal_selections
                 .iter()
-                .find(|selection| clocked && selection.clause == hyper.name())
+                .find(|selection| clocked && selection.clause == hyper.name());
+            let binding = selected
                 .map(|selection| {
                     fsl_package::hyper_clock_name(graph, occurrence.node())
                         .map(|clock_name| BindingRow {
@@ -476,12 +485,15 @@ impl Selection {
             hyper_rows.push(HyperRow {
                 node: id(occurrence.node(), "hyperproperty id")?,
                 name: text(hyper.name()),
+                occurrence: occurrence.origin().ordinal(),
                 traces: hyper
                     .quantifiers()
                     .iter()
-                    .map(|quantifier| text(&quantifier.variable))
+                    .map(|quantifier| TraceRow {
+                        trace: text(&quantifier.variable),
+                        binding: binding.clone(),
+                    })
                     .collect(),
-                binding,
             });
         }
         let mut node_counts = BTreeMap::new();
@@ -614,7 +626,11 @@ impl Selection {
                     .iter()
                     .map(|row| (&row.name, &row.binding)),
             )
-            .chain(self.hypers.iter().map(|row| (&row.name, &row.binding)))
+            .chain(
+                self.hypers
+                    .iter()
+                    .filter_map(|row| row.traces.first().map(|first| (&row.name, &first.binding))),
+            )
             .filter_map(|(name, binding)| {
                 binding.as_ref().map(|binding| ClockSelection {
                     clause: name.clone(),
@@ -665,9 +681,9 @@ impl Selection {
             + self
                 .hypers
                 .iter()
+                .flat_map(|row| &row.traces)
                 .filter(|row| row.binding.is_some())
-                .map(|row| row.traces.len())
-                .sum::<usize>();
+                .count();
         if rows != expected {
             return Err(refusal(SelectionAxis::ClauseBinding, None));
         }
@@ -834,13 +850,15 @@ fn check_profile(
 /// A hyper clause's rows: one per quantifier, keyed on its `hyperproperty`
 /// node with the quantifier's `trace`.
 fn check_hyper(row: &HyperRow, package: &CheckedPackageV2) -> Result<(), SelectionRefusal> {
-    for trace in &row.traces {
+    for expected in &row.traces {
         let actual = package.temporal_bindings().and_then(|rows| {
             rows.iter().find(|held| {
-                held.declaration == row.node && held.trace.as_deref() == Some(trace.as_str())
+                held.declaration == row.node
+                    && held.occurrence == row.occurrence
+                    && held.trace.as_deref() == Some(expected.trace.as_str())
             })
         });
-        compare_binding(&row.name, row.binding.as_ref(), actual)?;
+        compare_binding(&row.name, expected.binding.as_ref(), actual)?;
     }
     Ok(())
 }

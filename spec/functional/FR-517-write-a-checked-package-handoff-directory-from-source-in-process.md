@@ -133,18 +133,26 @@ node of its form by distinct node key, leaving none out:
 - **`claim/hyperproperty`**: the number of distinct `hyperproperty` node
   keys. `Selection::check` counts that form in the package.
 
+Per hyper clause, in source order, the sidecar holds a row in the `hypers`
+member: `node` (the `hyperproperty` NodeId), `name`, `occurrence` (the
+clause's `claim` ordinal of that node), and `traces`, a list in quantifier
+order of `{trace, binding}`. `binding` is the expected `TemporalBinding`
+`clock_name` and `clock` of that trace's row, and is absent when the request
+gives the clause no clock selection or its profile is not clock-configured.
+`hypers` is omitted when the unit declares no hyper clause. The format
+identity stays `filament.checked-handoff.selection/1`.
+
 The expected number of `temporal_bindings` rows adds one row per quantifier
 for each hyper clause whose profile is clock-configured, keyed on its
-`hyperproperty` node with the quantifier's `trace` (FR-488 "Clause names and
-clock bindings"). Two parts disagree with FR-488 today:
-
-- The emitter writes one row per such clause, keyed on the body wrapper with
-  no `trace`.
-- The strict reader refuses a row keyed on a wrapper.
-
-So a clock-configured hyper clause emits no admitted package until the
-emitter writes the rows FR-488 states. The sidecar counts the rows FR-488
-states, never the emitter's current row. Remaining work: QSL-2631.
+`hyperproperty` node at its `claim` occurrence with the quantifier's `trace`
+(FR-488 "Clause names and clock bindings"); the emitter writes exactly those
+rows and none keyed on the body wrapper. `Selection::check` refuses on
+`clause.binding` when a trace's row is missing or present against an absent
+binding, and on the clock axes when a value differs. A hyper clause whose
+quantifiers name more than one model under a clock-configured profile is not
+given one request clock for every trace: the request is refused
+`unsupported_construct`/`not-yet-implemented` (`PerTraceClockConfigurations`)
+until per-trace clock derivation lands (QSL-2277).
 
 
 `checked_handoff::Selection::read(bytes)` parses the sidecar and

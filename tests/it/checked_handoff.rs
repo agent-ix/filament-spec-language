@@ -2931,9 +2931,17 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A handoff request for one unit over the config-version model that declares `body` after
-/// its profiles; no library, with the clock selections `selections`.
-fn hyper_request(dir: &Path, body: &str, selections: Vec<ClockSelection>) -> CheckedHandoffRequest {
+const CONFIG_MODEL: &str = "examples/config-version/model.semantic-ir.json";
+
+/// A handoff request for one unit over the models `models` that declares
+/// `body` after its profiles; no library, with the clock selections
+/// `selections`.
+fn hyper_request(
+    dir: &Path,
+    models: Vec<PathBuf>,
+    body: &str,
+    selections: Vec<ClockSelection>,
+) -> CheckedHandoffRequest {
     let source = dir.join("unit.native");
     std::fs::write(
         &source,
@@ -2942,7 +2950,8 @@ fn hyper_request(dir: &Path, body: &str, selections: Vec<ClockSelection>) -> Che
              profile v = \"filament.model.complete/v1\";\n\
              profile i = \"filament.temporal.infinite-trace/v1\";\n\
              profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
-             model V = \"example/config-version\";\n{body}\n"
+             profile p = \"filament.temporal.infinite-trace/v1\";\n\
+             {body}\n"
         ),
     )
     .unwrap();
@@ -2950,9 +2959,7 @@ fn hyper_request(dir: &Path, body: &str, selections: Vec<ClockSelection>) -> Che
         emit: Request {
             source,
             package_name: "r".into(),
-            models: vec![PathBuf::from(
-                "examples/config-version/model.semantic-ir.json",
-            )],
+            models,
             libraries: Vec::new(),
             execution_points: None,
             temporal_selections: selections,
@@ -2963,7 +2970,8 @@ fn hyper_request(dir: &Path, body: &str, selections: Vec<ClockSelection>) -> Che
     }
 }
 
-/// `body` written over [`hyper_request`], compiled back, and its sidecar.
+/// `body` over the config-version model written, compiled back, checked
+/// against its sidecar, and the sidecar.
 fn hyper_handoff(
     body: &str,
     selections: Vec<ClockSelection>,
@@ -2974,8 +2982,14 @@ fn hyper_handoff(
 ) {
     let holder = tempfile::tempdir().unwrap();
     let out = holder.path().join("handoff");
-    write(&hyper_request(holder.path(), body, selections), &out)
-        .expect("the handoff of a unit with a hyper clause is written");
+    let body = format!("model V = \"example/config-version\";\n{body}");
+    let request = hyper_request(
+        holder.path(),
+        vec![PathBuf::from(CONFIG_MODEL)],
+        &body,
+        selections,
+    );
+    write(&request, &out).expect("the handoff of a unit with a hyper clause is written");
     let sidecar = serde_json::from_slice(&tree(&out)["selection.json"]).unwrap();
     let handoff = compile(&out).expect("the directory compiles back");
     Selection::read(&tree(&out)["selection.json"])
@@ -2989,19 +3003,31 @@ const BOUNDED: &str =
     "temporal Bounded using i over (view: V::ConfigVersion) clock \"model-steps\" \
      on origin { always holds(view.versionNumber = view.versionNumber) }\n";
 
+const EQUAL: &str = "hyper Equal using i over behaviours (c: V::ConfigVersion) \
+     forall trace a of V forall trace b of V \
+     { always holds(c.versionNumber @ a = c.versionNumber @ b) }\n";
+
+/// A hybrid model `Braking` and the claim `SlowEnough` over it.
+const HYBRID: &str = "dimension Time;\nunit s : Time = rational(1, 1);\n\
+     hybrid Braking using p {\n\
+       mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }\n\
+         flow { v' = -a; a' = 0; t' = 1; }\n\
+         transition to Stopped when { v = 0 } reset { v = 0 };\n\
+       mode Stopped invariant { v = 0 }\n\
+         flow { v' = 0; a' = 0; t' = 1; }\n\
+     }\n\
+     temporal SlowEnough using p over (h: Braking) clock \"model-time\" \
+     on origin { always [0, 10] holds(h.v < 30) }\n";
+
 /// FR-517-AC-25 (TC-3128): the sidecar counts a hyper clause's body wrapper
 /// with the temporal clauses and its `hyperproperty` node, so the handoff
 /// compiles back and passes `Selection::check`, and a sidecar whose
-/// `temporal/temporal_clause` count is 1 is refused on `package.nodes`.
+/// `temporal/temporal_clause` count is 1 is refused on `package.nodes`. A
+/// hybrid claim joins the count.
 #[trace("TC-3128", "FR-517-AC-25")]
 #[test]
 fn a_handoff_of_a_unit_with_a_hyper_clause_passes_its_selection_check() {
-    let body = format!(
-        "{BOUNDED}hyper Equal using i over behaviours (c: V::ConfigVersion) \
-         forall trace a of V forall trace b of V \
-         {{ always holds(c.versionNumber @ a = c.versionNumber @ b) }}"
-    );
-    let (_holder, sidecar, handoff) = hyper_handoff(&body, Vec::new());
+    let (_holder, sidecar, handoff) = hyper_handoff(&format!("{BOUNDED}{EQUAL}"), Vec::new());
     let counts = &sidecar["package"]["node_counts"];
     assert_eq!(counts["temporal/temporal_clause"], 2);
     assert_eq!(counts["claim/hyperproperty"], 1);
@@ -3013,11 +3039,18 @@ fn a_handoff_of_a_unit_with_a_hyper_clause_passes_its_selection_check() {
         .check(handoff.admitted())
         .expect_err("the count of one is refused");
     assert_eq!(refusal.axis, SelectionAxis::PackageNodes);
+
+    let (_holder, sidecar, _handoff) =
+        hyper_handoff(&format!("{HYBRID}{BOUNDED}{EQUAL}"), Vec::new());
+    let counts = &sidecar["package"]["node_counts"];
+    assert_eq!(counts["temporal/temporal_clause"], 3);
+    assert_eq!(counts["claim/hyperproperty"], 1);
 }
 
 /// FR-517-AC-26 (TC-3128): a hyper clause under the event-position profile
 /// writes one binding row per quantifier on its `hyperproperty` node, the
-/// sidecar expects them, and the handoff passes `Selection::check`.
+/// sidecar expects them, and the handoff passes `Selection::check`, which
+/// refuses a differing clock and a trace whose row is missing.
 #[trace("TC-3128", "FR-517-AC-26")]
 #[test]
 fn a_clocked_hyper_clause_handoff_carries_one_binding_row_per_quantifier() {
@@ -3035,18 +3068,25 @@ fn a_clocked_hyper_clause_handoff_carries_one_binding_row_per_quantifier() {
         }],
     );
     assert_eq!(sidecar["package"]["node_counts"]["claim/hyperproperty"], 1);
-    assert_eq!(
-        sidecar["hypers"][0]["traces"],
-        serde_json::json!(["a", "b"])
-    );
+    let hyper = &sidecar["hypers"][0];
+    assert_eq!(hyper["occurrence"], 0);
+    let traces: Vec<&Value> = hyper["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| &row["trace"])
+        .collect();
+    assert_eq!(traces, ["a", "b"]);
 
     let rows = handoff
         .admitted()
         .temporal_bindings()
         .expect("binding rows");
     assert_eq!(rows.len(), 2, "{rows:?}");
-    let hyperproperty = serde_json::to_value(&rows[0].declaration).unwrap();
-    assert_eq!(hyperproperty, sidecar["hypers"][0]["node"]);
+    assert_eq!(
+        serde_json::to_value(&rows[0].declaration).unwrap(),
+        hyper["node"]
+    );
     let traces: Vec<Option<&str>> = rows.iter().map(|row| row.trace.as_deref()).collect();
     assert_eq!(traces, [Some("a"), Some("b")]);
     for row in rows {
@@ -3055,12 +3095,83 @@ fn a_clocked_hyper_clause_handoff_carries_one_binding_row_per_quantifier() {
         assert_eq!(row.clock_name.as_ref(), "model-steps");
     }
 
-    // A sidecar that expects another sequence authority is refused on it.
-    let mut edited = sidecar.clone();
-    edited["hypers"][0]["binding"]["clock"]["sequence_authority"] = "other".into();
-    let refusal = Selection::read(&serde_json::to_vec(&edited).unwrap())
-        .unwrap()
-        .check(handoff.admitted())
-        .expect_err("another sequence authority is refused");
-    assert_eq!(refusal.axis, SelectionAxis::ClockSequenceAuthority);
+    let check = |edit: &dyn Fn(&mut Value)| {
+        let mut edited = sidecar.clone();
+        edit(&mut edited);
+        Selection::read(&serde_json::to_vec(&edited).unwrap())
+            .unwrap()
+            .check(handoff.admitted())
+            .expect_err("the departing sidecar is refused")
+            .axis
+    };
+    assert_eq!(
+        check(&|edited| {
+            edited["hypers"][0]["traces"][1]["binding"]["clock"]["sequence_authority"] =
+                "other".into();
+        }),
+        SelectionAxis::ClockSequenceAuthority
+    );
+    assert_eq!(
+        check(&|edited| edited["hypers"][0]["traces"][1]["binding"] = Value::Null),
+        SelectionAxis::ClauseBinding
+    );
+    assert_eq!(
+        check(&|edited| edited["hypers"][0]["traces"][1]["trace"] = "z".into()),
+        SelectionAxis::ClauseBinding
+    );
+}
+
+/// FR-517-AC-26 with FR-640 (QSL-2277): a clocked hyper clause whose
+/// quantifiers name two models is refused `PerTraceClockConfigurations`
+/// instead of taking one request clock for both traces.
+#[trace("TC-3128", "FR-517-AC-26")]
+#[test]
+fn a_clocked_hyper_clause_over_two_models_is_refused_on_the_request_path() {
+    let holder = tempfile::tempdir().unwrap();
+    let document = std::fs::read_to_string(CONFIG_MODEL).unwrap();
+    let models: Vec<PathBuf> = ["device-saving", "device-normal"]
+        .iter()
+        .map(|name| {
+            let path = holder.path().join(format!("{name}.json"));
+            std::fs::write(
+                &path,
+                document.replace("example/config-version", &format!("example/{name}")),
+            )
+            .unwrap();
+            path
+        })
+        .collect();
+    let body = "model S = \"example/device-saving\";\nmodel N = \"example/device-normal\";\n\
+         hyper Saves using t over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of S forall trace n of N \
+         { always [0, 3] holds(d.versionNumber @ s <= e.versionNumber @ n) }";
+    let request = hyper_request(
+        holder.path(),
+        models,
+        body,
+        vec![ClockSelection {
+            clause: "Saves".into(),
+            clock: ClockConfiguration::EventPosition {
+                sequence_authority: "events-authority".into(),
+            },
+        }],
+    );
+    let Err(Error::Compile(emit_checked_v2::Error::Producer(refusal))) =
+        write(&request, &holder.path().join("handoff"))
+    else {
+        panic!("the request is refused by the producer");
+    };
+    let fsl_replay::ReplayRefusal::Recompile { refusal, .. } = *refusal else {
+        panic!("a recompile refusal");
+    };
+    assert!(
+        matches!(
+            *refusal,
+            fsl_replay::CompileRefusal::Emit(
+                fsl_package::EmitRefusal::PerTraceClockConfigurations { ref declaration },
+                _
+            ) if declaration == "Saves"
+        ),
+        "{refusal:?}"
+    );
 }
