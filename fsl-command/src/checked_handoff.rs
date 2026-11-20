@@ -53,8 +53,8 @@ mod tree;
 use std::path::Path;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageReadLimits,
+    CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 
 use crate::emit_checked_v2::{self, Compiled};
@@ -532,6 +532,10 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
 /// value retains the admitted package and the checked in-process package for
 /// callers that need them.
 pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
+    let _ = std::fs::read_dir(directory).map_err(|source| Error::Read {
+        path: directory.display().to_string(),
+        source,
+    })?;
     let package_ceiling = usize::try_from(READ_LIMITS.bytes).unwrap_or(usize::MAX);
     let selection = Selection::read(&tree::read(directory, "selection.json", package_ceiling)?)?;
     let bytes = tree::read(directory, "checked-package.json", package_ceiling)?;
@@ -540,9 +544,7 @@ pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     let compiled = emit_checked_v2::compile_inputs(inputs)?;
     let evidence = read_evidence(&compiled)?;
     let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
-    selection
-        .check(&admitted)
-        .map_err(Error::SelectionMismatch)?;
+    selection.check(&admitted).map_err(Error::SelectionMismatch)?;
     Ok(admitted)
 }
 

@@ -15,7 +15,8 @@ pub use budget::{BudgetDenial, BudgetOwner, DeniedCharge};
 pub use locus::{InvalidJsonPointer, JsonPointer, Locus, UnresolvedLocus};
 pub use stage::{LimitExceeded, LimitKind, StageFailure, StageWork, Staged, Stopped};
 
-use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
+pub use filament_semantic_value::catalog::CatalogCode;
+use filament_semantic_value::catalog::{CatalogCoded, Category};
 
 /// Native processing phase; successful syntax does not imply later execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -978,8 +979,8 @@ mod foundation_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
     use super::{
-        category_of, resource_exhausted, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit,
-        CATALOG_CATEGORIES,
+        CATALOG_CATEGORIES, Code, Phase, Source, SourceIdentity, Span, SyntaxLimit, category_of,
+        resource_exhausted,
     };
     use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
     use ix_trace_rs::trace;

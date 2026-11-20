@@ -148,6 +148,15 @@ pub enum ReplayRefusal {
     /// The complete offered checked package failed native admission after recompilation.
     #[error(transparent)]
     Package(#[from] crate::ReplayPackageAdmissionRefusal),
+    /// The package reader refused bytes and the request supplied the identity
+    /// under which those bytes were selected.
+    #[error("{refusal}")]
+    PackageWithIdentity {
+        /// The native reader refusal.
+        refusal: crate::ReplayPackageAdmissionRefusal,
+        /// The request's package binding, never the package's own claim.
+        identity: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    },
     /// Genuine recompilation evidence could not be assembled by the spine owner.
     #[error(transparent)]
     PackageEvidence(Box<spine::RunRefusal>),
@@ -622,6 +631,7 @@ impl ReplayRefusal {
         match self {
             Self::Request(refusal) => refusal.code(),
             Self::Package(refusal) => refusal.code(),
+            Self::PackageWithIdentity { refusal, .. } => refusal.code(),
             Self::PackageEvidence(refusal) => refusal.code(),
             Self::LimitAboveReader(_) => Code::InvalidRequest,
             Self::SourceCount(_) => Code::InvalidRequest,
@@ -696,6 +706,7 @@ impl ReplayRefusal {
         match self {
             Self::Request(refusal) => refusal.cause(),
             Self::Package(refusal) => refusal.cause(),
+            Self::PackageWithIdentity { refusal, .. } => refusal.cause(),
             Self::PackageEvidence(_) => None,
             Self::Recompile { refusal, .. } => refusal.cause(),
             Self::RecompileWithProtocolResults { refusal, .. }
@@ -795,6 +806,9 @@ impl ReplayRefusal {
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
             Self::Package(refusal) => Some(Cow::Owned(refusal.pointer())),
+            Self::PackageWithIdentity { refusal, .. } => {
+                Some(Cow::Owned(refusal.pointer()))
+            }
             Self::RefinementInternals { pointer, .. } => Some(Cow::Owned(pointer.clone())),
             Self::WrongReplayTarget { target, .. } => {
                 Some(Cow::Borrowed(target.member().pointer()))
@@ -2121,7 +2135,17 @@ pub(crate) fn recompile_with_temporal_selections(
     )?;
     request
         .package()
-        .admit(&evidence, limits.spine.imports.for_ir())?;
+        .admit(&evidence, limits.spine.imports.for_ir())
+        .map_err(|refusal| ReplayRefusal::PackageWithIdentity {
+            refusal,
+            identity: request.sources().first().and_then(|source| {
+                fsl_foundation::source::provenance::RawSourceRef::new(
+                    source.authority().to_owned(),
+                    source.identity().to_owned(),
+                )
+                .ok()
+            }),
+        })?;
     Ok(compiled)
 }
 

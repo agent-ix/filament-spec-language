@@ -22,6 +22,7 @@ extern crate alloc;
 
 pub mod backend;
 pub mod bound;
+pub mod canonical_json;
 pub mod diagnostic;
 pub mod identity_limits;
 pub mod intake_limits;
@@ -45,6 +46,22 @@ pub mod witness;
 
 pub use backend::{BackendId, EmptyBackendIdentity};
 pub use diagnostic::{Code, Diagnostic, Phase, SyntaxLimit};
+/// FR-286: catalog pairs produced by this crate's typed diagnostic causes.
+pub const CATALOG_PAIRS: &[diagnostic::CatalogCode] = &[
+    diagnostic::CatalogCode::new("resource_exhausted", "allocation-failed"),
+    diagnostic::CatalogCode::new("resource_exhausted", "reservation-size-overflow"),
+    diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "input-bytes-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "token-count-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "node-count-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "edge-count-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "occurrence-count-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "diagnostic-count-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "logical-storage-exceeded"),
+    diagnostic::CatalogCode::new("stage_limit_exceeded", "rational-bits-exceeded"),
+    diagnostic::CatalogCode::new("wrong_snapshot", "wrong-anchor"),
+];
 pub use identity_limits::{IdentityLimits, DEFAULT_IDENTITY_INPUT_BYTES};
 pub use intake_limits::{IntakeLimits, DEFAULT_INTAKE_INPUT_BYTES, DEFAULT_SEQUENCE_MAXIMUM};
 pub use memory::MemoryModelName;

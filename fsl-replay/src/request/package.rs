@@ -5,8 +5,8 @@ use super::{PackageMemberCause, ReplayRequestRefusal};
 use crate::identity::SourceRefWire;
 use filament_contract_model::CheckedRefinementInternal;
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageIncomplete, CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageIncomplete,
+    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 use quire_canonical::{Document, Node, NodeRef, ReadError};
 

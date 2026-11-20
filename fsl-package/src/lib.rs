@@ -18,6 +18,13 @@
 // `filament-contract-model` and are behind `std`.
 extern crate alloc;
 
+/// FR-286: the typed refusal pairs produced by package admission and emission.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_wire", "unsupported-wire"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
+];
+
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
