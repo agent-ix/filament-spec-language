@@ -13,7 +13,7 @@ Compared the changed test assertions and strict pending cases with their exact c
 
 ## Verdict
 
-**CONDITIONAL** — remove the unsupported FR-127-AC-4 tag; the existing FR-127-AC-1 tag correctly covers the tested MaxStates settlement. This is a diff-scoped semantic and binding review under the explicit user scope, not a full repository gap audit.
+**PASS** — the sole trace finding is fixed according to the trusted author receipt at `a6e877cbd0068d1ae4184284a12a1db7d733754d`: only the unsupported FR-127-AC-4 tag was removed; FR-127-AC-1 and FR-128-AC-6 and all runtime assertions remain. This is a diff-scoped semantic and binding review under the explicit user scope, not a full repository gap audit.
 
 ## Findings
 
@@ -34,3 +34,11 @@ The user explicitly prohibits another matrix, measurement, whole-repository inve
 ## Finding detail
 
 The function `returned_undefined_and_actual_state_limit_runs_settle_without_invented_outcomes` asserts genuine Undefined replay and a MaxStates stop with value 1. FR-127-AC-1 owns the MaxStates map. FR-127-AC-4 instead names max_automaton_states, cancellation sources, max_depth, work-unit limits, and recording the three limits used; the body reads none of those fields or scenarios. Removing the extra tag is sufficient and requires no runtime test rerun.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Trusted author receipt at a6e877cbd0068d1ae4184284a12a1db7d733754d confirms removal of only the unsupported FR-127-AC-4 tag, retaining FR-127-AC-1/FR-128-AC-6 and every runtime assertion. |
+
+Round 1 is a record-only disposition explicitly authorized by the lead. No source, diff, specification, test, build, lint or new review was repeated. Reported corrected attribute: `#[trace("FR-127-AC-1", "FR-128-AC-6")]`. The original finding above remains unchanged.
