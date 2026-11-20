@@ -27,19 +27,20 @@ fn a_timed_witness_requires_a_delay_on_each_transition() {
 
 #[trace("FR-237-AC-1")]
 #[test]
-fn rationally_equal_delays_reproduce_the_same_exact_trace_position() {
-    let world = rpc(3);
+fn an_admissible_fractional_timeout_replays_without_rounding_clock_values() {
+    let world = rpc(2);
     let mut witness = returned(&world);
-    assert_eq!(delays(&witness), [whole(0), whole(3), whole(0)]);
-    for (step, delay) in witness
-        .prefix
-        .iter_mut()
-        .zip([exact(0, 17), exact(6, 2), exact(0, 31)])
-    {
-        step.delay = Some(delay);
-    }
+    witness.prefix = walk(
+        &world,
+        &[
+            ("send", whole(0)),
+            ("timeout", exact(5, 2)),
+            ("reply", whole(0)),
+        ],
+    );
+    assert_eq!(delays(&witness), [whole(0), exact(5, 2), whole(0)]);
     assert_eq!(
-        replay(&world, &witness).expect("equivalent rational delays reproduce"),
+        replay(&world, &witness).expect("the exact fractional clock states reproduce"),
         ModelTraceSettlement::Reproduced {
             value: ModelTraceValue::Truth(false),
             trace_position: Some(3),
