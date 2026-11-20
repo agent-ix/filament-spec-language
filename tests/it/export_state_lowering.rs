@@ -5,10 +5,10 @@
 
 use crate::plan_export_surface::outcome_json;
 use crate::plan_export_surface::{counter_export, counter_request};
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use crate::support::refinement_cas::{self, Variant};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn tla() -> Value {
     json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"]})
@@ -54,11 +54,11 @@ fn the_counter_invariant_lowers_to_tla() {
     for part in [
         "VARIABLES v_Counter",
         "TypeOK ==",
-        "v_Counter = [k \\in {<<99>>} |-> CASE k = <<99>> -> [f_value |-> 0]]",
-        "op_inc(p_self) ==",
+        "v_Counter = [k \\in {<<99>>} |-> CASE k = <<99>> -> [fld_value |-> 0]]",
+        "op_inc(r_self) ==",
         "Next ==",
         "Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)",
-        "c_Bounded == \\A p_self \\in DOMAIN v_Counter",
+        "c_Bounded == \\A r_self \\in DOMAIN v_Counter",
         "THEOREM Th_Bounded == Spec => []c_Bounded",
     ] {
         assert!(module.contains(part), "{part}: {module}");
@@ -122,7 +122,7 @@ fn the_counter_invariant_lowers_to_lean() {
         "structure State where",
         "def WF (s : State)",
         "def Init (s : State)",
-        "s.v_Counter = [([99], { f_value := 0 })]",
+        "s.v_Counter = [([99], { fld_value := 0 })]",
         "def op_inc (s : State)",
         "def Step (s : State)",
         "structure Behaviour where",
@@ -213,11 +213,21 @@ fn exported(models: Models<'_>, unit: &str, member: &Value) -> (u8, Value) {
     )
 }
 
-fn failed(models: Models<'_>, unit: &str, member: &Value) -> Value {
-    let (_directory, result) = run_export(models, unit, member);
-    let error = result.expect_err("a mapper failure");
-    assert_eq!(error.category().exit_code(), 30, "{:?}", error.value());
-    error.value().unwrap()
+fn refused(models: Models<'_>, unit: &str, member: &Value) -> Value {
+    let (exit, value) = exported(models, unit, member);
+    assert_eq!(exit, 21, "{value}");
+    refusal_of(&value)
+}
+
+/// The `refusal` of an `unimplemented_capability` export document, which
+/// names the target and the construct the build does not lower
+/// (FSpec FR-817-AC-16).
+fn refusal_of(value: &Value) -> Value {
+    let refusal = value["export"]["refusal"].clone();
+    assert_eq!(refusal["code"], "unimplemented_capability", "{value}");
+    assert_eq!(refusal["cause"], "unimplemented-meaning", "{value}");
+    assert_eq!(value["export"]["status"], "refused", "{value}");
+    refusal
 }
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -262,12 +272,12 @@ fn an_operation_with_a_parameter_and_a_receiver_frame_lowers_to_tla() {
     assert_eq!(exit, 0, "{value}");
     let module = text(&value);
     for part in [
-        "op_add(p_self, p_n) ==",
-        "\\/ \\E p_self \\in DOMAIN v_Counter, p_n \\in 0..1 : op_add(p_self, p_n)",
+        "op_add(r_self, p_n) ==",
+        "\\/ \\E r_self \\in DOMAIN v_Counter, p_n \\in 0..1 : op_add(r_self, p_n)",
         "p_n >= 0",
         "p_n <= 1",
-        "\\A k \\in DOMAIN v_Counter : k /= p_self => v_Counter'[k].f_value = v_Counter[k].f_value",
-        "\\A k \\in DOMAIN v_Counter : v_Counter'[k].f_id = v_Counter[k].f_id",
+        "\\A k \\in DOMAIN v_Counter : k /= r_self => v_Counter'[k].fld_value = v_Counter[k].fld_value",
+        "\\A k \\in DOMAIN v_Counter : v_Counter'[k].fld_id = v_Counter[k].fld_id",
         "Init == TypeOK",
     ] {
         assert!(module.contains(part), "{part}: {module}");
@@ -285,7 +295,7 @@ fn an_operation_with_a_parameter_and_a_receiver_frame_lowers_to_tla() {
 
 /// The Lean `op_` of a receiver-only frame keeps its later conjuncts out of
 /// the receiver guard: each frame line is parenthesized, so `WF s'` and the
-/// remaining lines are not under `Not (k = p_self) ->`.
+/// remaining lines are not under `Not (k = r_self) ->`.
 #[test]
 fn a_receiver_frame_does_not_swallow_the_later_lean_conjuncts() {
     let (exit, value) = exported(
@@ -301,7 +311,7 @@ fn a_receiver_frame_does_not_swallow_the_later_lean_conjuncts() {
         .expect("op_tick");
     let guarded = tick
         .lines()
-        .find(|line| line.contains("Not (k = p_self) ->"))
+        .find(|line| line.contains("Not (k = r_self) ->"))
         .expect("the receiver frame line");
     assert!(
         guarded.trim_start().starts_with("(forall k,") && guarded.trim_end().ends_with(") /\\"),
@@ -309,10 +319,10 @@ fn a_receiver_frame_does_not_swallow_the_later_lean_conjuncts() {
     );
     assert!(tick.contains("(WF s')"), "{tick}");
     assert!(
-        file.contains("def op_add (s : State) (s' : State) (p_self : List Nat) (p_n : Int)"),
+        file.contains("def op_add (s : State) (s' : State) (r_self : List Nat) (p_n : Int)"),
         "{file}"
     );
-    assert!(file.contains("exists p_self, exists p_n,"), "{file}");
+    assert!(file.contains("exists r_self, exists p_n,"), "{file}");
     assert!(file.contains("p_n >= 0"), "{file}");
     assert!(!file.contains("Prod.fst"), "{file}");
 }
@@ -335,18 +345,18 @@ fn boolean_fields_and_connectives_lower_in_both_targets() {
     let (exit, value) = exported(&models, &unit, &member("filament.output.tla2/v1"));
     assert_eq!(exit, 0, "{value}");
     let module = text(&value);
-    assert!(module.contains("f_busyA \\in BOOLEAN"), "{module}");
+    assert!(module.contains("fld_busyA \\in BOOLEAN"), "{module}");
     assert!(
-        module.contains("~(v_Counter[p_self].f_busyA /\\ v_Counter[p_self].f_busyB)"),
+        module.contains("~(v_Counter[r_self].fld_busyA /\\ v_Counter[r_self].fld_busyB)"),
         "{module}"
     );
     assert!(module.contains(" \\/ "), "{module}");
     let (exit, value) = exported(&models, &unit, &member("filament.output.lean4/v1"));
     assert_eq!(exit, 0, "{value}");
     let file = text(&value);
-    assert!(file.contains(".f_busyA = true)"), "{file}");
+    assert!(file.contains(".fld_busyA = true)"), "{file}");
     assert!(file.contains("Not ("), "{file}");
-    assert!(file.contains("f_busyA : Bool"), "{file}");
+    assert!(file.contains("fld_busyA : Bool"), "{file}");
 }
 
 /// An `or` guards the definedness of its right operand by the negated left
@@ -369,7 +379,7 @@ fn an_or_guards_the_definedness_of_its_right_operand() {
     assert_eq!(exit, 0, "{value}");
     let module = text(&value);
     assert!(
-        module.contains("~(v_Counter[p_self].f_id = 0) => ((0 <="),
+        module.contains("~(v_Counter[r_self].fld_id = 0) => ((0 <="),
         "{module}"
     );
 }
@@ -416,10 +426,10 @@ fn two_exported_object_types_frame_each_other() {
 }
 
 /// Population bounds (`bound`, FSpec FR-812-AC-6) are not lowered, so an
-/// export over a bounded population is a mapper failure naming the bound
+/// export over a bounded population is the typed `unimplemented_capability` refusal naming the bound
 /// rather than a `preserved` record that drops it.
 #[test]
-fn a_bounded_population_is_a_mapper_failure() {
+fn a_bounded_population_is_an_unimplemented_capability() {
     for profile in ["filament.output.tla2/v1", "filament.output.lean4/v1"] {
         let directory = tempfile::tempdir().unwrap();
         let path = counter_request(
@@ -432,21 +442,26 @@ fn a_bounded_population_is_a_mapper_failure() {
             format!("{unit}bound B on Counter::counters [3]\n"),
         )
         .unwrap();
-        let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-            .expect_err("a mapper failure");
-        assert_eq!(error.category().exit_code(), 30, "{profile}");
-        let value = error.value().unwrap().to_string();
+        let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+            .expect("a refused export document");
+        assert_eq!(result.exit_code, 21, "{profile}");
+        let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
+        let refusal = refusal_of(&value);
+        assert_eq!(refusal["construct"], "model/bound", "{value}");
         assert!(
-            value.contains("bound") && value.contains("Bounded"),
+            refusal["capability"]
+                .as_str()
+                .unwrap()
+                .ends_with("model/bound"),
             "{value}"
         );
     }
 }
 
 /// An operation carrying domain-package `requires` or `ensures` clauses is
-/// a mapper failure, never a `preserved` record that omits them.
+/// the typed `unimplemented_capability` refusal, never a `preserved` record that omits them.
 #[test]
-fn an_operation_contract_in_the_model_is_a_mapper_failure() {
+fn an_operation_contract_in_the_model_is_an_unimplemented_capability() {
     let mut document: Value = serde_json::from_slice(&spec_doc()).unwrap();
     for node in document["types"].as_array_mut().unwrap() {
         for operation in node
@@ -464,14 +479,14 @@ fn an_operation_contract_in_the_model_is_a_mapper_failure() {
         refinement_cas::SPEC,
         serde_json::to_vec(&document).unwrap(),
     )];
-    let value = failed(
+    let value = refused(
         &models,
         &spec_unit(),
         &spec_member("filament.output.tla2/v1"),
     );
     let text = value.to_string();
     assert!(
-        text.contains("model/operation") && text.contains("requires"),
+        text.contains("model/operation") && text.contains("unimplemented_capability"),
         "{text}"
     );
 }
@@ -533,7 +548,7 @@ fn an_incomplete_export_renders_its_limit() {
 
 fn render(result: &fsl_command::command::RunResult) -> Vec<String> {
     use filament_exact::Cancel;
-    use fsl_inspect::{render_outcome, RenderForm, RenderSources};
+    use fsl_inspect::{RenderForm, RenderSources, render_outcome};
     let rendered = render_outcome(
         result.outcome.as_ref().expect("an outcome document"),
         RenderForm::Text,
@@ -589,12 +604,12 @@ fn writing_the_regions_charges_work_units() {
     );
 }
 
-/// An invariant over a type with a field this build does not lower is a
-/// mapper failure naming the construct and the clause, exit 30, with no
-/// `export` member, no file, `last_stage` S4 and stage `emit`, under every
-/// floor and in both targets (FSpec FR-811 "Decision", FR-817 exits).
+/// An invariant over a type with a field this build does not lower is the
+/// typed `unimplemented_capability` refusal naming the construct and its
+/// node, exit 21, with no file and `last_stage` S4, under every floor and in
+/// both targets (FSpec FR-817-AC-16).
 #[test]
-fn an_unlowered_state_construct_is_a_mapper_failure() {
+fn an_unlowered_state_construct_is_an_unimplemented_capability() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
          model Config = \"example/config-version\";\n\
@@ -616,20 +631,29 @@ fn an_unlowered_state_construct_is_a_mapper_failure() {
                 "export": member}});
             let path = directory.path().join("request.json");
             std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-            let error = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-                .expect_err("a mapper failure");
-            assert_eq!(error.category().exit_code(), 30, "{profile} {floor:?}");
-            let value = error.value().unwrap();
-            let text = value.to_string();
-            assert!(
-                text.contains("Low") && text.contains("model/field"),
-                "{text}"
+            let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+                .expect("a refused export document");
+            assert_eq!(result.exit_code, 21, "{profile} {floor:?}");
+            let value: Value = serde_json::from_str(&result.value.to_string()).unwrap();
+            let refusal = refusal_of(&value);
+            assert_eq!(refusal["construct"], "model/field", "{value}");
+            assert_eq!(
+                refusal["target"],
+                if profile.contains("tla") {
+                    "tla"
+                } else {
+                    "lean"
+                },
+                "{value}"
             );
-            assert!(value.get("export").is_none(), "{value}");
-            assert_eq!(value["stage"], "emit", "{value}");
+            assert!(
+                refusal["node"].is_string() && refusal["locus"].is_object(),
+                "{value}"
+            );
             assert!(!directory.path().join("m.out").exists());
-            let document = outcome_json(&error.outcome_document(fsl_replay::Operation::Export));
+            let document = outcome_json(&result.outcome.expect("an outcome document"));
             assert_eq!(document["last_stage"], "S4", "{document}");
+            assert_eq!(document["category"], "unsupported", "{document}");
         }
     }
 }

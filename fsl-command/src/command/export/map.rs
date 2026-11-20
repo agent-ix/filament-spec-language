@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.
@@ -186,7 +186,7 @@ impl<'a> Graph<'a> {
             .and_then(|id| self.by_id.get(&id).copied())
     }
 
-    fn position(&self, id: &CheckedNodeId) -> Option<usize> {
+    pub(super) fn position(&self, id: &CheckedNodeId) -> Option<usize> {
         serde_json::to_value(id)
             .and_then(|id| serde_json::to_string(&id))
             .ok()
@@ -243,8 +243,8 @@ impl<'a> Graph<'a> {
         Ok(flows)
     }
 
-    /// The FSpec FR-811 cause for the unrepresentable node at `position`.
-    fn cause(&self, target: Target, position: usize) -> Result<Value> {
+    /// The node id and the FR-203 region of the node at `position`.
+    fn locate(&self, position: usize) -> Result<(String, Value)> {
         let node = self.node(position);
         let id = fsl_replay::protocol_analysis::node_text(&node.node_id)
             .map_err(|_| internal("a package node id does not spell"))?;
@@ -259,10 +259,42 @@ impl<'a> Graph<'a> {
                 region["kind"] = json!("region");
                 region
             });
+        Ok((id, locus))
+    }
+
+    /// The `node_tag/semantic_form` of the node at `position`.
+    /// An obligation the mapper does not lower, at the node at `position`.
+    fn unlowered(
+        &self,
+        obligation: &str,
+        position: usize,
+        construct: Option<&str>,
+        detail: &str,
+        fault: bool,
+    ) -> Result<Unlowered> {
+        let (node, locus) = self.locate(position)?;
+        Ok(Unlowered {
+            obligation: obligation.to_owned(),
+            construct: construct.map_or_else(|| self.construct(position), str::to_owned),
+            detail: detail.to_owned(),
+            node,
+            locus,
+            fault,
+        })
+    }
+
+    fn construct(&self, position: usize) -> String {
+        let node = self.node(position);
+        format!("{}/{}", node.node_tag, node.semantic_form)
+    }
+
+    /// The FSpec FR-811 cause for the unrepresentable node at `position`.
+    fn cause(&self, target: Target, position: usize) -> Result<Value> {
+        let (id, locus) = self.locate(position)?;
         Ok(json!({
             "kind": "target-unrepresentable",
             "target": target.family(),
-            "construct": format!("{}/{}", node.node_tag, node.semantic_form),
+            "construct": self.construct(position),
             "node": id,
             "locus": locus,
         }))
@@ -323,14 +355,20 @@ pub(super) fn run(
         }
         let flows = graph.flows(&closure)?;
         if flows.is_empty() {
-            if clause.construct == "state/state_clause" {
+            if matches!(
+                clause.construct,
+                "state/state_clause" | "temporal/temporal_clause"
+            ) {
                 if clause.bounded {
-                    unlowered.get_or_insert_with(|| Unlowered {
-                        obligation: name.clone(),
-                        construct: "model/bound".to_owned(),
-                        detail: "a `bound` declaration bounds the population, and this build does not lower population bounds"
-                            .to_owned(),
-                    });
+                    if unlowered.is_none() {
+                        unlowered = Some(graph.unlowered(
+                            name,
+                            root,
+                            Some("model/bound"),
+                            "a `bound` declaration bounds the population, and this build does not lower population bounds",
+                            false,
+                        )?);
+                    }
                 } else {
                     lowerable.push((name.clone(), root, records.len()));
                 }
@@ -342,11 +380,10 @@ pub(super) fn run(
                     regions: Vec::new(),
                 });
             } else {
-                unlowered.get_or_insert_with(|| Unlowered {
-                    obligation: name.clone(),
-                    construct: clause.construct.to_owned(),
-                    detail: String::new(),
-                });
+                if unlowered.is_none() {
+                    unlowered =
+                        Some(graph.unlowered(name, root, Some(clause.construct), "", false)?);
+                }
             }
             continue;
         }
@@ -373,16 +410,32 @@ pub(super) fn run(
                 for (name, _, index) in &lowerable {
                     if let Some(record) = records.get_mut(*index) {
                         record.regions = done.regions.get(name).cloned().unwrap_or_default();
+                        if let Some(condition) = done.conditions.get(name) {
+                            record.disposition = Disposition::Conditional;
+                            record.conditions.extend(condition.iter().cloned());
+                        }
                     }
                 }
                 lowered = Some(done);
             }
             Err(refusal) => {
-                unlowered.get_or_insert_with(|| Unlowered {
-                    obligation: refusal.obligation.unwrap_or_else(|| first.clone()),
-                    construct: refusal.construct,
-                    detail: refusal.detail,
-                });
+                if unlowered.is_none() {
+                    let obligation = refusal.obligation.unwrap_or_else(|| first.clone());
+                    let at = refusal.node.or_else(|| {
+                        lowerable
+                            .iter()
+                            .find(|(name, _, _)| *name == obligation)
+                            .map(|(_, root, _)| *root)
+                    });
+                    let fault = refusal.construct == "checked package";
+                    unlowered = Some(graph.unlowered(
+                        &obligation,
+                        at.unwrap_or_default(),
+                        refusal.node.is_none().then_some(refusal.construct.as_str()),
+                        &refusal.detail,
+                        fault,
+                    )?);
+                }
             }
         }
     }

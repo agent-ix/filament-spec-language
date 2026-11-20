@@ -1,0 +1,624 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FSpec FR-813: the lowering of temporal clauses and fairness over the
+//! exported state to TLA+ and Lean 4 text.
+//!
+//! The Lean text is the direct definition by recursion over positions for
+//! every operator; the TLA+ text is in [`tla`]. A construct the specification
+//! covers and this build does not yet lower is a typed refusal that names it.
+
+mod tla;
+
+pub(super) use self::tla::{Extra, tla};
+use super::{
+    Definition, E, Graph, Input, Lower, defer_at, define, mangle, parameters, refusal, refuse,
+};
+use filament_contract_model::CheckedOperationInterval;
+use fsl_package::checked_views::{
+    Activation, FormulaNodeUse, FormulaOperation, OperatorDirection, temporal_subject,
+};
+use fsl_semantics::check::TemporalProfile;
+
+const CONSTRUCT: &str = "temporal/temporal_clause";
+
+/// An operator's interval: `None` for an unbounded operator, otherwise the
+/// inclusive lower bound and the inclusive upper bound when there is one.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct Iv(Option<(u64, Option<u64>)>);
+
+impl Iv {
+    /// No interval.
+    pub(super) const fn none() -> Self {
+        Self(None)
+    }
+    /// The inclusive lower bound and the inclusive upper bound, if any.
+    fn bounds(self) -> (u64, Option<u64>) {
+        self.0.unwrap_or_default()
+    }
+    fn lower(self) -> u64 {
+        self.0.map_or(0, |(lower, _)| lower)
+    }
+    fn upper(self) -> Option<u64> {
+        self.0.and_then(|(_, upper)| upper)
+    }
+    fn is_some(self) -> bool {
+        self.0.is_some()
+    }
+}
+
+/// A temporal formula over the clause's atoms.
+#[derive(Clone, PartialEq)]
+pub(super) enum Tf {
+    Const(bool),
+    Atom(usize),
+    /// A history variable that stands for a lowered past operator.
+    Hist(usize),
+    Not(Box<Tf>),
+    And(Box<Tf>, Box<Tf>),
+    Or(Box<Tf>, Box<Tf>),
+    Implies(Box<Tf>, Box<Tf>),
+    Always(Iv, Box<Tf>),
+    Eventually(Iv, Box<Tf>),
+    Once(Iv, Box<Tf>),
+    Historically(Iv, Box<Tf>),
+    Until(Iv, Box<Tf>, Box<Tf>),
+    Release(Iv, Box<Tf>, Box<Tf>),
+    Since(Iv, Box<Tf>, Box<Tf>),
+    Triggered(Iv, Box<Tf>, Box<Tf>),
+}
+
+/// One fairness constraint of a clause, as read from the package.
+pub(super) struct FairRead {
+    pub(super) strong: bool,
+    pub(super) each: bool,
+    /// The object type that declares the operation.
+    pub(super) declaration: String,
+    pub(super) operation: String,
+    /// The fairness node.
+    pub(super) node: usize,
+}
+
+/// A temporal clause as read from the package.
+pub(super) struct ClauseRead {
+    pub(super) name: String,
+    pub(super) position: usize,
+    /// The object type the `over` binder ranges over.
+    pub(super) context: String,
+    pub(super) context_node: usize,
+    /// The mangled name of the `over` binder.
+    pub(super) binder: String,
+    /// The `over` binder node.
+    pub(super) over: usize,
+    pub(super) tf: Tf,
+    /// The first future operator the clause's TLA+ text has no deterministic
+    /// monitor for, when one exists.
+    pub(super) refuse_at: Option<usize>,
+    /// The node of each atom's Boolean operand, in formula order.
+    pub(super) atoms: Vec<usize>,
+    pub(super) fairness: Vec<FairRead>,
+}
+
+/// A temporal clause with its atoms lowered.
+pub(super) struct ClauseLow {
+    pub(super) name: String,
+    pub(super) position: usize,
+    pub(super) object: usize,
+    pub(super) binder: String,
+    pub(super) tf: Tf,
+    /// The node a clause without a deterministic monitor is refused at.
+    pub(super) refuse_at: Option<usize>,
+    /// The FR-812 definedness conditions of the atoms, which `ok_<clause>`
+    /// states.
+    pub(super) defs: Vec<E>,
+    /// Each atom in the current state and in the next state.
+    pub(super) cur: Vec<E>,
+    pub(super) next: Vec<E>,
+    pub(super) fairness: Vec<FairLow>,
+}
+
+/// A fairness constraint over an exported operation.
+pub(super) struct FairLow {
+    pub(super) strong: bool,
+    pub(super) each: bool,
+    pub(super) object: usize,
+    pub(super) operation: usize,
+}
+
+// ---- Reading -------------------------------------------------------------
+
+/// The position of the package node `id` names.
+fn at_node(graph: &Graph<'_>, id: &filament_contract_model::CheckedNodeId) -> Lower<usize> {
+    graph.position(id).ok_or_else(|| {
+        refusal(
+            "checked package",
+            "a node of the clause is not in the package",
+        )
+    })
+}
+
+fn interval(graph: &Graph<'_>, node: &FormulaNodeUse<'_>) -> Lower<Iv> {
+    let bound = |text: String| {
+        text.parse::<u64>()
+            .map_err(|_| refusal("temporal/interval", "an interval bound beyond 64 bits"))
+    };
+    match &node.interval {
+        None => Ok(Iv::none()),
+        Some(CheckedOperationInterval::Integer { lower, upper }) => {
+            let lower = bound(lower.to_string())?;
+            let upper = upper
+                .as_ref()
+                .map(|upper| bound(upper.to_string()))
+                .transpose()?;
+            Ok(if (lower, upper) == (0, None) {
+                Iv::none()
+            } else {
+                Iv(Some((lower, upper)))
+            })
+        }
+        Some(CheckedOperationInterval::Timed { .. }) => defer_at(
+            at_node(graph, node.node)?,
+            "temporal/timed-interval",
+            "an interval over time stamps needs the dense-time encoding",
+        ),
+    }
+}
+
+fn boxed(items: &[Tf], index: usize) -> Lower<Box<Tf>> {
+    items
+        .get(index)
+        .cloned()
+        .map(Box::new)
+        .ok_or_else(|| refusal(CONSTRUCT, "a temporal operator is missing an operand"))
+}
+
+/// Where `build` is in the formula.
+#[derive(Clone, Copy)]
+struct Scope {
+    /// Inside a future operator.
+    future: bool,
+    /// Inside a past operator.
+    past: bool,
+    /// Reached from the root through conjunctions only.
+    conj: bool,
+}
+
+fn build(
+    graph: &Graph<'_>,
+    uses: &[FormulaNodeUse<'_>],
+    at: usize,
+    atom: &mut usize,
+    scope: Scope,
+    refuse_at: &mut Option<usize>,
+) -> Lower<Tf> {
+    let node = uses
+        .get(at)
+        .ok_or_else(|| refusal(CONSTRUCT, "a formula operand is not in the formula"))?;
+    let kind = node
+        .kind()
+        .ok_or_else(|| refusal(CONSTRUCT, "an operation that is no temporal operation"))?;
+    if kind == FormulaOperation::Holds {
+        *atom += 1;
+        return Ok(Tf::Atom(*atom - 1));
+    }
+    let iv = interval(graph, node)?;
+    let here = at_node(graph, node.node)?;
+    let direction = kind.direction();
+    if direction == Some(OperatorDirection::Future) {
+        if scope.past {
+            return defer_at(
+                here,
+                "temporal/future-in-past",
+                "a future operator inside the operand of a past operator",
+            );
+        }
+        let monitored =
+            matches!(kind, FormulaOperation::Until | FormulaOperation::Release) || iv.is_some();
+        if scope.future || (!scope.conj && monitored) {
+            refuse_at.get_or_insert(here);
+        }
+    }
+    let inner = Scope {
+        future: scope.future || direction == Some(OperatorDirection::Future),
+        past: scope.past || direction == Some(OperatorDirection::Past),
+        conj: scope.conj && kind == FormulaOperation::And,
+    };
+    let mut operands = Vec::new();
+    for &operand in &node.operands {
+        operands.push(build(graph, uses, operand, atom, inner, refuse_at)?);
+    }
+    Ok(match kind {
+        FormulaOperation::True => Tf::Const(true),
+        FormulaOperation::False => Tf::Const(false),
+        FormulaOperation::Holds => unreachable!("read above"),
+        FormulaOperation::Aggregate => {
+            return defer_at(
+                here,
+                "temporal/aggregate",
+                "an aggregate atom over an accumulation of the trace",
+            );
+        }
+        FormulaOperation::Not => Tf::Not(boxed(&operands, 0)?),
+        FormulaOperation::And => Tf::And(boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Or => Tf::Or(boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Implies => Tf::Implies(boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Always => Tf::Always(iv, boxed(&operands, 0)?),
+        FormulaOperation::Eventually => Tf::Eventually(iv, boxed(&operands, 0)?),
+        FormulaOperation::Once => Tf::Once(iv, boxed(&operands, 0)?),
+        FormulaOperation::Historically => Tf::Historically(iv, boxed(&operands, 0)?),
+        FormulaOperation::Until => Tf::Until(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Release => Tf::Release(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Since => Tf::Since(iv, boxed(&operands, 0)?, boxed(&operands, 1)?),
+        FormulaOperation::Triggered => {
+            Tf::Triggered(iv, boxed(&operands, 0)?, boxed(&operands, 1)?)
+        }
+    })
+}
+
+/// Read the temporal clause at `position` of the package.
+///
+/// # Errors
+///
+/// A [`super::Refusal`] naming the clause shape this build does not lower.
+pub(super) fn read(graph: &Graph<'_>, name: &str, position: usize) -> Lower<ClauseRead> {
+    let node = graph.node(position);
+    let view = temporal_subject(graph.package, &node.node_id).map_err(|_| {
+        refusal(
+            CONSTRUCT,
+            "a clause the package does not read as a temporal clause",
+        )
+    })?;
+    if let Some(protocol) = view.requirements().first() {
+        return defer_at(
+            at_node(graph, protocol)?,
+            "temporal/protocol-subject",
+            "a clause that a protocol requires through its activation relation",
+        );
+    }
+    if let Activation::Each { trigger, .. } = view.activation() {
+        return defer_at(
+            at_node(graph, trigger)?,
+            "temporal/activation",
+            "an activation other than `on origin`",
+        );
+    }
+    if let Some(capture) = view.captures().first() {
+        return defer_at(
+            at_node(graph, capture)?,
+            "temporal/capture",
+            "a capture of the activation",
+        );
+    }
+    if !view.capture_names().is_empty() {
+        // The capture is read as a name, with no node of its own.
+        return defer_at(position, "temporal/capture", "a capture of the activation");
+    }
+    let profile = TemporalProfile::from_identity(&view.profile().definition.identity);
+    if profile != Some(TemporalProfile::InfiniteTrace) {
+        // The package has no node for the profile selection (a lock row), so
+        // the clause node, which carries it, is the node named.
+        return defer_at(
+            position,
+            "temporal/profile",
+            "a step-counting profile other than filament.temporal.infinite-trace/v1",
+        );
+    }
+    let mut atom = 0;
+    let mut refuse_at = None;
+    let start = Scope {
+        future: false,
+        past: false,
+        conj: true,
+    };
+    let tf = build(
+        graph,
+        view.formula_graph(),
+        0,
+        &mut atom,
+        start,
+        &mut refuse_at,
+    )?;
+    let leaves = view.predicate_leaves();
+    if atom != leaves.len() {
+        return refuse(CONSTRUCT, "a formula whose atoms the package does not list");
+    }
+    let atoms = leaves
+        .iter()
+        .map(|leaf| {
+            graph
+                .position(leaf)
+                .ok_or_else(|| refusal(CONSTRUCT, "an atom names no package node"))
+        })
+        .collect::<Lower<Vec<_>>>()?;
+    let over = graph
+        .position(view.over())
+        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder names no package node"))?;
+    let binder = super::parameter_name(graph, over)
+        .ok_or_else(|| refusal(CONSTRUCT, "the `over` binder has no name"))?;
+    let (context, context_node) = super::context_of(graph, over)?;
+    Ok(ClauseRead {
+        name: name.to_owned(),
+        position,
+        context,
+        context_node,
+        binder: mangle("p_", &binder),
+        over,
+        tf,
+        refuse_at,
+        atoms,
+        fairness: super::fairness_of(graph, position)?,
+    })
+}
+
+// ---- Lean 4 --------------------------------------------------------------
+
+struct LeanClause<'a> {
+    clause: &'a ClauseLow,
+    atom: String,
+    next: usize,
+}
+
+impl LeanClause<'_> {
+    fn atom_name(&self, index: usize) -> String {
+        format!("{}_{index}", self.atom)
+    }
+
+    fn fresh(&mut self, prefix: &str) -> String {
+        self.next += 1;
+        format!("{prefix}{}", self.next)
+    }
+
+    /// The conditions that put the offset `d` in `iv`. A past operator
+    /// without an upper bound ranges over the positions from the origin
+    /// through `position - lower` only (FSpec FR-092, FR-367), so it adds
+    /// `0 <= position - d`.
+    fn window(iv: Iv, d: &str, past: Option<&str>) -> Vec<String> {
+        let mut conditions = match (iv.lower(), iv.upper()) {
+            (0, None) => vec![format!("0 <= {d}")],
+            (lower, None) => vec![format!("{lower} <= {d}")],
+            (lower, Some(upper)) => vec![format!("{lower} <= {d}"), format!("{d} <= {upper}")],
+        };
+        if let (Some(position), None) = (past, iv.upper()) {
+            conditions.push(format!("0 <= ({position} - {d})"));
+        }
+        conditions
+    }
+
+    /// `tf` at the position `position` of the behaviour `b`.
+    fn at(&mut self, tf: &Tf, position: &str) -> Lower<String> {
+        Ok(match tf {
+            Tf::Const(true) => "True".to_owned(),
+            Tf::Const(false) => "False".to_owned(),
+            Tf::Hist(_) => {
+                return refuse(CONSTRUCT, "a TLA+ monitor construct in a Lean definition");
+            }
+            Tf::Atom(index) => format!(
+                "(0 <= {position} /\\ {} (b.st (Int.toNat {position})) {})",
+                self.atom_name(*index),
+                self.clause.binder
+            ),
+            Tf::Not(inner) => format!("Not ({})", self.at(inner, position)?),
+            Tf::And(left, right) => {
+                format!(
+                    "({} /\\ {})",
+                    self.at(left, position)?,
+                    self.at(right, position)?
+                )
+            }
+            Tf::Or(left, right) => {
+                format!(
+                    "({} \\/ {})",
+                    self.at(left, position)?,
+                    self.at(right, position)?
+                )
+            }
+            Tf::Implies(left, right) => {
+                format!(
+                    "({} -> {})",
+                    self.at(left, position)?,
+                    self.at(right, position)?
+                )
+            }
+            Tf::Always(iv, inner) => {
+                let d = self.fresh("d");
+                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let window = Self::window(*iv, &d, None).join(" -> ");
+                format!("(forall {d} : Int, {window} -> {body})")
+            }
+            Tf::Eventually(iv, inner) => {
+                let d = self.fresh("d");
+                let body = self.at(inner, &format!("({position} + {d})"))?;
+                let window = Self::window(*iv, &d, None).join(" /\\ ");
+                format!("(exists {d} : Int, {window} /\\ {body})")
+            }
+            Tf::Historically(iv, inner) => {
+                let d = self.fresh("d");
+                let body = self.at(inner, &format!("({position} - {d})"))?;
+                let window = Self::window(*iv, &d, Some(position)).join(" -> ");
+                format!("(forall {d} : Int, {window} -> {body})")
+            }
+            Tf::Once(iv, inner) => {
+                let d = self.fresh("d");
+                let body = self.at(inner, &format!("({position} - {d})"))?;
+                let window = Self::window(*iv, &d, Some(position)).join(" /\\ ");
+                format!("(exists {d} : Int, {window} /\\ {body})")
+            }
+            Tf::Until(iv, left, right) => self.relation(*iv, left, right, position, "+")?,
+            Tf::Since(iv, left, right) => self.relation(*iv, left, right, position, "-")?,
+            Tf::Release(iv, left, right) => {
+                let (left, right) = (negate(left), negate(right));
+                format!("Not {}", self.relation(*iv, &left, &right, position, "+")?)
+            }
+            Tf::Triggered(iv, left, right) => {
+                let (left, right) = (negate(left), negate(right));
+                format!("Not {}", self.relation(*iv, &left, &right, position, "-")?)
+            }
+        })
+    }
+
+    /// `left until right` or, reading backwards, `left since right`:
+    /// some offset `d` in the interval makes `right` hold and every offset
+    /// `e` from the interval's lower bound up to `d` makes `left` hold.
+    fn relation(
+        &mut self,
+        iv: Iv,
+        left: &Tf,
+        right: &Tf,
+        position: &str,
+        sign: &str,
+    ) -> Lower<String> {
+        let d = self.fresh("d");
+        let e = self.fresh("e");
+        let right = self.at(right, &format!("({position} {sign} {d})"))?;
+        let left = self.at(left, &format!("({position} {sign} {e})"))?;
+        let past = (sign == "-").then_some(position);
+        let window = Self::window(iv, &d, past).join(" /\\ ");
+        Ok(format!(
+            "(exists {d} : Int, {window} /\\ {right} /\\ (forall {e} : Int, {} <= {e} -> {e} < {d} -> {left}))",
+            iv.lower()
+        ))
+    }
+}
+
+fn negate(tf: &Tf) -> Tf {
+    Tf::Not(Box::new(tf.clone()))
+}
+
+/// The Lean text of a fairness premise over the behaviour `b`.
+fn lean_fair(input: &Input<'_>, clause: &ClauseLow) -> Lower<Option<String>> {
+    let mut premises = Vec::new();
+    for constraint in &clause.fairness {
+        let object = input
+            .objects
+            .get(constraint.object)
+            .ok_or_else(|| refusal("temporal/fairness", "a fairness target outside the state"))?;
+        let operation = object
+            .operations
+            .get(constraint.operation)
+            .ok_or_else(|| refusal("temporal/fairness", "an operation outside the state"))?;
+        let name = mangle("op_", &operation.name);
+        let params = parameters(operation);
+        let names: Vec<&str> = params.iter().map(|(param, _)| param.as_str()).collect();
+        let chosen: Vec<&str> = if constraint.each {
+            names.iter().skip(1).copied().collect()
+        } else {
+            names.clone()
+        };
+        let exists = |state: &str, next: &str| {
+            let binders: String = chosen
+                .iter()
+                .map(|param| format!("exists {param}, "))
+                .collect();
+            format!("{binders}{name} {state} {next} {}", names.join(" "))
+        };
+        let enabled = format!("(exists t, {})", exists("(b.st j)", "t"));
+        let taken = format!("({})", exists("(b.st j)", "(b.st (j + 1))"));
+        let premise = if constraint.strong {
+            format!(
+                "((forall i : Nat, exists j : Nat, i <= j /\\ {enabled}) -> (forall i : Nat, exists j : Nat, i <= j /\\ {taken}))"
+            )
+        } else {
+            format!(
+                "(forall i : Nat, (forall j : Nat, i <= j -> {enabled}) -> (exists j : Nat, i <= j /\\ {taken}))"
+            )
+        };
+        premises.push(if constraint.each {
+            format!(
+                "(forall r_self, {} r_self -> {premise})",
+                mangle("Ids_", &object.name)
+            )
+        } else {
+            premise
+        });
+    }
+    Ok((!premises.is_empty()).then(|| premises.join(" /\\\n  ")))
+}
+
+/// Lower the clauses of `input` to Lean 4.
+pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
+    let mut universes = std::collections::BTreeSet::new();
+    for clause in input.temporals {
+        let object = input
+            .objects
+            .get(clause.object)
+            .ok_or_else(|| refusal(CONSTRUCT, "an unexported clause context"))?;
+        let obligation = Some(clause.name.as_str());
+        let has = mangle("F_has_", &object.name);
+        if universes.insert(clause.object) {
+            let ids = mangle("Ids_", &object.name);
+            out.push(define(
+                clause.position,
+                Some(ids.clone()),
+                format!(
+                    "def {ids} (k : List Nat) : Prop := exists s : State, Init s /\\ {has} k s.{}",
+                    object.variable()
+                ),
+                obligation,
+            ));
+        }
+        let ok = mangle("ok_", &clause.name);
+        let mut ok_body = vec![format!("{has} {} s.{}", clause.binder, object.variable())];
+        for def in &clause.defs {
+            ok_body.push(input.show.expr(def)?);
+        }
+        out.push(define(
+            clause.position,
+            Some(ok.clone()),
+            format!(
+                "def {ok} (s : State) ({} : List Nat) : Prop := {}",
+                clause.binder,
+                ok_body.join(" /\\ ")
+            ),
+            obligation,
+        ));
+        let atom = mangle("at_", &clause.name);
+        let holds = mangle("holds_", &clause.name);
+        let ob = mangle("Ob_", &clause.name);
+        let binder = &clause.binder;
+        for (index, e) in clause.cur.iter().enumerate() {
+            out.push(define(
+                clause.position,
+                None,
+                format!(
+                    "def {atom}_{index} (s : State) ({binder} : List Nat) : Prop :=\n  {}",
+                    input.show.expr(e)?
+                ),
+                obligation,
+            ));
+        }
+        let mut lean = LeanClause {
+            clause,
+            atom,
+            next: 0,
+        };
+        let formula = lean.at(&clause.tf, "i")?;
+        out.push(define(
+            clause.position,
+            Some(holds.clone()),
+            format!(
+                "def {holds} (b : Behaviour) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
+            ),
+            obligation,
+        ));
+        let fairness = lean_fair(input, clause)?;
+        let mut premise = String::new();
+        if let Some(text) = fairness {
+            let fair = mangle("fair_", &clause.name);
+            out.push(define(
+                clause.position,
+                Some(fair.clone()),
+                format!("def {fair} (b : Behaviour) : Prop :=\n  {text}"),
+                obligation,
+            ));
+            premise = format!("{fair} b -> ");
+        }
+        out.push(define(
+            clause.position,
+            Some(ob.clone()),
+            format!(
+                "def {ob} : Prop :=\n  forall b : Behaviour, {premise}forall {binder}, {} {binder} -> (forall j : Nat, {ok} (b.st j) {binder}) /\\ {holds} b {binder} 0",
+                mangle("Ids_", &object.name)
+            ),
+            obligation,
+        ));
+    }
+    Ok(())
+}

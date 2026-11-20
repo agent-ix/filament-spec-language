@@ -10,16 +10,21 @@
 //! names it, so the export stops as a mapper failure rather than writing a
 //! text that states less than the clause says.
 
-use super::map::{mangle, Graph};
+mod temporal;
+
+use self::temporal::{ClauseLow, ClauseRead, Extra, FairLow, FairRead};
+use super::map::{Graph, mangle};
 use super::request::Target;
 use fsl_replay::protocol_analysis::node_text;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A construct this build does not lower, and why.
 pub(super) struct Refusal {
     pub(super) construct: String,
     pub(super) detail: String,
+    /// The package node the construct is at, when the refusal knows it.
+    pub(super) node: Option<usize>,
     /// The obligation whose clause failed, when one did.
     pub(super) obligation: Option<String>,
 }
@@ -30,6 +35,7 @@ fn refuse<T>(construct: &str, detail: impl Into<String>) -> Lower<T> {
     Err(Refusal {
         construct: construct.to_owned(),
         detail: detail.into(),
+        node: None,
         obligation: None,
     })
 }
@@ -39,6 +45,8 @@ pub(super) struct Lowered {
     pub(super) text: String,
     pub(super) name_map: Vec<Value>,
     pub(super) regions: BTreeMap<String, Vec<(usize, usize)>>,
+    /// The condition of each obligation whose record is `conditional`.
+    pub(super) conditions: BTreeMap<String, Vec<Value>>,
     /// The output regions written: one per definition.
     pub(super) definitions: usize,
 }
@@ -274,10 +282,21 @@ fn read_models(models: &[Vec<u8>]) -> Lower<BTreeMap<String, RawObject>> {
     Ok(objects)
 }
 
+/// A typed refusal at the package node `node`.
+fn defer_at<T>(node: usize, construct: &str, detail: impl Into<String>) -> Lower<T> {
+    Err(Refusal {
+        construct: construct.to_owned(),
+        detail: detail.into(),
+        node: Some(node),
+        obligation: None,
+    })
+}
+
 fn refusal(construct: &str, detail: &str) -> Refusal {
     Refusal {
         construct: construct.to_owned(),
         detail: detail.to_owned(),
+        node: None,
         obligation: None,
     }
 }
@@ -302,7 +321,7 @@ enum Op {
     NeBool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum E {
     Int(String),
     Bool(bool),
@@ -395,6 +414,19 @@ impl Lowerer<'_> {
         )
     }
 
+    /// Whether the parameter node at `position` is typed by an object type.
+    fn is_object_typed(&self, position: usize) -> bool {
+        let node = self.graph.node(position);
+        let Some(ty) = self.graph.position(&node.semantic_type) else {
+            return false;
+        };
+        let Ok(body) = serde_json::to_value(&self.graph.node(ty).body) else {
+            return false;
+        };
+        let path = &body["members"][0]["target"]["path"];
+        path[0] == "model" && path[1] == "object_type"
+    }
+
     fn node(&mut self, position: usize, primed: bool) -> Lower<Low> {
         let node = self.graph.node(position);
         let body = serde_json::to_value(&node.body)
@@ -406,8 +438,16 @@ impl Lowerer<'_> {
                 .find(|member| str_of(member, "name") == Some("name"))
                 .and_then(|member| member["value"]["value"].as_str())
                 .ok_or_else(|| refusal(&construct, "a parameter has no name"))?;
+            // The receiver is the operation's object-typed `self` parameter; a
+            // declared parameter spelled `self` is an ordinary `p_` parameter
+            // (FSpec FR-814).
+            let receiver = name == "self" && self.is_object_typed(position);
             return Ok(Low {
-                value: E::Param(mangle("p_", name)),
+                value: E::Param(if receiver {
+                    "r_self".to_owned()
+                } else {
+                    mangle("p_", name)
+                }),
                 defined: Vec::new(),
             });
         }
@@ -569,6 +609,84 @@ impl Lowerer<'_> {
     }
 }
 
+// ---- Temporal clause reads -------------------------------------------------
+
+/// The declared name of the `value`/`parameter` node at `position`.
+fn parameter_name(graph: &Graph<'_>, position: usize) -> Option<String> {
+    let body = serde_json::to_value(&graph.node(position).body).ok()?;
+    items(&body, "members")
+        .iter()
+        .find(|member| str_of(member, "name") == Some("name"))
+        .and_then(|member| member["value"]["value"].as_str())
+        .map(str::to_owned)
+}
+
+/// The object type the `over` binder at `position` ranges over: its
+/// identity and its node.
+fn context_of(graph: &Graph<'_>, position: usize) -> Lower<(String, usize)> {
+    let fail = |detail: &str| refusal("temporal/temporal_clause", detail);
+    let node = graph.node(position);
+    let ty = graph
+        .position(&node.semantic_type)
+        .ok_or_else(|| fail("the `over` binder has no type node"))?;
+    let body = serde_json::to_value(&graph.node(ty).body)
+        .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+    let target = body["members"]
+        .get(0)
+        .map(|member| &member["target"])
+        .ok_or_else(|| fail("the `over` binder has no type"))?;
+    let object_type = target["path"][0] == "model" && target["path"][1] == "object_type";
+    let id = target["path"].get(2).and_then(Value::as_str);
+    let (true, Some(id)) = (object_type, id) else {
+        return defer_at(
+            position,
+            "temporal/subject",
+            "a clause over a subject that is no object type, such as a protocol subject",
+        );
+    };
+    let object = graph
+        .position_of(target)
+        .ok_or_else(|| fail("the `over` binder's object type is no package node"))?;
+    Ok((id.to_owned(), object))
+}
+
+/// The fairness constraints of the clause at `position`, in written order.
+fn fairness_of(graph: &Graph<'_>, position: usize) -> Lower<Vec<FairRead>> {
+    let body = serde_json::to_value(&graph.node(position).body)
+        .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+    let mut reads = Vec::new();
+    for member in items(&body["arguments"][4], "members") {
+        let node = graph
+            .position_of(&member["target"])
+            .ok_or_else(|| refusal("temporal/fairness", "a fairness names no package node"))?;
+        let body = serde_json::to_value(&graph.node(node).body)
+            .map_err(|_| refusal("checked package", "a node body does not serialize"))?;
+        let fairness = &body["operation"]["member"];
+        let target = &fairness["target"];
+        if str_of(target, "kind") != Some("operation") {
+            return defer_at(
+                node,
+                "temporal/fairness",
+                "a fairness over a target other than a model operation",
+            );
+        }
+        reads.push(FairRead {
+            strong: str_of(fairness, "fairness_kind") == Some("strong"),
+            each: str_of(fairness, "granularity") == Some("each"),
+            declaration: target["declaration"]["path"]
+                .get(2)
+                .and_then(Value::as_str)
+                .ok_or_else(|| refusal("temporal/fairness", "a fairness names no declaration"))?
+                .to_owned(),
+            operation: str_of(target, "name")
+                .ok_or_else(|| refusal("temporal/fairness", "a fairness names no operation"))?
+                .to_owned(),
+            node,
+        });
+    }
+    Ok(reads)
+}
+
 // ---- Rendering -----------------------------------------------------------
 
 /// One operation's lowered clauses.
@@ -586,6 +704,7 @@ struct Input<'a> {
     show: &'a Show<'a>,
     first: usize,
     clauses: &'a [(String, usize, usize, E)],
+    temporals: &'a [ClauseLow],
 }
 
 struct Show<'a> {
@@ -628,7 +747,7 @@ impl Show<'_> {
                     .get(*field)
                     .ok_or_else(|| refusal("checked package", "a read of an unknown field"))?;
                 let key = self.expr(key)?;
-                let name = mangle("f_", &field.name);
+                let name = mangle("fld_", &field.name);
                 if tla {
                     let tick = if *primed { "'" } else { "" };
                     format!("{}{tick}[{key}].{name}", object.variable())
@@ -885,7 +1004,20 @@ pub(super) fn lower(
     let clauses = state_clauses(graph)?;
     let mut raw = read_models(models)?;
     let mut contexts: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let mut reads: Vec<ClauseRead> = Vec::new();
     for (name, position) in wanted {
+        if &*graph.node(*position).node_tag == "temporal" {
+            let read = temporal::read(graph, name, *position).map_err(|mut refusal| {
+                refusal.obligation = Some(name.clone());
+                refusal.node.get_or_insert(*position);
+                refusal
+            })?;
+            contexts
+                .entry(read.context.clone())
+                .or_insert_with(|| (read.context_node, name.clone()));
+            reads.push(read);
+            continue;
+        }
         let clause = clauses
             .iter()
             .find(|clause| clause.position == *position)
@@ -969,7 +1101,7 @@ pub(super) fn lower(
                         return Err(attribute(refusal(
                             "state/state_clause",
                             &format!("a `{other}` operation clause"),
-                        )))
+                        )));
                     }
                 }
             }
@@ -979,6 +1111,9 @@ pub(super) fn lower(
     }
     let mut lowered_clauses = Vec::new();
     for (name, position) in wanted {
+        if reads.iter().any(|read| read.position == *position) {
+            continue;
+        }
         let clause = clauses
             .iter()
             .find(|clause| clause.position == *position)
@@ -994,6 +1129,89 @@ pub(super) fn lower(
             .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))?;
         lowered_clauses.push((name.clone(), *position, object, low.clause()));
     }
+    let mut temporals = Vec::new();
+    for read in reads {
+        let attribute = |mut refusal: Refusal| {
+            refusal.obligation = Some(read.name.clone());
+            refusal.node.get_or_insert(read.position);
+            refusal
+        };
+        let object = objects
+            .iter()
+            .position(|object| object.id == read.context)
+            .ok_or_else(|| refusal("model/object_type", "an unexported clause context"))
+            .map_err(attribute)?;
+        let (mut cur, mut next) = (Vec::new(), Vec::new());
+        // The binder as the lowerer names it, then as a clause binder (`o_`).
+        let lowered_binder = match lowerer.node(read.over, false).map_err(attribute)?.value {
+            E::Param(name) => name,
+            _ => {
+                return Err(attribute(refusal(
+                    "temporal/temporal_clause",
+                    "the `over` binder does not lower to a parameter",
+                )));
+            }
+        };
+        let binder = format!("o_{}", read.binder.trim_start_matches("p_"));
+        let mut defs: Vec<E> = Vec::new();
+        for &leaf in &read.atoms {
+            for (primed, atoms) in [(false, &mut cur), (true, &mut next)] {
+                let low = lowerer.node(leaf, primed).map_err(attribute)?;
+                if !primed {
+                    for def in low.defined {
+                        let def = rename_param(def, &lowered_binder, &binder);
+                        if !defs.iter().any(|seen| seen == &def) {
+                            defs.push(def);
+                        }
+                    }
+                }
+                atoms.push(rename_param(low.value, &lowered_binder, &binder));
+            }
+        }
+        let mut fairness = Vec::new();
+        for fair in &read.fairness {
+            let found = objects
+                .iter()
+                .enumerate()
+                .find(|(_, candidate)| candidate.id == fair.declaration)
+                .and_then(|(index, candidate)| {
+                    candidate
+                        .operations
+                        .iter()
+                        .position(|operation| operation.name == fair.operation)
+                        .map(|operation| (index, operation))
+                });
+            let (fair_object, operation) = match found {
+                Some((index, operation)) if index == object => (index, operation),
+                _ => {
+                    return defer_at(
+                        fair.node,
+                        "temporal/fairness-target",
+                        "a fairness over an operation of another object type than the clause's subject",
+                    )
+                    .map_err(attribute);
+                }
+            };
+            fairness.push(FairLow {
+                strong: fair.strong,
+                each: fair.each,
+                object: fair_object,
+                operation,
+            });
+        }
+        temporals.push(ClauseLow {
+            name: read.name,
+            position: read.position,
+            object,
+            binder: binder.clone(),
+            tf: read.tf,
+            refuse_at: read.refuse_at,
+            defs,
+            cur,
+            next,
+            fairness,
+        });
+    }
 
     let show = Show {
         target,
@@ -1008,12 +1226,16 @@ pub(super) fn lower(
         show: &show,
         first,
         clauses: &lowered_clauses,
+        temporals: &temporals,
     };
-    match target {
+    let extra = match target {
         Target::Tla => tla(&input, &mut definitions)?,
-        Target::Lean => lean(&input, &mut definitions)?,
-    }
-    assemble(graph, target, module, &objects, definitions)
+        Target::Lean => {
+            lean(&input, &mut definitions)?;
+            Extra::default()
+        }
+    };
+    assemble(graph, target, module, &objects, &extra, definitions)
 }
 
 // ---- Snapshot ------------------------------------------------------------
@@ -1071,7 +1293,7 @@ fn record_literal(object: &Object, values: &[Lit], target: Target) -> String {
         .iter()
         .zip(values)
         .map(|(field, value)| {
-            let name = mangle("f_", &field.name);
+            let name = mangle("fld_", &field.name);
             let value = value.text(target);
             match target {
                 Target::Tla => format!("{name} |-> {value}"),
@@ -1104,7 +1326,7 @@ fn define(node: usize, name: Option<String>, body: String, obligation: Option<&s
 
 /// The signature parameters of `operation`: the receiver, then its own.
 fn parameters(operation: &Operation) -> Vec<(String, Option<&Kind>)> {
-    std::iter::once(("p_self".to_owned(), None))
+    std::iter::once(("r_self".to_owned(), None))
         .chain(
             operation
                 .params
@@ -1126,7 +1348,7 @@ fn frame_fields<'a>(object: &'a Object, operation: &Operation) -> Vec<(&'a Field
 
 // ---- TLA+ ----------------------------------------------------------------
 
-fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
+fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     let target = Target::Tla;
     let objects = input.objects;
     let variables: Vec<String> = objects.iter().map(Object::variable).collect();
@@ -1140,12 +1362,23 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     for object in objects {
         let v = object.variable();
         type_ok.push(format!("DOMAIN {v} \\subseteq Seq(Nat)"));
+        if input.snapshot.is_none()
+            && input
+                .temporals
+                .iter()
+                .any(|clause| objects[clause.object].node == object.node)
+        {
+            type_ok.push(format!(
+                "DOMAIN {v} \\subseteq {}",
+                mangle("Keys_", &object.name)
+            ));
+        }
         let fields: Vec<String> = object
             .fields
             .iter()
             .flat_map(|field| {
                 range_conditions(
-                    &format!("{v}[k].{}", mangle("f_", &field.name)),
+                    &format!("{v}[k].{}", mangle("fld_", &field.name)),
                     &field.kind,
                     target,
                 )
@@ -1198,7 +1431,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             let name = mangle("op_", &operation.name);
             let params = parameters(operation);
             let names: Vec<&str> = params.iter().map(|(name, _)| name.as_str()).collect();
-            let mut lines = vec![format!("p_self \\in DOMAIN {v}")];
+            let mut lines = vec![format!("r_self \\in DOMAIN {v}")];
             for (param, kind) in params.iter().skip(1) {
                 if let Some(kind) = kind {
                     lines.extend(range_conditions(param, kind, target));
@@ -1208,8 +1441,8 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             lines.extend(input.show.exprs(&lowered.post)?);
             lines.push(format!("DOMAIN {v}' = DOMAIN {v}"));
             for (field, receiver) in frame_fields(object, operation) {
-                let f = mangle("f_", &field.name);
-                let guard = if receiver { "k /= p_self => " } else { "" };
+                let f = mangle("fld_", &field.name);
+                let guard = if receiver { "k /= r_self => " } else { "" };
                 lines.push(format!(
                     "\\A k \\in DOMAIN {v} : {guard}{v}'[k].{f} = {v}[k].{f}"
                 ));
@@ -1259,7 +1492,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             *position,
             Some(clause.clone()),
             format!(
-                "{clause} == \\A p_self \\in DOMAIN {} : {}",
+                "{clause} == \\A r_self \\in DOMAIN {} : {}",
                 object.variable(),
                 input.show.expr(formula)?
             ),
@@ -1273,7 +1506,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             Some(name),
         ));
     }
-    Ok(())
+    temporal::tla(input, out)
 }
 
 // ---- Lean 4 --------------------------------------------------------------
@@ -1298,7 +1531,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                     Kind::Int { .. } => "Int",
                     Kind::Bool => "Bool",
                 };
-                format!("  {} : {ty}", mangle("f_", &field.name))
+                format!("  {} : {ty}", mangle("fld_", &field.name))
             })
             .collect();
         out.push(define(
@@ -1316,7 +1549,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                     Kind::Int { .. } => "0",
                     Kind::Bool => "false",
                 };
-                format!("{} := {value}", mangle("f_", &field.name))
+                format!("{} := {value}", mangle("fld_", &field.name))
             })
             .collect();
         let default = mangle("F_default_", &object.name);
@@ -1359,7 +1592,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             .iter()
             .flat_map(|field| {
                 range_conditions(
-                    &format!("e.2.{}", mangle("f_", &field.name)),
+                    &format!("e.2.{}", mangle("fld_", &field.name)),
                     &field.kind,
                     target,
                 )
@@ -1468,7 +1701,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                     format!("({param} : {ty})")
                 })
                 .collect();
-            let mut lines = vec![format!("{has} p_self s.{v}")];
+            let mut lines = vec![format!("{has} r_self s.{v}")];
             for (param, kind) in params.iter().skip(1) {
                 if let Some(kind) = kind {
                     lines.extend(range_conditions(param, kind, target));
@@ -1480,8 +1713,8 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 "List.map (fun e => e.1) s'.{v} = List.map (fun e => e.1) s.{v}"
             ));
             for (field, receiver) in frame_fields(object, operation) {
-                let f = mangle("f_", &field.name);
-                let guard = if receiver { "Not (k = p_self) -> " } else { "" };
+                let f = mangle("fld_", &field.name);
+                let guard = if receiver { "Not (k = r_self) -> " } else { "" };
                 lines.push(format!(
                     "forall k, {has} k s.{v} -> {guard}({get} k s'.{v}).{f} = ({get} k s.{v}).{f}"
                 ));
@@ -1546,7 +1779,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             *position,
             Some(clause.clone()),
             format!(
-                "def {clause} (s : State) : Prop :=\n  forall p_self, {} p_self s.{} -> {}",
+                "def {clause} (s : State) : Prop :=\n  forall r_self, {} r_self s.{} -> {}",
                 mangle("F_has_", &object.name),
                 object.variable(),
                 input.show.expr(formula)?
@@ -1568,7 +1801,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             Some(name),
         ));
     }
-    Ok(())
+    temporal::lean(input, out)
 }
 
 // ---- Assembly ------------------------------------------------------------
@@ -1578,15 +1811,36 @@ fn assemble(
     target: Target,
     module: &str,
     objects: &[Object],
+    extra: &Extra,
     definitions: Vec<Definition>,
 ) -> Lower<Lowered> {
     let first = objects.first().map_or(0, |object| object.node);
     let mut text = match target {
         Target::Tla => {
-            let variables: Vec<String> = objects.iter().map(Object::variable).collect();
+            let variables: Vec<String> = objects
+                .iter()
+                .map(Object::variable)
+                .chain(extra.variables.iter().cloned())
+                .collect();
             format!(
-                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\n{}\nVARIABLES {}\n",
+                "---- MODULE {module} ----\nEXTENDS Naturals, Integers, Sequences, FiniteSets, TLC\n\n{}\n{}VARIABLES {}\n",
                 comment(graph, first, target)?,
+                if extra.constants.is_empty() {
+                    String::new()
+                } else {
+                    let assumed: Vec<String> = extra
+                        .constants
+                        .iter()
+                        .map(|keys| {
+                            format!("ASSUME {keys} \\subseteq Seq(Nat) /\\ IsFiniteSet({keys})\n")
+                        })
+                        .collect();
+                    format!(
+                        "CONSTANTS {}\n{}",
+                        extra.constants.join(", "),
+                        assumed.concat()
+                    )
+                },
                 variables.join(", ")
             )
         }
@@ -1629,10 +1883,52 @@ fn assemble(
         Target::Tla => text.push_str("\n====\n"),
         Target::Lean => text.push_str(&format!("\nend {module}\n")),
     }
+    let mut conditions: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for cond in &extra.conditional {
+        let node = node_id_text(graph, cond.node)?;
+        let value = match &cond.type_name {
+            Some(type_name) => json!({"type": cond.kind, "type_name": type_name, "node": node}),
+            None => json!({"type": cond.kind, "clause": cond.obligation, "node": node}),
+        };
+        conditions
+            .entry(cond.obligation.clone())
+            .or_default()
+            .push(value);
+    }
     Ok(Lowered {
         text,
         name_map,
         regions,
+        conditions,
         definitions: count,
     })
+}
+
+/// `e` with the parameter `from` renamed to `to`.
+fn rename_param(e: E, from: &str, to: &str) -> E {
+    let go = |inner: Box<E>| Box::new(rename_param(*inner, from, to));
+    match e {
+        E::Param(name) if name == from => E::Param(to.to_owned()),
+        E::Field {
+            object,
+            key,
+            field,
+            primed,
+        } => E::Field {
+            object,
+            key: go(key),
+            field,
+            primed,
+        },
+        E::Neg(inner) => E::Neg(go(inner)),
+        E::Not(inner) => E::Not(go(inner)),
+        E::Bin(op, left, right) => E::Bin(op, go(left), go(right)),
+        E::Conj(items) => E::Conj(
+            items
+                .into_iter()
+                .map(|item| rename_param(item, from, to))
+                .collect(),
+        ),
+        other => other,
+    }
 }
