@@ -374,7 +374,7 @@ fn compile_and_map(
     let mut intake = intake_with_bytes(directory, counts, limits.dependent_bytes)?;
     let selection = &compile.program.sources[0];
     let source = intake.source(selection, "program.sources[0].source")?;
-    super::require_complete_edition(source.source())?;
+    super::require_native_header(source.source())?;
     let program = Program {
         identity: super::package_name(source.source().identity()),
         version: selection.identity.formal_revision.to_string(),

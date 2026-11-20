@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
     wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
@@ -531,7 +531,7 @@ fn drive(
         dependent_bytes,
     )?;
     let program = intake.source(&request.program.source, "program.source")?;
-    require_complete_edition(program.source())?;
+    require_native_header(program.source())?;
     let compile = wire::CompileRequest {
         models: std::mem::take(&mut request.models),
         program: wire::CompileProgram {

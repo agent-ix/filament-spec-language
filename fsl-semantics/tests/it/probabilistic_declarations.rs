@@ -3009,6 +3009,25 @@ fn a_quantile_over_a_fraction_refuses() {
     );
 }
 
+/// FR-612-AC-1: a probability event whose whole condition reads a trace index
+/// outside a `hyper` clause refuses `unsupported_construct`/`expression-form`
+/// at the read.
+#[trace("FR-612-AC-1")]
+#[test]
+fn an_indexed_read_in_a_probability_condition_refuses_as_hyper_only() {
+    let source = claim(
+        "{ probability >= 0.5 [ always[0,10] holds(s.phase @ a = Service::Phase::Idle) ] }",
+    );
+    assert_eq!(
+        located(&service(None, &source)),
+        [(
+            Code::UnsupportedConstruct,
+            Some("expression-form"),
+            "s.phase @ a".to_owned()
+        )]
+    );
+}
+
 /// A second distribution or reward is a duplicate even when the first was
 /// refused.
 #[trace("TC-620")]

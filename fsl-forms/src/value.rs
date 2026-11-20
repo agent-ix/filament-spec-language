@@ -13,7 +13,7 @@
 //! grow with nesting. S2 takes no limit of its own: it builds at most one
 //! node per CST node, so S1's node limit bounds it (FR-257).
 
-use super::dispatch::{Construct, ConstructKind, FormsCause, FormsRefusal};
+use super::dispatch::{Construct, FormsCause, FormsRefusal};
 use super::spans::{DeclarationSpans, ExpressionSpans};
 use super::syntax::{
     AbsenceMode, Accumulation, AliasForm, ArmForm, BinaryOperator, BinderQuery, BuiltinType,
@@ -119,12 +119,15 @@ pub(crate) fn unexpected(node: &CstNode) -> FormsRefusal {
     )
 }
 
-/// The refusal for a construct no `Expression` variant represents.
+/// The refusal for a construct no `Expression` variant represents (FR-763).
+/// No source reaches the cause today: it is the specified S2 refusal for a
+/// construct that has no form yet, held ready and exercised by its unit test.
+#[cfg(test)]
 pub(crate) fn unrepresented(
     cst: &LosslessCst,
     production: Production,
     span: Span,
-    construct: ConstructKind,
+    construct: super::dispatch::ConstructKind,
 ) -> FormsRefusal {
     let text = source_text(cst, span);
     FormsRefusal::at(
@@ -139,6 +142,9 @@ pub(crate) fn unrepresented(
     )
 }
 
+/// The construct's source text, at most 120 bytes cut on a character
+/// boundary and followed by `...` when cut.
+#[cfg(test)]
 fn source_text(cst: &LosslessCst, span: Span) -> String {
     let text = cst
         .source()

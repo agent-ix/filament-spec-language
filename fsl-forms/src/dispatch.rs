@@ -437,8 +437,6 @@ pub enum LeadingTokenKind {
 /// The closed source vocabulary for a construct that S2 does not build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConstructKind {
-    /// A hyper expression in a temporal condition.
-    HyperCondition,
     /// A declaration with no dispatch entry.
     Declaration,
 }
@@ -447,7 +445,6 @@ impl ConstructKind {
     /// The stable source and wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::HyperCondition => "hyper-condition",
             Self::Declaration => "declaration",
         }
     }
@@ -1353,6 +1350,52 @@ mod tests {
     /// FR-091: the `record` entry replaced the M-3a no-entry fixture token;
     /// FR-102 (TC-457) claims `invariant`, so FR-067-AC-3's
     /// no-entry case moves to `verify`, a spelling no family claims.
+    /// FR-763-AC-5: the `declaration` row's cause carries its construct kind
+    /// and the construct's source text, cut at 120 bytes with `...`.
+    #[trace("FR-763-AC-5")]
+    #[test]
+    fn an_unrepresented_declaration_construct_carries_its_payload_and_cut_text() {
+        use fsl_cst::Production;
+        for keyword in ["unclaimed".to_owned(), "k".repeat(200)] {
+            let cst = LosslessCst::fixture(&HEADER, &[keyword.as_str()], Vec::new());
+            let start = cst
+                .source()
+                .text()
+                .rfind(keyword.as_str())
+                .expect("the keyword");
+            let span = Span {
+                start,
+                end: start + keyword.len(),
+            };
+            let refusal = value::unrepresented(
+                &cst,
+                Production::Declaration,
+                span,
+                ConstructKind::Declaration,
+            );
+            assert_eq!(refusal.catalog_code(), Code::UnsupportedConstruct);
+            assert_eq!(refusal.span, Some(span));
+            let FormsCause::UnrepresentedConstruct {
+                construct,
+                text,
+                declaration,
+                profile,
+                ..
+            } = refusal.cause
+            else {
+                panic!("the unrepresented-construct cause");
+            };
+            assert_eq!(construct.as_str(), "declaration");
+            assert_eq!((declaration, profile), (None, None));
+            if keyword.len() <= 120 {
+                assert_eq!(text.as_ref(), keyword);
+            } else {
+                assert_eq!(text.as_ref(), format!("{}...", &keyword[..120]));
+                assert!(text.len() <= 123);
+            }
+        }
+    }
+
     #[trace("TC-167", "FR-067-AC-3")]
     #[trace("TC-457", "FR-102-AC-4")]
     #[test]

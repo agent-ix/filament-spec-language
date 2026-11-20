@@ -37,7 +37,7 @@ pub use cst::{
 };
 pub use diagnostic::{CompleteCause, CompleteCode, CompleteDiagnostic, HostCause};
 pub use extension::{ExtensionForms, ExtensionProduction};
-pub use lexer::{declared_edition, DeclaredEdition, Limits};
+pub use lexer::{declared_edition, declared_language, DeclaredEdition, DeclaredLanguage, Limits};
 
 /// The one edition the complete-V1 grammar admits (its `Header` rule).
 pub const EDITION: &str = "1-draft";

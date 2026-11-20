@@ -148,7 +148,6 @@ fn no_counter_trace_can_stay_zero() {
 
 #[test]
 #[trace("FR-135")]
-#[ignore = "QSL-2594: the missing population diagnostic must name its member"]
 fn a_missing_population_row_names_its_population() {
     let error =
         command::compile_outcome(&corpus().join("refinement-missing-population.request.json"))
@@ -159,7 +158,6 @@ fn a_missing_population_row_names_its_population() {
 
 #[test]
 #[trace("FR-612-AC-1")]
-#[ignore = "QSL-2595: an indexed read outside hyper must use expression-form"]
 fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
     let error =
         command::compile_outcome(&corpus().join("pending/hyper-plain-temporal-at.request.json"))
@@ -169,6 +167,21 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
     assert_eq!(error.category().exit_code(), 21, "{value}");
     assert_eq!(value["code"], "unsupported_construct", "{value}");
     assert_eq!(value["cause"], "expression-form", "{value}");
+    assert!(
+        value["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("hyper")),
+        "{value}"
+    );
+    let source = std::fs::read_to_string(corpus().join("pending/hyper-plain-temporal-at.native"))
+        .expect("the case source");
+    let at = source.find("c.value @ a").expect("the indexed read");
+    assert_eq!(value["details"]["span"]["start"]["byte"], at, "{value}");
+    assert_eq!(
+        value["details"]["span"]["end"]["byte"],
+        at + "c.value @ a".len(),
+        "{value}"
+    );
 }
 
 #[path = "refinement_remaining_source_routes.rs"]

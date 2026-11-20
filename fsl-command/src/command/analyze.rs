@@ -20,7 +20,7 @@ use fsl_semantics::model::observation::DocumentProvision;
 use super::settle::Settle;
 use super::{
     FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
-    check_sources, intake_with_bytes, request, request_integer_division, require_complete_edition,
+    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
     wire,
 };
 
@@ -338,7 +338,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         dependent_bytes,
     )?;
     let source = intake.source(&program.source, "program.source")?;
-    require_complete_edition(source.source())?;
+    require_native_header(source.source())?;
     let RunMembers {
         documents,
         mut subject,
