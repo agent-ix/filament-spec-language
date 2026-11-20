@@ -167,6 +167,7 @@ fn request(
     source: ReplaySource,
 ) -> ReplayRequestWire {
     ReplayRequestWire {
+        certificate: None,
         profile_selections: vec![],
         package: crate::ReplayPackage::read(compiled.emitted.bytes(), 1 << 30)
             .expect("actual emitted replay package"),

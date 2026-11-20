@@ -441,6 +441,7 @@ impl World {
         )
         .expect("the original checked graph package emits");
         let wire = ReplayRequestWire {
+            certificate: None,
             package: fsl_replay::ReplayPackage::read(
                 emission.package().bytes(),
                 limits.input_bytes,

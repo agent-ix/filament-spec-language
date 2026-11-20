@@ -19,7 +19,6 @@ fsl-analyze = { path = "../fsl-analyze" }
 fsl-conformance = { path = "../fsl-conformance" }
 # FR-567-AC-5: the report names this package's own `CARGO_PKG_VERSION`.
 filament-spec-language = { path = ".." }
-filament-specification-qualification = { workspace = true }
 fsl-cst = { path = "../fsl-cst" }
 logos = "0.16.1"
 fsl-route = { path = "../fsl-route" }
@@ -44,8 +43,6 @@ tempfile = "3.27.0"
 [features]
 # FR-567: a test may replace the matrix cell set; the command line cannot.
 test-support = []
-
-[dev-dependencies]
 
 # FR-765-AC-3: needs the sibling driver and examples checkouts; run by
 # `make examples-check` after the gate itself.

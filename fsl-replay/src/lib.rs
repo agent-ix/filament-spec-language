@@ -147,13 +147,15 @@ pub use call_site::{
     FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite, OperationSite,
     PopulationName, PopulationSite, ValueParitySite,
 };
+pub use certificate::closed_form::check::{
+    check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
+};
 pub use certificate::closed_form::outcome::{
     AmcEvidence, ClosedFormAnalysis, ClosedFormEvidence, ClosedFormOutcome, DemandWitness,
     HighModeMiss, JobIterates, MissEvidence, ScheduleLimit, TaskFixpoint,
 };
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
-pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::task_set::{
     Arrival, Criticality, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet,
     TaskSetRefusal, TimeMember, Wcet,
@@ -221,6 +223,7 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
+    CertificateRecord, CertificateStatus, HYBRID_CERTIFICATE_CHECKER,
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
@@ -229,6 +232,11 @@ pub use hybrid::{
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
+    check_certificate as check_hybrid_certificate, read_certificate as read_hybrid_certificate,
+    Acceptance as HybridCertificateAcceptance, CertificateOutcome as HybridCertificateOutcome,
+    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive,
+    HybridCertificate, HybridCertificateRule, ProofCoverage as HybridProofCoverage,
+    Rejection as HybridCertificateRejection,
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
     polynomial_class_gap, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
@@ -302,14 +310,13 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace, replay_model_trace,
-    replay_checked_source_model_trace,
-    replay_model_trace_from_package, replay_model_trace_with_temporal_selections,
-    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd,
-    BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint,
-    TimedReplay,
+    behaviour_valuations, evaluate_model_trace, evaluate_protocol_trace,
+    replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
+    replay_model_trace_with_temporal_selections, replay_protocol_trace,
+    replay_protocol_trace_with_temporal_selections, BehaviourValuationEnd, BehaviourValuations,
+    DelayBar, HandoffSupply, ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceRun, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd,
+    ProtocolTraceRun, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
     settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
@@ -661,6 +668,7 @@ mod redaction_tests {
         let entry_x: Vec<u8> = (0..4096u32).map(|i| (i % 241) as u8).collect();
         // It returns the full content through the typed accessor.
         let valid_wire = ReplayRequestWire {
+            certificate: None,
             profile_selections: vec![],
             package: crate::request::raw_package_descriptor(
                 "fixture",

@@ -157,7 +157,7 @@ impl Records {
 
 /// A claim formula over expanded atoms.
 #[derive(Clone, Debug)]
-enum Formula {
+pub(super) enum Formula {
     Atom(usize),
     Not(Box<Formula>),
     Logic(LogicOp, Box<Formula>, Box<Formula>),
@@ -204,11 +204,28 @@ fn window(interval: Option<&HybridInterval>) -> Window {
     )
 }
 
-struct Converter<'x, 'g> {
+pub(super) struct Converter<'x, 'g> {
     expander: &'x mut Expander<'g>,
     meter: &'x mut HybridReplayMeter,
     atoms: Vec<Exp>,
     period: Option<Period>,
+}
+
+impl<'x, 'g> Converter<'x, 'g> {
+    /// A converter of a claim formula with no lasso.
+    pub(super) fn new(expander: &'x mut Expander<'g>, meter: &'x mut HybridReplayMeter) -> Self {
+        Self {
+            expander,
+            meter,
+            atoms: Vec::new(),
+            period: None,
+        }
+    }
+
+    /// The atoms converted so far, in formula pre-order.
+    pub(super) fn into_atoms(self) -> Vec<Exp> {
+        self.atoms
+    }
 }
 
 impl Converter<'_, '_> {
@@ -216,7 +233,7 @@ impl Converter<'_, '_> {
     /// repeats on a lasso. On a lasso, an unbounded future window reads a
     /// bounded one that covers a whole period past its operand's onset,
     /// which reads the same positions' values.
-    fn convert(
+    pub(super) fn convert(
         &mut self,
         formula: &HybridFormula,
     ) -> Result<(Formula, Rational), HybridReplayRefusal> {
@@ -1065,7 +1082,7 @@ impl Claim<'_> {
     }
 }
 
-fn signal_of(formula: &Formula, atoms: &[Signal], timeline: &Timeline) -> Signal {
+pub(super) fn signal_of(formula: &Formula, atoms: &[Signal], timeline: &Timeline) -> Signal {
     match formula {
         Formula::Atom(i) => atoms[*i].clone(),
         Formula::Not(f) => Timeline::map(&signal_of(f, atoms, timeline), Tri::not),
@@ -1399,12 +1416,10 @@ pub(super) fn replay(
     meter.charge()?;
     let n = points.befores.len();
     let lasso = trace.loop_to.and_then(|l| usize::try_from(l).ok());
-    // Every mode the trace dwells in has a polynomial flow.
+    // Every mode the trace visits has a polynomial flow: the last state of a
+    // trace without `end` is still dwelled in (FSpec FR-193 "Exact replay").
     let mut flows = BTreeMap::new();
     for k in 0..=n {
-        if k == n && points.end.is_none() {
-            continue;
-        }
         meter.charge()?;
         let mode = points.states[k].0;
         if flows.contains_key(&mode) {

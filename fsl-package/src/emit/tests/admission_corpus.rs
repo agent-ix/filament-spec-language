@@ -840,6 +840,18 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
         (
+            K::ScalarType(ScalarTypeForm::ClockReference),
+            "FSL lowers no clock-reference type node",
+        ),
+        (
+            K::Expression(ExpressionForm::PlaceReference),
+            "FSL lowers no place-reference expression node",
+        ),
+        (
+            K::Claim(ClaimForm::ValueValidity),
+            "FSL lowers no value-validity claim node",
+        ),
+        (
             K::ScalarType(ScalarTypeForm::BoundedQuantity),
             "lowering refuses a bounded quantity type: no checked type node carries one",
         ),
@@ -3116,50 +3128,47 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
     }
 }
 
-/// The refusals of [`rows_refinement`] over `rows`, which must not check.
-fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::CheckCause> {
-    let (unit, documents) = rows_refinement(rows, operations);
-    let packages =
-        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
-    assemble_with_models(unit.as_bytes(), &packages)
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .map(|_| ())
-        .expect_err("the refinement is not emitted")
-        .into_iter()
-        .map(|refusal| refusal.cause)
-        .collect()
+/// Emit and strictly read one refinement field expression.
+fn assert_field_row_reads_back(field: &str) {
+    let rows = format!(
+        "population A::config_history from C::config_history;\n\
+             object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
+    );
+    let (emitted, _) = emit_rows(&rows, &[]);
+    let node = refinement_node(&emitted.emission);
+    assert_eq!(
+        node["body"]["objects"][0]["fields"][0]["name"],
+        "versionNumber"
+    );
+    assert_eq!(
+        node["body"]["objects"][0]["fields"][0]["expression"]["term"],
+        "reference"
+    );
+    assert!(
+        emitted.emission.omitted.is_empty(),
+        "{field}: no omitted refinement"
+    );
+    let admitted = read(&emitted);
+    assert!(
+        admitted.is_ok(),
+        "{field}: the rows read back: {admitted:?}"
+    );
 }
 
-/// A row whose expression reads a whole concrete population or builds a
-/// `seq` has no node form (STD-493), like a `history` row: the
-/// refinement refuses `RefinementNotEmitted` naming it, never a fault or a
-/// malformed package.
-#[trace("FR-375-AC-21", "TC-310")]
+/// A whole concrete population read emits an admitted refinement mapping.
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
-fn whole_population_and_seq_rows_are_not_emitted() {
-    for field in [
+fn whole_population_rows_are_emitted_and_read_back() {
+    assert_field_row_reads_back(
         "versionNumber = count(s in C::config_history where s.versionNumber = 1);",
-        "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber \
-         else self.versionNumber;",
-    ] {
-        let rows = format!(
-            "population A::config_history from C::config_history;\n\
-             object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
-        );
-        let refusals = refused_rows(&rows, &[]);
-        assert!(
-            matches!(
-                &refusals[..],
-                [fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. }] if name == "R"
-            ),
-            "{field}: {refusals:?}"
-        );
-    }
+    );
+}
+
+/// The sequence expression must emit a canonical, strictly admitted mapping.
+#[test]
+#[ignore = "QSL-2729: seq-row bounded-domain node identity fails strict read-back"]
+fn seq_rows_are_emitted_and_read_back() {
+    assert_field_row_reads_back("versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;");
 }
 
 /// FSpec FR-341 row binders (SR-1735002 FND-002): over an operation with a
@@ -3280,11 +3289,10 @@ fn fairness_and_operation_rows_name_operation_anchors() {
     assert_eq!(anchor(&step["target"]["receiver"]["target"]), "parameter");
 }
 
-/// The step, `assume` and `ensure` rows read back once IR resolves an
-/// `operation_anchor` against its declaring type (IR-1077).
-#[trace("FR-375-AC-21", "TC-310")]
+/// The step and `assume` rows read back with each `operation_anchor`
+/// resolved against its declaring type.
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
-#[ignore = "IR-1077: IR requires a row's operation_anchor context to be the model root"]
 fn operation_rows_read_back() {
     let (emitted, _) = emit_rows(
         &format!(

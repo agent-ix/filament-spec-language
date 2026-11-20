@@ -154,6 +154,7 @@ fn request(source_order: Vec<&str>, documents: Vec<Vec<u8>>) -> ReplayRequestWir
     let site = selection.site;
     let target = RequestTargetWire::function(selected(), site.declaration.clone());
     ReplayRequestWire {
+        certificate: None,
         package: with_sources(
             &positive_multi_unit_package(),
             source_order.into_iter().map(reference).collect(),
@@ -435,6 +436,7 @@ fn d10_replay(reverse: bool) -> (fsl_replay::StateClauseReplayResult, Vec<u8>) {
         snapshot.clone(),
     ));
     let wire = ReplayRequestWire {
+        certificate: None,
         package: with_sources(&package_bytes, references),
         profile_selections: Vec::new(),
         dependencies: Vec::new(),
@@ -520,6 +522,7 @@ fn multi_source_dependency_request(
         byte_provision.push(source);
     }
     let wire = ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(&package, ReplayLimits::default().input_bytes)
             .unwrap(),
         profile_selections: Vec::new(),

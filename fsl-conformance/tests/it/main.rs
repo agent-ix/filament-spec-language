@@ -5,6 +5,7 @@ mod analyze_row;
 mod execute_row;
 mod front_end_rows;
 mod fspec_vectors;
+mod fspec_finite_window;
 mod matrix_shape;
 mod monitor_row;
 mod plugin_invariance;

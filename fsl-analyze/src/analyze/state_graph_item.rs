@@ -1486,6 +1486,7 @@ fn replay_instance(
         envelope = envelope.with_zone_certificate(certificate.clone());
     }
     let wire = ReplayRequestWire {
+        certificate: None,
         package,
         profile_selections: Vec::new(),
         dependencies,

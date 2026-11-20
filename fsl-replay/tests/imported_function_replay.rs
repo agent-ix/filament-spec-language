@@ -159,6 +159,7 @@ fn request(
         )
     }));
     ReplayRequestWire {
+        certificate: None,
         profile_selections: vec![],
         package: fsl_replay::ReplayPackage::read(
             &located.package,

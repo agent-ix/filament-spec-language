@@ -196,6 +196,7 @@ fn library_replay(
 ) -> fsl_replay::InputArmResult {
     let source = ("a".to_owned(), "units".to_owned());
     let wire = ReplayRequestWire {
+        certificate: None,
         profile_selections: vec![],
         package: fsl_replay::ReplayPackage::read(
             &site.package,

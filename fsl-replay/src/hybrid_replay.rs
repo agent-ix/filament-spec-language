@@ -16,6 +16,7 @@
 //! `CheckedHybridModel` and the checked bodies of the functions its terms
 //! call, by the indices the trace carries. Neither reads source.
 
+mod certificate;
 mod class;
 mod eval;
 mod exact;
@@ -38,6 +39,11 @@ use fsl_semantics::check::{
     CheckedFunctionRef, CheckedGraph, CheckedHybridClaim, CheckedHybridModel, HybridModelIndex,
 };
 
+pub use certificate::{
+    check_certificate, read_certificate, Acceptance, CertificateOutcome, CertificateRefusal,
+    Decisive, Expect, HybridCertificate, ProofCoverage, RefusalCode, Rejection,
+    Rule as HybridCertificateRule,
+};
 pub use class::polynomial_class_gap;
 pub use expand::{ExpansionGap, TermLocus};
 pub use fsl_foundation::diagnostic::JsonPointer;
