@@ -61,6 +61,34 @@ fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Erro
     )
 }
 
+#[cfg(unix)]
+#[ix_trace_rs::trace("FR-350-AC-21")]
+#[test]
+fn the_finite_window_source_runner_is_a_required_conformance_selection() {
+    let check = CHECKS
+        .iter()
+        .find(|check| {
+            check.selection == "fspec_finite_window::conformance_fspec_finite_window_source_windows"
+        })
+        .expect("the source runner is required");
+    assert_eq!(check.package, "fsl-conformance");
+    assert!(matches!(check.target, super::Target::Test));
+    let output = std::process::Output {
+        status: std::os::unix::process::ExitStatusExt::from_raw(0),
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 46 finite-window source windows matched\n".to_vec(),
+        stderr: Vec::new(),
+    };
+    super::check_output(check, &output).expect("source window evidence is required");
+    let missing = std::process::Output {
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\n".to_vec(),
+        ..output
+    };
+    assert!(matches!(
+        super::check_output(check, &missing),
+        Err(Error::ConformanceCheck { .. })
+    ));
+}
+
 #[test]
 fn each_pinned_vector_selection_requires_success_and_its_summary() {
     let root = crate::test_support::tempdir();

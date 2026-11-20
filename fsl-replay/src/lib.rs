@@ -156,7 +156,6 @@ pub use certificate::closed_form::outcome::{
 };
 pub use certificate::closed_form::recompute::{recompute, ClosedFormCheck, ClosedFormDisagreement};
 pub use certificate::closed_form::settle::settle;
-pub use certificate::closed_form::check::{check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult};
 pub use certificate::closed_form::task_set::{
     Arrival, Criticality, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet,
     TaskSetRefusal, TimeMember, Wcet,
