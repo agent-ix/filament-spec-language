@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, ScalarLimits};
 use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
 use fsl_replay::spine::{
@@ -24,6 +24,18 @@ use serde_json::{json, Value};
 
 const PROFILE: &str = "filament.temporal.timestamped-event.finite-window/v1";
 const FIXTURE: &str = "proposals/finite-window/finite-window-vectors.json";
+const ACCOUNTING: ScalarLimits = ScalarLimits {
+    integer_bits: 1 << 20,
+    decimal_digits: 1 << 20,
+    scale_expansion: 1 << 20,
+    text_input_bytes: 1 << 20,
+    text_scalars: 1 << 20,
+    normalized_scalars: 1 << 20,
+    unit_edges: 1 << 20,
+    value_occurrences: 1 << 20,
+    work_units: 1 << 30,
+    result_units: 1 << 30,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -286,7 +298,7 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
         model_limits: ModelNormalizationLimits::default(),
         snapshots: &DocumentProvision::new(),
         observation_limits: ObservationLimits::default(),
-        accounting: Default::default(),
+        accounting: ACCOUNTING,
         name: "Window",
         trace: &trace,
         over: None,
