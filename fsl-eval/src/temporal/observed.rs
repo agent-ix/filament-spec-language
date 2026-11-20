@@ -303,6 +303,7 @@ pub fn evaluate_observed_timed(
         (stopped, _) => stopped,
     };
     ObservedRun {
+        inactive: false,
         result,
         stopped,
         undefined: letters.undefined,

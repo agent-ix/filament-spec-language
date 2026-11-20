@@ -1585,6 +1585,7 @@ impl<'a> ClauseState<'a> {
                     TemporalVerdict::Violated { .. }
                         | TemporalVerdict::Undefined { .. }
                         | TemporalVerdict::Holds
+                        | TemporalVerdict::Inactive
                 )
             )
             .then(|| Arc::clone(report)),
