@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! State-graph recognition distinguishes syntactic placement from S3 admission.
 
-use fsl_cst::{CstElement, Production, TokenClass};
+use fsl_cst::{CstElement, ParsedSource, Production, TokenClass};
 use ix_trace_rs::trace;
 
 use super::claim_syntax;
@@ -148,7 +148,7 @@ const ROWS: [Row; 13] = [
     },
 ];
 
-fn accepted(index: usize) {
+fn accepted(index: usize) -> (String, ParsedSource) {
     let row = &ROWS[index];
     let text = claim_syntax::unit(row.accepted);
     let parsed = claim_syntax::admitted(&text);
@@ -183,6 +183,7 @@ fn accepted(index: usize) {
         claim_syntax::node_texts(&text, &parsed, Production::StateGraphBody).len(),
         usize::from(kind != Kind::UniquePath)
     );
+    (text, parsed)
 }
 
 fn rejected(index: usize) {
@@ -240,7 +241,13 @@ mod each_row_of_the_distinguishing_table_has_an_accepting_form {
     #[trace("FR-165-AC-4")]
     #[test]
     fn ordinary_not_expression() {
-        super::accepted(9);
+        let (text, parsed) = super::accepted(9);
+        assert_eq!(
+            claim_syntax::node_texts(&text, &parsed, Production::Comparison),
+            ["not c.n = 2"]
+        );
+        assert!(claim_syntax::node_texts(&text, &parsed, Production::Unary).contains(&"not c.n"));
+        assert!(claim_syntax::node_texts(&text, &parsed, Production::StateGraphUnary).is_empty());
     }
     #[trace("FR-165-AC-4")]
     #[test]
@@ -325,5 +332,19 @@ mod each_row_has_a_near_miss_refused_at_its_token {
     #[test]
     fn unique_requires_semicolon() {
         super::rejected(12);
+    }
+
+    #[trace("FR-165-AC-6")]
+    #[test]
+    fn unique_path_has_no_body_for_a_following_fairness_constraint() {
+        let good = "unique path One using v from (c.a) to (c.d);";
+        let text = claim_syntax::unit(good);
+        let parsed = claim_syntax::admitted(&text);
+        assert_eq!(
+            claim_syntax::node_texts(&text, &parsed, Production::StateGraphClaim),
+            [good]
+        );
+        let bad = format!("{good} fair weak M::Cfg::step");
+        claim_syntax::refused_at(&bad, "fair", "fair");
     }
 }
