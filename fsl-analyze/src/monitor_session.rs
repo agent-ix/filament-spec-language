@@ -361,6 +361,15 @@ fn same_disposition(before: &ClauseRunReport, after: &ClauseRunReport) -> bool {
 }
 
 impl<'a> MonitorSession<'a> {
+    /// The number of observations accepted by this session.
+    ///
+    /// This count includes observations accepted before a checkpoint, so a
+    /// resumed session can continue assigning positions in the original
+    /// trace.
+    pub fn observations_seen(&self) -> u64 {
+        self.seen
+    }
+
     /// FR-643: open a session over `request`'s clauses.
     ///
     /// # Errors
