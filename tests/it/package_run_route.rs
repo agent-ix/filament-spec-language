@@ -128,12 +128,31 @@ fn a_package_run_selects_its_form_by_the_member() {
         exit, 20,
         "a package with equality decisions needs its witness: {value}"
     );
-    names(&value, "Equality(Missing)");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    names(&value, "invalid_package/missing-file");
+    names(&value, "/request/package/equality");
     assert!(value.get("synthesis").is_none(), "{value}");
+
+    let (exit, value) = run(
+        directory.path(),
+        json!({"models": [], "package": {"file": "package.json",
+            "equality": "missing-equality.json"},
+            "synthesis": {"declaration": "Pick"}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "invalid-request/missing-file");
+    names(&value, "package.equality");
+    names(&value, "missing-equality.json");
+    names(&value, "/request/package/equality");
+
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "package.json"},
-            "clause": {"selection": {"clause": "Pick"}, "observations": {}}}),
+            "clause": {"selection": {"clause": {"name": "Pick", "observation": "current"}},
+                "observations": {}}}),
     );
     assert_eq!(exit, 20, "{value}");
     names(&value, "\"requires\":\"directory\"");
