@@ -114,7 +114,9 @@ fn an_operation_beyond_the_trace_bound_is_uncovered_within_the_bound() {
 fn operation_coverage_is_deterministic_and_settles_no_verdict() {
     let first = generated_coverage(8).expect("the run's result record carries `operations`");
     let second = generated_coverage(8).expect("the run's result record carries `operations`");
-    assert_eq!(first["operations"], second["operations"]);
+    assert_eq!(first, second, "same seed and inputs reproduce the full record");
+    assert_eq!(first["cases"]["generated"], 100, "{first}");
+    assert_eq!(first["cases"]["passed"], 100, "{first}");
     assert_eq!(first["evidence"], "tested", "{first}");
     assert!(
         first.get("verdict").is_none_or(serde_json::Value::is_null),

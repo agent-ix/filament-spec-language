@@ -63,6 +63,19 @@ fn a_seeded_counterexample_shrinks_to_the_shortest_failing_prefix() {
             fsl_foundation::IdentityLimits::default(),
         )
         .is_ok());
+        let shorter = fsl_eval::simulation::model::sample_model(
+            &system,
+            10_000,
+            &sampler(),
+            seed,
+            0,
+            3,
+        )
+        .expect("the shorter candidate is generated");
+        assert!(
+            !violates_small(&shorter),
+            "three increments do not reproduce the same Small failure"
+        );
     }
 }
 
@@ -151,4 +164,23 @@ fn shrinking_decreases_an_operation_argument_while_preserving_failure() {
         "value 2 is the immediate lower failing argument"
     );
     assert!(violates_small(&shrunk));
+
+    let lower = (0..128)
+        .find_map(|seed| {
+            let trace =
+                fsl_eval::simulation::model::sample_model(&system, 10_000, &sampler(), seed, 0, 1)
+                    .expect("the finite model produces a trace");
+            trace
+                .trace
+                .steps
+                .first()
+                .and_then(|step| step.transition.arguments().first())
+                .filter(|argument| argument.contains(r#""value":"1""#))
+                .map(|_| trace)
+        })
+        .expect("the fixed seed range includes the immediate lower argument");
+    assert!(
+        !violates_small(&lower),
+        "reducing value 2 to value 1 no longer fails Small"
+    );
 }
