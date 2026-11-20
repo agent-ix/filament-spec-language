@@ -46,7 +46,7 @@ object Node identity (id) {
   operation bump(amount: Int[0, 9]): Boolean modifies self.id;
   invariant Bounded { self.id >= 0 };
 }
-event Placed { at: Integer; occurs at; }
+event Placed { timestamp: Integer; occurs timestamp; }
 machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 store Nodes persists Node { operation save(n: Reference<Node>); }
