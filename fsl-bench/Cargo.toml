@@ -7,7 +7,8 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "The committed performance benchmarks (parser, checker, CST identity hashing, model layer, evaluator and evaluator kernels) and the probe that records per-run counts."
 
-# A benchmark-only crate: no workspace crate depends on it. It reaches the
+# A benchmark and test-support crate: no shipped workspace code depends on it.
+# It reaches the
 # layer crates through their public API only, so an internal rewrite behind
 # that API needs no bench change; a change to the API itself does (for
 # example a change to `intake::admit`'s return type). Every model-intake call goes

@@ -53,6 +53,9 @@ thiserror = "2.0.20"
 test-support = []
 
 [dev-dependencies]
+# Shared property configuration; this edge is test-only.
+fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 filament-specification = { workspace = true }
 # The evaluator's tests build `PackageDeclarations` from layer-2 parsed forms
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its

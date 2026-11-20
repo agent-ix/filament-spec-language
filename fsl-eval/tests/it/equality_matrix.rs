@@ -59,6 +59,9 @@ use fsl_semantics::value::{
 use ix_trace_rs::trace;
 use serde_json::json;
 
+#[path = "equality_conversion_properties.rs"]
+mod conversion_properties;
+
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
     decimal_digits: u64::MAX,
