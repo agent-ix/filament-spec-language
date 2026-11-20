@@ -1240,6 +1240,8 @@ struct ScopeIndex {
     /// Every type a declared name binds, in resolution order: aliases,
     /// composites, enums, then object types. More than one is ambiguous.
     types: BTreeMap<String, Vec<ValueType>>,
+    /// The names of the unit's `type Name = T;` aliases.
+    type_aliases: BTreeSet<String>,
     /// Enum name, then member case, to each (binding, member) position in
     /// [`Scope::enums`] that declares it. A member `m` of enum `E` is
     /// written `E::m`.
@@ -1409,6 +1411,7 @@ impl ScopeIndex {
     ) -> Self {
         let mut index = Self::default();
         for (alias, value_type) in aliases {
+            index.type_aliases.insert(alias.clone());
             index.named_type(alias, value_type.clone());
         }
         for declaration in types.composites() {
@@ -1742,6 +1745,21 @@ impl Scope {
     /// Each unit's model aliases bound to their packages.
     pub(crate) fn model_spellings(&self) -> &ModelSpellings {
         &self.model_spellings
+    }
+
+    /// The declaration key of the type alias `written` names, when the unit's
+    /// own source declares one (FSpec FR-322 "Named type arguments"): the
+    /// alias's qualified name beneath its source unit's identity.
+    pub(crate) fn alias_declaration(&self, written: &str) -> Option<crate::value::TypeArgumentAlias> {
+        if !self.index.type_aliases.contains(written) {
+            return None;
+        }
+        let identity = self.source_owners.get(written)?.identity();
+        let path = written.split("::").collect::<Vec<_>>().join("/");
+        Some(crate::value::TypeArgumentAlias {
+            package: identity.to_owned(),
+            node: format!("ix://{identity}/{path}"),
+        })
     }
 
     /// The source unit of each top-level declaration, by declared name.
@@ -2696,6 +2714,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType, location: &Location) -> N
         field_population: None,
         equality_range_context: None,
         type_argument: None,
+        binder_annotation: None,
     }
 }
 
@@ -2855,6 +2874,7 @@ impl Typer<'_> {
                         field_population: None,
                         equality_range_context: None,
                         type_argument: None,
+                        binder_annotation: None,
                     });
                 }
             }
@@ -2892,6 +2912,7 @@ impl Typer<'_> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 })
             }
             (ValueType::Int(source), ValueType::Int(target))
@@ -2909,6 +2930,7 @@ impl Typer<'_> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 })
             }
             _ => Err(mismatch(&node.location)),
@@ -5345,6 +5367,7 @@ impl<'a> Typer<'a> {
                     field_population: None,
                     equality_range_context: None,
                     type_argument: None,
+                    binder_annotation: None,
                 });
             }
             return Ok(typed);

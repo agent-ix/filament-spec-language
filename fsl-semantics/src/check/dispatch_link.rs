@@ -383,6 +383,8 @@ impl PackageDeclarations {
             model.alias() == Some("")
                 && model.selection().identity == view.domain_package().model_selection.identity
         });
+        clauses.source_owner_identity = source_model
+            .then(|| super::node_key::SourceOwner::from(&self.source).identity().to_owned());
         for record in &view.domain_package().records {
             let DomainPackageRecord::OperationMember(operation) = record else {
                 continue;

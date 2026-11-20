@@ -777,6 +777,7 @@ enum SeqStage {
         high: Box<Node>,
         slot: Slot,
         maximum: Option<u64>,
+        binder_type: ValueType,
     },
 }
 
@@ -914,6 +915,11 @@ fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
 }
 
 impl<'a> Typer<'a> {
+    /// The alias a type argument written as `written` names, when it names one.
+    fn type_argument_alias(&self, written: &str) -> Option<crate::value::TypeArgumentAlias> {
+        self.scope.alias_declaration(written)
+    }
+
     /// Type `expression` where `required` is expected. A conditional or `let`
     /// passes the requirement into its branches or body.
     pub(crate) fn check_as(
@@ -3289,6 +3295,7 @@ impl<'a> Typer<'a> {
                     branches,
                     location,
                     name,
+                    annotation,
                     ..
                 } = *frame;
                 let body = typed;
@@ -3305,7 +3312,8 @@ impl<'a> Typer<'a> {
                     },
                     value_type,
                     &location,
-                )))
+                )
+                .with_binder_annotation(annotation)))
             }
         }
     }
@@ -3997,7 +4005,7 @@ impl<'a> Typer<'a> {
             frame.value_type,
             &frame.location,
         )
-        .with_type_argument(frame.type_argument))
+        .with_type_argument(self.type_argument_alias(&frame.type_argument)))
     }
 
     fn accept_tally<'e, 'r>(
@@ -4051,7 +4059,7 @@ impl<'a> Typer<'a> {
                         value_type,
                         &location,
                     )
-                    .with_type_argument(type_argument),
+                    .with_type_argument(self.type_argument_alias(&type_argument)),
                 ))
             }
         }
@@ -4486,7 +4494,7 @@ impl<'a> Typer<'a> {
                     &frame.location,
                 )?;
                 let slot =
-                    self.bind(frame.binder, binder_type, &frame.location, LocalKind::Bound)?;
+                    self.bind(frame.binder, binder_type.clone(), &frame.location, LocalKind::Bound)?;
                 let body = frame.body;
                 let body_location = frame.location.child(2);
                 frame.stage = SeqStage::Body {
@@ -4494,6 +4502,7 @@ impl<'a> Typer<'a> {
                     high: Box::new(typed),
                     slot,
                     maximum,
+                    binder_type,
                 };
                 frames.push(Frame::Seq(frame));
                 Ok(Step::Descend(Goal::Infer(body, None, body_location)))
@@ -4503,6 +4512,7 @@ impl<'a> Typer<'a> {
                 high,
                 slot,
                 maximum,
+                binder_type,
             } => {
                 self.unbind(1);
                 let location = frame.location.clone();
@@ -4525,7 +4535,8 @@ impl<'a> Typer<'a> {
                     },
                     value_type,
                     &location,
-                )))
+                )
+                .with_binder_annotation(Some(binder_type))))
             }
         }
     }

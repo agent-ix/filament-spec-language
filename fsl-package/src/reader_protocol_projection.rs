@@ -72,6 +72,12 @@ impl ReaderProtocolProjection {
     }
 
     /// The selected exact type of an arena node.
+    /// The declaration key of the alias the source wrote as the type argument
+    /// of the application at `index`, when it wrote one.
+    pub fn type_argument(&self, index: usize) -> Option<&str> {
+        self.nodes.get(index)?.type_argument.as_deref()
+    }
+
     pub fn value_type(&self, index: usize) -> Option<&ValueType> {
         self.nodes.get(index).map(|node| &node.value_type)
     }
@@ -2027,6 +2033,19 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 ));
             }
         };
+        let type_argument = match &node.body {
+            CheckedTerm::Application { operation, .. } => operation
+                .read()
+                .ok()
+                .and_then(|read| match read.member {
+                    Some(filament_contract_model::CheckedOperationMember::TypeArgument {
+                        alias: Some(alias),
+                        ..
+                    }) => Some(alias.node.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
         let value_type = self.value_type(id)?;
         Ok(self.push(ReaderProjectedNode {
             kind,
@@ -2035,6 +2054,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             children,
             term,
             absorbed: None,
+            type_argument,
             occurrence: self.sole_expression_occurrence(id, node),
         }))
     }
@@ -3878,6 +3898,9 @@ struct ReaderProjectedNode {
     /// A quantity conversion the walk visits directly above this node,
     /// which the enclosing equality's admitted decision applies itself.
     absorbed: Option<CheckedNodeId>,
+    /// The declaration key of the alias the source wrote as this aggregate's
+    /// type argument (FSpec FR-322 "Named type arguments").
+    type_argument: Option<Box<str>>,
 }
 
 impl ReaderProjectedNode {
@@ -3889,6 +3912,7 @@ impl ReaderProjectedNode {
             children: Vec::new(),
             term: None,
             absorbed: None,
+            type_argument: None,
             occurrence: None,
         }
     }
