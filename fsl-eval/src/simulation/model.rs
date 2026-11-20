@@ -2468,12 +2468,7 @@ fn rebuild_model_trace(
                 if index < requested.len() {
                     return Ok(None);
                 }
-                let state_findings = system
-                    .state_findings(&current)
-                    .map(|evaluated| {
-                        evaluated.unwrap_or_else(|stop| system.stopped_findings(&current, stop))
-                    })
-                    .unwrap_or_default();
+                let state_findings = system.findings_at_stop(&current);
                 if !state_findings.is_empty() {
                     let (_, state_key) = system.state_key(&current).map_err(|refusal| {
                         ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))

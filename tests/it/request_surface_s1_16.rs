@@ -115,10 +115,9 @@ fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
 
 // ---- FR-752: model-based testing --------------------------------------
 
-/// FR-752-AC-1: a state clause false at every state is refuted by a
-/// 1-minimal counterexample of zero invocations, replayed natively.
+/// A state clause false at every state is refuted by a 1-minimal
+/// counterexample of zero invocations, replayed natively.
 #[test]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-6")]
 fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
@@ -142,8 +141,8 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     assert_eq!(counterexample["invocations"], json!([]), "{value}");
 }
 
-/// FR-752-AC-2: a false initial state remains a replayable 1-minimal
-/// counterexample for a fixed set of seeds.
+/// A false initial state remains a replayable 1-minimal counterexample for a
+/// fixed set of seeds.
 #[test]
 fn false_initial_state_remains_one_minimal_across_seeds() {
     let unit = format!(
@@ -180,10 +179,9 @@ fn false_initial_state_remains_one_minimal_across_seeds() {
     }
 }
 
-/// FR-752-AC-3: a clause that every case passes yields `tested` evidence,
-/// never `proved`, within `max_cases`.
+/// A direct request for a clause that every case passes yields `tested`
+/// evidence, never `proved`, within `max_cases`.
 #[test]
-#[trace("TC-2102", "FR-752-AC-3")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-7")]
 fn a_passing_run_records_tested_and_never_proved() {
     let unit = format!(
@@ -972,8 +970,15 @@ fn model_based_test_request_rules() {
         assert_eq!(code, 20, "{refusal}");
         assert_eq!(refusal["code"], "invalid_runtime_input", "{refusal}");
         assert_eq!(refusal["cause"], "invalid-value", "{refusal}");
+        refusal_names(&refusal, "max_value_bits");
     }
-    refusal_names(&mbt(base.clone()), "max_value_bits");
+    let missing_bits = mbt(base.clone());
+    assert_eq!(
+        missing_bits["code"], "invalid_runtime_input",
+        "{missing_bits}"
+    );
+    assert_eq!(missing_bits["cause"], "missing-member", "{missing_bits}");
+    refusal_names(&missing_bits, "max_value_bits");
     let mut bounded = base.clone();
     bounded["max_value_bits"] = json!(8);
     let first = mbt(bounded.clone());
@@ -1012,13 +1017,42 @@ fn model_based_test_request_rules() {
         first["model_based_test"]["provenance"]["size_bounded"][0]["values"], "511",
         "{first}"
     );
+    assert_eq!(first["model_based_test"]["status"], "tested", "{first}");
+    assert_eq!(first["model_based_test"]["cases"]["generated"], 20, "{first}");
+    assert!(
+        partitions.iter().all(|partition| {
+            partition["value"]["value"]
+                .as_str()
+                .and_then(|value| value.parse::<i64>().ok())
+                .is_some_and(|value| (-255..=255).contains(&value))
+        }),
+        "{first}"
+    );
+    assert!(
+        partitions.iter().all(|partition| {
+            !partition["kind"]
+                .as_str()
+                .expect("partition kind")
+                .ends_with("-refusal")
+        }),
+        "{first}"
+    );
     assert_eq!(first, mbt(bounded.clone()), "deterministic");
-    let mut zero = bounded.clone();
-    zero["max_cases"] = json!(0);
-    refusal_names(&mbt(zero), "max_cases");
-    let mut unknown = bounded;
-    unknown["clause"] = json!("Nothing");
-    refusal_names(&mbt(unknown), "Nothing");
+    for (member, value, code, cause) in [
+        ("max_cases", json!(0), "invalid_runtime_input", "invalid-value"),
+        ("max_cases", json!(-1), "invalid_runtime_input", "invalid-value"),
+        ("max_value_bits", json!(256), "invalid_runtime_input", "invalid-value"),
+        ("max_value_bits", json!(-1), "invalid_runtime_input", "invalid-value"),
+        ("max_trace_length", json!(0), "invalid_runtime_input", "invalid-value"),
+        ("clause", json!("Nothing"), "invalid_runtime_input", "unknown-member"),
+    ] {
+        let mut request = bounded.clone();
+        request[member] = value;
+        let refusal = mbt(request);
+        assert_eq!(refusal["code"], code, "{member}: {refusal}");
+        assert_eq!(refusal["cause"], cause, "{member}: {refusal}");
+        refusal_names(&refusal, member);
+    }
 
     let bounded_unit =
         format!("{VALUE_HEADER}predicate Small using v (x: Int[0, 5]): Boolean {{ x <= 3 }}\n");
@@ -1062,12 +1096,34 @@ fn model_based_test_request_rules() {
     );
 }
 
-/// FSpec FR-190-AC-8 and FR-752-AC-5: a direct value-clause request evaluates
+/// A state clause's initial snapshot holding a population marked incomplete
+/// refuses `incomplete_population` naming it, as the universe snapshot of a
+/// TL cross-evaluation does, rather than running over a missing universe.
+#[test]
+fn model_based_test_refuses_an_incomplete_initial_population() {
+    let unit = format!(
+        "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
+    );
+    let directory = bump_directory(&unit, &["a"], false);
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "model_based_test": {"clause": "Never", "seed": 1, "max_cases": 5,
+                "max_trace_length": 2, "initial": "s.json"}}}),
+    );
+    assert_eq!(code, 22, "{value}");
+    assert_eq!(value["code"], "incomplete_population", "{value}");
+    refusal_names(&value, "config_history");
+}
+
+/// FR-752-AC-5: a direct value-clause request evaluates
 /// generated Integer assignments with the checked package's native oracle and
 /// retains a reproduced, minimized failing assignment.
 #[test]
 #[trace("TC-2102", "FR-752-AC-5")]
-#[trace("FSpec-TC-1600", "FSpec-FR-190-AC-8")]
 fn model_based_test_value_clause_runs_and_shrinks_natively() {
     let unit = format!(
         "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"

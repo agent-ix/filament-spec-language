@@ -123,6 +123,15 @@ pub trait TransitionSystem {
     fn stopped_findings(&self, _state: &Self::State, _stop: ExpansionStop) -> Vec<Self::Finding> {
         Vec::new()
     }
+
+    /// The findings a state whose expansion stopped carries: its findings
+    /// evaluated alone, or [`Self::stopped_findings`] when that evaluation
+    /// itself stopped. Empty for a system that offers no such evaluation.
+    fn findings_at_stop(&self, state: &Self::State) -> Vec<Self::Finding> {
+        self.state_findings(state)
+            .map(|evaluated| evaluated.unwrap_or_else(|stop| self.stopped_findings(state, stop)))
+            .unwrap_or_default()
+    }
 }
 
 /// The stop a cancelled evaluation of a state's findings carries:

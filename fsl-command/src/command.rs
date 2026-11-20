@@ -775,9 +775,12 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
-    /// FR-752: a typed model-based-test request refusal with its catalog cause.
+    /// FR-752: a typed model-based-test request refusal with its catalog code
+    /// and cause.
     #[error("invalid model_based_test request member {path}: {cause}")]
     ModelBasedTestRequest {
+        /// The catalog code of the refusal.
+        code: Code,
         /// The JSON pointer of the member at fault.
         path: String,
         /// The FR-805 cause retained by the evaluator.
@@ -1112,9 +1115,8 @@ impl RunCause {
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
-            Self::ExportRequest { .. }
-            | Self::PlanRequest { .. }
-            | Self::ModelBasedTestRequest { .. } => Code::InvalidRuntimeInput,
+            Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
+            Self::ModelBasedTestRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1321,7 +1323,7 @@ impl RunError {
             )]),
             RunCause::ExportRequest { path, cause, .. }
             | RunCause::PlanRequest { path, cause, .. }
-            | RunCause::ModelBasedTestRequest { path, cause } => {
+            | RunCause::ModelBasedTestRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),
@@ -3943,7 +3945,18 @@ fn prepare_complete_run(
         return prepare_lowering(intake, request, member, source, observation_override);
     }
     if let Some(member) = &request.model_based_test {
-        return model_based_test::prepare(intake, request, member, source, observation_override);
+        return model_based_test::prepare(
+            intake,
+            request,
+            member,
+            model_based_test::Context {
+                source,
+                integer_division,
+                library_integer_division,
+                limits: stage_limits,
+                observation_override,
+            },
+        );
     }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {

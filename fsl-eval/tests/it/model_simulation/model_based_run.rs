@@ -1933,7 +1933,8 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
     )
     .expect_err("an empty checked domain refuses before generation");
     assert_eq!(refusal.member, "clause");
-    assert_eq!(refusal.cause, "invalid_model_binding/malformed-declaration");
+    assert_eq!(refusal.code, "invalid_model_binding");
+    assert_eq!(refusal.cause, "malformed-declaration");
 }
 
 fn ac7_model_world() -> World {

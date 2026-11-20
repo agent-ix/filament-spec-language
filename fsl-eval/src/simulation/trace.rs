@@ -170,13 +170,7 @@ pub fn replay<S: TransitionSystem>(
                 findings,
             } => (successors, findings),
             Expanded::Stopped(stop) if recorded == Some(stop.cause) => {
-                let findings = system
-                    .state_findings(&current)
-                    .map(|evaluated| {
-                        evaluated.unwrap_or_else(|stop| system.stopped_findings(&current, stop))
-                    })
-                    .unwrap_or_default();
-                check.expanded(index, findings)?;
+                check.expanded(index, system.findings_at_stop(&current))?;
                 break;
             }
             Expanded::Stopped(stop) => {

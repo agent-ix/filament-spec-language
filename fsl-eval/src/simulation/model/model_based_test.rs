@@ -20,7 +20,7 @@ use crate::simulation::{
 };
 
 use super::domain::{Domain, admitted_text_value};
-use super::{ContractClause, ContractClauseKind};
+use super::{AdmissionFailure, ContractClause, ContractClauseKind};
 use super::{
     ModelBoundaryPartition, ModelCheckInput, ModelFinding, ModelOperation, ModelOperationCase,
     ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
@@ -418,8 +418,49 @@ impl RootAdmission for NativeAdmission {
 pub struct ModelBasedTestRefusal {
     /// The request member at fault.
     pub member: &'static str,
-    /// Catalog cause for the refusal.
+    /// Catalog code of the refusal.
+    pub code: &'static str,
+    /// Catalog cause under `code`.
     pub cause: &'static str,
+}
+
+const INVALID_RUNTIME_INPUT: &str = "invalid_runtime_input";
+
+fn refuse(member: &'static str, cause: &'static str) -> ModelBasedTestRefusal {
+    ModelBasedTestRefusal {
+        member,
+        code: INVALID_RUNTIME_INPUT,
+        cause,
+    }
+}
+
+/// The empty-domain and unadmitted-subject refusals name `invalid_model_binding`.
+fn refuse_binding(member: &'static str) -> ModelBasedTestRefusal {
+    ModelBasedTestRefusal {
+        member,
+        code: "invalid_model_binding",
+        cause: "malformed-declaration",
+    }
+}
+
+/// A run stop that is a fault of the tool, not of the request.
+fn refuse_fault() -> ModelBasedTestRefusal {
+    ModelBasedTestRefusal {
+        member: "clause",
+        code: "runtime_invariant",
+        cause: "runtime-invariant",
+    }
+}
+
+fn refusal_of(error: ModelBasedTestError) -> ModelBasedTestRefusal {
+    match error {
+        ModelBasedTestError::InvalidClause { .. } => refuse("clause", "unknown-member"),
+        ModelBasedTestError::InvalidLimit { member } => refuse(member, "invalid-value"),
+        ModelBasedTestError::MissingValueBits => refuse("max_value_bits", "missing-member"),
+        ModelBasedTestError::UnknownValueBits => refuse("max_value_bits", "unknown-member"),
+        ModelBasedTestError::ValueDomain { .. } => refuse_binding("clause"),
+        _ => refuse_fault(),
+    }
 }
 
 /// FR-752's result record.
@@ -432,18 +473,17 @@ pub fn run_model_based_test(
     admission: &dyn RootAdmission,
     cancel: &filament_exact::Cancel,
 ) -> Result<ModelBasedTestRecord, ModelBasedTestRefusal> {
-    let refusal = |member, cause| ModelBasedTestRefusal { member, cause };
     let Some(identity) = request.clause.as_ref() else {
-        return Err(refusal("clause", "missing-member"));
+        return Err(refuse("clause", "missing-member"));
     };
     if request.max_cases == 0 {
-        return Err(refusal("max_cases", "invalid-value"));
+        return Err(refuse("max_cases", "invalid-value"));
     }
     if request
         .max_value_bits
         .is_some_and(|bits| !(1..=64).contains(&bits))
     {
-        return Err(refusal("max_value_bits", "invalid-value"));
+        return Err(refuse("max_value_bits", "invalid-value"));
     }
     let graph = package.graph();
     let is_state = graph.state_clause_by_identity(identity.clone()).is_some()
@@ -453,27 +493,27 @@ pub fn run_model_based_test(
             .any(|clause| clause.identity() == *identity);
     let is_value = graph.callable_by_identity(identity.clone()).is_some();
     if !is_state && !is_value {
-        return Err(refusal("clause", "unknown-member"));
+        return Err(refuse("clause", "unknown-member"));
     }
     if is_state && request.max_trace_length.is_none() {
-        return Err(refusal("max_trace_length", "missing-member"));
+        return Err(refuse("max_trace_length", "missing-member"));
     }
     if is_state && request.subject.is_none() {
-        return Err(refusal("subject", "missing-member"));
+        return Err(refuse("subject", "missing-member"));
     }
     if !is_state && request.subject.is_some() {
-        return Err(refusal("subject", "unknown-member"));
+        return Err(refuse("subject", "unknown-member"));
     }
     if is_value && request.max_trace_length.is_some() {
-        return Err(refusal("max_trace_length", "unknown-member"));
+        return Err(refuse("max_trace_length", "unknown-member"));
     }
     if request.max_trace_length == Some(0) {
-        return Err(refusal("max_trace_length", "invalid-value"));
+        return Err(refuse("max_trace_length", "invalid-value"));
     }
 
     if is_value {
         if cancel.cause().is_some() {
-            return Err(refusal("cancel", "cancelled"));
+            return Err(cancelled());
         }
         return run_model_based_value_function_entry(
             package,
@@ -489,21 +529,12 @@ pub fn run_model_based_test(
             request.position_limit,
             admission,
         )
-        .map_err(|error| match error {
-            ModelBasedTestError::InvalidClause { .. } => refusal("clause", "unknown-member"),
-            ModelBasedTestError::InvalidLimit { member } => refusal(member, "invalid-value"),
-            ModelBasedTestError::MissingValueBits => refusal("max_value_bits", "missing-member"),
-            ModelBasedTestError::UnknownValueBits => refusal("max_value_bits", "unknown-member"),
-            ModelBasedTestError::ValueDomain { .. } => {
-                refusal("clause", "invalid_model_binding/malformed-declaration")
-            }
-            _ => refusal("clause", "invalid_runtime_input"),
-        });
+        .map_err(refusal_of);
     }
 
     let subject = request.subject.as_ref();
     let Some(subject) = subject else {
-        return Err(refusal("subject", "missing-member"));
+        return Err(refuse("subject", "missing-member"));
     };
     let simulation = ModelSimulationRequest {
         input: ModelCheckInput::source(package),
@@ -517,10 +548,9 @@ pub fn run_model_based_test(
         meter: request.accounting,
         emit: request.emit,
     };
-    let system =
-        ModelSystem::new(simulation).map_err(|_| refusal("subject", "invalid_model_binding"))?;
+    let system = ModelSystem::new(simulation).map_err(subject_refusal)?;
     if cancel.cause().is_some() {
-        return Err(refusal("cancel", "cancelled"));
+        return Err(cancelled());
     }
     let result = run_model_based_test_with_system_and_admission(
         &system,
@@ -529,21 +559,36 @@ pub fn run_model_based_test(
         request.seed,
         request.max_cases,
         usize::try_from(request.max_trace_length.unwrap_or(1))
-            .map_err(|_| refusal("max_trace_length", "invalid-value"))?,
+            .map_err(|_| refuse("max_trace_length", "invalid-value"))?,
         request.max_value_bits,
         request.position_limit,
         request.exploration,
         admission,
     )
-    .map_err(|error| match error {
-        ModelBasedTestError::InvalidClause { .. } => refusal("clause", "unknown-member"),
-        ModelBasedTestError::InvalidLimit { member } => refusal(member, "invalid-value"),
-        ModelBasedTestError::ValueDomain { .. } => {
-            refusal("clause", "invalid_model_binding/malformed-declaration")
-        }
-        _ => refusal("clause", "invalid_runtime_input"),
-    })?;
+    .map_err(refusal_of)?;
     Ok(result)
+}
+
+fn cancelled() -> ModelBasedTestRefusal {
+    ModelBasedTestRefusal {
+        member: "cancel",
+        code: "cancelled",
+        cause: "cancelled",
+    }
+}
+
+/// FR-120's admission refusal for a subject the model system does not admit.
+fn subject_refusal(failure: AdmissionFailure) -> ModelBasedTestRefusal {
+    match failure {
+        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+            ModelBasedTestRefusal {
+                member: "subject",
+                code: record.catalog.code(),
+                cause: record.catalog.cause(),
+            }
+        }
+        AdmissionFailure::Fault(_) => refuse_fault(),
+    }
 }
 
 impl ModelBasedTestResult {
@@ -797,6 +842,78 @@ pub fn run_model_based_test_with_value_bits(
     reason = "the checked-system compatibility entry feeds the one FR-752 entry"
 )]
 fn run_model_based_test_with_system_and_admission(
+    system: &ModelSystem<'_>,
+    identity: &NodeKey,
+    sampler: &DefinitionRef,
+    seed: u64,
+    max_cases: u64,
+    max_trace_length: usize,
+    max_value_bits: Option<u64>,
+    position_limit: u64,
+    reachability_limits: Limits,
+    admission: &dyn RootAdmission,
+) -> Result<ModelBasedTestResult, ModelBasedTestError> {
+    let outcome = dispatch_model_based_test(
+        system,
+        identity,
+        sampler,
+        seed,
+        max_cases,
+        max_trace_length,
+        max_value_bits,
+        position_limit,
+        reachability_limits,
+        admission,
+    );
+    let defect = match &outcome {
+        Err(ModelBasedTestError::Shrink(_)) => ModelBasedTestDefect::InvalidShrink,
+        Err(ModelBasedTestError::OracleDisagreement { .. }) => {
+            ModelBasedTestDefect::OracleDisagreement
+        }
+        _ => return outcome,
+    };
+    let Some(name) = clause_name(system, identity) else {
+        return outcome;
+    };
+    tool_failure_record(
+        system,
+        &name,
+        sampler,
+        seed,
+        max_cases,
+        max_trace_length,
+        max_value_bits,
+        position_limit,
+        reachability_limits,
+        defect,
+    )
+}
+
+/// The checked name of the clause or value function `identity` selects.
+fn clause_name(system: &ModelSystem<'_>, identity: &NodeKey) -> Option<String> {
+    let graph = system.source_package()?.graph();
+    graph
+        .state_clause_by_identity(identity.clone())
+        .map(|clause| clause.name().to_owned())
+        .or_else(|| {
+            graph
+                .temporal_clauses()
+                .iter()
+                .find(|clause| clause.identity() == *identity)
+                .map(|clause| clause.clause().name().to_owned())
+        })
+        .or_else(|| {
+            graph
+                .function_by_identity(identity.clone())
+                .map(|function| function.name.to_owned())
+        })
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the checked-system compatibility entry feeds the one FR-752 entry"
+)]
+fn dispatch_model_based_test(
     system: &ModelSystem<'_>,
     identity: &NodeKey,
     sampler: &DefinitionRef,
@@ -1837,7 +1954,7 @@ fn run_model_based_contract_clause(
         Err(ModelBasedTestError::OracleDisagreement { .. }) => {
             return tool_failure_record(
                 system,
-                clause,
+                &clause.name,
                 sampler,
                 seed,
                 max_cases,
@@ -1845,6 +1962,7 @@ fn run_model_based_contract_clause(
                 max_value_bits,
                 position_limit,
                 reachability_limits,
+                ModelBasedTestDefect::OracleDisagreement,
             );
         }
         Err(error) => return Err(error),
@@ -2888,7 +3006,7 @@ mod refusal_tests {
 )]
 fn tool_failure_record(
     system: &ModelSystem<'_>,
-    clause: &ContractClause,
+    clause: &str,
     sampler: &DefinitionRef,
     seed: u64,
     max_cases: u64,
@@ -2896,6 +3014,7 @@ fn tool_failure_record(
     max_value_bits: Option<u64>,
     position_limit: u64,
     reachability_limits: Limits,
+    defect: ModelBasedTestDefect,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let partitions = system.boundary_partitions();
     let declared: Vec<ModelOperation> = system
@@ -2913,7 +3032,7 @@ fn tool_failure_record(
     let evidence = ModelBasedTestEvidence::Failed;
     Ok(ModelBasedTestResult {
         limits: ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
-        clause: clause.name.clone(),
+        clause: clause.to_owned(),
         profile: sampler.clone(),
         seed,
         max_cases,
@@ -2940,9 +3059,7 @@ fn tool_failure_record(
             limits: operation_coverage.limits,
         }),
         result: evidence,
-        cause: Some(ModelBasedTestCause::ToolFailure {
-            defect: ModelBasedTestDefect::OracleDisagreement,
-        }),
+        cause: Some(ModelBasedTestCause::ToolFailure { defect }),
         counterexample: None,
         evidence,
     })

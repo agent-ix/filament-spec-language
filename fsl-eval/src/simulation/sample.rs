@@ -146,12 +146,7 @@ pub(crate) fn sample<S: TransitionSystem>(
                 findings,
             } => (successors, findings),
             Expanded::Stopped(stop) => {
-                let state_findings = system
-                    .state_findings(&current)
-                    .map(|evaluated| {
-                        evaluated.unwrap_or_else(|stop| system.stopped_findings(&current, stop))
-                    })
-                    .unwrap_or_default();
+                let state_findings = system.findings_at_stop(&current);
                 if !state_findings.is_empty() {
                     findings.push(StateFindings {
                         state: current_key.clone(),
