@@ -8,13 +8,20 @@ use proptest::prelude::{BoxedStrategy, Strategy};
 /// Independent description of a finite product of saturating counters.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SmallModel {
-    /// One counter per process, initially zero (between one and three).
-    pub processes: u8,
-    /// Inclusive upper bound for every counter (between one and three).
-    pub maximum: u8,
+    processes: u8,
+    maximum: u8,
 }
 
 impl SmallModel {
+    /// Number of independently scheduled counters (between one and three).
+    pub fn processes(&self) -> u8 {
+        self.processes
+    }
+
+    /// Inclusive upper bound for each counter (between one and three).
+    pub fn maximum(&self) -> u8 {
+        self.maximum
+    }
     /// Independent product-state bound, including the initial state.
     pub fn state_bound(&self) -> usize {
         (usize::from(self.maximum) + 1).pow(u32::from(self.processes))
