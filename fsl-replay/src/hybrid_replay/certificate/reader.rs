@@ -404,9 +404,11 @@ fn rational_roots(coefficients: &[Rational]) -> Option<Vec<Rational>> {
             let four = Rational::from_integer(Integer::from(4_i64));
             let two = Rational::from_integer(Integer::from(2_i64));
             let discriminant = c[1].mul(&c[1]).sub(&four.mul(&c[2]).mul(&c[0]));
-            let Some(root) = rational_sqrt(&discriminant) else {
+            if discriminant.numerator().is_negative() {
                 return Some(Vec::new());
-            };
+            }
+            // A positive discriminant that is no square has irrational roots.
+            let root = rational_sqrt(&discriminant)?;
             let scale = two.mul(&c[2]);
             let mut roots = vec![c[1].neg().add(&root).div(&scale)?];
             if !root.is_zero() {

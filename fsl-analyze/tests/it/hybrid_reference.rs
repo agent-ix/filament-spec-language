@@ -717,7 +717,6 @@ fn a_fork_is_proved_with_a_jump_step_for_each_transition() {
 /// FR-1019 "Refutations" step 3: a trace crosses a jump, so the claim `x < 50`
 /// over `Fork` is refuted through the jump at time 5 to `x = 100`.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-2")]
 fn a_candidate_trace_crosses_a_jump() {
     let unit = temporal(FORK, "Low", "on origin", "always [0, 10] holds(h.x < 50)");
     let item = reference("ref-fork-low", &unit, one("Low"));
@@ -730,7 +729,6 @@ fn a_candidate_trace_crosses_a_jump() {
 /// FR-1019 "Claims with no horizon": an `on each` claim with a horizon is
 /// proved inductively.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-9")]
 fn an_on_each_claim_is_proved_by_the_inductive_enclosure() {
     let unit = temporal(
         "hybrid Sw using p { initial { mode A when { x = 0 }; } \
@@ -749,7 +747,6 @@ fn an_on_each_claim_is_proved_by_the_inductive_enclosure() {
 /// FR-1019 "Refutations": the refutation root is one initial entry's box, so
 /// the entries `v = 0` and `v = 10` never try `v = 5`.
 #[test]
-#[trace("TC-2869", "FR-1019-AC-2")]
 fn a_refutation_tries_only_points_of_its_own_entry() {
     let unit = temporal(
         "hybrid Two using p { initial { mode M when { v = 0 and w = 0 }; mode M when { v = 10 and w = 0 }; } \
@@ -764,4 +761,40 @@ fn a_refutation_tries_only_points_of_its_own_entry() {
     let lower = &trace["start"]["enclosure"]["v"]["lower"];
     assert!(*lower == rational("0") || *lower == rational("10"), "{item}");
     assert_eq!(*lower, trace["start"]["enclosure"]["v"]["upper"], "{item}");
+}
+
+/// FR-1019-AC-16: `SlowEnough`'s `Stopped` jump step carries `from`
+/// `{"dwell": 0, "transition": 0}`.
+#[test]
+#[trace("TC-2869", "FR-1019-AC-16")]
+fn the_stopped_jump_step_names_its_source_dwell_and_transition() {
+    let item = reference("ref-16", &braking_pair(), one("SlowEnough"));
+    let steps = item["certificate"]["form"]["steps"]
+        .as_array()
+        .expect("a flowpipe certificate");
+    let stopped = steps
+        .iter()
+        .find(|step| step["mode"] == "Stopped")
+        .expect("a Stopped jump step");
+    assert_eq!(stopped["from"], json!({"dwell": 0, "transition": 0}), "{item}");
+}
+
+/// FR-1019 "Refutations" step 3: a guard first true at an irrational instant
+/// (`x = t^2 / 2 >= 1`) has no least rational instant, so the point fails and
+/// the violation behind that jump is never refuted by a trace that skips it.
+#[test]
+fn a_guard_first_true_at_an_irrational_instant_refutes_nothing() {
+    let unit = temporal(
+        "hybrid Quad using p { initial { mode A when { x = 0 and y = 0 }; } \
+         mode A invariant { x >= 0 and x <= 20 and y >= 0 and y <= 20 } \
+           flow { x' = y; y' = 1; } \
+         transition to B when { x >= 1 } reset { x = 100 }; \
+         mode B invariant { x >= 0 and x <= 200 and y >= 0 and y <= 20 } \
+           flow { x' = 0; y' = 0; } }",
+        "Low",
+        "on origin",
+        "always [0, 10] holds(h.x < 50)",
+    );
+    let item = never_proved("ref-quad", &unit, "Low");
+    assert_ne!(item["record"]["result"], "refuted", "{item}");
 }

@@ -326,7 +326,7 @@ impl<'a> Run<'a, '_> {
         &self,
         value: &Value,
         coverage: &HybridProofCoverage,
-    ) -> Option<HybridCertificateOutcome> {
+    ) -> Option<fsl_replay::HybridProbeOutcome> {
         let certificate =
             read_hybrid_certificate(self.req.model, HybridCertificateExpect::Bounded, value).ok()?;
         let mut meter = HybridReplayMeter::new(WORK_UNITS);

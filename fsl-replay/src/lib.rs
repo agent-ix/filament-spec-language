@@ -232,7 +232,7 @@ pub use hybrid::{
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
-    probe_flowpipe_claim as probe_hybrid_flowpipe_claim,
+    probe_flowpipe_claim as probe_hybrid_flowpipe_claim, ProbeOutcome as HybridProbeOutcome,
     box_advance, box_hull, box_tube, box_within, Fired as HybridFired, HybridBox,
     InitialHull as HybridInitialHull, Interval as HybridInterval, ModelReader as HybridModelReader,
     ReadStop as HybridReadStop, Tri as HybridTri,

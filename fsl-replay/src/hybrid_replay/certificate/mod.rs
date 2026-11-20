@@ -211,14 +211,31 @@ pub fn check_certificate(
 /// # Errors
 ///
 /// As [`check_certificate`].
+#[doc(hidden)]
 pub fn probe_flowpipe_claim(
     graph: &CheckedGraph,
     claim: &CheckedHybridClaim,
     certificate: &HybridCertificate,
     coverage: &ProofCoverage,
     meter: &mut HybridReplayMeter,
-) -> Result<CertificateOutcome, HybridReplayRefusal> {
-    check_with(graph, claim, certificate, Some(coverage), None, meter, false)
+) -> Result<ProbeOutcome, HybridReplayRefusal> {
+    Ok(match check_with(graph, claim, certificate, Some(coverage), None, meter, false)? {
+        CertificateOutcome::Rejected(Rejection {
+            rule: Rule::Claim, ..
+        }) => ProbeOutcome::ClaimRejected,
+        _ => ProbeOutcome::NotRejected,
+    })
+}
+
+/// What [`probe_flowpipe_claim`] found. It is never a proof: the initial
+/// containment was not checked.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProbeOutcome {
+    /// The claim rule rejects the flowpipe.
+    ClaimRejected,
+    /// It does not (accepted by the checked rules, or another rule rejects).
+    NotRejected,
 }
 
 fn check_with(

@@ -229,11 +229,7 @@ impl Run<'_, '_> {
         };
         let coverage = Self::coverage(&pipe, cap);
         let value = wire::flowpipe(self.req.model, &pipe.steps);
-        Ok(matches!(
-            self.probe(&value, &coverage),
-            Some(HybridCertificateOutcome::Rejected(rejection))
-                if rejection.rule == HybridCertificateRule::Claim
-        ))
+        Ok(self.probe(&value, &coverage) == Some(fsl_replay::HybridProbeOutcome::ClaimRejected))
     }
 
     /// Candidate points of `bx`, then the halves whose flowpipe still gets a
