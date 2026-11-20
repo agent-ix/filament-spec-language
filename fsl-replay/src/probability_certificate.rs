@@ -2233,7 +2233,7 @@ mod tests {
             pending: None,
         })
         .expect("clocked timed key is valid");
-        let graph = |state| CheckerGraph {
+        let graph = |state: ProbabilityProductKey| CheckerGraph {
             initial: state.clone(),
             states: BTreeMap::from([(
                 state.clone(),
