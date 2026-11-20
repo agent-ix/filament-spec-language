@@ -13,7 +13,7 @@ Reviewed frozen source 70ad3c157392731a3f75da225242c3666ea99dd1. The real public
 
 ## Verdict
 
-**CONDITIONAL** — add TC-053's mandatory accepted controls to the generated test; preserve conservative refusal of other safe formulas.
+**PASS** — FND-001 is fixed in f1b283aa03ee72446fc52e64b1422a86466a7317. All three TC-053 mandatory controls must check, with independent runtime Boolean expectations; conservative refusal remains permitted elsewhere.
 
 ## Findings
 
@@ -245,4 +245,12 @@ Diff-scoped review only, under explicit lead/user scope. Nineteen active tests h
 ## Required correction
 
 Mark the current generated direct-presence and common-fact controls as required acceptance, add an impossible-path control grounded in TC-053, and require those controls to check. Keep the independent eight-assignment soundness oracle and typed refusal checks for the remaining formulas. Record actual generated formula/assignment counts. Run only this changed qualified test while fixing; one final affected-component gate belongs after review disposition.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1, f1b283aa03ee72446fc52e64b1422a86466a7317: direct-presence, common-fact and impossible-path formulas carry mandatory acceptance labels; refusal of any labeled control fails. Counts require three accepted controls and 36 real evaluations against independently computed Boolean outcomes. The reported changed-test receipt passed 35 formulas, 280 assignments, 9 accepted and 26 permitted refusals. No execution was repeated. |
+
+The original finding remains unchanged. This confined disposition inspected only the guard-test fix. No new finding; final affected-component gate remains the code lead's next step.
 
