@@ -209,6 +209,7 @@ pub fn compile_model_unit(
     let mut has_variant_type = false;
     let mut has_event_type = false;
     let mut has_namespace = false;
+    let mut has_systems_interface = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -369,6 +370,36 @@ pub fn compile_model_unit(
                 }
                 types.push(namespace);
                 has_namespace = true;
+                index = next;
+            }
+            Some("interface") => {
+                let Some((interface, next)) =
+                    read_systems_interface(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid systems interface declaration",
+                    )]);
+                };
+                let interface_name = interface["identity"]
+                    .as_str()
+                    .and_then(|identity| identity.rsplit('/').next())
+                    .unwrap_or_default()
+                    .to_owned();
+                if !declaration_names.insert(interface_name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {interface_name} is declared more than once"),
+                    )]);
+                }
+                types.push(interface);
+                has_systems_interface = true;
                 index = next;
             }
             Some("dimension") => {
@@ -588,6 +619,9 @@ pub fn compile_model_unit(
     if has_namespace {
         meanings.push(("namespace", "filament.meaning.model.namespace/v1"));
     }
+    if has_systems_interface {
+        meanings.push(("interface", "filament.meaning.systems.interface/v1"));
+    }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
     }
@@ -597,7 +631,16 @@ pub fn compile_model_unit(
             json!({
                 "kind": {"module": identity, "name": name},
                 "moduleVersion": "1.0.0",
-                "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": meaning},
+                "construct": {
+                    "identity": "none",
+                    "shape": if name == "interface" { "interface" } else { "record" },
+                    "members": if name == "interface" {
+                        json!({"featureOrder": "required", "fields": "optional", "operations": "optional", "supertypes": "optional"})
+                    } else {
+                        json!({})
+                    },
+                    "meaning": meaning
+                },
             })
         })
         .collect::<Vec<_>>();
@@ -1237,6 +1280,50 @@ fn read_namespace(
         name,
         index,
     ))
+}
+
+fn read_systems_interface(
+    tokens: &[Token],
+    index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, usize)> {
+    let (mut interface, next) = read_object(tokens, index, package, parsed)?;
+    interface.wire["kind"]["name"] = json!("interface");
+    if let Some(fields) = interface.wire["fields"].as_array_mut() {
+        for field in fields {
+            field["multiplicity"]["unique"] = json!(false);
+        }
+    }
+    let features = interface.wire["fields"]
+        .as_array()?
+        .iter()
+        .chain(interface.wire["operations"].as_array()?)
+        .filter_map(|feature| {
+            let identity = feature.get("identity")?.as_str()?;
+            Some((identity.rsplit('/').next()?.to_owned(), identity.to_owned()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let feature_order = tokens[index..next]
+        .iter()
+        .enumerate()
+        .filter(|(offset, token)| {
+            token.text == "operation"
+                || tokens[index + offset + 1..next]
+                    .first()
+                    .is_some_and(|after| after.text == ":")
+        })
+        .filter_map(|(offset, token)| {
+            let feature_name = if token.text == "operation" {
+                tokens.get(index + offset + 1)?.text.as_str()
+            } else {
+                token.text.as_str()
+            };
+            features.get(feature_name).cloned()
+        })
+        .collect::<Vec<_>>();
+    interface.wire["featureOrder"] = json!(feature_order);
+    Some((interface.wire, next))
 }
 
 fn read_dimension(

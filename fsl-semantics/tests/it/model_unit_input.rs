@@ -437,3 +437,26 @@ namespace Terms { members Node; term node = "a node"; }
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_a_systems_interface() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/systems";
+interface Pump { rate: Integer; operation start(); }
+"#;
+    let packages = package_input([source.as_bytes()]).expect("interface model compiles");
+    let (_, document) = admit(
+        "example/systems",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the systems interface");
+    let records = read_records("example/systems", &document).expect("interface is read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(_)
+        )
+    }));
+}
