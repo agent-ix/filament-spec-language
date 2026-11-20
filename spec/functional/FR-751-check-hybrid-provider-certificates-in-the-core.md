@@ -39,7 +39,8 @@ certificate, and the item's work limit.
   read each over a box by FSpec FR-652 "Interval reading": Kleene's
   three-valued connectives, the definedness reading (an expression not
   definitely defined over a box fails the rule reading it), the one-pass
-  contractor `Contract`, the guarded part, the post image contracted by the
+  contractor `Contract` (in the Picard check only for a contraction-admitted
+  mode, the uncontracted tube otherwise), the guarded part, the post image contracted by the
   target invariant, the tube and advance, and the boundary face decided from
   the invariant's variable-bound conjuncts. It never probes a point beyond a
   face and never settles an unknown reading by a midpoint, endpoint or
