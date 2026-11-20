@@ -2,7 +2,7 @@
 //! S4 emission and strict reading for FSL verification plans (FR-753).
 
 use alloc::{collections::BTreeSet, string::String, vec, vec::Vec};
-use filament_contract_model::{CheckedOccurrence, CheckedOccurrenceRole};
+use filament_contract_model::CheckedOccurrence;
 use serde::{Deserialize, Serialize};
 
 use crate::CheckedPackage;
@@ -203,12 +203,8 @@ pub fn emit_verification_plans(package: &CheckedPackage) -> Vec<VerificationPlan
                     .iter()
                     .enumerate()
                     .map(|(step_index, step)| {
-                        let clause = package
-                            .graph()
-                            .temporal_clauses()
-                            .iter()
-                            .find(|clause| clause.clause().name() == step.claim.name)
-                            .expect("S3 accepted this temporal plan claim");
+                        let (node, origin) = claim_site(package, &step.claim.name)
+                            .expect("S3 accepted this plan claim");
                         let key = package
                             .graph()
                             .verification_plan_domain_key(plan_index, step_index)
@@ -218,16 +214,17 @@ pub fn emit_verification_plans(package: &CheckedPackage) -> Vec<VerificationPlan
                             claim: VerificationPlanClaim {
                                 node: serde_json::from_value(
                                     serde_json::to_value(
-                                        fsl_semantics::check::wire_id::structural_id(
-                                            &clause.identity(),
-                                        ),
+                                        fsl_semantics::check::wire_id::structural_id(&node),
                                     )
                                     .expect("structural node identity serializes"),
                                 )
                                 .expect("structural node identity has the FR-192 shape"),
                                 occurrence: CheckedOccurrence {
-                                    role: CheckedOccurrenceRole::Claim,
-                                    ordinal: clause.claim().ordinal(),
+                                    role: serde_json::from_value(serde_json::Value::String(
+                                        origin.role().as_str().into(),
+                                    ))
+                                    .expect("an occurrence role is a checked occurrence role"),
+                                    ordinal: origin.ordinal(),
                                 },
                             },
                             method: method_semantics(&step.method.name, step.bound.is_some()),
@@ -253,6 +250,64 @@ pub fn emit_verification_plans(package: &CheckedPackage) -> Vec<VerificationPlan
             }
         })
         .collect()
+}
+
+/// The checked node and claim occurrence of the claim S3 resolved by `name`
+/// (FSpec FR-192 "Source form"): a temporal clause, a state clause, a
+/// state-graph, hybrid, hyper, refinement or probabilistic claim.
+fn claim_site(
+    package: &CheckedPackage,
+    name: &str,
+) -> Option<(filament_exact::NodeKey, filament_exact::Origin)> {
+    let graph = package.graph();
+    let split = |key: &fsl_foundation::source::provenance::OccurrenceKey| {
+        (key.node().clone(), key.origin().clone())
+    };
+    if let Some(clause) = graph
+        .temporal_clauses()
+        .iter()
+        .find(|clause| clause.clause().name() == name)
+    {
+        return Some((clause.identity(), clause.claim().clone()));
+    }
+    if let Some(clause) = graph.state_clause(name) {
+        return Some((clause.identity(), clause.claim().clone()));
+    }
+    if let Some(site) = graph
+        .hybrid_claim_sites()
+        .iter()
+        .find(|site| site.name == name)
+    {
+        return Some((site.identity.clone(), site.claim.clone()));
+    }
+    graph
+        .state_graph_claims()
+        .iter()
+        .find(|claim| claim.name() == name)
+        .and_then(|claim| claim.occurrence())
+        .or_else(|| {
+            graph
+                .hyper_clauses()
+                .iter()
+                .find(|clause| clause.name() == name)
+                .and_then(|clause| clause.assembled_occurrence())
+        })
+        .or_else(|| {
+            graph
+                .refinements()
+                .iter()
+                .find(|refinement| refinement.name() == name)
+                .and_then(|refinement| refinement.requirement_occurrence())
+        })
+        .or_else(|| {
+            graph
+                .probabilistic_model()
+                .claims()
+                .iter()
+                .find(|claim| claim.name == name)
+                .and_then(|claim| claim.occurrence())
+        })
+        .map(split)
 }
 
 fn method_semantics(name: &str, bounded: bool) -> VerificationPlanMethod {

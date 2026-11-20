@@ -553,7 +553,7 @@ pub(super) fn dependency_wires(
     dependencies.into_values().collect()
 }
 
-pub(super) fn simulation<'a>(
+pub(crate) fn simulation<'a>(
     input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
