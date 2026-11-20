@@ -2411,6 +2411,15 @@ impl<'a> Typer<'a> {
             }
         }
         Ok(match peer {
+            Some(peer)
+                if matches!(peer.as_ref(), ValueType::Float(_))
+                    && matches!(expression.node(), ExprNode::Integer(_)) =>
+            {
+                // An exact integer literal is not a Float operand merely
+                // because equality has a Float peer. Keep its admitted type
+                // so the refusal can retain both operand types.
+                Goal::Infer(expression, None, location)
+            }
             Some(peer) if contextual(expression) => {
                 Goal::Expect(expression, Expected::Checked(peer), location)
             }
@@ -2482,6 +2491,7 @@ impl<'a> Typer<'a> {
         &mut self,
         typed: Node,
         converted: Option<(ValueType, Location)>,
+        operator: EqualityOperator,
     ) -> Result<(TypedOperand, ValueType), CheckRefusal> {
         match converted {
             Some((target, location)) => {
@@ -2515,7 +2525,15 @@ impl<'a> Typer<'a> {
                 if matches!(&target, ValueType::Float(_))
                     && !super::admits_equality_conversion(&typed.value_type, &target, &self.units)
                 {
-                    return Err(mismatch(&location));
+                    return Err(super::operand_mismatch(
+                        &location,
+                        match operator {
+                            EqualityOperator::Equal => BinaryOperator::Equal,
+                            EqualityOperator::NotEqual => BinaryOperator::NotEqual,
+                        },
+                        typed.value_type.clone(),
+                        target,
+                    ));
                 }
                 if matches!(typed.value_type, ValueType::Float(_)) {
                     let source = typed.value_type.clone();
@@ -3602,7 +3620,7 @@ impl<'a> Typer<'a> {
                 pair,
                 converted,
             } => {
-                let (typed, peer) = self.equality_typed(typed, converted)?;
+                let (typed, peer) = self.equality_typed(typed, converted, operator)?;
                 match pair {
                     Pair::First(second, second_location) => {
                         let mut converted = None;
