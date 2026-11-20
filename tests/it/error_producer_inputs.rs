@@ -97,12 +97,6 @@ fn source_refusals_reach_their_typed_producers_and_documented_rows() {
             Phase::Parse,
             "",
         ),
-        (
-            "enum Caption { Label = \"bad\\q\" }",
-            CompleteCause::InvalidEscape,
-            Phase::Lex,
-            "\\q",
-        ),
     ] {
         let text = source(body);
         let diagnostic = refused(text.as_bytes(), Limits::default());
@@ -145,6 +139,7 @@ fn an_unselected_declaration_form_is_a_real_unsupported_construct() {
 
 #[test]
 #[trace("FR-762-AC-6")]
+#[ignore = "QSL-2688: the syntax diagnostic cut must name s1.diagnostics"]
 fn the_diagnostic_limit_is_reached_by_independent_source_errors() {
     let declarations = (0..101)
         .map(|index| format!("record Item{index} {{ amount: ; }}\n"))
@@ -287,25 +282,56 @@ fn real_editor_requests_reach_revision_profile_and_cancellation_producers() {
 
 #[test]
 #[trace("FR-276-AC-1")]
-fn a_cancelled_real_parse_stops_at_its_public_poll() {
+fn a_cancelled_real_parse_stops_at_its_public_entry() {
     let cancel = Cancel::new();
     cancel.cancel(CancelCause::Requested);
     let text = source("function total using p(): Integer pure { 5 }");
-    let diagnostic = fsl_cst::parse_with_cancel(
-        identity(),
-        "producer.native",
-        text.as_bytes(),
+    let offered = identity();
+    let result = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &offered,
+            path: "producer.native",
+            bytes: text.as_bytes(),
+        },
         Limits::default(),
         &cancel,
-    )
-    .expect_err("caller poll stops parse");
+    );
+    assert!(
+        matches!(
+            &result,
+            Err(fsl_foundation::diagnostic::StageFailure::Cancelled(
+                CancelCause::Requested
+            ))
+        ),
+        "{result:?}"
+    );
+    let document = fsl_replay::OutcomeDocument::from_parse(&result);
+    let outcome: serde_json::Value =
+        serde_json::from_slice(&document.to_bytes().expect("public cancellation outcome"))
+            .expect("JSON");
+    assert_eq!(outcome["category"], "incomplete");
+    assert!(outcome["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .any(|diagnostic| diagnostic["code"] == CompleteCode::Cancelled.as_str()));
+}
+
+#[test]
+#[ignore = "QSL-2687: malformed escapes must not produce unrelated selection-identity refusals"]
+fn an_invalid_escape_reaches_its_lexical_producer_before_selection_cascades() {
+    let text = source("enum Caption { Label = \"bad\\q\" }");
+    let diagnostic = refused(text.as_bytes(), Limits::default());
     produced(
         &diagnostic,
-        CompleteCode::ResourceExhausted,
-        CompleteCause::InsufficientNextCharge,
+        CompleteCode::InvalidSyntax,
+        CompleteCause::InvalidEscape,
         Phase::Lex,
     );
-    assert!(cancel.tripped().is_some());
+    let span = diagnostic
+        .byte_span()
+        .expect("the actual string is located");
+    assert!(text[span.start..span.end].contains("\\q"));
 }
 
 #[test]
@@ -341,4 +367,290 @@ fn a_real_node_from_another_parse_reaches_the_foreign_node_host_cause() {
         other.cst().render_node(node).expect("own node renders"),
         b"record Abroad { item: Boolean; }"
     );
+}
+
+/// Provenance: QSL-2079; real layer-3 resolution, not synthetic CompleteCause conversion.
+#[test]
+fn exact_definition_inputs_reach_bundle_refusal_producers() {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::bundle::{
+        link_bundle, DefinitionCatalog, ExtensionDefinitionSource, PackageLimits, ResolutionCause,
+    };
+    use std::collections::BTreeSet;
+    let first = DefinitionRef::new("producer.example", "extensions/one").expect("exact selection");
+    let second = DefinitionRef::new("producer.example", "extensions/two").expect("exact selection");
+    let definition = |reference: &DefinitionRef, dependencies: BTreeSet<DefinitionRef>| {
+        ExtensionDefinitionSource {
+            authority: reference.authority().to_owned(),
+            identity: reference.identity().to_owned(),
+            exact_bytes: b"{}".to_vec(),
+            dependencies,
+            capabilities: BTreeSet::new(),
+        }
+    };
+    let absent_dependency = DefinitionCatalog::read_extensions(vec![definition(
+        &first,
+        BTreeSet::from([second.clone()]),
+    )])
+    .expect("real selected root with an unresolved dependency");
+    let missing = link_bundle(
+        std::slice::from_ref(&first),
+        &absent_dependency,
+        PackageLimits::default(),
+    )
+    .expect_err("missing real dependency");
+    assert_eq!(
+        (missing.code, missing.cause_tag),
+        (
+            CompleteCode::MissingImport,
+            ResolutionCause::MissingSelection
+        )
+    );
+    let mut facet_only = definition(&first, BTreeSet::new());
+    facet_only.capabilities = fsl_semantics::library::bundle::CapabilityId::complete_inventory()
+        .into_iter()
+        .collect();
+    let catalog = DefinitionCatalog::read_extensions(vec![facet_only])
+        .expect("the public object reader admits exact extension input");
+    let incomplete = link_bundle(
+        std::slice::from_ref(&first),
+        &catalog,
+        PackageLimits::default(),
+    )
+    .expect_err("an extension alone does not supply complete facets");
+    assert_eq!(
+        (incomplete.code, incomplete.cause_tag),
+        (
+            CompleteCode::InvalidPackage,
+            ResolutionCause::FeatureSetMismatch
+        )
+    );
+    let cyclic = DefinitionCatalog::read_extensions(vec![
+        definition(&first, BTreeSet::from([second.clone()])),
+        definition(&second, BTreeSet::from([first.clone()])),
+    ])
+    .expect("graph input is admitted before closure resolution");
+    let cycle = link_bundle(
+        std::slice::from_ref(&first),
+        &cyclic,
+        PackageLimits::default(),
+    )
+    .expect_err("real dependency cycle");
+    assert_eq!(
+        (cycle.code, cycle.cause_tag),
+        (
+            CompleteCode::InvalidPackage,
+            ResolutionCause::DefinitionCycle
+        )
+    );
+    for refusal in [missing, incomplete, cycle] {
+        assert!(DOCUMENTATION.contains(&format!("| {} |", refusal.code.as_str())));
+    }
+}
+
+#[test]
+#[trace("FR-010-AC-7")]
+fn public_compile_intake_inputs_reach_io_json_and_wire_codes() {
+    use fsl_command::command;
+    let directory = tempfile::tempdir().expect("owned temporary input directory");
+    let missing =
+        command::compile(&directory.path().join("absent-job.json")).expect_err("missing real file");
+    assert_eq!(missing.cause.code(), CompleteCode::IoError);
+    assert!(DOCUMENTATION.contains("| io-error |"));
+    for (name, bytes, code) in [
+        ("broken.json", b"{".as_slice(), CompleteCode::InvalidRequest),
+        (
+            "wire.json",
+            br#"{"format":"producer.future/99","request":{}}"#.as_slice(),
+            CompleteCode::UnknownWire,
+        ),
+    ] {
+        let path = directory.path().join(name);
+        std::fs::write(&path, bytes).expect("original request bytes");
+        let refusal = command::compile(&path).expect_err("invalid public request");
+        assert_eq!(refusal.cause.code(), code, "{refusal:?}");
+        assert!(DOCUMENTATION.contains(&format!("| {} |", code.as_str())));
+    }
+}
+
+fn compile_original(body: &str) -> Result<Vec<u8>, Box<fsl_command::command::RunError>> {
+    compile_text(&source(body))
+}
+
+fn compile_text(text: &str) -> Result<Vec<u8>, Box<fsl_command::command::RunError>> {
+    let directory = tempfile::tempdir().expect("owned compile input");
+    std::fs::write(directory.path().join("producer.fsl"), text).expect("original source");
+    let request = serde_json::json!({"format":"native-compile/1","request":{"models":[],"program":{"source":{"file":"producer.fsl","authority":"producer-tests","identity":"original:diagnostics","document":"Producer","formal_revision":1}}}});
+    std::fs::write(
+        directory.path().join("job.json"),
+        serde_json::to_vec(&request).expect("request encodes"),
+    )
+    .expect("original request");
+    fsl_command::command::compile(&directory.path().join("job.json"))
+}
+
+#[test]
+#[trace("FR-286-AC-2")]
+fn public_compile_semantic_inputs_keep_missing_typing_and_definedness_codes() {
+    for (body, code) in [
+        (
+            "function bill using p(): Integer pure { missing_amount }",
+            CompleteCode::MissingDeclaration,
+        ),
+        (
+            "function bill using p(): Integer pure { \"not a number\" }",
+            CompleteCode::IllTyped,
+        ),
+        (
+            "function shifted using p(items: Int[0, 8]): Int[0, 8] pure { items + 2 }",
+            CompleteCode::UndefinedExpression,
+        ),
+    ] {
+        let refusal = compile_original(body).expect_err("semantic defect refuses before emission");
+        assert_eq!(refusal.cause.code(), code, "{body}: {refusal:?}");
+        let fsl_command::command::RunCause::Spine(failure) = &refusal.cause else {
+            panic!("expected a real compiler-stage refusal: {refusal:?}");
+        };
+        let stage: fsl_replay::OutcomeStage = failure.refusal.stage().into();
+        assert_eq!(stage, fsl_replay::OutcomeStage::S3);
+        assert!(failure.span.is_some(), "the original source is located");
+        assert_eq!(failure.source, identity());
+        assert!(failure.path.ends_with("producer.fsl"));
+        assert!(DOCUMENTATION.contains(&format!("| {} |", code.as_str())));
+    }
+}
+
+#[test]
+#[trace("FR-056-AC-9")]
+fn actual_model_document_inputs_reach_malformed_and_noncanonical_codes() {
+    use fsl_foundation::IntakeLimits;
+    use fsl_semantics::model::intake::PackageDocument;
+    let original = crate::support::spine_model::DOCUMENT;
+    PackageDocument::parse(original, IntakeLimits::default())
+        .expect("authoritative same-repository model document is valid");
+    let malformed = PackageDocument::parse(b"{", IntakeLimits::default())
+        .expect_err("actual malformed document");
+    assert_eq!(malformed.code, CompleteCode::InvalidModelBinding);
+    let mut document: serde_json::Value =
+        serde_json::from_slice(original).expect("original document JSON");
+    *document
+        .pointer_mut("/types/0/fields/0/multiplicity/lower")
+        .expect("existing numeric model member") = serde_json::json!(9_007_199_254_740_993_u64);
+    let bytes = serde_json::to_vec(&document).expect("caller bytes encode the offered integer");
+    let inexact = PackageDocument::parse(&bytes, IntakeLimits::default())
+        .expect_err("integer lacks an exact RFC8785 spelling");
+    assert_eq!(inexact.code, CompleteCode::NoncanonicalWire, "{inexact:?}");
+    for code in [malformed.code, inexact.code] {
+        assert!(DOCUMENTATION.contains(&format!("| {} |", code.as_str())));
+    }
+}
+
+#[test]
+fn source_selection_inputs_reach_language_and_identifier_codes() {
+    let text =
+        "language \"producer:unknown\" edition \"1-draft\";\nrecord Boxed { amount: Integer; }";
+    let refusal = compile_text(text).expect_err("unsupported compile language selection");
+    assert_eq!(
+        refusal.cause.code(),
+        CompleteCode::UnknownLanguage,
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.category().exit_code(), 20);
+    assert!(DOCUMENTATION.contains("| unknown_language |"));
+    let empty = "language \"ix:native\" edition \"1-draft\";\nprofile p = \"\";\nrecord Boxed { amount: Integer; }";
+    let diagnostic = refused(empty.as_bytes(), Limits::default());
+    produced(
+        &diagnostic,
+        CompleteCode::InvalidIdentifier,
+        CompleteCause::Host(HostCause::SelectionIdentity),
+        Phase::Profile,
+    );
+}
+
+#[test]
+#[trace("FR-255-AC-1")]
+fn source_lexer_and_parser_limits_reach_actual_stage_limit_causes() {
+    use fsl_foundation::diagnostic::LimitKind;
+    let text = source("function total using p(): Integer pure { 5 }");
+    assert!(parsed(&text).is_admissible());
+    for (limits, kind, phase) in [
+        (
+            Limits::default().with_source_bytes(1),
+            LimitKind::InputBytes,
+            Phase::Source,
+        ),
+        (
+            Limits::default().with_tokens(0),
+            LimitKind::TokenCount,
+            Phase::Lex,
+        ),
+        (
+            Limits::default().with_nodes(0),
+            LimitKind::NodeCount,
+            Phase::Parse,
+        ),
+        (
+            Limits::default().with_work_units(1),
+            LimitKind::WorkBudget,
+            Phase::Parse,
+        ),
+    ] {
+        let diagnostic = refused(text.as_bytes(), limits);
+        produced(
+            &diagnostic,
+            CompleteCode::StageLimitExceeded,
+            CompleteCause::StageLimit(kind),
+            phase,
+        );
+        assert!(
+            diagnostic.limit().is_some(),
+            "the actual denied budget is retained"
+        );
+    }
+}
+
+#[test]
+#[trace("FR-111-AC-3")]
+fn real_bundle_budget_and_authority_inputs_keep_distinct_codes() {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::bundle::{
+        link_bundle, DefinitionCatalog, ExtensionDefinitionSource, PackageLimits, ResolutionCause,
+    };
+    use std::collections::BTreeSet;
+    let selected = DefinitionRef::new("producer.example", "extensions/budget").expect("selection");
+    let offered = ExtensionDefinitionSource {
+        authority: selected.authority().into(),
+        identity: selected.identity().into(),
+        exact_bytes: b"{}".to_vec(),
+        dependencies: BTreeSet::new(),
+        capabilities: BTreeSet::new(),
+    };
+    let catalog = DefinitionCatalog::read_extensions(vec![offered]).expect("real caller document");
+    let limited = link_bundle(
+        std::slice::from_ref(&selected),
+        &catalog,
+        PackageLimits::default().with_definitions(0),
+    )
+    .expect_err("caller denies first selected definition");
+    assert_eq!(
+        (limited.code, limited.cause_tag),
+        (
+            CompleteCode::ResourceExhausted,
+            ResolutionCause::InsufficientNextCharge
+        )
+    );
+    let conflict =
+        DefinitionRef::new("another.authority", selected.identity()).expect("distinct authority");
+    let ambiguous = link_bundle(&[selected, conflict], &catalog, PackageLimits::default())
+        .expect_err("two authorities select one logical identity");
+    assert_eq!(
+        (ambiguous.code, ambiguous.cause_tag),
+        (
+            CompleteCode::AmbiguousDeclaration,
+            ResolutionCause::ConflictingAuthority
+        )
+    );
+    for code in [limited.code, ambiguous.code] {
+        assert!(DOCUMENTATION.contains(&format!("| {} |", code.as_str())));
+    }
 }

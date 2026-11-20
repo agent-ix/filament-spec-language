@@ -1,4 +1,26 @@
+---
+type: reference
+---
 # Native diagnostic codes
+
+Native diagnostic codes identify why an FSL operation stopped. Use the code
+and phase to choose a correction, then use the source region or document
+pointer to locate the input. A refusal does not report that a rule is false.
+
+For source identity errors, supply both nonblank caller labels and a display
+path before parsing. For UTF-8 errors, correct the original bytes without
+renumbering their source positions. For syntax errors, correct the reported
+token or missing terminal; a diagnostic-list cut means more independent errors
+remain after the reported bound.
+
+An editor's `invalid_source_map` can mean a foreign node, an edit against
+another source, a mismatched request identity, overlapping edits or a range
+inside a UTF-8 character. Keep the node, request and edits bound to the source
+that produced them. Reparse the intended source before issuing a new request.
+
+For cancellation, begin a new uncancelled operation when the caller intends
+to continue. For a named budget, raise only that caller-selected ceiling when
+the work is intended and affordable. Neither result supplies predicate truth.
 
 FR-010 exposes one native `Diagnostic` envelope with phase, code, exact caller
 source labels, display path, original span and explanatory message. `Display`
