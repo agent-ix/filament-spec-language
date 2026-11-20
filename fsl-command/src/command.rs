@@ -2890,9 +2890,9 @@ fn package_input_from_formal_sources(
                 source.source().text().as_bytes(),
                 fsl_cst::Limits::default().source_bytes,
             )
-            .map_err(|refusal| RunCause::ClauseRequest {
+            .map_err(|_refusal| RunCause::ClauseRequest {
                 member: "models".to_owned(),
-                reason: format!("{refusal:?}"),
+                reason: "model-unit source could not be re-read with a relative path".to_owned(),
             })?;
             fsl_semantics::model::intake::package_input_from_sources([(
                 selected_identity.as_str(),
