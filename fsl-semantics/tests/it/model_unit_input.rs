@@ -165,7 +165,7 @@ population nodes: Node;
     );
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
-    admit(
+    let (_, document) = admit(
         "example/graph",
         &packages,
         ModelNormalizationLimits::default().intake,
@@ -368,4 +368,25 @@ map Index = Map<Text, Integer>[0, 4];
             fsl_semantics::model::domain_package::DomainPackageRecord::MapType(_)
         )
     }));
+}
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_dimensions_and_units() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/units";
+dimension Length;
+unit m: Length = 1;
+"#;
+    let packages = package_input([source.as_bytes()]).expect("unit model compiles");
+    let compiled: serde_json::Value =
+        serde_json::from_slice(&packages["example/units"]).expect("compiled model unit is JSON");
+    assert_eq!(compiled["dimensions"][0]["name"], "Length");
+    assert_eq!(compiled["units"][0]["name"], "m");
+    let (_, document) = admit(
+        "example/units",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the dimension and unit");
 }

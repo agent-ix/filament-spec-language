@@ -196,6 +196,8 @@ pub fn compile_model_unit(
     );
     let mut types = Vec::new();
     let mut populations = Vec::new();
+    let mut dimensions = Vec::new();
+    let mut units = Vec::new();
     let mut object_names = std::collections::BTreeSet::new();
     let mut declaration_names = std::collections::BTreeSet::new();
     let mut population_names = std::collections::BTreeSet::new();
@@ -312,6 +314,52 @@ pub fn compile_model_unit(
                     )]);
                 }
                 types.push(map_type);
+                index = next;
+            }
+            Some("dimension") => {
+                let Some((dimension, name, next)) =
+                    read_dimension(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid dimension declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                dimensions.push(dimension);
+                index = next;
+            }
+            Some("unit") => {
+                let Some((unit, name, next)) = read_unit(&tokens, index, &identity, parsed) else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid unit declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                units.push(unit);
                 index = next;
             }
             Some("tuple") => {
@@ -499,6 +547,7 @@ pub fn compile_model_unit(
         "package": {"identity": identity, "version": "1.0.0", "mappingVersions": [], "profileVersions": []},
         "occurrences": [], "extensions": [], "constructs": constructs,
         "types": types, "populations": populations,
+        "dimensions": dimensions, "units": units,
     });
     let encoded = serde_json::to_vec(&document).map_err(|error| {
         vec![diagnostic(
@@ -1023,6 +1072,75 @@ fn read_map_type(
             "values": type_ref(&values, package),
             "bound": {"lower": lower, "upper": upper},
             "origin": source_origin(parsed, Span { start, end: tokens[index - 1].span.end }),
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_dimension(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    Some((
+        json!({
+            "identity": format!("ix://{package}/dimension/{name}"),
+            "name": name,
+            "base": true,
+            "terms": [],
+            "origin": source_origin(parsed, Span { start, end }),
+        }),
+        name,
+        index,
+    ))
+}
+
+fn read_unit(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ":" {
+        return None;
+    }
+    index += 1;
+    let dimension = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "=" {
+        return None;
+    }
+    index += 1;
+    let scale = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != ";" {
+        return None;
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    Some((
+        json!({
+            "identity": format!("ix://{package}/unit/{name}"),
+            "name": name,
+            "dimension": format!("ix://{package}/dimension/{dimension}"),
+            "scale": scale,
+            "offset": "0",
+            "origin": source_origin(parsed, Span { start, end }),
         }),
         name,
         index,
