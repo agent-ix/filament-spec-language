@@ -517,6 +517,7 @@ impl CheckedClosureHandle {
         ApplicationRegistry {
             acquisition: Arc::clone(&self.acquisition),
             inner: Registry::new(PackageClosure::new(Arc::clone(&self.package))),
+            host_bindings: BTreeSet::new(),
         }
     }
 }
@@ -877,6 +878,7 @@ pub enum ApplicationBeginRefusal {
 pub struct ApplicationRegistry {
     acquisition: Arc<()>,
     inner: Registry<Adapter>,
+    host_bindings: BTreeSet<NodeKey>,
 }
 
 impl ApplicationRegistry {
@@ -890,9 +892,13 @@ impl ApplicationRegistry {
         if !Arc::ptr_eq(&self.acquisition, &selection.acquisition) {
             return Err(SelectionRefusal::WrongAcquisition);
         }
-        Ok(self
+        let admission = self
             .inner
-            .register(selection.key.clone(), signature, factory))
+            .register(selection.key.clone(), signature, factory);
+        if admission == Admission::Accepted {
+            self.host_bindings.insert(selection.key.clone());
+        }
+        Ok(admission)
     }
 
     /// Begin a call under the leaf's admission and permanent sealing rules.
@@ -910,6 +916,7 @@ impl ApplicationRegistry {
         if !Arc::ptr_eq(&self.acquisition, &selection.acquisition) {
             return Err(ApplicationBeginRefusal::WrongAcquisition);
         }
+        let host_root = self.host_bindings.contains(&selection.key);
         self.inner
             .begin_call(
                 selection.key.clone(),
@@ -918,7 +925,7 @@ impl ApplicationRegistry {
                 &environment.0,
                 meter,
             )
-            .map(|inner| CheckedApplicationSession { inner })
+            .map(|inner| CheckedApplicationSession { inner, host_root })
             .map_err(ApplicationBeginRefusal::Call)
     }
 
@@ -951,21 +958,46 @@ impl ApplicationRegistry {
 /// A live leaf application whose meter belongs to its caller.
 pub struct CheckedApplicationSession<'a> {
     inner: Session<'a, Adapter>,
+    host_root: bool,
 }
 
 impl<'a> CheckedApplicationSession<'a> {
     /// Take one leaf transition, consuming this session.
     pub fn step(self) -> CheckedApplicationProgress<'a> {
+        let host_root = self.host_root;
         match self.inner.step() {
-            Progress::Runnable(inner) => CheckedApplicationProgress::Runnable(Self { inner }),
-            Progress::Terminal(result) => CheckedApplicationProgress::Terminal(result),
+            Progress::Runnable(inner) => {
+                CheckedApplicationProgress::Runnable(Self { inner, host_root })
+            }
+            Progress::Terminal(result) => {
+                CheckedApplicationProgress::Terminal(account_for_host_root(result, host_root))
+            }
         }
     }
 
     /// Drive this leaf session to its terminal result.
     pub fn run(self) -> Result<Evaluation, CallFailure> {
-        self.inner.run()
+        self.inner
+            .run()
+            .map(|evaluation| account_for_host_root(evaluation, self.host_root))
     }
+}
+
+/// A live-occurrence stop inside a child frame terminates before the scheduler
+/// resumes its host caller. Count that registered root once, matching the
+/// caller frame retained by the interpreted Machine path.
+fn account_for_host_root(mut evaluation: Evaluation, host_root: bool) -> Evaluation {
+    if host_root
+        && matches!(
+            &evaluation.outcome,
+            filament_eval::FamilyOutcome::Evaluated(
+                filament_exact::Outcome::Incomplete(incomplete),
+            ) if incomplete.limit_kind == filament_exact::LimitKind::LiveOccurrences
+        )
+    {
+        evaluation.frame_depth = evaluation.frame_depth.saturating_add(1);
+    }
+    evaluation
 }
 
 /// The runnable or terminal state of one leaf step.
