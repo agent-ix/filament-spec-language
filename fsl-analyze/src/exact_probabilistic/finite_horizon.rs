@@ -9,7 +9,10 @@ use num_integer::Integer as _;
 use num_traits::Zero as _;
 
 use super::rows::Evaluation;
-use super::unbounded::{Choice, Graph, UnboundedError, maximal_end_components_from};
+use super::unbounded::{
+    Choice, Graph, UnboundedError, UnboundedObjective, maximal_end_components_from,
+    policy_iteration,
+};
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
@@ -124,7 +127,7 @@ pub fn decide_bounded_event(
         Bound::AtLeast(threshold) => (FhObjective::Min, threshold),
         Bound::AtMost(threshold) => (FhObjective::Max, threshold),
     };
-    backward_induction(
+    backward_induction_with_policy_limit(
         product,
         &terminal,
         objective,
@@ -132,6 +135,7 @@ pub fn decide_bounded_event(
         limits.max_rational_bits,
         limits.precision_bits,
         limits.max_precision_bits,
+        limits.max_policy_iterations,
     )
 }
 
@@ -159,6 +163,28 @@ pub fn backward_induction(
     precision_bits: u32,
     max_precision_bits: u32,
 ) -> Result<FhResult, FhError> {
+    backward_induction_with_policy_limit(
+        product,
+        terminal,
+        objective,
+        threshold,
+        max_rational_bits,
+        precision_bits,
+        max_precision_bits,
+        u64::MAX,
+    )
+}
+
+fn backward_induction_with_policy_limit(
+    product: &ProbProduct,
+    terminal: &[Option<Rational>],
+    objective: FhObjective,
+    threshold: &Rational,
+    max_rational_bits: u64,
+    precision_bits: u32,
+    max_precision_bits: u32,
+    max_policy_iterations: u64,
+) -> Result<FhResult, FhError> {
     if terminal.len() != product.states.len()
         || precision_bits == 0
         || max_precision_bits < precision_bits
@@ -168,7 +194,13 @@ pub fn backward_induction(
     let evaluation = Evaluation::of(product).map_err(|_| FhError::InvalidProbability)?;
     let terminal = evaluation.extend(terminal).ok_or(FhError::InvalidState)?;
     if let Some(result) =
-        collapse_zero_time_components(&evaluation.product, &terminal, objective, max_rational_bits)?
+        collapse_zero_time_components(
+            &evaluation.product,
+            &terminal,
+            objective,
+            max_rational_bits,
+            max_policy_iterations,
+        )?
     {
         return Ok(FhResult::Exact {
             values: evaluation.restrict(result.0),
@@ -212,6 +244,7 @@ fn collapse_zero_time_components(
     terminal: &[Option<Rational>],
     objective: FhObjective,
     max_rational_bits: u64,
+    max_policy_iterations: u64,
 ) -> Result<Option<(Vec<Rational>, Vec<Option<usize>>)>, FhError> {
     let graph = Graph::new(product).map_err(|error| match error {
         UnboundedError::InvalidState => FhError::InvalidState,
@@ -238,7 +271,42 @@ fn collapse_zero_time_components(
     )
     .map_err(|_| FhError::InvalidState)?;
     if components.is_empty() {
-        return Ok(None);
+        if !has_cycle(&zero_graph)? {
+            return Ok(None);
+        }
+        let graph = Graph::new(product).map_err(|error| match error {
+            UnboundedError::InvalidState => FhError::InvalidState,
+            _ => FhError::InvalidProbability,
+        })?;
+        let policy = graph
+            .choices
+            .iter()
+            .map(|choices| (!choices.is_empty()).then_some(0))
+            .collect();
+        let objective = match objective {
+            FhObjective::Min => UnboundedObjective::Min,
+            FhObjective::Max => UnboundedObjective::Max,
+        };
+        let (values, policy, _) = policy_iteration(
+            &graph,
+            terminal,
+            objective,
+            max_policy_iterations,
+            policy,
+            max_rational_bits,
+        )
+        .map_err(|error| match error {
+            UnboundedError::InvalidState => FhError::InvalidState,
+            UnboundedError::MissingAction => FhError::MissingAction,
+            UnboundedError::InvalidProbability | UnboundedError::MaxRationalBits => {
+                FhError::InvalidProbability
+            }
+            UnboundedError::Singular
+            | UnboundedError::MaxPolicyIterations
+            | UnboundedError::MissingReward
+            | UnboundedError::ZeroWeightComponent => FhError::Cycle,
+        })?;
+        return Ok(Some((values, policy)));
     }
     let mut solver = ZeroTimeSolver {
         product,
@@ -269,6 +337,39 @@ fn collapse_zero_time_components(
         .map(|value| value.ok_or(FhError::InvalidState))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some((values, solver.policy)))
+}
+
+fn has_cycle(graph: &Graph<'_>) -> Result<bool, FhError> {
+    let count = graph.product.states.len();
+    let mut indegree = vec![0_usize; count];
+    for choices in &graph.choices {
+        for choice in choices {
+            for edge in &choice.edges {
+                let degree = indegree.get_mut(edge.to.index()).ok_or(FhError::InvalidState)?;
+                *degree = degree.checked_add(1).ok_or(FhError::InvalidState)?;
+            }
+        }
+    }
+    let mut ready = VecDeque::new();
+    for (state, degree) in indegree.iter().enumerate() {
+        if *degree == 0 {
+            ready.push_back(state);
+        }
+    }
+    let mut visited = 0_usize;
+    while let Some(state) = ready.pop_front() {
+        visited = visited.checked_add(1).ok_or(FhError::InvalidState)?;
+        for choice in graph.choices.get(state).ok_or(FhError::InvalidState)? {
+            for edge in &choice.edges {
+                let degree = indegree.get_mut(edge.to.index()).ok_or(FhError::InvalidState)?;
+                *degree = degree.checked_sub(1).ok_or(FhError::InvalidState)?;
+                if *degree == 0 {
+                    ready.push_back(edge.to.index());
+                }
+            }
+        }
+    }
+    Ok(visited != count)
 }
 
 struct ZeroTimeSolver<'p> {
