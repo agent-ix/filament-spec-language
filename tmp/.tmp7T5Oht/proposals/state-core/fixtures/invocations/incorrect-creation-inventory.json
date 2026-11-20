@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": "agent-a-invocation/1-draft",
+  "subject": {
+    "package": "example/config",
+    "requirement": "OP-001",
+    "revision": 1,
+    "clause": "VersionUnchanged"
+  },
+  "operation": "ix://example/config/operation/ConfigVersion/attemptUpdate",
+  "invocation": "ix://example/config/invocation/incorrect-creation-inventory",
+  "self": "version-1",
+  "parameters": {},
+  "result": true,
+  "pre": {
+    "path": "snapshots/incorrect-creation-inventory-pre.json",
+    "artifactRef": {
+      "authority": "agent-a-review-fixtures",
+      "identity": "ix://example/config/snapshot/incorrect-creation-inventory/pre",
+      "profile": "agent-a-snapshot/1-draft"
+    }
+  },
+  "post": {
+    "path": "snapshots/incorrect-creation-inventory-post.json",
+    "artifactRef": {
+      "authority": "agent-a-review-fixtures",
+      "identity": "ix://example/config/snapshot/incorrect-creation-inventory/post",
+      "profile": "agent-a-snapshot/1-draft"
+    }
+  },
+  "created": [
+    "invented"
+  ],
+  "deleted": [],
+  "frameBinding": {
+    "path": "frames/allow-version-write.json",
+    "artifactRef": {
+      "authority": "agent-a-review-fixtures",
+      "identity": "ix://example/config/binding/allow-version-write",
+      "profile": "agent-a-frame-binding/1-draft"
+    }
+  }
+}

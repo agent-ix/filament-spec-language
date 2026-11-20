@@ -1,0 +1,1790 @@
+{
+  "capability_report": [
+    {
+      "disposition": "available",
+      "feature": "filament.value.complete/v1"
+    }
+  ],
+  "contract_version": "filament.checked-package/v2",
+  "diagnostics": {
+    "catalog": {
+      "authority": "agent-ix",
+      "identity": "catalog"
+    },
+    "entries": []
+  },
+  "lock": {
+    "definition_selections": [],
+    "dependency_selections": [],
+    "edition": {
+      "definition": {
+        "authority": "agent-ix",
+        "identity": "filament-edition"
+      },
+      "role": "edition"
+    },
+    "profile_selections": [],
+    "required_features": [
+      "filament.value.complete/v1"
+    ],
+    "sources": [
+      {
+        "authority": "agent-ix",
+        "identity": "example"
+      }
+    ]
+  },
+  "name": "example",
+  "semantic_graph": {
+    "graph_version": "filament.checked-semantic-graph/v2",
+    "nodes": [
+      {
+        "body": {
+          "members": [],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        },
+        "node_tag": "scalar_type",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "type"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "integer",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "text"
+          ]
+        },
+        "node_tag": "scalar_type",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "type"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "text",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "text"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "Circle",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "scalar_type",
+                        "integer"
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            },
+            {
+              "name": "Rect",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "scalar_type",
+                        "integer"
+                      ]
+                    },
+                    "term": "reference"
+                  },
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "scalar_type",
+                        "integer"
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            },
+            {
+              "name": "Empty",
+              "term": "binding",
+              "value": {
+                "members": [],
+                "term": "aggregate"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "declaration": {
+          "qualified_name": [
+            "Shape"
+          ]
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Shape"
+          ]
+        },
+        "node_tag": "composite_type",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "declaration"
+          }
+        ],
+        "owner": {
+          "authority": "agent-ix",
+          "identity": "example",
+          "kind": "source"
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "union",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Shape"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "name",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "text"
+                  ]
+                },
+                "value": "s",
+                "value_kind": "text"
+              }
+            },
+            {
+              "name": "level",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "0",
+                "value_kind": "integer"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "parameter",
+            "name",
+            {
+              "operand": 0
+            },
+            "s",
+            "level",
+            {
+              "operand": 1
+            },
+            "0",
+            {
+              "operand": 2
+            }
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "parameter",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Shape"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "name",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "text"
+                  ]
+                },
+                "value": "r",
+                "value_kind": "text"
+              }
+            },
+            {
+              "name": "level",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "1",
+                "value_kind": "integer"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "parameter",
+            "name",
+            {
+              "operand": 0
+            },
+            "r",
+            "level",
+            {
+              "operand": 1
+            },
+            "1"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "parameter",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "name",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "text"
+                  ]
+                },
+                "value": "w",
+                "value_kind": "text"
+              }
+            },
+            {
+              "name": "level",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "1",
+                "value_kind": "integer"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "parameter",
+            "name",
+            {
+              "operand": 0
+            },
+            "w",
+            "level",
+            {
+              "operand": 1
+            },
+            "1"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "parameter",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "name",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "text"
+                  ]
+                },
+                "value": "h",
+                "value_kind": "text"
+              }
+            },
+            {
+              "name": "level",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "2",
+                "value_kind": "integer"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "parameter",
+            "name",
+            {
+              "operand": 0
+            },
+            "h",
+            "level",
+            {
+              "operand": 1
+            },
+            "2"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "parameter",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "term": "literal",
+          "type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "value": "0",
+          "value_kind": "integer"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "literal",
+            {
+              "operand": 0
+            },
+            "0"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "literal",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "term": "literal",
+          "type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "value": "2",
+          "value_kind": "integer"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "literal",
+            {
+              "operand": 0
+            },
+            "2"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "literal",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "term": "literal",
+          "type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "value": "3",
+          "value_kind": "integer"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "literal",
+            {
+              "operand": 0
+            },
+            "3"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "literal",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "Rect",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "value",
+                        "literal",
+                        {
+                          "operand": 0
+                        },
+                        "2"
+                      ]
+                    },
+                    "term": "reference"
+                  },
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "value",
+                        "literal",
+                        {
+                          "operand": 0
+                        },
+                        "3"
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "literal",
+              {
+                "operand": 0
+              },
+              "2"
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "literal",
+              {
+                "operand": 0
+              },
+              "3"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "union_value",
+            "Rect",
+            {
+              "operand": 1
+            },
+            {
+              "operand": 2
+            },
+            {
+              "operand": 3
+            }
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "union_value",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Shape"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "Empty",
+              "term": "binding",
+              "value": {
+                "members": [],
+                "term": "aggregate"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "union_value",
+            "Empty",
+            {
+              "operand": 0
+            }
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "union_value",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Shape"
+          ]
+        }
+      },
+      {
+        "body": {
+          "arguments": [
+            {
+              "target": {
+                "ordinal": 0,
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "w",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1"
+                ]
+              },
+              "term": "reference"
+            },
+            {
+              "target": {
+                "ordinal": 0,
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "h",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "2"
+                ]
+              },
+              "term": "reference"
+            }
+          ],
+          "operation": {
+            "identity": "filament.op.integer.mul",
+            "laws": [],
+            "leaves": [],
+            "member": null,
+            "mode": null
+          },
+          "operator": "binary",
+          "result_type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "term": "application"
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "h",
+              "level",
+              {
+                "operand": 1
+              },
+              "2"
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "w",
+              "level",
+              {
+                "operand": 1
+              },
+              "1"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "expression",
+            "binary",
+            {
+              "operand": 2
+            },
+            {
+              "operand": 3
+            },
+            "filament.op.integer.mul",
+            "binary",
+            {
+              "operand": 1
+            }
+          ]
+        },
+        "node_tag": "expression",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "binary",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "arguments": [
+            {
+              "target": {
+                "ordinal": 0,
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "s",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ]
+              },
+              "term": "reference"
+            },
+            {
+              "name": "Circle",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "members": [
+                      {
+                        "target": {
+                          "ordinal": 0,
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "parameter",
+                            "name",
+                            {
+                              "operand": 0
+                            },
+                            "r",
+                            "level",
+                            {
+                              "operand": 1
+                            },
+                            "1"
+                          ]
+                        },
+                        "term": "reference"
+                      }
+                    ],
+                    "term": "aggregate"
+                  },
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "value",
+                        "parameter",
+                        "name",
+                        {
+                          "operand": 0
+                        },
+                        "r",
+                        "level",
+                        {
+                          "operand": 1
+                        },
+                        "1"
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            },
+            {
+              "name": "Rect",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "members": [
+                      {
+                        "target": {
+                          "ordinal": 0,
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "parameter",
+                            "name",
+                            {
+                              "operand": 0
+                            },
+                            "w",
+                            "level",
+                            {
+                              "operand": 1
+                            },
+                            "1"
+                          ]
+                        },
+                        "term": "reference"
+                      },
+                      {
+                        "target": {
+                          "ordinal": 0,
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "parameter",
+                            "name",
+                            {
+                              "operand": 0
+                            },
+                            "h",
+                            "level",
+                            {
+                              "operand": 1
+                            },
+                            "2"
+                          ]
+                        },
+                        "term": "reference"
+                      }
+                    ],
+                    "term": "aggregate"
+                  },
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "expression",
+                        "binary",
+                        {
+                          "operand": 3
+                        },
+                        {
+                          "operand": 4
+                        },
+                        "filament.op.integer.mul",
+                        "binary",
+                        {
+                          "operand": 1
+                        }
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            },
+            {
+              "name": "Empty",
+              "term": "binding",
+              "value": {
+                "members": [
+                  {
+                    "members": [],
+                    "term": "aggregate"
+                  },
+                  {
+                    "target": {
+                      "ordinal": 0,
+                      "package": "example",
+                      "path": [
+                        "value",
+                        "literal",
+                        {
+                          "operand": 1
+                        },
+                        "0"
+                      ]
+                    },
+                    "term": "reference"
+                  }
+                ],
+                "term": "aggregate"
+              }
+            }
+          ],
+          "operation": {
+            "identity": "filament.op.control.case",
+            "laws": [],
+            "leaves": [],
+            "member": null,
+            "mode": null
+          },
+          "operator": "case",
+          "result_type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "term": "application"
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "expression",
+              "binary",
+              {
+                "operand": 3
+              },
+              {
+                "operand": 4
+              },
+              "filament.op.integer.mul",
+              "binary",
+              {
+                "operand": 1
+              }
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "literal",
+              {
+                "operand": 1
+              },
+              "0"
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "h",
+              "level",
+              {
+                "operand": 1
+              },
+              "2"
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "r",
+              "level",
+              {
+                "operand": 1
+              },
+              "1"
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "s",
+              "level",
+              {
+                "operand": 1
+              },
+              "0",
+              {
+                "operand": 2
+              }
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "parameter",
+              "name",
+              {
+                "operand": 0
+              },
+              "w",
+              "level",
+              {
+                "operand": 1
+              },
+              "1"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "expression",
+            "case",
+            {
+              "operand": 5
+            },
+            "Circle",
+            {
+              "operand": 6
+            },
+            "Rect",
+            {
+              "operand": 3
+            },
+            {
+              "operand": 4
+            },
+            {
+              "operand": 7
+            },
+            "Empty",
+            {
+              "operand": 8
+            },
+            "filament.op.control.case",
+            "case",
+            {
+              "operand": 1
+            }
+          ]
+        },
+        "node_tag": "expression",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "case",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      }
+    ],
+    "operand_rows": [
+      [],
+      [],
+      [],
+      [
+        1,
+        0,
+        2
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0
+      ],
+      [
+        0,
+        8,
+        9,
+        2
+      ],
+      [
+        2
+      ],
+      [
+        1,
+        0,
+        5,
+        6
+      ],
+      [
+        1,
+        0,
+        2,
+        5,
+        6,
+        3,
+        4,
+        12,
+        7
+      ]
+    ]
+  },
+  "source_map": [
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "scalar_type",
+          "integer"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 1,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 0
+        }
+      ],
+      "role": "type"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "scalar_type",
+          "text"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 2,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 1
+        }
+      ],
+      "role": "type"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "Shape"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 3,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 2
+        }
+      ],
+      "role": "declaration"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "parameter",
+          "name",
+          {
+            "node": 1
+          },
+          "s",
+          "level",
+          {
+            "node": 0
+          },
+          "0",
+          {
+            "node": 2
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 4,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 3
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "parameter",
+          "name",
+          {
+            "node": 1
+          },
+          "r",
+          "level",
+          {
+            "node": 0
+          },
+          "1"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 5,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 4
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "parameter",
+          "name",
+          {
+            "node": 1
+          },
+          "w",
+          "level",
+          {
+            "node": 0
+          },
+          "1"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 6,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 5
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "parameter",
+          "name",
+          {
+            "node": 1
+          },
+          "h",
+          "level",
+          {
+            "node": 0
+          },
+          "2"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 7,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 6
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "literal",
+          {
+            "node": 0
+          },
+          "0"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 8,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 7
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "literal",
+          {
+            "node": 0
+          },
+          "2"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 9,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 8
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "literal",
+          {
+            "node": 0
+          },
+          "3"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 10,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 9
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "union_value",
+          "Rect",
+          {
+            "node": 8
+          },
+          {
+            "node": 9
+          },
+          {
+            "node": 2
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 11,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 10
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "union_value",
+          "Empty",
+          {
+            "node": 2
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 12,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 11
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "expression",
+          "binary",
+          {
+            "node": 5
+          },
+          {
+            "node": 6
+          },
+          "filament.op.integer.mul",
+          "binary",
+          {
+            "node": 0
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 13,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 12
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "expression",
+          "case",
+          {
+            "node": 3
+          },
+          "Circle",
+          {
+            "node": 4
+          },
+          "Rect",
+          {
+            "node": 5
+          },
+          {
+            "node": 6
+          },
+          {
+            "node": 12
+          },
+          "Empty",
+          {
+            "node": 7
+          },
+          "filament.op.control.case",
+          "case",
+          {
+            "node": 0
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 14,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 13
+        }
+      ],
+      "role": "expression"
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "status": "proposed-review-fixtures",
+  "subjects": [
+    {
+      "status": "proposed-review-fixture",
+      "fixtureVersion": "agent-a-source-subject/1-draft",
+      "authored": {
+        "package": "example/config",
+        "requirement": "OP-001",
+        "revision": 1,
+        "clause": "CanAttemptUpdate"
+      },
+      "language": {
+        "tag": "ix:native",
+        "edition": "0-draft"
+      },
+      "profile": {
+        "identity": "state-finite",
+        "version": "0-draft",
+        "requiredFeatures": [
+          "bounded-integer",
+          "operation-snapshots"
+        ]
+      },
+      "source": {
+        "identity": "ix://example/config/source/version-update",
+        "path": "version-update.native",
+        "spanConvention": "utf8-half-open-scalar-column/0-draft",
+        "expressionSpan": {
+          "startByte": 223,
+          "startLine": 6,
+          "startColumn": 3,
+          "endByte": 248,
+          "endLine": 6,
+          "endColumn": 28
+        },
+        "expectedExpression": "self.versionNumber < 1000",
+        "clauseSpan": {
+          "startByte": 163,
+          "startLine": 5,
+          "startColumn": 1,
+          "endByte": 250,
+          "endLine": 7,
+          "endColumn": 2
+        }
+      },
+      "anchor": {
+        "kind": "precondition",
+        "observation": "pre",
+        "contextType": "ix://example/config/type/ConfigVersion",
+        "operation": "ix://example/config/operation/ConfigVersion/attemptUpdate"
+      },
+      "modelBinding": {
+        "state": "unavailable",
+        "reason": "domain-package-required",
+        "package": "example/config",
+        "version": "1.0.0"
+      },
+      "reviewArtifacts": [
+        {
+          "path": "version-update.native"
+        },
+        {
+          "path": "model-expectations.json"
+        }
+      ]
+    },
+    {
+      "status": "proposed-review-fixture",
+      "fixtureVersion": "agent-a-source-subject/1-draft",
+      "authored": {
+        "package": "example/config",
+        "requirement": "OP-001",
+        "revision": 1,
+        "clause": "VersionUnchanged"
+      },
+      "language": {
+        "tag": "ix:native",
+        "edition": "0-draft"
+      },
+      "profile": {
+        "identity": "state-finite",
+        "version": "0-draft",
+        "requiredFeatures": [
+          "bounded-integer",
+          "operation-snapshots"
+        ]
+      },
+      "source": {
+        "identity": "ix://example/config/source/version-update",
+        "path": "version-update.native",
+        "spanConvention": "utf8-half-open-scalar-column/0-draft",
+        "expressionSpan": {
+          "startByte": 312,
+          "startLine": 9,
+          "startColumn": 3,
+          "endByte": 356,
+          "endLine": 9,
+          "endColumn": 47
+        },
+        "expectedExpression": "self.versionNumber = pre(self.versionNumber)",
+        "clauseSpan": {
+          "startByte": 251,
+          "startLine": 8,
+          "startColumn": 1,
+          "endByte": 358,
+          "endLine": 10,
+          "endColumn": 2
+        }
+      },
+      "anchor": {
+        "kind": "postcondition",
+        "observation": "post",
+        "contextType": "ix://example/config/type/ConfigVersion",
+        "operation": "ix://example/config/operation/ConfigVersion/attemptUpdate"
+      },
+      "modelBinding": {
+        "state": "unavailable",
+        "reason": "domain-package-required",
+        "package": "example/config",
+        "version": "1.0.0"
+      },
+      "reviewArtifacts": [
+        {
+          "path": "version-update.native"
+        },
+        {
+          "path": "model-expectations.json"
+        }
+      ]
+    }
+  ]
+}

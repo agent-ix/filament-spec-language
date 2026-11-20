@@ -1,0 +1,236 @@
+{
+  "library": {
+    "identity": "test/predicates",
+    "package": "fixtures/positive-dependency-library.json",
+    "function": [
+      "Lib",
+      "is_small"
+    ]
+  },
+  "base": "fixtures/positive-dependency-call.json",
+  "call": [
+    "App",
+    "check"
+  ],
+  "mutations": [
+    {
+      "id": "no-dependency-supplied",
+      "supplied": false,
+      "patch": [],
+      "outcome": "refused:missing_import/missing-selection",
+      "locus": "/lock/dependency_selections/0"
+    },
+    {
+      "id": "package-not-a-direct-selection",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/package",
+          "value": "test/unselected"
+        }
+      ],
+      "outcome": "refused:missing_declaration/missing-selection",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0/package"
+    },
+    {
+      "id": "node-carries-no-declaration",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "integer"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:missing_declaration/missing-name",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0/node"
+    },
+    {
+      "id": "node-names-a-declared-record",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "Lib",
+              "Point"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0"
+    },
+    {
+      "id": "function-returns-a-declared-record",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "Lib",
+              "make_point"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0"
+    },
+    {
+      "id": "function-over-a-set-of-a-declared-record",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "Lib",
+              "any_point"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0"
+    },
+    {
+      "id": "function-over-a-tuple-holding-a-declared-record",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "Lib",
+              "first_small"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0"
+    },
+    {
+      "id": "function-over-a-model-type-reference",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/0/node",
+          "value": {
+            "package": "test/predicates",
+            "path": [
+              "Lib",
+              "is_open"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/0"
+    },
+    {
+      "id": "term-as-a-non-callee-argument",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body/arguments/1",
+          "value": {
+            "term": "dependency_reference",
+            "package": "test/predicates",
+            "node": {
+              "package": "test/predicates",
+              "path": [
+                "Lib",
+                "is_small"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/3",
+          "value": []
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body/arguments/1"
+    },
+    {
+      "id": "term-as-a-node-body-root",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/body",
+          "value": {
+            "term": "dependency_reference",
+            "package": "test/predicates",
+            "node": {
+              "package": "test/predicates",
+              "path": [
+                "Lib",
+                "is_small"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "add",
+          "path": "/semantic_graph/nodes/3/owner",
+          "value": {
+            "authority": "agent-ix",
+            "identity": "example",
+            "kind": "source"
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/3",
+          "value": []
+        }
+      ],
+      "outcome": "refused:ill_typed/operator-ineligible",
+      "locus": "/semantic_graph/nodes/3/body"
+    },
+    {
+      "id": "target-listed-in-dependencies",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/dependencies",
+          "value": [
+            {
+              "package": "test/predicates",
+              "path": [
+                "Lib",
+                "is_small"
+              ],
+              "ordinal": 0
+            }
+          ]
+        }
+      ],
+      "outcome": "refused:invalid_semantic_graph",
+      "locus": "/semantic_graph/nodes/3/dependencies"
+    }
+  ]
+}

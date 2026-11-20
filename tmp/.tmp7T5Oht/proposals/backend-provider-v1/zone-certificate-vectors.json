@@ -1,0 +1,1439 @@
+{
+  "version": "filament.zone-certificate-vectors/v1",
+  "encoding": "RFC 8785 JCS, UTF-8, over the FR-331 ZoneCertificate value; states are illustrative state keys, not computed from a model",
+  "vectors": [
+    {
+      "id": "ZC-10",
+      "description": "Refinement-form certificate of the TReq safety half (FR-430-AC-1 shape): two positions, two nodes, two edges, one initial state.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "Safety"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "r.x",
+            "lower": {
+              "bound": "1",
+              "strict": false
+            },
+            "upper": "infinity"
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "r.x",
+            "lower": {
+              "bound": "1",
+              "strict": false
+            },
+            "upper": "infinity"
+          }
+        ],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 1,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "-1",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "node": 0,
+            "transition": {
+              "type": "transition",
+              "operation": "TReq::send",
+              "receiver": {
+                "type": "text",
+                "value": "r"
+              },
+              "arguments": []
+            },
+            "target": 1
+          },
+          {
+            "node": 1,
+            "transition": {
+              "type": "transition",
+              "operation": "TReq::send",
+              "receiver": {
+                "type": "text",
+                "value": "r"
+              },
+              "arguments": []
+            },
+            "target": 1
+          }
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": [
+            0
+          ]
+        },
+        "refinement": {
+          "concrete_package": "example",
+          "abstract_package": "test/predicates",
+          "positions": [
+            {
+              "concrete": {
+                "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+              },
+              "history": [],
+              "abstract_states": [
+                {
+                  "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjYifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+                }
+              ]
+            },
+            {
+              "concrete": {
+                "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+              },
+              "history": [],
+              "abstract_states": [
+                {
+                  "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjcifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+                }
+              ]
+            }
+          ],
+          "taken": [
+            {
+              "type": "abstract",
+              "transitions": [
+                {
+                  "type": "transition",
+                  "operation": "Req::send",
+                  "receiver": {
+                    "type": "text",
+                    "value": "r"
+                  },
+                  "arguments": []
+                }
+              ]
+            },
+            {
+              "type": "abstract",
+              "transitions": [
+                {
+                  "type": "transition",
+                  "operation": "Req::send",
+                  "receiver": {
+                    "type": "text",
+                    "value": "r"
+                  },
+                  "arguments": []
+                }
+              ]
+            }
+          ],
+          "refinement_node": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "Refinement"
+            ]
+          }
+        },
+        "initials": [
+          0
+        ]
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[0],\"start\":0},\"bounds\":[{\"clock\":\"r.x\",\"lower\":{\"bound\":\"1\",\"strict\":false},\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":\"infinity\"},{\"clock\":\"r.x\",\"lower\":{\"bound\":\"1\",\"strict\":false},\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":\"infinity\"}],\"edges\":[{\"node\":0,\"target\":1,\"transition\":{\"arguments\":[],\"operation\":\"TReq::send\",\"receiver\":{\"type\":\"text\",\"value\":\"r\"},\"type\":\"transition\"}},{\"node\":1,\"target\":1,\"transition\":{\"arguments\":[],\"operation\":\"TReq::send\",\"receiver\":{\"type\":\"text\",\"value\":\"r\"},\"type\":\"transition\"}}],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"Safety\"]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":1,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"-1\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]}],\"refinement\":{\"abstract_package\":\"test/predicates\",\"concrete_package\":\"example\",\"positions\":[{\"abstract_states\":[{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjYifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"}],\"concrete\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"history\":[]},{\"abstract_states\":[{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjcifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"}],\"concrete\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"history\":[]}],\"refinement_node\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"Refinement\"]},\"taken\":[{\"transitions\":[{\"arguments\":[],\"operation\":\"Req::send\",\"receiver\":{\"type\":\"text\",\"value\":\"r\"},\"type\":\"transition\"}],\"type\":\"abstract\"},{\"transitions\":[{\"arguments\":[],\"operation\":\"Req::send\",\"receiver\":{\"type\":\"text\",\"value\":\"r\"},\"type\":\"transition\"}],\"type\":\"abstract\"}]},\"scale\":\"1\"}",
+      "byte_length": 2569
+    },
+    {
+      "id": "ZC-11",
+      "description": "Time-lock-freedom shape: component index per node, reasons per component, divergence target per node, no refinement.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "Safety"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "c.x",
+            "lower": {
+              "bound": "1",
+              "strict": false
+            },
+            "upper": {
+              "bound": "3",
+              "strict": false
+            }
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "c.x",
+            "lower": {
+              "bound": "1",
+              "strict": false
+            },
+            "upper": {
+              "bound": "3",
+              "strict": false
+            }
+          }
+        ],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                {
+                  "bound": "3",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "node": 0,
+            "transition": {
+              "type": "transition",
+              "operation": "Call::reply",
+              "receiver": {
+                "type": "text",
+                "value": "c"
+              },
+              "arguments": []
+            },
+            "target": 1
+          },
+          {
+            "node": 1,
+            "transition": {
+              "type": "transition",
+              "operation": "Call::tick",
+              "receiver": {
+                "type": "text",
+                "value": "c"
+              },
+              "arguments": []
+            },
+            "target": 1
+          }
+        ],
+        "components": [
+          0,
+          1
+        ],
+        "reasons": [
+          {
+            "type": "missing-acceptance",
+            "set": "accepting"
+          },
+          {
+            "type": "weak-fairness",
+            "constraint": "fair weak serve"
+          }
+        ],
+        "divergence": [
+          1,
+          1
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": [
+            0
+          ]
+        },
+        "initials": [
+          0
+        ]
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[0],\"start\":0},\"bounds\":[{\"clock\":\"c.x\",\"lower\":{\"bound\":\"1\",\"strict\":false},\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":{\"bound\":\"3\",\"strict\":false}},{\"clock\":\"c.x\",\"lower\":{\"bound\":\"1\",\"strict\":false},\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":{\"bound\":\"3\",\"strict\":false}}],\"components\":[0,1],\"divergence\":[1,1],\"edges\":[{\"node\":0,\"target\":1,\"transition\":{\"arguments\":[],\"operation\":\"Call::reply\",\"receiver\":{\"type\":\"text\",\"value\":\"c\"},\"type\":\"transition\"}},{\"node\":1,\"target\":1,\"transition\":{\"arguments\":[],\"operation\":\"Call::tick\",\"receiver\":{\"type\":\"text\",\"value\":\"c\"},\"type\":\"transition\"}}],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"Safety\"]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[{\"bound\":\"3\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]}],\"reasons\":[{\"set\":\"accepting\",\"type\":\"missing-acceptance\"},{\"constraint\":\"fair weak serve\",\"type\":\"weak-fairness\"}],\"scale\":\"1\"}",
+      "byte_length": 1672
+    },
+    {
+      "id": "ZC-12",
+      "description": "Refinement form with two initial states, the first failing check_initial and time-locked: initials[0] is a locked entry node carrying the reserved index positions.len(), admitted starts at the positioned initials[1], and there are no edges, so taken is empty.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "Safety"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "r.x",
+            "lower": "infinity",
+            "upper": "infinity"
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "clock": "r.x",
+            "lower": "infinity",
+            "upper": "infinity"
+          }
+        ],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 1,
+            "locked": true,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [],
+        "admitted": {
+          "start": 1,
+          "edges": []
+        },
+        "refinement": {
+          "concrete_package": "example",
+          "abstract_package": "test/predicates",
+          "positions": [
+            {
+              "concrete": {
+                "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+              },
+              "history": [],
+              "abstract_states": [
+                {
+                  "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjYifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+                }
+              ]
+            }
+          ],
+          "taken": [],
+          "refinement_node": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "Refinement"
+            ]
+          }
+        },
+        "initials": [
+          0,
+          1
+        ]
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[],\"start\":1},\"bounds\":[{\"clock\":\"r.x\",\"lower\":\"infinity\",\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":\"infinity\"},{\"clock\":\"r.x\",\"lower\":\"infinity\",\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"upper\":\"infinity\"}],\"edges\":[],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"Safety\"]},\"ordinal\":0},\"initials\":[0,1],\"nodes\":[{\"automaton\":1,\"locked\":true,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]}],\"refinement\":{\"abstract_package\":\"test/predicates\",\"concrete_package\":\"example\",\"positions\":[{\"abstract_states\":[{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjYifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"}],\"concrete\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"history\":[]}],\"refinement_node\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"Refinement\"]},\"taken\":[]},\"scale\":\"1\"}",
+      "byte_length": 1701
+    },
+    {
+      "id": "ZC-19",
+      "description": "Two-state fixed-work periodic cycle: activation creates the rank-zero live job in the target; completion names that job in the source. Repeated cycles reuse the finite rank and slot while exact replay occurrence increases.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "TaskSet"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 1,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "-1",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "node": 0,
+            "transition": {
+              "type": "task-transition-template",
+              "action": "activate",
+              "taskset": "S",
+              "task": "A",
+              "job_rank": 0,
+              "slot": 0,
+              "release": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              },
+              "source_transition": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              }
+            },
+            "target": 1
+          },
+          {
+            "node": 1,
+            "transition": {
+              "type": "task-transition-template",
+              "action": "complete",
+              "taskset": "S",
+              "task": "A",
+              "job_rank": 0,
+              "slot": 0,
+              "release": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              },
+              "source_transition": null
+            },
+            "target": 0
+          }
+        ],
+        "initials": [
+          0
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": []
+        },
+        "task_product": {
+          "abstraction": "bounded-subtraction-diagonal/v1",
+          "queue_bounds": [
+            {
+              "taskset": "S",
+              "task": "A",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "max_jobs": 1
+            }
+          ],
+          "clock_ceilings": [],
+          "diagonal_constraints": [],
+          "subtractions": [
+            {
+              "transition": {
+                "type": "task-transition-template",
+                "action": "complete",
+                "taskset": "S",
+                "task": "A",
+                "job_rank": 0,
+                "slot": 0,
+                "release": {
+                  "type": "transition",
+                  "operation": "Task::release",
+                  "receiver": null,
+                  "arguments": []
+                },
+                "source_transition": null
+              },
+              "clock": "A.service",
+              "constant": "1"
+            }
+          ],
+          "time_progress": {
+            "method": "closed-finite-product/v1",
+            "live_job_cap": 1,
+            "closure": "recompute-all-reachable-successors/v1"
+          }
+        }
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[],\"start\":0},\"bounds\":[],\"edges\":[{\"node\":0,\"target\":1,\"transition\":{\"action\":\"activate\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}},{\"node\":1,\"target\":0,\"transition\":{\"action\":\"complete\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":null,\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}}],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"TaskSet\"]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":1,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"-1\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]}],\"scale\":\"1\",\"task_product\":{\"abstraction\":\"bounded-subtraction-diagonal/v1\",\"clock_ceilings\":[],\"diagonal_constraints\":[],\"queue_bounds\":[{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":1,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"task\":\"A\",\"taskset\":\"S\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"1\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"1\"}}],\"subtractions\":[{\"clock\":\"A.service\",\"constant\":\"1\",\"transition\":{\"action\":\"complete\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":null,\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}}],\"time_progress\":{\"closure\":\"recompute-all-reachable-successors/v1\",\"live_job_cap\":1,\"method\":\"closed-finite-product/v1\"}}}",
+      "byte_length": 2191
+    },
+    {
+      "id": "ZC-23",
+      "description": "A completes while task B stays live; task A is then activated again. The finite rank and slot are reused for A while B keeps its original live identity and order.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "TaskSet"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 1,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "-1",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          },
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                },
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ],
+              [
+                "infinity",
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [
+          {
+            "node": 0,
+            "transition": {
+              "type": "task-transition-template",
+              "action": "complete",
+              "taskset": "S",
+              "task": "A",
+              "job_rank": 0,
+              "slot": 0,
+              "release": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              },
+              "source_transition": null
+            },
+            "target": 1
+          },
+          {
+            "node": 1,
+            "transition": {
+              "type": "task-transition-template",
+              "action": "activate",
+              "taskset": "S",
+              "task": "A",
+              "job_rank": 0,
+              "slot": 0,
+              "release": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              },
+              "source_transition": {
+                "type": "transition",
+                "operation": "Task::release",
+                "receiver": null,
+                "arguments": []
+              }
+            },
+            "target": 2
+          }
+        ],
+        "initials": [
+          0
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": []
+        },
+        "task_product": {
+          "abstraction": "bounded-subtraction-diagonal/v1",
+          "queue_bounds": [
+            {
+              "taskset": "S",
+              "task": "A",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "max_jobs": 1
+            },
+            {
+              "taskset": "S",
+              "task": "B",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "3",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "3",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "max_jobs": 1
+            }
+          ],
+          "clock_ceilings": [],
+          "diagonal_constraints": [],
+          "subtractions": [
+            {
+              "transition": {
+                "type": "task-transition-template",
+                "action": "complete",
+                "taskset": "S",
+                "task": "A",
+                "job_rank": 0,
+                "slot": 0,
+                "release": {
+                  "type": "transition",
+                  "operation": "Task::release",
+                  "receiver": null,
+                  "arguments": []
+                },
+                "source_transition": null
+              },
+              "clock": "A.service",
+              "constant": "1"
+            }
+          ],
+          "time_progress": {
+            "method": "closed-finite-product/v1",
+            "live_job_cap": 2,
+            "closure": "recompute-all-reachable-successors/v1"
+          }
+        }
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[],\"start\":0},\"bounds\":[],\"edges\":[{\"node\":0,\"target\":1,\"transition\":{\"action\":\"complete\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":null,\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}},{\"node\":1,\"target\":2,\"transition\":{\"action\":\"activate\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}}],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"TaskSet\"]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":1,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjIifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"-1\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]},{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false},{\"bound\":\"0\",\"strict\":false}],[\"infinity\",{\"bound\":\"0\",\"strict\":false}]]}],\"scale\":\"1\",\"task_product\":{\"abstraction\":\"bounded-subtraction-diagonal/v1\",\"clock_ceilings\":[],\"diagonal_constraints\":[],\"queue_bounds\":[{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":1,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"task\":\"A\",\"taskset\":\"S\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"1\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"1\"}},{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"3\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":1,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"3\"},\"task\":\"B\",\"taskset\":\"S\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"1\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"1\"}}],\"subtractions\":[{\"clock\":\"A.service\",\"constant\":\"1\",\"transition\":{\"action\":\"complete\",\"job_rank\":0,\"release\":{\"arguments\":[],\"operation\":\"Task::release\",\"receiver\":null,\"type\":\"transition\"},\"slot\":0,\"source_transition\":null,\"task\":\"A\",\"taskset\":\"S\",\"type\":\"task-transition-template\"}}],\"time_progress\":{\"closure\":\"recompute-all-reachable-successors/v1\",\"live_job_cap\":2,\"method\":\"closed-finite-product/v1\"}}}",
+      "byte_length": 2779
+    },
+    {
+      "id": "ZC-26",
+      "description": "Closed timed source product with no reachable task release; variable demand is irrelevant and no scheduler clocks or task edges are present.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "Example",
+              "TaskSet"
+            ]
+          },
+          "model": "example",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [],
+        "initials": [
+          0
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": []
+        },
+        "task_product": {
+          "abstraction": "bounded-subtraction-diagonal/v1",
+          "queue_bounds": [
+            {
+              "taskset": "S",
+              "task": "A",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "max_jobs": 1
+            }
+          ],
+          "clock_ceilings": [],
+          "diagonal_constraints": [],
+          "subtractions": [],
+          "time_progress": {
+            "method": "closed-no-release-product/v1",
+            "live_job_cap": 0,
+            "closure": "recompute-all-source-successors-no-task-release/v1"
+          }
+        }
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[],\"start\":0},\"bounds\":[],\"edges\":[],\"identity\":{\"model\":\"example\",\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"Example\",\"TaskSet\"]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false}]]}],\"scale\":\"1\",\"task_product\":{\"abstraction\":\"bounded-subtraction-diagonal/v1\",\"clock_ceilings\":[],\"diagonal_constraints\":[],\"queue_bounds\":[{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":1,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"task\":\"A\",\"taskset\":\"S\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"1\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"2\"}}],\"subtractions\":[],\"time_progress\":{\"closure\":\"recompute-all-source-successors-no-task-release/v1\",\"live_job_cap\":0,\"method\":\"closed-no-release-product/v1\"}}}",
+      "byte_length": 1012
+    },
+    {
+      "id": "ZC-30",
+      "description": "Schema-valid no-release closure certificate bound to the checked CtlFp claim and its task row; ZC-28 uses it to isolate reachable-release refusal.",
+      "document": {
+        "identity": {
+          "node_id": {
+            "ordinal": 0,
+            "package": "package",
+            "path": [
+              "claim",
+              "schedulability",
+              "kind",
+              "schedulable",
+              "policy",
+              "fixed-priority",
+              "task",
+              "bound",
+              "tasks",
+              "task",
+              "name",
+              "t1",
+              "arrival",
+              "periodic",
+              "period",
+              "4/1",
+              {
+                "node": 6
+              },
+              "deadline",
+              "4/1",
+              {
+                "node": 6
+              },
+              "bcet",
+              "0/1",
+              {
+                "node": 6
+              },
+              "wcet",
+              "1/1",
+              {
+                "node": 6
+              },
+              "wcet_hi",
+              "criticality",
+              "lo",
+              "priority",
+              "1",
+              "jitter",
+              "0/1",
+              {
+                "node": 6
+              },
+              "blocking",
+              "0/1",
+              {
+                "node": 6
+              },
+              "task",
+              "name",
+              "t2",
+              "arrival",
+              "periodic",
+              "period",
+              "6/1",
+              {
+                "node": 6
+              },
+              "deadline",
+              "6/1",
+              {
+                "node": 6
+              },
+              "bcet",
+              "0/1",
+              {
+                "node": 6
+              },
+              "wcet",
+              "2/1",
+              {
+                "node": 6
+              },
+              "wcet_hi",
+              "criticality",
+              "lo",
+              "priority",
+              "2",
+              "jitter",
+              "0/1",
+              {
+                "node": 6
+              },
+              "blocking",
+              "0/1",
+              {
+                "node": 6
+              },
+              "task",
+              "name",
+              "t3",
+              "arrival",
+              "periodic",
+              "period",
+              "12/1",
+              {
+                "node": 6
+              },
+              "deadline",
+              "12/1",
+              {
+                "node": 6
+              },
+              "bcet",
+              "0/1",
+              {
+                "node": 6
+              },
+              "wcet",
+              "5/1",
+              {
+                "node": 6
+              },
+              "wcet_hi",
+              "criticality",
+              "lo",
+              "priority",
+              "3",
+              "jitter",
+              "0/1",
+              {
+                "node": 6
+              },
+              "blocking",
+              "0/1",
+              {
+                "node": 6
+              }
+            ]
+          },
+          "model": "test/litmus",
+          "ordinal": 0
+        },
+        "scale": "1",
+        "bounds": [],
+        "nodes": [
+          {
+            "state": {
+              "key": "eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0"
+            },
+            "automaton": 0,
+            "zone": [
+              [
+                {
+                  "bound": "0",
+                  "strict": false
+                }
+              ]
+            ]
+          }
+        ],
+        "edges": [],
+        "initials": [
+          0
+        ],
+        "admitted": {
+          "start": 0,
+          "edges": []
+        },
+        "task_product": {
+          "abstraction": "bounded-subtraction-diagonal/v1",
+          "queue_bounds": [
+            {
+              "taskset": "Ctl",
+              "task": "t1",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "4",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "4",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "1",
+                "denominator": "1"
+              },
+              "max_jobs": 2
+            },
+            {
+              "taskset": "Ctl",
+              "task": "t2",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "6",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "6",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "2",
+                "denominator": "1"
+              },
+              "max_jobs": 2
+            },
+            {
+              "taskset": "Ctl",
+              "task": "t3",
+              "arrival": "periodic",
+              "interarrival": {
+                "numerator": "12",
+                "denominator": "1"
+              },
+              "relative_deadline": {
+                "numerator": "12",
+                "denominator": "1"
+              },
+              "max_jitter": {
+                "numerator": "0",
+                "denominator": "1"
+              },
+              "work_lower": {
+                "numerator": "5",
+                "denominator": "1"
+              },
+              "work_upper": {
+                "numerator": "5",
+                "denominator": "1"
+              },
+              "max_jobs": 2
+            }
+          ],
+          "clock_ceilings": [],
+          "diagonal_constraints": [],
+          "subtractions": [],
+          "time_progress": {
+            "method": "closed-no-release-product/v1",
+            "live_job_cap": 0,
+            "closure": "recompute-all-source-successors-no-task-release/v1"
+          }
+        }
+      },
+      "canonical_text": "{\"admitted\":{\"edges\":[],\"start\":0},\"bounds\":[],\"edges\":[],\"identity\":{\"model\":\"test/litmus\",\"node_id\":{\"ordinal\":0,\"package\":\"package\",\"path\":[\"claim\",\"schedulability\",\"kind\",\"schedulable\",\"policy\",\"fixed-priority\",\"task\",\"bound\",\"tasks\",\"task\",\"name\",\"t1\",\"arrival\",\"periodic\",\"period\",\"4/1\",{\"node\":6},\"deadline\",\"4/1\",{\"node\":6},\"bcet\",\"0/1\",{\"node\":6},\"wcet\",\"1/1\",{\"node\":6},\"wcet_hi\",\"criticality\",\"lo\",\"priority\",\"1\",\"jitter\",\"0/1\",{\"node\":6},\"blocking\",\"0/1\",{\"node\":6},\"task\",\"name\",\"t2\",\"arrival\",\"periodic\",\"period\",\"6/1\",{\"node\":6},\"deadline\",\"6/1\",{\"node\":6},\"bcet\",\"0/1\",{\"node\":6},\"wcet\",\"2/1\",{\"node\":6},\"wcet_hi\",\"criticality\",\"lo\",\"priority\",\"2\",\"jitter\",\"0/1\",{\"node\":6},\"blocking\",\"0/1\",{\"node\":6},\"task\",\"name\",\"t3\",\"arrival\",\"periodic\",\"period\",\"12/1\",{\"node\":6},\"deadline\",\"12/1\",{\"node\":6},\"bcet\",\"0/1\",{\"node\":6},\"wcet\",\"5/1\",{\"node\":6},\"wcet_hi\",\"criticality\",\"lo\",\"priority\",\"3\",\"jitter\",\"0/1\",{\"node\":6},\"blocking\",\"0/1\",{\"node\":6}]},\"ordinal\":0},\"initials\":[0],\"nodes\":[{\"automaton\":0,\"state\":{\"key\":\"eyJmaWVsZHMiOlt7Im5hbWUiOiJuIiwidmFsdWUiOnsidHlwZSI6ImludGVnZXIiLCJ2YWx1ZSI6IjEifX1dLCJuYW1lIjoiU3RhdGUiLCJ0eXBlIjoicmVjb3JkIn0\"},\"zone\":[[{\"bound\":\"0\",\"strict\":false}]]}],\"scale\":\"1\",\"task_product\":{\"abstraction\":\"bounded-subtraction-diagonal/v1\",\"clock_ceilings\":[],\"diagonal_constraints\":[],\"queue_bounds\":[{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"4\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":2,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"4\"},\"task\":\"t1\",\"taskset\":\"Ctl\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"1\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"1\"}},{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"6\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":2,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"6\"},\"task\":\"t2\",\"taskset\":\"Ctl\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"2\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"2\"}},{\"arrival\":\"periodic\",\"interarrival\":{\"denominator\":\"1\",\"numerator\":\"12\"},\"max_jitter\":{\"denominator\":\"1\",\"numerator\":\"0\"},\"max_jobs\":2,\"relative_deadline\":{\"denominator\":\"1\",\"numerator\":\"12\"},\"task\":\"t3\",\"taskset\":\"Ctl\",\"work_lower\":{\"denominator\":\"1\",\"numerator\":\"5\"},\"work_upper\":{\"denominator\":\"1\",\"numerator\":\"5\"}}],\"subtractions\":[],\"time_progress\":{\"closure\":\"recompute-all-source-successors-no-task-release/v1\",\"live_job_cap\":0,\"method\":\"closed-no-release-product/v1\"}}}",
+      "byte_length": 2454
+    }
+  ],
+  "malformed_vectors": [
+    {
+      "id": "ZC-20",
+      "description": "An exact task-transition identity with global occurrence and generation cannot stand in for a finite certificate template.",
+      "base": "ZC-19",
+      "pointer": "/edges/0/transition",
+      "value": {
+        "type": "task-transition",
+        "action": "activate",
+        "taskset": "S",
+        "task": "A",
+        "slot": 0,
+        "release": {
+          "type": "transition",
+          "operation": "Task::release",
+          "receiver": null,
+          "arguments": []
+        },
+        "source_transition": {
+          "type": "transition",
+          "operation": "Task::release",
+          "receiver": null,
+          "arguments": []
+        },
+        "job": 0,
+        "generation": 0,
+        "demand": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "jitter": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "deadline": {
+          "numerator": "2",
+          "denominator": "1"
+        }
+      }
+    },
+    {
+      "id": "ZC-21",
+      "description": "A finite template cannot carry a global job occurrence.",
+      "base": "ZC-19",
+      "pointer": "/edges/0/transition",
+      "value": {
+        "type": "task-transition-template",
+        "action": "activate",
+        "taskset": "S",
+        "task": "A",
+        "job_rank": 0,
+        "slot": 0,
+        "release": {
+          "type": "transition",
+          "operation": "Task::release",
+          "receiver": null,
+          "arguments": []
+        },
+        "source_transition": {
+          "type": "transition",
+          "operation": "Task::release",
+          "receiver": null,
+          "arguments": []
+        },
+        "job": 0
+      }
+    },
+    {
+      "id": "ZC-22",
+      "description": "A bounded-subtraction row cannot carry an exact task-transition identity.",
+      "base": "ZC-19",
+      "pointer": "/task_product/subtractions/0/transition",
+      "value": {
+        "type": "task-transition",
+        "action": "complete",
+        "taskset": "S",
+        "task": "A",
+        "slot": 0,
+        "release": {
+          "type": "transition",
+          "operation": "Task::release",
+          "receiver": null,
+          "arguments": []
+        },
+        "source_transition": null,
+        "job": 0,
+        "generation": 0,
+        "demand": {
+          "numerator": "1",
+          "denominator": "1"
+        },
+        "jitter": {
+          "numerator": "0",
+          "denominator": "1"
+        },
+        "deadline": {
+          "numerator": "2",
+          "denominator": "1"
+        }
+      }
+    },
+    {
+      "id": "ZC-27",
+      "description": "The no-release closure marker requires a zero live-job cap.",
+      "base": "ZC-26",
+      "pointer": "/task_product/time_progress/live_job_cap",
+      "value": 1
+    },
+    {
+      "id": "ZC-29",
+      "description": "A no-release closure still carries at least one checked task demand row.",
+      "base": "ZC-26",
+      "pointer": "/task_product/queue_bounds",
+      "value": []
+    }
+  ],
+  "task_reader_vectors": [
+    {
+      "id": "ZC-24",
+      "description": "A task template rank beyond the recomputed number of live jobs is refused by the reader.",
+      "base": "ZC-23",
+      "pointer": "/edges/1/transition/job_rank",
+      "value": 1,
+      "expected": {
+        "code": "certificate-rejected",
+        "rule": "successor-missing",
+        "at": {
+          "node": 1
+        }
+      }
+    },
+    {
+      "id": "ZC-25",
+      "description": "A task template slot bound to a different live job is refused by the reader.",
+      "base": "ZC-23",
+      "pointer": "/edges/0/transition/slot",
+      "value": 1,
+      "expected": {
+        "code": "certificate-rejected",
+        "rule": "successor-missing",
+        "at": {
+          "node": 0
+        }
+      }
+    },
+    {
+      "id": "ZC-28",
+      "description": "A no-release closure matching TC-372 CtlFp is refused because its checked Ctl.t1 Cell::set release binding is reachable and no corresponding task-product successor is certified.",
+      "checked_task_model": "TC-372/CtlFp",
+      "base": "ZC-30",
+      "pointer": "/edges",
+      "value": [
+        {
+          "node": 0,
+          "transition": {
+            "type": "transition",
+            "operation": "Cell::set",
+            "receiver": null,
+            "arguments": []
+          },
+          "target": 0
+        }
+      ],
+      "expected": {
+        "code": "certificate-rejected",
+        "rule": "successor-missing",
+        "at": {
+          "node": 0
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,4503 @@
+{
+  "version": "filament.model-tuple-union-vectors/v1",
+  "note": "STD-519 (review round 1: package-level nodes, recursion, application-node keys). The selected document of fixtures/positive-model-tuple-union.json is the full FCD semantic IR 2.0.0 domain-package-acme-shapes.json (STD-529, FR-322-AC-151); domain_package is its projection, the declarations FR-154 reads (tuple_types carry ordered positions, variant_types carry cases, all in document order). Cases are evaluated by the QSpec test over domain_package; wire_cases are RFC 6902 patches over the fixture. Node names are the declaration_nodes names. Intake cases that patch `/aliases` add FR-154 alias declarations (`node`, `target`) to the projection; an alias is read through to its target before the payload and position tests.",
+  "base": "fixtures/positive-model-tuple-union.json",
+  "domain_package": {
+    "identity": "acme/shapes",
+    "version": "1.0.0",
+    "object_types": [
+      {
+        "node": "ix://acme/shapes/Holder",
+        "interfaceFeatures": null,
+        "supertypes": [],
+        "fields": [
+          {
+            "name": "pair",
+            "typeRef": "ix://acme/shapes/Pair",
+            "presence": "required",
+            "multiplicity": {
+              "lower": "1",
+              "upper": "1",
+              "ordered": false,
+              "unique": true
+            },
+            "redefines": null
+          },
+          {
+            "name": "shape",
+            "typeRef": "ix://acme/shapes/Shape",
+            "presence": "optional",
+            "multiplicity": {
+              "lower": "1",
+              "upper": "1",
+              "ordered": false,
+              "unique": true
+            },
+            "redefines": null
+          },
+          {
+            "name": "pairs",
+            "typeRef": "ix://acme/shapes/Pair",
+            "presence": "required",
+            "multiplicity": {
+              "lower": "0",
+              "upper": "3",
+              "ordered": true,
+              "unique": false
+            },
+            "redefines": null
+          }
+        ],
+        "operations": []
+      }
+    ],
+    "tuple_types": [
+      {
+        "node": "ix://acme/shapes/Pair",
+        "positions": [
+          {
+            "ordinal": 0,
+            "typeRef": "ix://filament/native/Boolean"
+          },
+          {
+            "ordinal": 1,
+            "typeRef": "ix://filament/native/Integer"
+          }
+        ]
+      },
+      {
+        "node": "ix://acme/shapes/Swap",
+        "positions": [
+          {
+            "ordinal": 0,
+            "typeRef": "ix://filament/native/Integer"
+          },
+          {
+            "ordinal": 1,
+            "typeRef": "ix://filament/native/Boolean"
+          }
+        ]
+      },
+      {
+        "node": "ix://acme/shapes/Nest",
+        "positions": [
+          {
+            "ordinal": 0,
+            "typeRef": "ix://acme/shapes/Pair"
+          },
+          {
+            "ordinal": 1,
+            "typeRef": "ix://acme/shapes/Shape"
+          }
+        ]
+      },
+      {
+        "node": "ix://acme/shapes/Cell",
+        "positions": [
+          {
+            "ordinal": 0,
+            "typeRef": "ix://filament/native/Integer"
+          },
+          {
+            "ordinal": 1,
+            "typeRef": "ix://acme/shapes/List"
+          }
+        ]
+      }
+    ],
+    "variant_types": [
+      {
+        "node": "ix://acme/shapes/Shape",
+        "cases": [
+          {
+            "name": "Flag",
+            "payloadType": "ix://filament/native/Boolean"
+          },
+          {
+            "name": "Empty",
+            "payloadType": null
+          },
+          {
+            "name": "Both",
+            "payloadType": "ix://acme/shapes/Pair"
+          }
+        ]
+      },
+      {
+        "node": "ix://acme/shapes/Color",
+        "cases": [
+          {
+            "name": "Red",
+            "payloadType": null
+          },
+          {
+            "name": "Green",
+            "payloadType": null
+          }
+        ]
+      },
+      {
+        "node": "ix://acme/shapes/List",
+        "cases": [
+          {
+            "name": "Nil",
+            "payloadType": null
+          },
+          {
+            "name": "Cons",
+            "payloadType": "ix://acme/shapes/Cell"
+          }
+        ]
+      }
+    ]
+  },
+  "family_cases": [
+    {
+      "name": "TF-01",
+      "criterion": "FR-322-AC-140",
+      "node": "Pair",
+      "expected": "tuple"
+    },
+    {
+      "name": "TF-02",
+      "criterion": "FR-322-AC-143",
+      "node": "Shape",
+      "expected": "union"
+    },
+    {
+      "name": "TF-03",
+      "criterion": "FR-322-AC-143",
+      "node": "Color",
+      "expected": "enum"
+    },
+    {
+      "name": "TF-04",
+      "criterion": "FR-322-AC-147",
+      "node": "List",
+      "expected": "union"
+    },
+    {
+      "name": "TF-05",
+      "criterion": "FR-322-AC-147",
+      "node": "Cell",
+      "expected": "tuple"
+    }
+  ],
+  "position_cases": [
+    {
+      "name": "TP-01",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Pair",
+      "position": 0,
+      "expected": {
+        "member_type": {
+          "type": "Boolean"
+        },
+        "resolves": "ix://acme/shapes/Pair/p0"
+      }
+    },
+    {
+      "name": "TP-02",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Pair",
+      "position": 1,
+      "expected": {
+        "member_type": {
+          "type": "Integer"
+        },
+        "resolves": "ix://acme/shapes/Pair/p1"
+      }
+    },
+    {
+      "name": "TP-03",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Pair",
+      "position": 2,
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "operator-ineligible",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TP-04",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Swap",
+      "position": 0,
+      "expected": {
+        "member_type": {
+          "type": "Integer"
+        },
+        "resolves": "ix://acme/shapes/Swap/p0"
+      }
+    },
+    {
+      "name": "TP-05",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Nest",
+      "position": 0,
+      "expected": {
+        "member_type": {
+          "declaration": "Pair"
+        },
+        "resolves": "ix://acme/shapes/Nest/p0"
+      }
+    },
+    {
+      "name": "TP-06",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Nest",
+      "position": 1,
+      "expected": {
+        "member_type": {
+          "declaration": "Shape"
+        },
+        "resolves": "ix://acme/shapes/Nest/p1"
+      }
+    },
+    {
+      "name": "TP-07",
+      "criterion": "FR-322-AC-141",
+      "tuple": "Pair",
+      "position": "9007199254740993",
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "operator-ineligible",
+          "stage": "reader"
+        }
+      }
+    }
+  ],
+  "field_type_cases": [
+    {
+      "name": "TT-01",
+      "criterion": "FR-322-AC-141",
+      "object": "Holder",
+      "field": "pair",
+      "expected": {
+        "declaration": "Pair"
+      }
+    },
+    {
+      "name": "TT-02",
+      "criterion": "FR-322-AC-143",
+      "object": "Holder",
+      "field": "shape",
+      "expected": {
+        "option": {
+          "declaration": "Shape"
+        }
+      }
+    },
+    {
+      "name": "TT-03",
+      "criterion": "FR-322-AC-141",
+      "object": "Holder",
+      "field": "pairs",
+      "expected": {
+        "sequence": {
+          "declaration": "Pair"
+        },
+        "min": "0",
+        "max": "3"
+      }
+    }
+  ],
+  "member_cases": [
+    {
+      "name": "TM-01",
+      "criterion": "FR-322-AC-143",
+      "union": "Shape",
+      "expected": [
+        {
+          "case": "Both",
+          "arity": 1,
+          "payload": {
+            "declaration": "Pair"
+          }
+        },
+        {
+          "case": "Empty",
+          "arity": 0,
+          "payload": null
+        },
+        {
+          "case": "Flag",
+          "arity": 1,
+          "payload": {
+            "type": "Boolean"
+          }
+        }
+      ]
+    }
+  ],
+  "union_value_cases": [
+    {
+      "name": "TU-01",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Empty",
+      "payload": [],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TU-02",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Flag",
+      "payload": [
+        {
+          "type": "Boolean"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TU-03",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Both",
+      "payload": [
+        {
+          "declaration": "Pair"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TU-04",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Flag",
+      "payload": [
+        {
+          "type": "Integer"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "type-mismatch",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TU-05",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Flag",
+      "payload": [],
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "type-mismatch",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TU-06",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Empty",
+      "payload": [
+        {
+          "type": "Boolean"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "type-mismatch",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TU-07",
+      "criterion": "FR-322-AC-144",
+      "union": "Shape",
+      "case": "Missing",
+      "payload": [],
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "type-mismatch",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TU-08",
+      "criterion": "FR-322-AC-144",
+      "union": "Color",
+      "case": "Red",
+      "payload": [],
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "type-mismatch",
+          "stage": "reader"
+        }
+      }
+    }
+  ],
+  "enum_value_cases": [
+    {
+      "name": "TE-01",
+      "criterion": "FR-322-AC-144",
+      "type": "Color",
+      "case": "Red",
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TE-02",
+      "criterion": "FR-322-AC-144",
+      "type": "Color",
+      "case": "Blue",
+      "expected": {
+        "refused": {
+          "code": "invalid_semantic_graph",
+          "cause": null,
+          "stage": "graph"
+        }
+      }
+    },
+    {
+      "name": "TE-03",
+      "criterion": "FR-322-AC-144",
+      "type": "Shape",
+      "case": "Empty",
+      "expected": {
+        "refused": {
+          "code": "invalid_semantic_graph",
+          "cause": null,
+          "stage": "graph"
+        }
+      }
+    },
+    {
+      "name": "TE-04",
+      "criterion": "FR-322-AC-144",
+      "type": "Shape",
+      "case": "Flag",
+      "expected": {
+        "refused": {
+          "code": "invalid_semantic_graph",
+          "cause": null,
+          "stage": "graph"
+        }
+      }
+    }
+  ],
+  "equality_cases": [
+    {
+      "name": "TQ-01",
+      "criterion": "FR-322-AC-144",
+      "operation": "filament.op.structural.eq",
+      "type": "Shape",
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TQ-02",
+      "criterion": "FR-322-AC-144",
+      "operation": "filament.op.enum.eq",
+      "type": "Shape",
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "operator-ineligible",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TQ-03",
+      "criterion": "FR-322-AC-144",
+      "operation": "filament.op.enum.eq",
+      "type": "Color",
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TQ-04",
+      "criterion": "FR-322-AC-144",
+      "operation": "filament.op.structural.eq",
+      "type": "Color",
+      "expected": {
+        "refused": {
+          "code": "ill_typed",
+          "cause": "operator-ineligible",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TQ-05",
+      "criterion": "FR-322-AC-140",
+      "operation": "filament.op.structural.eq",
+      "type": "Pair",
+      "expected": {
+        "admitted": true
+      }
+    }
+  ],
+  "intake_cases": [
+    {
+      "name": "TK-01",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions",
+          "value": []
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-02",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/ordinal",
+          "value": 2
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-03",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/tuple_types/0/positions/1/typeRef"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-04",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/tuple_types/0/fields",
+          "value": []
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-05",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/Missing"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "missing_declaration",
+          "cause": "missing-name",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-06",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/ordinal",
+          "value": 0
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "conflicting-binding",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-07",
+      "criterion": "FR-322-AC-145",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Missing"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-08",
+      "criterion": "FR-322-AC-399",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Clock"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-09",
+      "criterion": "FR-322-AC-399",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://filament/native/Clock"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-10",
+      "criterion": "FR-322-AC-145",
+      "patch": [],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-11",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Rational"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-12",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Decimal"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-13",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Text"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-14",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Label",
+              "native": "ix://filament/native/Text"
+            },
+            {
+              "node": "ix://acme/shapes/Code",
+              "native": "ix://filament/native/Text",
+              "lower": "0",
+              "upper": "8",
+              "profile": "nfc"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Label"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-15",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://filament/native/Rational"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/0",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-16",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://filament/native/Decimal"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-17",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://filament/native/Text"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-18",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Label",
+              "native": "ix://filament/native/Text"
+            },
+            {
+              "node": "ix://acme/shapes/Code",
+              "native": "ix://filament/native/Text",
+              "lower": "0",
+              "upper": "8",
+              "profile": "nfc"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/Label"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-19",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/Missing"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://filament/native/Rational"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-20",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Label",
+              "native": "ix://filament/native/Text"
+            },
+            {
+              "node": "ix://acme/shapes/Code",
+              "native": "ix://filament/native/Text",
+              "lower": "0",
+              "upper": "8",
+              "profile": "nfc"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Float64"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://filament/native/Bytes"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/Code"
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/2/payloadType",
+          "value": "ix://filament/native/JsonObject"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-21",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Money",
+              "native": "ix://filament/native/Decimal",
+              "lower": "0",
+              "upper": "9"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Money"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-22",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Ratio",
+              "native": "ix://filament/native/Rational"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Ratio"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-23",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Money",
+              "native": "ix://filament/native/Decimal",
+              "lower": "0",
+              "upper": "9"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/Money"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-24",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Ratio",
+              "native": "ix://filament/native/Rational"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/Ratio"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/0",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-25",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://filament/native/Float32"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://filament/native/String"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/1/positions/0/typeRef",
+          "value": "ix://filament/native/UUID"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/1/positions/1/typeRef",
+          "value": "ix://filament/native/Timestamp"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/2/positions/0/typeRef",
+          "value": "ix://filament/native/Duration"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-26",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://filament/native/Float32"
+        },
+        {
+          "op": "add",
+          "path": "/variant_types/0/cases/1/payloadType",
+          "value": "ix://filament/native/String"
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/2/payloadType",
+          "value": "ix://filament/native/UUID"
+        },
+        {
+          "op": "add",
+          "path": "/variant_types/2/cases/0/payloadType",
+          "value": "ix://filament/native/Timestamp"
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/2/cases/1/payloadType",
+          "value": "ix://filament/native/Duration"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-27",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/RatioAlias",
+              "target": "ix://filament/native/Rational"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/RatioAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-28",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/MoneyAlias",
+              "target": "ix://filament/native/Decimal"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/MoneyAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-29",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/LabelAlias",
+              "target": "ix://filament/native/Text"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/LabelAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-30",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/RatioAlias",
+              "target": "ix://filament/native/Rational"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/RatioAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/0",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-31",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/MoneyAlias",
+              "target": "ix://filament/native/Decimal"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/MoneyAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-32",
+      "criterion": "FR-322-AC-182",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/LabelAlias",
+              "target": "ix://filament/native/Text"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/1/typeRef",
+          "value": "ix://acme/shapes/LabelAlias"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "invalid_model_binding",
+          "cause": "malformed-declaration",
+          "at": "/tuple_types/0/positions/1",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-33",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Money",
+              "native": "ix://filament/native/Decimal",
+              "lower": "0",
+              "upper": "9"
+            }
+          ]
+        },
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Outer",
+              "target": "ix://acme/shapes/Mid"
+            },
+            {
+              "node": "ix://acme/shapes/Mid",
+              "target": "ix://acme/shapes/Money"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Outer"
+        }
+      ],
+      "expected": {
+        "refused": {
+          "code": "unsupported_construct",
+          "cause": "declaration-form",
+          "at": "/variant_types/0/cases/0/payloadType",
+          "stage": "reader"
+        }
+      }
+    },
+    {
+      "name": "TK-34",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/FloatAlias",
+              "target": "ix://filament/native/Float64"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/FloatAlias"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/FloatAlias"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-35",
+      "criterion": "FR-322-AC-181",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/aliases",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Outer",
+              "target": "ix://acme/shapes/Mid"
+            },
+            {
+              "node": "ix://acme/shapes/Mid",
+              "target": "ix://acme/shapes/Last"
+            },
+            {
+              "node": "ix://acme/shapes/Last",
+              "target": "ix://filament/native/Float64"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Outer"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/Outer"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    },
+    {
+      "name": "TK-36",
+      "criterion": "FR-322-AC-380",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/value_types",
+          "value": [
+            {
+              "node": "ix://acme/shapes/Ratio",
+              "native": "ix://filament/native/Rational",
+              "numerator_min": "-3",
+              "numerator_max": "7",
+              "denominator_min": "1",
+              "denominator_max": "12"
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/variant_types/0/cases/0/payloadType",
+          "value": "ix://acme/shapes/Ratio"
+        },
+        {
+          "op": "replace",
+          "path": "/tuple_types/0/positions/0/typeRef",
+          "value": "ix://acme/shapes/Ratio"
+        }
+      ],
+      "expected": {
+        "admitted": true
+      }
+    }
+  ],
+  "recursion_cases": [
+    {
+      "name": "TR-01",
+      "criterion": "FR-322-AC-147",
+      "description": "Cell(Integer, List) and List{Nil, Cons(Cell)} reference one another: the document is admitted by intake",
+      "expected": {
+        "admitted": true,
+        "cycle": [
+          "Cell",
+          "List"
+        ]
+      }
+    },
+    {
+      "name": "TR-02",
+      "criterion": "FR-322-AC-147",
+      "description": "the two declaration nodes carry no recursion_group and are keyed by their owner alone",
+      "nodes": [
+        "Cell",
+        "List"
+      ],
+      "expected": {
+        "recursion_group": null,
+        "key_from_owner_only": true
+      }
+    },
+    {
+      "name": "TR-03",
+      "criterion": "FR-322-AC-147",
+      "description": "the structural walk out of List and Cell, by the position and member segments of FR-440",
+      "expected": {
+        "List": [
+          {
+            "path": [
+              "member:Cons",
+              "position:0"
+            ],
+            "type": "Cell"
+          }
+        ],
+        "Cell": [
+          {
+            "path": [
+              "position:0"
+            ],
+            "type": "Integer"
+          },
+          {
+            "path": [
+              "position:1"
+            ],
+            "type": "List"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TR-04",
+      "criterion": "FR-322-AC-147",
+      "description": "structural.eq over two List values: the walk re-enters List and Cell, reaches no text, and so has no leaf",
+      "operation": "filament.op.structural.eq",
+      "type": "List",
+      "expected": {
+        "leaves": []
+      }
+    }
+  ],
+  "wire_cases": [
+    {
+      "id": "TW-00",
+      "description": "the published package, unmutated",
+      "patch": [],
+      "schema": "valid",
+      "outcome": "admitted"
+    },
+    {
+      "id": "TW-01",
+      "description": "the Pair tuple node without owner",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/semantic_graph/nodes/0/owner"
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/0",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-02",
+      "description": "the Pair tuple node with a SourceOwner and no declaration",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/0/owner",
+          "value": {
+            "kind": "source",
+            "authority": "agent-ix",
+            "identity": "example"
+          }
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-03",
+      "description": "the Pair tuple node with a declaration beside its ModelOwner",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/semantic_graph/nodes/0/declaration",
+          "value": {
+            "qualified_name": [
+              "Pair"
+            ]
+          }
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-04",
+      "description": "the Pair tuple node whose ModelOwner carries a version label",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/semantic_graph/nodes/0/owner/version",
+          "value": "1.0.0"
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-06",
+      "description": "the Pair tuple node owned by the variant type Color",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/0/owner/node",
+          "value": "ix://acme/shapes/Color"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:missing_declaration",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "cause": "missing-selection",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-07",
+      "description": "the Pair tuple node owned by the object type Holder",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/0/owner/node",
+          "value": "ix://acme/shapes/Holder"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:missing_declaration",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "cause": "missing-selection",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-08",
+      "description": "the Pair tuple node owned by a node the document does not declare",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/0/owner/node",
+          "value": "ix://acme/shapes/Missing"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:missing_declaration",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "cause": "missing-selection",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-09",
+      "description": "the Shape variant type node owned by the tuple Pair",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/owner/node",
+          "value": "ix://acme/shapes/Pair"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:missing_declaration",
+      "locus": "/semantic_graph/nodes/3/owner",
+      "cause": "missing-selection",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-10",
+      "description": "the Shape variant type node without owner",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/semantic_graph/nodes/3/owner"
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/3",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-11",
+      "description": "a Shape value of the case Flag with an Integer payload term",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/26",
+          "value": {
+            "body": {
+              "term": "aggregate",
+              "members": [
+                {
+                  "term": "binding",
+                  "name": "Flag",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 0
+                            },
+                            "1"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 0
+                  },
+                  "1"
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "union_value",
+                "Flag",
+                {
+                  "operand": 1
+                },
+                {
+                  "operand": 2
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "union_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/26/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "union_value",
+              "Flag",
+              {
+                "node": 12
+              },
+              {
+                "node": 3
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/26",
+          "value": [
+            8,
+            12,
+            3
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/26",
+      "cause": "type-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-12",
+      "description": "a Shape value of the case Flag with no payload term",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/26",
+          "value": {
+            "body": {
+              "term": "aggregate",
+              "members": [
+                {
+                  "term": "binding",
+                  "name": "Flag",
+                  "value": {
+                    "term": "aggregate",
+                    "members": []
+                  }
+                }
+              ]
+            },
+            "dependencies": [],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "union_value",
+                "Flag",
+                {
+                  "operand": 0
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "union_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/26/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "union_value",
+              "Flag",
+              {
+                "node": 3
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/26",
+          "value": [
+            3
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/26",
+      "cause": "type-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-13",
+      "description": "a Shape value of the nullary case Empty with a payload term",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/25",
+          "value": {
+            "body": {
+              "term": "aggregate",
+              "members": [
+                {
+                  "term": "binding",
+                  "name": "Empty",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 0
+                            }
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 0
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "union_value",
+                "Empty",
+                {
+                  "operand": 1
+                },
+                {
+                  "operand": 2
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "union_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/25/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "union_value",
+              "Empty",
+              {
+                "node": 10
+              },
+              {
+                "node": 3
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/25",
+          "value": [
+            7,
+            10,
+            3
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/25",
+      "cause": "type-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-14",
+      "description": "a Shape value of a case Shape does not declare",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/25",
+          "value": {
+            "body": {
+              "term": "aggregate",
+              "members": [
+                {
+                  "term": "binding",
+                  "name": "Missing",
+                  "value": {
+                    "term": "aggregate",
+                    "members": []
+                  }
+                }
+              ]
+            },
+            "dependencies": [],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "union_value",
+                "Missing",
+                {
+                  "operand": 0
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "union_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/25/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "union_value",
+              "Missing",
+              {
+                "node": 3
+              }
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/25",
+      "cause": "type-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-15",
+      "description": "a union_value whose semantic_type is the enumeration Color",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/25",
+          "value": {
+            "body": {
+              "term": "aggregate",
+              "members": [
+                {
+                  "term": "binding",
+                  "name": "Red",
+                  "value": {
+                    "term": "aggregate",
+                    "members": []
+                  }
+                }
+              ]
+            },
+            "dependencies": [],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "union_value",
+                "Red",
+                {
+                  "operand": 0
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "union_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Color"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/25/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "union_value",
+              "Red",
+              {
+                "node": 4
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/25",
+          "value": [
+            4
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/25",
+      "cause": "type-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-16",
+      "description": "a case over Shape with no arm for Flag",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/33",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "case",
+              "operation": {
+                "identity": "filament.op.control.case",
+                "laws": [],
+                "leaves": [],
+                "member": null,
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "ps",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "1",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                },
+                {
+                  "term": "binding",
+                  "name": "Both",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "aggregate",
+                        "members": [
+                          {
+                            "term": "reference",
+                            "target": {
+                              "package": "example",
+                              "path": [
+                                "value",
+                                "parameter",
+                                "name",
+                                {
+                                  "operand": 0
+                                },
+                                "bq",
+                                "level",
+                                {
+                                  "operand": 1
+                                },
+                                "2",
+                                {
+                                  "operand": 3
+                                }
+                              ],
+                              "ordinal": 0
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 1
+                            },
+                            "1"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "term": "binding",
+                  "name": "Empty",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "aggregate",
+                        "members": []
+                      },
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 1
+                            },
+                            "0"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "integer"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 1
+                  },
+                  "0"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 1
+                  },
+                  "1"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "bq",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "2",
+                  {
+                    "operand": 3
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "ps",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "case",
+                "case",
+                "filament.op.control.case",
+                {
+                  "operand": 4
+                },
+                "Both",
+                {
+                  "operand": 5
+                },
+                {
+                  "operand": 6
+                },
+                "Empty",
+                {
+                  "operand": 7
+                },
+                {
+                  "operand": 1
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "case",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "integer"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/33/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "case",
+              "case",
+              "filament.op.control.case",
+              {
+                "node": 15
+              },
+              "Both",
+              {
+                "node": 17
+              },
+              {
+                "node": 12
+              },
+              "Empty",
+              {
+                "node": 11
+              },
+              {
+                "node": 8
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/33",
+          "value": [
+            9,
+            8,
+            3,
+            0,
+            15,
+            17,
+            12,
+            11
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/33",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-17",
+      "description": "a case over Shape with its arms in declaration order Flag, Empty, Both instead of the member order Both, Empty, Flag",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/33",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "case",
+              "operation": {
+                "identity": "filament.op.control.case",
+                "laws": [],
+                "leaves": [],
+                "member": null,
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "ps",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "1",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                },
+                {
+                  "term": "binding",
+                  "name": "Flag",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "aggregate",
+                        "members": [
+                          {
+                            "term": "reference",
+                            "target": {
+                              "package": "example",
+                              "path": [
+                                "value",
+                                "parameter",
+                                "name",
+                                {
+                                  "operand": 0
+                                },
+                                "bf",
+                                "level",
+                                {
+                                  "operand": 1
+                                },
+                                "2",
+                                {
+                                  "operand": 3
+                                }
+                              ],
+                              "ordinal": 0
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 1
+                            },
+                            "2"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "term": "binding",
+                  "name": "Empty",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "aggregate",
+                        "members": []
+                      },
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 1
+                            },
+                            "0"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "term": "binding",
+                  "name": "Both",
+                  "value": {
+                    "term": "aggregate",
+                    "members": [
+                      {
+                        "term": "aggregate",
+                        "members": [
+                          {
+                            "term": "reference",
+                            "target": {
+                              "package": "example",
+                              "path": [
+                                "value",
+                                "parameter",
+                                "name",
+                                {
+                                  "operand": 0
+                                },
+                                "bq",
+                                "level",
+                                {
+                                  "operand": 1
+                                },
+                                "2",
+                                {
+                                  "operand": 4
+                                }
+                              ],
+                              "ordinal": 0
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "term": "reference",
+                        "target": {
+                          "package": "example",
+                          "path": [
+                            "value",
+                            "literal",
+                            {
+                              "operand": 1
+                            },
+                            "1"
+                          ],
+                          "ordinal": 0
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "integer"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 1
+                  },
+                  "0"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 1
+                  },
+                  "1"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "literal",
+                  {
+                    "operand": 1
+                  },
+                  "2"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "bf",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "2",
+                  {
+                    "operand": 3
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "bq",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "2",
+                  {
+                    "operand": 4
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "ps",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "case",
+                "case",
+                "filament.op.control.case",
+                {
+                  "operand": 5
+                },
+                "Flag",
+                {
+                  "operand": 6
+                },
+                {
+                  "operand": 7
+                },
+                "Empty",
+                {
+                  "operand": 8
+                },
+                "Both",
+                {
+                  "operand": 9
+                },
+                {
+                  "operand": 10
+                },
+                {
+                  "operand": 1
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "case",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "integer"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/33/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "case",
+              "case",
+              "filament.op.control.case",
+              {
+                "node": 15
+              },
+              "Flag",
+              {
+                "node": 16
+              },
+              {
+                "node": 13
+              },
+              "Empty",
+              {
+                "node": 11
+              },
+              "Both",
+              {
+                "node": 17
+              },
+              {
+                "node": 12
+              },
+              {
+                "node": 8
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/33",
+          "value": [
+            9,
+            8,
+            3,
+            7,
+            0,
+            15,
+            16,
+            13,
+            11,
+            17,
+            12
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/33",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-18",
+      "description": "a tuple.project over Pair at position 2",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/31",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "query",
+              "operation": {
+                "identity": "filament.op.tuple.project",
+                "laws": [],
+                "leaves": [],
+                "member": {
+                  "declaration": {
+                    "package": "acme/shapes",
+                    "path": [
+                      "model",
+                      "tuple_value_type",
+                      "ix://acme/shapes/Pair"
+                    ],
+                    "ordinal": 0
+                  },
+                  "kind": "position",
+                  "position": 2
+                },
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pp",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "integer"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "tuple_value_type",
+                  "ix://acme/shapes/Pair"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pp",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "query",
+                "query",
+                "filament.op.tuple.project",
+                {
+                  "operand": 2
+                },
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 1
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "query",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "integer"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/31/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "query",
+              "query",
+              "filament.op.tuple.project",
+              {
+                "node": 0
+              },
+              {
+                "node": 14
+              },
+              {
+                "node": 8
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/31",
+          "value": [
+            9,
+            8,
+            0,
+            14
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/31",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-19",
+      "description": "a tuple.project over a Pair value whose member names the tuple Swap",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/31",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "query",
+              "operation": {
+                "identity": "filament.op.tuple.project",
+                "laws": [],
+                "leaves": [],
+                "member": {
+                  "declaration": {
+                    "package": "acme/shapes",
+                    "path": [
+                      "model",
+                      "tuple_value_type",
+                      "ix://acme/shapes/Swap"
+                    ],
+                    "ordinal": 0
+                  },
+                  "kind": "position",
+                  "position": 0
+                },
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pp",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "integer"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "tuple_value_type",
+                  "ix://acme/shapes/Swap"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pp",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "query",
+                "query",
+                "filament.op.tuple.project",
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 4
+                },
+                {
+                  "operand": 1
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "query",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "integer"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/31/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "query",
+              "query",
+              "filament.op.tuple.project",
+              {
+                "node": 1
+              },
+              {
+                "node": 14
+              },
+              {
+                "node": 8
+              }
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/31",
+          "value": [
+            9,
+            8,
+            0,
+            1,
+            14
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/31",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-20",
+      "description": "a tuple.project whose position is the beyond-safe KeyOrdinal string 9007199254740993",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/31",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "query",
+              "operation": {
+                "identity": "filament.op.tuple.project",
+                "laws": [],
+                "leaves": [],
+                "member": {
+                  "declaration": {
+                    "package": "acme/shapes",
+                    "path": [
+                      "model",
+                      "tuple_value_type",
+                      "ix://acme/shapes/Pair"
+                    ],
+                    "ordinal": 0
+                  },
+                  "kind": "position",
+                  "position": "9007199254740993"
+                },
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pp",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "integer"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "tuple_value_type",
+                  "ix://acme/shapes/Pair"
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pp",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "query",
+                "query",
+                "filament.op.tuple.project",
+                {
+                  "operand": 2
+                },
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 1
+                }
+              ],
+              "ordinal": 1
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "query",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "integer"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/31/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "query",
+              "query",
+              "filament.op.tuple.project",
+              {
+                "node": 0
+              },
+              {
+                "node": 14
+              },
+              {
+                "node": 8
+              }
+            ],
+            "ordinal": 1
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/31",
+          "value": [
+            9,
+            8,
+            0,
+            14
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/31",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-21",
+      "description": "an enum_value of Color whose case Blue is not a case of Color",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/30",
+          "value": {
+            "body": {
+              "term": "literal",
+              "type": {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "variant_type",
+                  "ix://acme/shapes/Color"
+                ],
+                "ordinal": 0
+              },
+              "value": "Blue",
+              "value_kind": "enum"
+            },
+            "dependencies": [
+              {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "variant_type",
+                  "ix://acme/shapes/Color"
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "enum_value",
+                {
+                  "operand": 0
+                },
+                "Blue"
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "declaration"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "enum_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Color"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/30/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "enum_value",
+              {
+                "node": 4
+              },
+              "Blue"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_semantic_graph",
+      "locus": "/semantic_graph/nodes/30",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-22",
+      "description": "an enum_value over the union Shape, which a nullary member never is",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/30",
+          "value": {
+            "body": {
+              "term": "literal",
+              "type": {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "variant_type",
+                  "ix://acme/shapes/Shape"
+                ],
+                "ordinal": 0
+              },
+              "value": "Empty",
+              "value_kind": "enum"
+            },
+            "dependencies": [
+              {
+                "package": "acme/shapes",
+                "path": [
+                  "model",
+                  "variant_type",
+                  "ix://acme/shapes/Shape"
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "value",
+                "enum_value",
+                {
+                  "operand": 0
+                },
+                "Empty"
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "value",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "declaration"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "enum_value",
+            "semantic_type": {
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/30/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "value",
+              "enum_value",
+              {
+                "node": 3
+              },
+              "Empty"
+            ],
+            "ordinal": 0
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/operand_rows/30",
+          "value": [
+            3
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_semantic_graph",
+      "locus": "/semantic_graph/nodes/30",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-23",
+      "description": "an enum.eq over two Shape values",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/34",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "binary",
+              "operation": {
+                "identity": "filament.op.enum.eq",
+                "laws": [],
+                "leaves": [],
+                "member": null,
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pshape1",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                },
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pshape2",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "1",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "boolean"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pshape1",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pshape2",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "binary",
+                "binary",
+                "filament.op.enum.eq",
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 4
+                },
+                {
+                  "operand": 5
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "binary",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "boolean"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/34/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "binary",
+              "binary",
+              "filament.op.enum.eq",
+              {
+                "node": 23
+              },
+              {
+                "node": 24
+              },
+              {
+                "node": 7
+              }
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/34",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-24",
+      "description": "a structural.eq over two Color values",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/36",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "binary",
+              "operation": {
+                "identity": "filament.op.structural.eq",
+                "laws": [],
+                "leaves": [],
+                "member": null,
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pc1",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                },
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pc2",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "1",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "boolean"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pc1",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pc2",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "binary",
+                "binary",
+                "filament.op.structural.eq",
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 4
+                },
+                {
+                  "operand": 5
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "binary",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "boolean"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/36/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "binary",
+              "binary",
+              "filament.op.structural.eq",
+              {
+                "node": 21
+              },
+              {
+                "node": 22
+              },
+              {
+                "node": 7
+              }
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:ill_typed",
+      "locus": "/semantic_graph/nodes/36",
+      "cause": "operator-ineligible",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-25",
+      "description": "a structural.eq over two List values that supplies a leaf: the recursive List reaches no text, so its walk has none",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/35",
+          "value": {
+            "body": {
+              "term": "application",
+              "operator": "binary",
+              "operation": {
+                "identity": "filament.op.structural.eq",
+                "laws": [],
+                "leaves": [
+                  {
+                    "path": [
+                      "recursion:0"
+                    ],
+                    "laws": [],
+                    "mode": null
+                  }
+                ],
+                "member": null,
+                "mode": null
+              },
+              "arguments": [
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pl1",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "0",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                },
+                {
+                  "term": "reference",
+                  "target": {
+                    "package": "example",
+                    "path": [
+                      "value",
+                      "parameter",
+                      "name",
+                      {
+                        "operand": 0
+                      },
+                      "pl2",
+                      "level",
+                      {
+                        "operand": 1
+                      },
+                      "1",
+                      {
+                        "operand": 2
+                      }
+                    ],
+                    "ordinal": 0
+                  }
+                }
+              ],
+              "result_type": {
+                "package": "example",
+                "path": [
+                  "scalar_type",
+                  "boolean"
+                ],
+                "ordinal": 0
+              }
+            },
+            "dependencies": [
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pl1",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "0",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              },
+              {
+                "package": "example",
+                "path": [
+                  "value",
+                  "parameter",
+                  "name",
+                  {
+                    "operand": 0
+                  },
+                  "pl2",
+                  "level",
+                  {
+                    "operand": 1
+                  },
+                  "1",
+                  {
+                    "operand": 2
+                  }
+                ],
+                "ordinal": 0
+              }
+            ],
+            "node_id": {
+              "package": "example",
+              "path": [
+                "expression",
+                "binary",
+                "binary",
+                "filament.op.structural.eq",
+                {
+                  "operand": 3
+                },
+                {
+                  "operand": 4
+                },
+                {
+                  "operand": 5
+                }
+              ],
+              "ordinal": 0
+            },
+            "node_tag": "expression",
+            "occurrences": [
+              {
+                "ordinal": 0,
+                "role": "expression"
+              }
+            ],
+            "schema_version": "filament.checked-semantic-graph/v2",
+            "semantic_form": "binary",
+            "semantic_type": {
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "boolean"
+              ],
+              "ordinal": 0
+            }
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/35/node_id",
+          "value": {
+            "package": "example",
+            "path": [
+              "expression",
+              "binary",
+              "binary",
+              "filament.op.structural.eq",
+              {
+                "node": 19
+              },
+              {
+                "node": 20
+              },
+              {
+                "node": 7
+              }
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/semantic_graph/nodes/35",
+      "cause": "operation-law-mismatch",
+      "stage": "reader"
+    },
+    {
+      "id": "TW-26",
+      "description": "a tuple.project whose position is the string 0, which is no KeyOrdinal",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/31/body/operation/member/position",
+          "value": "0"
+        }
+      ],
+      "schema": "invalid",
+      "outcome": "refused:malformed_wire",
+      "locus": "/semantic_graph/nodes/31",
+      "stage": "schema"
+    },
+    {
+      "id": "TW-27",
+      "description": "the Pair tuple node whose body carries a Boolean literal member: a model declaration node's body is the empty aggregate, and its structural node id is unchanged",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/semantic_graph/nodes/0/body/members/-",
+          "value": {
+            "term": "literal",
+            "type": {
+              "ordinal": 0,
+              "package": "example",
+              "path": [
+                "scalar_type",
+                "boolean"
+              ]
+            },
+            "value": true,
+            "value_kind": "boolean"
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/semantic_graph/nodes/0/node_id",
+      "cause": "invalid-derived-shape",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-28",
+      "description": "the Pair tuple node owned by a node the document does not declare, and the Pair-typed parameter whose semantic_type names a node the graph lacks: the owner join (stage 2) is reported before the dangling semantic_type edge (stage 4)",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/0/owner/node",
+          "value": "ix://acme/shapes/Missing"
+        },
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/14/semantic_type",
+          "value": {
+            "package": "acme/shapes",
+            "path": [
+              "model",
+              "tuple_value_type",
+              "ix://acme/shapes/Absent"
+            ],
+            "ordinal": 0
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:missing_declaration",
+      "locus": "/semantic_graph/nodes/0/owner",
+      "cause": "missing-selection",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-29",
+      "description": "the Shape variant type node with no source_map entry: a model declaration node that carries no located occurrence",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/source_map/3"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/source_map",
+      "cause": "invalid-value",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-30",
+      "description": "the Shape variant type node's occurrence and source_map entry with role expression instead of generated",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/occurrences/0/role",
+          "value": "expression"
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/3/role",
+          "value": "expression"
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/source_map/3",
+      "cause": "invalid-value",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-31",
+      "description": "the Shape variant type node's source_map entry at ordinal 1 instead of 0",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/3/occurrences/0/ordinal",
+          "value": 1
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/3/ordinal",
+          "value": 1
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/source_map/3",
+      "cause": "invalid-value",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-32",
+      "description": "the Shape variant type node's source_map entry with a region of its own, [1048,1052), instead of the model root's region",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/source_map/3/regions",
+          "value": [
+            {
+              "end": 1052,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 1048
+            }
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/source_map/3",
+      "cause": "invalid-value",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-33",
+      "description": "a second source_map entry for the Shape variant type node, role expression at ordinal 0 with the model root's region, appended after every other entry",
+      "patch": [
+        {
+          "op": "add",
+          "path": "/semantic_graph/nodes/3/occurrences/-",
+          "value": {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        },
+        {
+          "op": "add",
+          "path": "/source_map/-",
+          "value": {
+            "node_id": {
+              "ordinal": 0,
+              "package": "acme/shapes",
+              "path": [
+                "model",
+                "variant_type",
+                "ix://acme/shapes/Shape"
+              ]
+            },
+            "ordinal": 0,
+            "regions": [
+              {
+                "end": 1,
+                "source": {
+                  "authority": "agent-ix",
+                  "identity": "example"
+                },
+                "start": 0
+              }
+            ],
+            "role": "expression"
+          }
+        }
+      ],
+      "schema": "valid",
+      "outcome": "refused:invalid_package",
+      "locus": "/source_map/38",
+      "cause": "invalid-value",
+      "stage": "graph"
+    },
+    {
+      "id": "TW-34",
+      "description": "the model root's entry and the entry of every model declaration node moved together to the selecting region [5,9): each node's regions equal its root's, so the package is admitted",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/source_map/0/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/1/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/2/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/3/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/4/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/5/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/6/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        },
+        {
+          "op": "replace",
+          "path": "/source_map/37/regions",
+          "value": [
+            {
+              "end": 9,
+              "source": {
+                "authority": "agent-ix",
+                "identity": "example"
+              },
+              "start": 5
+            }
+          ]
+        }
+      ],
+      "schema": "valid",
+      "outcome": "admitted"
+    }
+  ]
+}

@@ -1,0 +1,492 @@
+{
+  "profile_selections": [],
+  "package": {
+    "capability_report": [
+      {
+        "disposition": "available",
+        "feature": "filament.value.complete/v1"
+      }
+    ],
+    "contract_version": "filament.checked-package/v2",
+    "diagnostics": {
+      "catalog": {
+        "authority": "agent-ix",
+        "identity": "filament.native.diagnostics/v1"
+      },
+      "entries": []
+    },
+    "lock": {
+      "definition_selections": [],
+      "dependency_selections": [
+        {
+          "identity": "test/predicates"
+        }
+      ],
+      "edition": {
+        "definition": {
+          "authority": "agent-ix",
+          "identity": "filament-edition"
+        },
+        "role": "edition"
+      },
+      "profile_selections": [],
+      "required_features": [
+        "filament.value.complete/v1"
+      ],
+      "sources": [
+        {
+          "authority": "agent-ix",
+          "identity": "example"
+        }
+      ]
+    },
+    "name": "example",
+    "semantic_graph": {
+      "graph_version": "filament.checked-semantic-graph/v2",
+      "nodes": [
+        {
+          "body": {
+            "members": [],
+            "term": "aggregate"
+          },
+          "dependencies": [],
+          "node_id": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "node_tag": "scalar_type",
+          "occurrences": [
+            {
+              "ordinal": 0,
+              "role": "type"
+            }
+          ],
+          "schema_version": "filament.checked-semantic-graph/v2",
+          "semantic_form": "integer",
+          "semantic_type": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          }
+        },
+        {
+          "body": {
+            "members": [],
+            "term": "aggregate"
+          },
+          "dependencies": [],
+          "node_id": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "boolean"
+            ]
+          },
+          "node_tag": "scalar_type",
+          "occurrences": [
+            {
+              "ordinal": 0,
+              "role": "type"
+            }
+          ],
+          "schema_version": "filament.checked-semantic-graph/v2",
+          "semantic_form": "boolean",
+          "semantic_type": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "boolean"
+            ]
+          }
+        },
+        {
+          "body": {
+            "members": [
+              {
+                "name": "min",
+                "term": "binding",
+                "value": {
+                  "term": "literal",
+                  "type": {
+                    "ordinal": 0,
+                    "package": "test/predicates",
+                    "path": [
+                      "scalar_type",
+                      "integer"
+                    ]
+                  },
+                  "value": "0",
+                  "value_kind": "integer"
+                }
+              },
+              {
+                "name": "max",
+                "term": "binding",
+                "value": {
+                  "term": "literal",
+                  "type": {
+                    "ordinal": 0,
+                    "package": "test/predicates",
+                    "path": [
+                      "scalar_type",
+                      "integer"
+                    ]
+                  },
+                  "value": "9",
+                  "value_kind": "integer"
+                }
+              }
+            ],
+            "term": "aggregate"
+          },
+          "dependencies": [
+            {
+              "ordinal": 0,
+              "package": "test/predicates",
+              "path": [
+                "scalar_type",
+                "integer"
+              ]
+            }
+          ],
+          "node_id": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "bounded_domain",
+              "integer_range",
+              "min",
+              {
+                "operand": 0
+              },
+              "0",
+              "max",
+              "9"
+            ]
+          },
+          "node_tag": "bounded_domain",
+          "occurrences": [
+            {
+              "ordinal": 0,
+              "role": "type"
+            }
+          ],
+          "schema_version": "filament.checked-semantic-graph/v2",
+          "semantic_form": "integer_range",
+          "semantic_type": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          }
+        },
+        {
+          "body": {
+            "arguments": [
+              {
+                "node": {
+                  "ordinal": 0,
+                  "package": "test/predicates",
+                  "path": [
+                    "Lib",
+                    "is_small"
+                  ]
+                },
+                "package": "test/predicates",
+                "term": "dependency_reference"
+              },
+              {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "test/predicates",
+                  "path": [
+                    "bounded_domain",
+                    "integer_range",
+                    "min",
+                    {
+                      "operand": 0
+                    },
+                    "0",
+                    "max",
+                    "9"
+                  ]
+                },
+                "value": "3",
+                "value_kind": "integer"
+              }
+            ],
+            "operation": {
+              "identity": "filament.op.function.call",
+              "laws": [],
+              "leaves": [],
+              "member": null,
+              "mode": null
+            },
+            "operator": "call",
+            "result_type": {
+              "ordinal": 0,
+              "package": "test/predicates",
+              "path": [
+                "scalar_type",
+                "boolean"
+              ]
+            },
+            "term": "application"
+          },
+          "declaration": {
+            "qualified_name": [
+              "App",
+              "check"
+            ]
+          },
+          "dependencies": [],
+          "node_id": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "App",
+              "check"
+            ]
+          },
+          "node_tag": "function",
+          "occurrences": [
+            {
+              "ordinal": 0,
+              "role": "declaration"
+            }
+          ],
+          "schema_version": "filament.checked-semantic-graph/v2",
+          "semantic_form": "pure_function",
+          "semantic_type": {
+            "ordinal": 0,
+            "package": "test/predicates",
+            "path": [
+              "scalar_type",
+              "boolean"
+            ]
+          }
+        }
+      ],
+      "operand_rows": [
+        [],
+        [],
+        [
+          0
+        ],
+        [
+          0
+        ]
+      ]
+    },
+    "source_map": [
+      {
+        "node_id": {
+          "ordinal": 0,
+          "package": "test/predicates",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        },
+        "ordinal": 0,
+        "regions": [
+          {
+            "end": 1,
+            "source": {
+              "authority": "agent-ix",
+              "identity": "example"
+            },
+            "start": 0
+          }
+        ],
+        "role": "type"
+      },
+      {
+        "node_id": {
+          "ordinal": 0,
+          "package": "test/predicates",
+          "path": [
+            "scalar_type",
+            "boolean"
+          ]
+        },
+        "ordinal": 0,
+        "regions": [
+          {
+            "end": 2,
+            "source": {
+              "authority": "agent-ix",
+              "identity": "example"
+            },
+            "start": 1
+          }
+        ],
+        "role": "type"
+      },
+      {
+        "node_id": {
+          "ordinal": 0,
+          "package": "test/predicates",
+          "path": [
+            "bounded_domain",
+            "integer_range",
+            "min",
+            {
+              "node": 0
+            },
+            "0",
+            "max",
+            "9"
+          ]
+        },
+        "ordinal": 0,
+        "regions": [
+          {
+            "end": 3,
+            "source": {
+              "authority": "agent-ix",
+              "identity": "example"
+            },
+            "start": 2
+          }
+        ],
+        "role": "type"
+      },
+      {
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "App",
+            "check"
+          ]
+        },
+        "ordinal": 0,
+        "regions": [
+          {
+            "end": 4,
+            "source": {
+              "authority": "agent-ix",
+              "identity": "example"
+            },
+            "start": 3
+          }
+        ],
+        "role": "declaration"
+      }
+    ]
+  },
+  "dependencies": [
+    {
+      "identity": "test/predicates",
+      "sources": [
+        {
+          "authority": "agent-ix",
+          "identity": "test/predicates"
+        }
+      ]
+    }
+  ],
+  "replay_target": {
+    "members": {
+      "function": "check"
+    },
+    "arguments": false,
+    "occurrence_key": {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "App",
+          "check"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": "0"
+    },
+    "over": null
+  },
+  "source": {
+    "kind": "input",
+    "assignments": []
+  },
+  "obligation_identity": {
+    "node_id": {
+      "package": "example",
+      "path": [
+        "App",
+        "check"
+      ],
+      "ordinal": 0
+    },
+    "model": null,
+    "ordinal": 0
+  },
+  "backend": "fixture.backend",
+  "state_environment": [],
+  "accounting_limits": {
+    "integer_bits": "0",
+    "decimal_digits": "0",
+    "scale_expansion": "0",
+    "text_input_bytes": "0",
+    "text_scalars": "0",
+    "normalized_scalars": "0",
+    "unit_edges": "0",
+    "value_occurrences": "0",
+    "work_units": "0",
+    "result_units": "0"
+  },
+  "stage_limits": {},
+  "supplied_limits": {
+    "admission_work_units": "0",
+    "conversion_work_units": "0",
+    "numeric_magnitude_bits": "0"
+  },
+  "object_environment": null,
+  "declared_domains": [
+    {
+      "domain": {
+        "kind": "node",
+        "node": {
+          "package": "test/predicates",
+          "path": [
+            "bounded_domain",
+            "integer_range",
+            "min",
+            {
+              "node": 0
+            },
+            "0",
+            "max",
+            "9"
+          ],
+          "ordinal": 0
+        },
+        "path": [
+          "0"
+        ]
+      },
+      "kind": {
+        "kind": "integer"
+      },
+      "bound": {
+        "kind": "integer_range",
+        "lower": "0",
+        "upper": "9"
+      }
+    }
+  ],
+  "byte_provision": []
+}

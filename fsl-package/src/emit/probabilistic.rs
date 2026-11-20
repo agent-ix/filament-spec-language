@@ -208,7 +208,7 @@ fn region_of(
         .region(location)
         .ok_or(EmitRefusal::SourceMapInvariant)?;
     Ok(CheckedSourceRegion {
-        source: source_artifact(graph.source()),
+        source: source_artifact(region.source()),
         start: region.start(),
         end: region.end(),
     })

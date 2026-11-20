@@ -837,7 +837,7 @@ impl Pass<'_, '_> {
                 span: form.profile.span,
             }));
         }
-        let scheduler = keep(refusals, self.scheduler(form, &subject));
+        let scheduler = keep(refusals, self.scheduler(index, form, &subject));
         let over = keep(refusals, self.over(form))?;
         let mut claim = ClaimCx {
             index,
@@ -1070,6 +1070,7 @@ impl Pass<'_, '_> {
     /// subject's model, or `every scheduler` with its fairness set.
     fn scheduler(
         &self,
+        index: usize,
         form: &ProbabilisticForm,
         subject: &ModelSubjectRef,
     ) -> Result<SchedulerCheck, CheckRefusal> {
@@ -1102,10 +1103,11 @@ impl Pass<'_, '_> {
                 let mut declaring: Vec<Option<DeclarationKey>> = Vec::new();
                 let mut refused = None;
                 for written in fairness {
-                    match self
-                        .input
-                        .operation(&written.operation, Some(&subject.alias))
-                    {
+                    match self.input.operation(
+                        &written.operation,
+                        Some(&subject.alias),
+                        Some(index),
+                    ) {
                         Ok((operation, _)) => {
                             let constraint = checked_constraint(
                                 written,

@@ -624,6 +624,14 @@ fn a_workload_weighing_two_operations_of_one_name_is_refused_at_its_span() {
 /// `units`, each a source identity and its text, assembled as one package
 /// with no selected domain package, through S3.
 fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<CheckRefusal>> {
+    check_units_named("source-probabilistic", units)
+}
+
+/// [`check_units`] for the package named `package`.
+fn check_units_named(
+    package: &str,
+    units: &[(&str, &str)],
+) -> Result<CheckedPackage, Vec<CheckRefusal>> {
     let units: Vec<_> = units
         .iter()
         .enumerate()
@@ -659,7 +667,7 @@ fn check_units(units: &[(&str, &str)]) -> Result<CheckedPackage, Vec<CheckRefusa
     )
     .expect("empty selected models admit");
     let mut declarations = PackageDeclarations::assemble_units(
-        "source-probabilistic".to_owned(),
+        package.to_owned(),
         units,
         selected,
         Vec::new(),
@@ -760,4 +768,129 @@ fn a_refusal_in_a_later_unit_is_located_in_that_unit() {
         .get(region.start() as usize..region.end() as usize)
         .expect("the region lies in the second unit");
     assert!(label.contains('W'), "{label}");
+}
+
+const OWN_A: &str = "object A { n: Integer; operation t(k: Int[1, 3]) modifies self.n; }\n\
+    time A dense unit ms;\n";
+const OWN_B: &str = "unit s : Time = rational(1000, 1) * ms;\n\
+    object B { n: Integer; operation u(k: Int[1, 3]) modifies self.n; }\n\
+    time B dense unit s;\n";
+
+/// The cause of the one refusal of `units`, which S3 must give.
+fn refused_cause(units: &[(&str, &str)]) -> ProbabilisticCause {
+    let refusals = match check_units(units) {
+        Ok(_) => panic!("S3 admits a declaration on another unit's type"),
+        Err(refusals) => refusals,
+    };
+    let [CheckRefusal {
+        cause: CheckCause::Probabilistic(cause),
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("one probabilistic refusal: {refusals:?}");
+    };
+    (**cause).clone()
+}
+
+/// FR-569: a source object type is visible only in the unit that declares it,
+/// so a probabilistic declaration of one unit on a type of another is refused
+/// as naming nothing, whichever unit declares the type.
+#[trace("TC-620", "FR-185-AC-14")]
+#[test]
+fn a_declaration_on_another_units_source_type_is_refused() {
+    let on_a = [
+        ("a reward", "reward cost on A::t = 1;\n"),
+        ("a random parameter", "random A::t(k) ~ { 1: 1, 3: 3 };\n"),
+        ("a delay", "delay A::t ~ discrete { 1 s: 1, 2 s: 1 };\n"),
+    ];
+    let on_b = [
+        ("a reward", "reward cost on B::u = 1;\n"),
+        ("a random parameter", "random B::u(k) ~ { 1: 1, 3: 3 };\n"),
+        ("a delay", "delay B::u ~ discrete { 1 ms: 1, 2 ms: 1 };\n"),
+    ];
+    for (what, text) in on_a {
+        let second = format!("{OWN_B}{text}");
+        let cause = refused_cause(&[("test:first", OWN_A), ("test:second", &second)]);
+        assert!(
+            matches!(cause, ProbabilisticCause::UnresolvedOperation { .. }),
+            "{what} of unit b on A: {cause:?}"
+        );
+    }
+    for (what, text) in on_b {
+        let first = format!("{OWN_A}{text}");
+        let cause = refused_cause(&[("test:first", &first), ("test:second", OWN_B)]);
+        assert!(
+            matches!(cause, ProbabilisticCause::UnresolvedOperation { .. }),
+            "{what} of unit a on B: {cause:?}"
+        );
+    }
+    let second = format!("{OWN_B}workload W on A {{ weight A::t = 1; }}\n");
+    let cause = refused_cause(&[("test:first", OWN_A), ("test:second", &second)]);
+    assert!(
+        matches!(cause, ProbabilisticCause::UnresolvedModel { .. }),
+        "a workload of unit b on A: {cause:?}"
+    );
+    let first = format!("{OWN_A}workload W on B {{ weight B::u = 1; }}\n");
+    let cause = refused_cause(&[("test:first", &first), ("test:second", OWN_B)]);
+    assert!(
+        matches!(cause, ProbabilisticCause::UnresolvedModel { .. }),
+        "a workload of unit a on B: {cause:?}"
+    );
+}
+
+/// FR-096: each probabilistic node's source map region names the unit that
+/// declares it, with that unit's offsets.
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn the_source_map_region_of_a_later_units_declaration_names_that_unit() {
+    let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)])
+        .unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    assert_eq!(probabilistic(&wire, "delay_distribution").len(), 2);
+    let text: String = HEADER
+        .lines()
+        .take(3)
+        .map(|line| format!("{line}\n"))
+        .collect::<String>()
+        + SECOND_UNIT;
+    let entries: Vec<&Value> = wire["source_map"]
+        .as_array()
+        .expect("source map")
+        .iter()
+        .filter(|entry| {
+            let path = &entry["node_id"]["path"];
+            path[1] == "delay_distribution" && path[3] == "u"
+        })
+        .collect();
+    assert!(!entries.is_empty(), "a source map entry for the delay");
+    for region in entries
+        .iter()
+        .flat_map(|entry| entry["regions"].as_array().expect("regions"))
+    {
+        assert_eq!(region["source"]["identity"], "test:second", "{region}");
+        let (start, end) = (
+            region["start"].as_u64().expect("start") as usize,
+            region["end"].as_u64().expect("end") as usize,
+        );
+        let label = text.get(start..end).expect("a region of the second unit");
+        assert!(label.contains("delay"), "{label}");
+    }
+}
+
+/// A package named like a later unit's identity (`acme/v/2`) keys its source
+/// types under that name, whichever unit declares them.
+#[trace("TC-3012", "FR-740-AC-5")]
+#[test]
+fn a_package_name_ending_in_a_number_keys_its_source_types_under_that_name() {
+    let package = check_units_named(
+        "acme/v/2",
+        &[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)],
+    )
+    .unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    for name in ["A", "B"] {
+        assert_eq!(source_node(&wire, name)["package"], "acme/v/2", "{name}");
+    }
+    assert_eq!(probabilistic(&wire, "delay_distribution").len(), 2);
+    assert_eq!(probabilistic(&wire, "workload").len(), 2);
 }

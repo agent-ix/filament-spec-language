@@ -136,21 +136,6 @@ pub fn declaring_node_key(key: &DeclarationKey, package_name: &str) -> Option<No
     }
 }
 
-/// The checked package's name a unit's source model identity `source/<name>` (or
-/// `source/<name>/<position>` for a later unit of the package) is minted from.
-#[must_use]
-pub(crate) fn source_package_name(identity: &str) -> Option<&str> {
-    let rest = identity.strip_prefix("source/")?;
-    Some(match rest.rsplit_once('/') {
-        Some((name, position))
-            if !position.is_empty() && position.bytes().all(|byte| byte.is_ascii_digit()) =>
-        {
-            name
-        }
-        _ => rest,
-    })
-}
-
 /// The own declaration node of the object type `key` declares in the unit's
 /// source: the checked package's name and its type name, at ordinal 0 (every
 /// unit of a package names its types under the package name).

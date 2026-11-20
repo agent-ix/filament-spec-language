@@ -1,0 +1,619 @@
+{
+  "contract_version": "filament.checked-package/v2",
+  "lock": {
+    "sources": [
+      {
+        "authority": "agent-ix",
+        "identity": "example"
+      },
+      {
+        "authority": "agent-ix",
+        "identity": "example-units"
+      }
+    ],
+    "edition": {
+      "role": "edition",
+      "definition": {
+        "authority": "agent-ix",
+        "identity": "filament-edition"
+      }
+    },
+    "profile_selections": [],
+    "definition_selections": [
+      {
+        "authority": "agent-ix",
+        "identity": "example-model"
+      }
+    ],
+    "required_features": [
+      "filament.value.complete/v1"
+    ],
+    "dependency_selections": []
+  },
+  "semantic_graph": {
+    "graph_version": "filament.checked-semantic-graph/v2",
+    "nodes": [
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "value",
+            "enum_value",
+            {
+              "operand": 0
+            },
+            "READY"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "value",
+        "semantic_form": "enum_value",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Status"
+          ],
+          "ordinal": 0
+        },
+        "dependencies": [
+          {
+            "package": "example",
+            "path": [
+              "Example",
+              "Status"
+            ],
+            "ordinal": 0
+          }
+        ],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "body": {
+          "term": "literal",
+          "type": {
+            "package": "example",
+            "path": [
+              "Example",
+              "Status"
+            ],
+            "ordinal": 0
+          },
+          "value_kind": "enum",
+          "value": "READY"
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Status"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "enum",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Status"
+          ],
+          "ordinal": 0
+        },
+        "declaration": {
+          "qualified_name": [
+            "Example",
+            "Status"
+          ]
+        },
+        "dependencies": [],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "enum",
+          "ordered": false,
+          "members": [
+            "READY"
+          ]
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "Example",
+            "metre"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "unit",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Length"
+          ],
+          "ordinal": 0
+        },
+        "declaration": {
+          "qualified_name": [
+            "Example",
+            "metre"
+          ]
+        },
+        "dependencies": [
+          {
+            "package": "example",
+            "path": [
+              "Example",
+              "Length"
+            ],
+            "ordinal": 0
+          }
+        ],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "unit",
+          "dimension_node_id": {
+            "package": "example",
+            "path": [
+              "Example",
+              "Length"
+            ],
+            "ordinal": 0
+          },
+          "target_unit_node_id": null,
+          "scale": {
+            "numerator": "1",
+            "denominator": "1"
+          },
+          "offset": {
+            "numerator": "0",
+            "denominator": "1"
+          }
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Length"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "dimension",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Length"
+          ],
+          "ordinal": 0
+        },
+        "declaration": {
+          "qualified_name": [
+            "Example",
+            "Length"
+          ]
+        },
+        "dependencies": [],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "dimension",
+          "terms": [],
+          "base": true
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Distance"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "dimension",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Distance"
+          ],
+          "ordinal": 0
+        },
+        "declaration": {
+          "qualified_name": [
+            "Example",
+            "Distance"
+          ]
+        },
+        "dependencies": [],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "dimension",
+          "terms": [],
+          "base": true
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Dimensionless"
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "dimension",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "Example",
+            "Dimensionless"
+          ],
+          "ordinal": 0
+        },
+        "declaration": {
+          "qualified_name": [
+            "Example",
+            "Dimensionless"
+          ]
+        },
+        "dependencies": [],
+        "occurrences": [
+          {
+            "role": "declaration",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "dimension",
+          "base": false,
+          "terms": []
+        }
+      },
+      {
+        "node_id": {
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "dimension_equivalence",
+            {
+              "operand": 0
+            },
+            {
+              "operand": 1
+            }
+          ],
+          "ordinal": 0
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "node_tag": "scalar_type",
+        "semantic_form": "dimension_equivalence",
+        "semantic_type": {
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "dimension_equivalence",
+            {
+              "operand": 0
+            },
+            {
+              "operand": 1
+            }
+          ],
+          "ordinal": 0
+        },
+        "dependencies": [
+          {
+            "package": "example",
+            "path": [
+              "Example",
+              "Distance"
+            ],
+            "ordinal": 0
+          },
+          {
+            "package": "example",
+            "path": [
+              "Example",
+              "Length"
+            ],
+            "ordinal": 0
+          }
+        ],
+        "occurrences": [
+          {
+            "role": "anchor",
+            "ordinal": 0
+          }
+        ],
+        "owner": {
+          "kind": "source",
+          "authority": "agent-ix",
+          "identity": "example"
+        },
+        "body": {
+          "term": "dimension_equivalence",
+          "dimension_node_ids": [
+            {
+              "package": "example",
+              "path": [
+                "Example",
+                "Distance"
+              ],
+              "ordinal": 0
+            },
+            {
+              "package": "example",
+              "path": [
+                "Example",
+                "Length"
+              ],
+              "ordinal": 0
+            }
+          ],
+          "root_scale": {
+            "numerator": "1",
+            "denominator": "1"
+          }
+        }
+      }
+    ],
+    "operand_rows": [
+      [
+        1
+      ],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [
+        4,
+        3
+      ]
+    ]
+  },
+  "source_map": [
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "value",
+          "enum_value",
+          {
+            "node": 1
+          },
+          "READY"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 0,
+          "end": 1
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "Example",
+          "Status"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 1,
+          "end": 2
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "Example",
+          "metre"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 2,
+          "end": 3
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "Example",
+          "Length"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 3,
+          "end": 4
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "Example",
+          "Distance"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 4,
+          "end": 5
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "scalar_type",
+          "dimension_equivalence",
+          {
+            "node": 4
+          },
+          {
+            "node": 3
+          }
+        ],
+        "ordinal": 0
+      },
+      "role": "anchor",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 5,
+          "end": 6
+        }
+      ]
+    },
+    {
+      "node_id": {
+        "package": "example",
+        "path": [
+          "Example",
+          "Dimensionless"
+        ],
+        "ordinal": 0
+      },
+      "role": "declaration",
+      "ordinal": 0,
+      "regions": [
+        {
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 6,
+          "end": 7
+        }
+      ]
+    }
+  ],
+  "capability_report": [
+    {
+      "feature": "filament.value.complete/v1",
+      "disposition": "available"
+    }
+  ],
+  "diagnostics": {
+    "catalog": {
+      "authority": "agent-ix",
+      "identity": "catalog"
+    },
+    "entries": []
+  },
+  "name": "example"
+}

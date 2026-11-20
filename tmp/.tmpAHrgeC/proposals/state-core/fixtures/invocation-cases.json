@@ -1,0 +1,143 @@
+{
+  "fixtureVersion": "agent-a-invocation-cases/1-draft",
+  "status": "manually-authored-expectations-not-evaluator-output",
+  "readiness": "model-and-operation-binding-unavailable",
+  "cases": [
+    {
+      "id": "healthy-unchanged-version",
+      "input": {
+        "path": "invocations/healthy-unchanged-version.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/healthy-unchanged-version",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "completed",
+        "value": true
+      }
+    },
+    {
+      "id": "violating-changed-version",
+      "input": {
+        "path": "invocations/violating-changed-version.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/violating-changed-version",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "completed",
+        "value": false
+      }
+    },
+    {
+      "id": "wrong-invocation",
+      "input": {
+        "path": "invocations/wrong-invocation.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/wrong-invocation",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "refused",
+        "diagnostic": "wrong_snapshot",
+        "logicalValue": "absent"
+      }
+    },
+    {
+      "id": "missing-pre-observation",
+      "input": {
+        "path": "invocations/missing-pre-observation.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/missing-pre-observation",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "incomplete",
+        "diagnostic": "unavailable_observation",
+        "logicalValue": "absent"
+      }
+    },
+    {
+      "id": "forbidden-frame-change",
+      "input": {
+        "path": "invocations/forbidden-frame-change.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/forbidden-frame-change",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "refused",
+        "diagnostic": "frame_violation",
+        "logicalValue": "absent"
+      }
+    },
+    {
+      "id": "deleted-self-post-context",
+      "input": {
+        "path": "invocations/deleted-self-post-context.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/deleted-self-post-context",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "refused",
+        "diagnostic": "wrong_snapshot",
+        "logicalValue": "absent"
+      }
+    },
+    {
+      "id": "incorrect-creation-inventory",
+      "input": {
+        "path": "invocations/incorrect-creation-inventory.json",
+        "artifactRef": {
+          "authority": "agent-a-review-fixtures",
+          "identity": "ix://example/config/invocation/incorrect-creation-inventory",
+          "profile": "agent-a-invocation/1-draft"
+        }
+      },
+      "expected": {
+        "execution": "refused",
+        "diagnostic": "population_delta_mismatch",
+        "logicalValue": "absent"
+      }
+    }
+  ],
+  "frameBindings": [
+    {
+      "path": "frames/allow-version-write.json",
+      "artifactRef": {
+        "authority": "agent-a-review-fixtures",
+        "identity": "ix://example/config/binding/allow-version-write",
+        "profile": "agent-a-frame-binding/1-draft"
+      }
+    },
+    {
+      "path": "frames/preserve-all.json",
+      "artifactRef": {
+        "authority": "agent-a-review-fixtures",
+        "identity": "ix://example/config/binding/preserve-all",
+        "profile": "agent-a-frame-binding/1-draft"
+      }
+    },
+    {
+      "path": "frames/allow-self-deletion.json",
+      "artifactRef": {
+        "authority": "agent-a-review-fixtures",
+        "identity": "ix://example/config/binding/allow-self-deletion",
+        "profile": "agent-a-frame-binding/1-draft"
+      }
+    }
+  ]
+}

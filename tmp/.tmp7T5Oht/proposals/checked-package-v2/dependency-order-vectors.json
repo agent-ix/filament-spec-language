@@ -1,0 +1,48 @@
+{
+  "version": "filament.checked-package-dependency-order-vectors/v1",
+  "fixture": "fixtures/positive-timed-model-nodes.json",
+  "cases": [
+    {
+      "id": "DO-01",
+      "node": 34,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/semantic_graph/nodes/34/dependencies",
+          "value": [
+            {
+              "ordinal": 0,
+              "package": "example",
+              "path": [
+                "value",
+                "literal",
+                {
+                  "operand": 0
+                },
+                "audit"
+              ]
+            },
+            {
+              "ordinal": 0,
+              "package": "example",
+              "path": [
+                "value",
+                "literal",
+                {
+                  "operand": 1
+                },
+                "30",
+                {
+                  "operand": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected_code": "invalid_semantic_graph",
+      "expected_cause": null,
+      "locus": "/semantic_graph/nodes/34/dependencies"
+    }
+  ]
+}

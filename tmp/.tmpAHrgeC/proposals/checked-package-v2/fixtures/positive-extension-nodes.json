@@ -1,0 +1,580 @@
+{
+  "capability_report": [
+    {
+      "disposition": "available",
+      "feature": "filament.value.complete/v1"
+    }
+  ],
+  "contract_version": "filament.checked-package/v2",
+  "diagnostics": {
+    "catalog": {
+      "authority": "agent-ix",
+      "identity": "catalog"
+    },
+    "entries": []
+  },
+  "lock": {
+    "definition_selections": [
+      {
+        "authority": "example",
+        "identity": "retention"
+      }
+    ],
+    "dependency_selections": [],
+    "edition": {
+      "definition": {
+        "authority": "agent-ix",
+        "identity": "filament-edition"
+      },
+      "role": "edition"
+    },
+    "profile_selections": [],
+    "required_features": [
+      "filament.value.complete/v1"
+    ],
+    "sources": [
+      {
+        "authority": "agent-ix",
+        "identity": "example"
+      }
+    ]
+  },
+  "name": "example",
+  "semantic_graph": {
+    "graph_version": "filament.checked-semantic-graph/v2",
+    "nodes": [
+      {
+        "body": {
+          "members": [],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        },
+        "node_tag": "scalar_type",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "type"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "integer",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [],
+          "term": "aggregate"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "text"
+          ]
+        },
+        "node_tag": "scalar_type",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "type"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "text",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "text"
+          ]
+        }
+      },
+      {
+        "body": {
+          "members": [
+            {
+              "name": "min",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "1",
+                "value_kind": "integer"
+              }
+            },
+            {
+              "name": "max",
+              "term": "binding",
+              "value": {
+                "term": "literal",
+                "type": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "scalar_type",
+                    "integer"
+                  ]
+                },
+                "value": "3650",
+                "value_kind": "integer"
+              }
+            }
+          ],
+          "term": "aggregate"
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "bounded_domain",
+            "integer_range",
+            "min",
+            {
+              "operand": 0
+            },
+            "1",
+            "max",
+            "3650"
+          ]
+        },
+        "node_tag": "bounded_domain",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "type"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "integer_range",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "integer"
+          ]
+        }
+      },
+      {
+        "body": {
+          "term": "literal",
+          "type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "text"
+            ]
+          },
+          "value": "audit",
+          "value_kind": "text"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "literal",
+            {
+              "operand": 0
+            },
+            "audit"
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "literal",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "scalar_type",
+            "text"
+          ]
+        }
+      },
+      {
+        "body": {
+          "term": "literal",
+          "type": {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "scalar_type",
+              "integer"
+            ]
+          },
+          "value": "30",
+          "value_kind": "integer"
+        },
+        "dependencies": [],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "value",
+            "literal",
+            {
+              "operand": 0
+            },
+            "30",
+            {
+              "operand": 1
+            }
+          ]
+        },
+        "node_tag": "value",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "expression"
+          }
+        ],
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "literal",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "bounded_domain",
+            "integer_range",
+            "min",
+            {
+              "operand": 0
+            },
+            "1",
+            "max",
+            "3650"
+          ]
+        }
+      },
+      {
+        "body": {
+          "clauses": [
+            {
+              "name": "subject",
+              "term": "binding",
+              "value": {
+                "target": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "value",
+                    "literal",
+                    {
+                      "operand": 0
+                    },
+                    "audit"
+                  ]
+                },
+                "term": "reference"
+              }
+            },
+            {
+              "name": "days",
+              "term": "binding",
+              "value": {
+                "target": {
+                  "ordinal": 0,
+                  "package": "example",
+                  "path": [
+                    "value",
+                    "literal",
+                    {
+                      "operand": 1
+                    },
+                    "30",
+                    {
+                      "operand": 2
+                    }
+                  ]
+                },
+                "term": "reference"
+              }
+            }
+          ],
+          "definition": {
+            "authority": "example",
+            "identity": "retention"
+          },
+          "node_kind": "retention",
+          "term": "extension_form"
+        },
+        "declaration": {
+          "qualified_name": [
+            "Audit"
+          ]
+        },
+        "dependencies": [
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "literal",
+              {
+                "operand": 1
+              },
+              "30",
+              {
+                "operand": 2
+              }
+            ]
+          },
+          {
+            "ordinal": 0,
+            "package": "example",
+            "path": [
+              "value",
+              "literal",
+              {
+                "operand": 0
+              },
+              "audit"
+            ]
+          }
+        ],
+        "node_id": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Audit"
+          ]
+        },
+        "node_tag": "extension",
+        "occurrences": [
+          {
+            "ordinal": 0,
+            "role": "declaration"
+          }
+        ],
+        "owner": {
+          "authority": "agent-ix",
+          "identity": "example",
+          "kind": "source"
+        },
+        "schema_version": "filament.checked-semantic-graph/v2",
+        "semantic_form": "extension_form",
+        "semantic_type": {
+          "ordinal": 0,
+          "package": "example",
+          "path": [
+            "Audit"
+          ]
+        }
+      }
+    ],
+    "operand_rows": [
+      [],
+      [],
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        0,
+        2
+      ]
+    ]
+  },
+  "source_map": [
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "scalar_type",
+          "integer"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 1,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 0
+        }
+      ],
+      "role": "type"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "scalar_type",
+          "text"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 2,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 1
+        }
+      ],
+      "role": "type"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "bounded_domain",
+          "integer_range",
+          "min",
+          {
+            "node": 0
+          },
+          "1",
+          "max",
+          "3650"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 50,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 49
+        }
+      ],
+      "role": "type"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "literal",
+          {
+            "node": 1
+          },
+          "audit"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 36,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 29
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "value",
+          "literal",
+          {
+            "node": 0
+          },
+          "30",
+          {
+            "node": 2
+          }
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 46,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 44
+        }
+      ],
+      "role": "expression"
+    },
+    {
+      "node_id": {
+        "ordinal": 0,
+        "package": "example",
+        "path": [
+          "Audit"
+        ]
+      },
+      "ordinal": 0,
+      "regions": [
+        {
+          "end": 48,
+          "source": {
+            "authority": "agent-ix",
+            "identity": "example"
+          },
+          "start": 2
+        }
+      ],
+      "role": "declaration"
+    }
+  ]
+}

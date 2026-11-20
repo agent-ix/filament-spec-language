@@ -5067,6 +5067,9 @@ impl PackageDeclarations {
         // FR-185: the `random`, `reward` and `workload` declarations,
         // resolved, typed and recorded; FR-186: a `probabilistic` claim,
         // resolved, typed and recorded with its obligation identity.
+        let declaration_owners: Vec<_> = (0..self.probabilistic.len())
+            .map(|index| self.source_owners.get(&format!("probabilistic {index}")).cloned())
+            .collect();
         let probabilistic_input = probabilistic::ProbabilisticInput {
             scope: &scope,
             signatures: &signatures,
@@ -5079,6 +5082,7 @@ impl PackageDeclarations {
             preconditions: &precondition_reads,
             profiles: &self.profile_selections,
             limits,
+            declaration_owners: &declaration_owners,
             cancel,
         };
         let mut probabilistic_cx = crate::family::CheckContext::new(

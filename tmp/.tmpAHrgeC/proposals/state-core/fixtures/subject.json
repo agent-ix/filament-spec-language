@@ -1,0 +1,64 @@
+{
+  "status": "proposed-review-fixture",
+  "fixtureVersion": "agent-a-source-subject/1-draft",
+  "authored": {
+    "package": "example/config",
+    "requirement": "INV-001",
+    "revision": 1,
+    "clause": "ParentPrecedes"
+  },
+  "language": {
+    "tag": "ix:native",
+    "edition": "0-draft"
+  },
+  "profile": {
+    "identity": "state-finite",
+    "version": "0-draft",
+    "requiredFeatures": [
+      "bounded-integer",
+      "optional-reference",
+      "guarded-implication"
+    ]
+  },
+  "source": {
+    "identity": "ix://example/config/source/parent-order",
+    "path": "parent-order.native",
+    "spanConvention": "utf8-half-open-scalar-column/0-draft",
+    "expressionSpan": {
+      "startByte": 234,
+      "startLine": 6,
+      "startColumn": 3,
+      "endByte": 323,
+      "endLine": 6,
+      "endColumn": 92
+    },
+    "expectedExpression": "present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber",
+    "clauseSpan": {
+      "startByte": 174,
+      "startLine": 5,
+      "startColumn": 1,
+      "endByte": 325,
+      "endLine": 7,
+      "endColumn": 2
+    }
+  },
+  "anchor": {
+    "kind": "invariant",
+    "observation": "current",
+    "contextType": "ix://example/config/type/ConfigVersion"
+  },
+  "modelBinding": {
+    "state": "unavailable",
+    "reason": "domain-package-required",
+    "package": "example/config",
+    "version": "1.0.0"
+  },
+  "reviewArtifacts": [
+    {
+      "path": "parent-order.native"
+    },
+    {
+      "path": "model-expectations.json"
+    }
+  ]
+}

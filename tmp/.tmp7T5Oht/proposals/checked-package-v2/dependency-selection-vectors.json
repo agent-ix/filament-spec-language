@@ -1,0 +1,141 @@
+{
+  "schema_only": [
+    "dependency_selections",
+    "entry_mutations",
+    "order_vectors",
+    "supply_vectors"
+  ],
+  "base": "fixtures/positive-all-families.json",
+  "dependency_selections": [
+    {
+      "identity": "test/geometry"
+    },
+    {
+      "identity": "test/units"
+    }
+  ],
+  "entry_mutations": [
+    {
+      "id": "definition-selection-shape",
+      "entry": {
+        "role": "profile",
+        "definition": {
+          "authority": "test",
+          "identity": "test/geometry"
+        }
+      },
+      "outcome": "refused:malformed_wire"
+    },
+    {
+      "id": "definition-ref-shape",
+      "entry": {
+        "authority": "test",
+        "identity": "test/geometry"
+      },
+      "outcome": "refused:unknown_member"
+    },
+    {
+      "id": "selection-carries-version",
+      "entry": {
+        "identity": "test/geometry",
+        "version": "1.0.0"
+      },
+      "outcome": "refused:unknown_member"
+    }
+  ],
+  "order_vectors": [
+    {
+      "id": "utf8-byte-order",
+      "dependency_selections": [
+        {
+          "identity": "test/｡"
+        },
+        {
+          "identity": "test/😀"
+        }
+      ],
+      "outcome": "admitted",
+      "loci": []
+    },
+    {
+      "id": "duplicate-identity",
+      "dependency_selections": [
+        {
+          "identity": "test/geometry"
+        },
+        {
+          "identity": "test/geometry"
+        },
+        {
+          "identity": "test/units"
+        }
+      ],
+      "outcome": "refused:invalid_package/conflicting-definition",
+      "loci": [
+        "/lock/dependency_selections/0",
+        "/lock/dependency_selections/1"
+      ]
+    },
+    {
+      "id": "misordered",
+      "dependency_selections": [
+        {
+          "identity": "test/units"
+        },
+        {
+          "identity": "test/geometry"
+        }
+      ],
+      "outcome": "refused:invalid_package/invalid-value",
+      "loci": [
+        "/lock/dependency_selections/1"
+      ]
+    }
+  ],
+  "supply_vectors": [
+    {
+      "id": "both-entries-unsupplied",
+      "entries": [
+        {
+          "identity": "test/a",
+          "supply": "absent"
+        },
+        {
+          "identity": "test/b",
+          "supply": "absent"
+        }
+      ],
+      "outcome": "refused:missing_import/missing-selection",
+      "locus": "/lock/dependency_selections/0"
+    },
+    {
+      "id": "first-supplied-second-absent",
+      "entries": [
+        {
+          "identity": "test/a",
+          "supply": "bound"
+        },
+        {
+          "identity": "test/b",
+          "supply": "absent"
+        }
+      ],
+      "outcome": "refused:missing_import/missing-selection",
+      "locus": "/lock/dependency_selections/1"
+    },
+    {
+      "id": "all-bound",
+      "entries": [
+        {
+          "identity": "test/a",
+          "supply": "bound"
+        },
+        {
+          "identity": "test/b",
+          "supply": "bound"
+        }
+      ],
+      "outcome": "admitted"
+    }
+  ]
+}

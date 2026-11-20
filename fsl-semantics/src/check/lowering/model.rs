@@ -356,6 +356,9 @@ pub struct AdmittedModel {
     /// The unit that declares this model, for a source model: its types and
     /// populations are visible in that unit only.
     source_unit: Option<fsl_foundation::source::provenance::RawSourceRef>,
+    /// The name of the checked package this source model belongs to, which its
+    /// object types' node keys are minted under.
+    source_package: Option<String>,
     selection: DomainPackageRef,
     records: BTreeMap<DeclarationKey, DomainPackageRecord>,
     /// FCD dimensions and units retained for FR-230's owner-qualified graph.
@@ -1014,6 +1017,7 @@ impl AdmittedModel {
                 .collect(),
             alias: None,
             source_unit: None,
+            source_package: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
@@ -1066,6 +1070,7 @@ impl AdmittedModel {
             supertypes: BTreeMap::new(),
             alias: None,
             source_unit: None,
+            source_package: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
@@ -1214,6 +1219,13 @@ impl AdmittedModel {
             }
         }
         layouts
+    }
+
+    /// This source model as the source model of the package named `package`.
+    #[must_use]
+    pub(crate) fn of_package(mut self, package: &str) -> Self {
+        self.source_package = Some(package.to_owned());
+        self
     }
 
     /// This source model as declared by `unit`.
@@ -1443,8 +1455,7 @@ impl AdmittedModel {
                 Some(DomainPackageRecord::ObjectType(_))
             )
         {
-            let package_name = crate::model::key::source_package_name(&self.selection.identity)?;
-            return crate::model::key::source_object_node_key(declaration, package_name);
+            return crate::model::key::source_object_node_key(declaration, self.source_package.as_deref()?);
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
@@ -2459,6 +2470,11 @@ impl AdmittedModel {
     }
 
     /// The key of every declaration record of the package, of any kind.
+    /// Whether this package declares the record `key`.
+    pub(crate) fn declares(&self, key: &DeclarationKey) -> bool {
+        self.records.contains_key(key)
+    }
+
     pub(crate) fn record_keys(&self) -> impl Iterator<Item = &DeclarationKey> {
         self.records.keys()
     }

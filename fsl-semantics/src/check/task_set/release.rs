@@ -94,7 +94,7 @@ pub(in crate::check) fn check_releases(
                 }
             }
         }
-        let operation = match input.operation(&form.operation, None) {
+        let operation = match input.operation(&form.operation, None, None) {
             Ok((operation, _)) => operation,
             Err(fault) => {
                 causes.push(match fault {
