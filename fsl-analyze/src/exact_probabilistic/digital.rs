@@ -1719,6 +1719,10 @@ impl<'c> Builder<'_, '_, 'c> {
             }
             return Ok(());
         }
+        let representative = racers
+            .first()
+            .map(|(identity, _)| identity.clone())
+            .ok_or_else(|| fault("a-race-has-a-racer"))?;
         for draw in Odometer::new(racers.iter().map(|(_, support)| support.len())) {
             self.poll()?;
             let mut probability = one();
@@ -1757,6 +1761,32 @@ impl<'c> Builder<'_, '_, 'c> {
                 .get(index.min(last))
                 .cloned()
                 .ok_or_else(|| fault("race-delay-is-reachable"))?;
+            let delayed = TraceStep {
+                action: None,
+                draw: None,
+                probability: probability.clone(),
+            };
+            let terminal = self.arrive(at, start.clone(), &[], Some(&delayed))?;
+            if matches!(
+                &terminal.key.monitor,
+                Some(MonitorState::Deadline {
+                    phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
+                    ..
+                })
+            ) {
+                planned.push(Planned {
+                    choice: ProductAction::Identity(representative.clone()),
+                    action: None,
+                    draw: None,
+                    target: terminal,
+                    probability,
+                    rewards: self.system.zero_rewards(),
+                    elapsed_ticks: least,
+                    step: Some(delayed),
+                    zero_delay: least == 0,
+                });
+                continue;
+            }
             for first in 0..tied.len() {
                 let chosen = tied[first].clone();
                 let mut order = Vec::with_capacity(tied.len());
