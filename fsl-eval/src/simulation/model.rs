@@ -42,10 +42,11 @@ pub use model_based_test::{
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
     ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
-    ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestResult, ModelBasedValueBoundCut,
-    ModelBasedValueBoundCuts, run_model_based_state_invariant,
+    ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestRecord, ModelBasedTestRefusal,
+    ModelBasedTestRequest, ModelBasedTestResult, ModelBasedTestSubject, ModelBasedValueBoundCut,
+    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, run_model_based_state_invariant,
     run_model_based_state_invariant_with_value_bits, run_model_based_test,
-    run_model_based_test_with_value_bits,
+    run_model_based_test_with_system, run_model_based_test_with_value_bits,
 };
 mod key_budget;
 mod letters;

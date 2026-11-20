@@ -7,10 +7,11 @@ use unicode_normalization::UnicodeNormalization;
 use fsl_eval::simulation::model::{
     ModelBasedCounterexample, ModelBasedTestCause, ModelBasedTestDiscardCount,
     ModelBasedTestDiscardReason, ModelBasedTestError, ModelBasedTestEvidence,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
-    ModelOperationCoverageSummaryStatus, run_model_based_state_invariant,
-    run_model_based_state_invariant_with_value_bits, run_model_based_test,
-    run_model_based_test_with_value_bits,
+    ModelBasedTestRequest, ModelBasedTestSubject, ModelOperationCoverageReason,
+    ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus, NativeAdmission, RootAdmission,
+    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    run_model_based_test_with_system as run_model_based_test, run_model_based_test_with_value_bits,
 };
 
 const INC: &str = "pre CanInc using v on M::Counter::inc { self.value < 5 }\n\
@@ -369,12 +370,12 @@ fn unbounded_model_roots_report_value_bound_cuts_in_operation_coverage() {
                         .to_owned(),
                     receiver,
                     arguments.iter().map(Json::to_string).collect(),
-                    quire_canonical::Limits::default(),
+                    quire_canonical::Limits::new(1 << 20),
                 )
                 .expect("the native transition reader admits the witness");
                 assert_eq!(
                     transition
-                        .canonical_bytes(quire_canonical::Limits::default())
+                        .canonical_bytes(quire_canonical::Limits::new(1 << 20))
                         .expect("native canonical transition"),
                     invocation.as_bytes()
                 );
@@ -1426,6 +1427,106 @@ fn contract_cases_start_with_ordered_domain_partitions() {
     );
 }
 
+/// FR-752-AC-8: an admission oracle accepting a refusal partition returns a
+/// failed result record instead of a tested record.
+#[trace("TC-2102", "FR-752-AC-8")]
+#[test]
+fn root_admission_disagreement_is_a_failed_result_record() {
+    struct AdmitSeven;
+
+    impl RootAdmission for AdmitSeven {
+        fn parameter(&self, value_type: &filament_exact::ValueType, value: &Value) -> bool {
+            matches!(value, Value::Integer(value) if value == &filament_exact::Integer::from(7_i64))
+                || value_type.admits(value)
+        }
+
+        fn value(&self, value_type: &filament_exact::ValueType, value: &Value) -> bool {
+            value_type.admits(value)
+        }
+    }
+
+    let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
+                   post Inc using v on M::Counter::inc { self.value <= 5 }";
+    let op = operation(
+        "inc",
+        &[("delta", &ident("By"))],
+        None,
+        frame(&["value"], false, false),
+    );
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(vec![op], false)).expect("fixture JSON");
+    let level = document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .expect("Level declaration");
+    *level = bound_type("Level", 5);
+    let mut by_type = bound_type("By", 6);
+    by_type["constraints"][0]["operands"]["value"] = json!("1");
+    document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .push(by_type);
+    let mut world = build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the model and contracts check");
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Inc")
+        .expect("checked Inc postcondition")
+        .identity();
+    let subject = ModelBasedTestSubject {
+        packages: &world.packages,
+        snapshots: &world.snapshots,
+        initial: vec![initial],
+        universes: universe(&["c1"]),
+    };
+    let request = ModelBasedTestRequest {
+        clause: Some(identity),
+        profile: sampler(),
+        seed: 7,
+        max_cases: 100,
+        max_trace_length: Some(8),
+        max_value_bits: None,
+        subject: Some(subject),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: UNLIMITED,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: Limits::default()
+            .with_max_states(100)
+            .with_max_transitions(1_000),
+        position_limit: 10_000,
+    };
+    let result = fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &request,
+        &AdmitSeven,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("oracle disagreement settles in the result record");
+
+    assert_eq!(result.evidence, ModelBasedTestEvidence::Failed);
+    assert_eq!(result.exit_code(), 30);
+    assert_eq!(
+        result.cause,
+        Some(ModelBasedTestCause::ToolFailure {
+            defect: fsl_eval::simulation::model::ModelBasedTestDefect::OracleDisagreement,
+        })
+    );
+    assert_eq!(result.counts.generated, 0);
+}
+
 /// Text count-table work is charged before any caller-sized allocation.
 #[trace("TC-3068", "FR-752-AC-10")]
 #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-22")]
@@ -1447,31 +1548,43 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
         (4, "nfc", 2_559, ModelBasedTestEvidence::Incomplete),
         (4, "nfc", 1_000_000, ModelBasedTestEvidence::Tested),
     ] {
-        let mut world = world_with_level_bound(
+        let world = world_with_level_bound(
             vec![operation("observe", &[], None, frame(&[], false, false))],
             &format!(
                 "function Label using v(t: Text[0,{maximum}; {profile}]): Boolean pure {{ size(t) >= 0 }}"
             ),
             5,
         );
-        let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
         let mut meter = UNLIMITED;
         meter.work_units = work;
-        let system = system(&world, vec![initial], &["c1"], meter);
         let identity = world
             .package
             .graph()
             .function_identity("Label")
             .expect("value clause");
-        let result = run_model_based_test(
-            &system,
-            &identity,
-            &sampler(),
-            7,
-            30,
-            8,
-            10_000,
-            Limits::default(),
+        let request = ModelBasedTestRequest {
+            clause: Some(identity),
+            profile: sampler(),
+            seed: 7,
+            max_cases: 30,
+            max_trace_length: None,
+            max_value_bits: None,
+            subject: None,
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            accounting: meter,
+            normalization: ModelNormalizationLimits::default(),
+            observation: ObservationLimits::default(),
+            emit: fsl_package::EmitLimits::fixture(),
+            exploration: Limits::default(),
+            position_limit: 10_000,
+        };
+        let result = fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &filament_exact::Cancel::new(),
         )
         .expect("resource exhaustion is a run record");
         assert_eq!(result.limits.accounting.work_units, work);
@@ -1504,6 +1617,187 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
             );
         }
     }
+}
+
+/// FR-752-AC-11: invalid request members are rejected before any case runs.
+#[trace("TC-3068", "FR-752-AC-11")]
+#[test]
+fn model_based_entry_refuses_missing_and_invalid_request_members() {
+    let by_type = ident("Level");
+    let mut world = world_with_level_bound(
+        vec![
+            operation(
+                "inc",
+                &[("by", &by_type)],
+                None,
+                frame(&["value"], false, false),
+            ),
+            operation("reset", &[], None, frame(&["value"], false, false)),
+            operation("jam", &[], None, frame(&["value"], false, false)),
+        ],
+        &format!("{INC}\n{RESET}\n{JAM}"),
+        6,
+    );
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    let identity = world
+        .package
+        .graph()
+        .state_clause("Inc")
+        .expect("checked postcondition")
+        .identity();
+    let subject = ModelBasedTestSubject {
+        packages: &world.packages,
+        snapshots: &world.snapshots,
+        initial: vec![initial],
+        universes: universe(&["c1"]),
+    };
+    let mut request = ModelBasedTestRequest {
+        clause: Some(identity),
+        profile: sampler(),
+        seed: 7,
+        max_cases: 100,
+        max_trace_length: Some(8),
+        max_value_bits: None,
+        subject: Some(subject),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: UNLIMITED,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: Limits::default(),
+        position_limit: 10_000,
+    };
+    let cancel = filament_exact::Cancel::new();
+    request.max_cases = 0;
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("zero cases refuse")
+        .member,
+        "max_cases"
+    );
+    request.max_cases = 100;
+    request.max_trace_length = Some(0);
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("zero trace length refuses")
+        .member,
+        "max_trace_length"
+    );
+    request.max_trace_length = None;
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("state clause needs a trace length")
+        .member,
+        "max_trace_length"
+    );
+    request.max_trace_length = Some(8);
+    request.subject = None;
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("state clause needs a subject")
+        .member,
+        "subject"
+    );
+    request.subject = Some(ModelBasedTestSubject {
+        packages: &world.packages,
+        snapshots: &world.snapshots,
+        initial: Vec::new(),
+        universes: Vec::new(),
+    });
+    request.clause = Some(
+        filament_exact::NodeKey::new(
+            PACKAGE,
+            vec![filament_exact::PathSegment::Text("unknown".to_owned())],
+            0,
+        )
+        .expect("well-formed unknown node identity"),
+    );
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &world.package,
+            &request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("unknown clause refuses")
+        .cause,
+        "unknown-member"
+    );
+
+    let value_world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function Predicate using v(x: Int[0,5]): Boolean pure { x >= 0 }",
+        6,
+    );
+    let value_identity = value_world
+        .package
+        .graph()
+        .function_identity("Predicate")
+        .expect("checked value clause");
+    let mut value_request = ModelBasedTestRequest {
+        clause: Some(value_identity),
+        profile: sampler(),
+        seed: 7,
+        max_cases: 10,
+        max_trace_length: Some(8),
+        max_value_bits: None,
+        subject: None,
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: UNLIMITED,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: Limits::default(),
+        position_limit: 10_000,
+    };
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &value_world.package,
+            &value_request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("value clauses do not consume max_trace_length")
+        .cause,
+        "unknown-member"
+    );
+    value_request.max_trace_length = None;
+    value_request.max_value_bits = Some(8);
+    assert_eq!(
+        fsl_eval::simulation::model::run_model_based_test(
+            &value_world.package,
+            &value_request,
+            &NativeAdmission,
+            &cancel,
+        )
+        .expect_err("finite roots do not consume max_value_bits")
+        .member,
+        "max_value_bits"
+    );
 }
 
 /// FR-752-AC-7 / FSpec FR-190-AC-16: an unrelated Jam postcondition records

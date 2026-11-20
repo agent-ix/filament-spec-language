@@ -22,12 +22,12 @@ use crate::simulation::{
 use super::domain::{Domain, admitted_text_value};
 use super::{ContractClause, ContractClauseKind};
 use super::{
-    ModelBoundaryPartition, ModelFinding, ModelOperation, ModelOperationCase,
+    ModelBoundaryPartition, ModelCheckInput, ModelFinding, ModelOperation, ModelOperationCase,
     ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
     ModelOperationCoverageReason, ModelOperationCoverageReasonKind,
     ModelOperationCoverageSummaryStatus, ModelPartitionStatus, ModelPartitionUncoveredReason,
-    ModelSampleError, ModelShrinkError, ModelSimState, ModelSystem, ModelTrace,
-    model_operation_coverage, sample_model_with_omitted_clause,
+    ModelSampleError, ModelShrinkError, ModelSimState, ModelSimulationRequest, ModelSystem,
+    ModelTrace, model_operation_coverage, sample_model_with_omitted_clause,
     shrink_model_trace_with_omitted_clause,
 };
 use crate::simulation::choice::ChoicePoint;
@@ -343,6 +343,209 @@ pub struct ModelBasedTestResult {
     pub evidence: ModelBasedTestEvidence,
 }
 
+/// Inputs for the single FR-752 model-based test entry.
+#[derive(Clone)]
+pub struct ModelBasedTestRequest<'a> {
+    /// The selected checked clause. `None` is a request refusal.
+    pub clause: Option<NodeKey>,
+    /// Generator profile.
+    pub profile: DefinitionRef,
+    /// Deterministic generator seed.
+    pub seed: u64,
+    /// Maximum generated cases.
+    pub max_cases: u64,
+    /// Maximum generated trace length; required for a state clause.
+    pub max_trace_length: Option<u64>,
+    /// Bound for roots without a finite declared domain.
+    pub max_value_bits: Option<u64>,
+    /// FR-120 model subject inputs; absent for a value clause.
+    pub subject: Option<ModelBasedTestSubject<'a>>,
+    /// Candidate bound for each model expansion.
+    pub expansion: super::ExpansionLimits,
+    /// Native evaluation accounting limits.
+    pub accounting: filament_exact::ScalarLimits,
+    /// Value normalization limits.
+    pub normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    /// Snapshot observation limits.
+    pub observation: fsl_semantics::model::observation::ObservationLimits,
+    /// Package emission limits.
+    pub emit: fsl_package::EmitLimits,
+    /// Reachability limits used by operation coverage.
+    pub exploration: Limits,
+    /// Maximum positions in a generated trace.
+    pub position_limit: u64,
+}
+
+/// FR-120 inputs for a clause over a state model.
+#[derive(Clone)]
+pub struct ModelBasedTestSubject<'a> {
+    /// Selected domain packages.
+    pub packages: &'a fsl_semantics::model::intake::PackageInput,
+    /// Snapshot documents.
+    pub snapshots: &'a fsl_semantics::model::observation::DocumentProvision,
+    /// Initial snapshots.
+    pub initial: Vec<fsl_semantics::model::observation::DocumentRef>,
+    /// Finite population universes.
+    pub universes: Vec<super::PopulationUniverse>,
+}
+
+/// Admission policy for each generated root (FR-752 "Partitions").
+pub trait RootAdmission {
+    /// Whether a value is admitted at a parameter root.
+    fn parameter(&self, value_type: &ValueType, value: &Value) -> bool;
+
+    /// Whether a value is admitted at a field or initial-state root.
+    fn value(&self, value_type: &ValueType, value: &Value) -> bool;
+}
+
+/// The production admission policy for model-based test roots.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeAdmission;
+
+impl RootAdmission for NativeAdmission {
+    fn parameter(&self, value_type: &ValueType, value: &Value) -> bool {
+        value_type.admits(value)
+    }
+
+    fn value(&self, value_type: &ValueType, value: &Value) -> bool {
+        value_type.admits(value)
+    }
+}
+
+/// A whole-request refusal from the FR-752 entry, before any case runs.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("invalid model-based test request member {member}: {cause}")]
+pub struct ModelBasedTestRefusal {
+    /// The request member at fault.
+    pub member: &'static str,
+    /// Catalog cause for the refusal.
+    pub cause: &'static str,
+}
+
+/// FR-752's result record.
+pub type ModelBasedTestRecord = ModelBasedTestResult;
+
+/// FR-752's single public model-based test entry.
+pub fn run_model_based_test(
+    package: &fsl_package::CheckedPackage,
+    request: &ModelBasedTestRequest<'_>,
+    admission: &dyn RootAdmission,
+    cancel: &filament_exact::Cancel,
+) -> Result<ModelBasedTestRecord, ModelBasedTestRefusal> {
+    let refusal = |member, cause| ModelBasedTestRefusal { member, cause };
+    let Some(identity) = request.clause.as_ref() else {
+        return Err(refusal("clause", "missing-member"));
+    };
+    if request.max_cases == 0 {
+        return Err(refusal("max_cases", "invalid-value"));
+    }
+    if request
+        .max_value_bits
+        .is_some_and(|bits| !(1..=64).contains(&bits))
+    {
+        return Err(refusal("max_value_bits", "invalid-value"));
+    }
+    let graph = package.graph();
+    let is_state = graph.state_clause_by_identity(identity.clone()).is_some()
+        || graph
+            .temporal_clauses()
+            .iter()
+            .any(|clause| clause.identity() == *identity);
+    let is_value = graph.callable_by_identity(identity.clone()).is_some();
+    if !is_state && !is_value {
+        return Err(refusal("clause", "unknown-member"));
+    }
+    if is_state && request.max_trace_length.is_none() {
+        return Err(refusal("max_trace_length", "missing-member"));
+    }
+    if is_state && request.subject.is_none() {
+        return Err(refusal("subject", "missing-member"));
+    }
+    if !is_state && request.subject.is_some() {
+        return Err(refusal("subject", "unknown-member"));
+    }
+    if is_value && request.max_trace_length.is_some() {
+        return Err(refusal("max_trace_length", "unknown-member"));
+    }
+    if request.max_trace_length == Some(0) {
+        return Err(refusal("max_trace_length", "invalid-value"));
+    }
+
+    if is_value {
+        if cancel.cause().is_some() {
+            return Err(refusal("cancel", "cancelled"));
+        }
+        return run_model_based_value_function_entry(
+            package,
+            identity,
+            &request.profile,
+            request.seed,
+            request.max_cases,
+            request.max_trace_length,
+            request.max_value_bits,
+            request.accounting,
+            request.expansion,
+            request.exploration,
+            request.position_limit,
+            admission,
+        )
+        .map_err(|error| match error {
+            ModelBasedTestError::InvalidClause { .. } => refusal("clause", "unknown-member"),
+            ModelBasedTestError::InvalidLimit { member } => refusal(member, "invalid-value"),
+            ModelBasedTestError::MissingValueBits => refusal("max_value_bits", "missing-member"),
+            ModelBasedTestError::UnknownValueBits => refusal("max_value_bits", "unknown-member"),
+            ModelBasedTestError::ValueDomain { .. } => {
+                refusal("clause", "invalid_model_binding/malformed-declaration")
+            }
+            _ => refusal("clause", "invalid_runtime_input"),
+        });
+    }
+
+    let subject = request.subject.as_ref();
+    let Some(subject) = subject else {
+        return Err(refusal("subject", "missing-member"));
+    };
+    let simulation = ModelSimulationRequest {
+        input: ModelCheckInput::source(package),
+        packages: subject.packages,
+        normalization: request.normalization,
+        snapshots: subject.snapshots,
+        initial: subject.initial.clone(),
+        universes: subject.universes.clone(),
+        observation: request.observation,
+        expansion: request.expansion,
+        meter: request.accounting,
+        emit: request.emit,
+    };
+    let system =
+        ModelSystem::new(simulation).map_err(|_| refusal("subject", "invalid_model_binding"))?;
+    if cancel.cause().is_some() {
+        return Err(refusal("cancel", "cancelled"));
+    }
+    let result = run_model_based_test_with_system_and_admission(
+        &system,
+        identity,
+        &request.profile,
+        request.seed,
+        request.max_cases,
+        usize::try_from(request.max_trace_length.unwrap_or(1))
+            .map_err(|_| refusal("max_trace_length", "invalid-value"))?,
+        request.max_value_bits,
+        request.position_limit,
+        request.exploration,
+        admission,
+    )
+    .map_err(|error| match error {
+        ModelBasedTestError::InvalidClause { .. } => refusal("clause", "unknown-member"),
+        ModelBasedTestError::InvalidLimit { member } => refusal(member, "invalid-value"),
+        ModelBasedTestError::ValueDomain { .. } => {
+            refusal("clause", "invalid_model_binding/malformed-declaration")
+        }
+        _ => refusal("clause", "invalid_runtime_input"),
+    })?;
+    Ok(result)
+}
+
 impl ModelBasedTestResult {
     /// FR-301 process exit for the method result.
     #[must_use]
@@ -535,7 +738,7 @@ pub fn run_model_based_state_invariant_with_value_bits(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
-pub fn run_model_based_test(
+pub fn run_model_based_test_with_system(
     system: &ModelSystem<'_>,
     identity: &NodeKey,
     sampler: &DefinitionRef,
@@ -574,6 +777,36 @@ pub fn run_model_based_test_with_value_bits(
     max_value_bits: Option<u64>,
     position_limit: u64,
     reachability_limits: Limits,
+) -> Result<ModelBasedTestResult, ModelBasedTestError> {
+    run_model_based_test_with_system_and_admission(
+        system,
+        identity,
+        sampler,
+        seed,
+        max_cases,
+        max_trace_length,
+        max_value_bits,
+        position_limit,
+        reachability_limits,
+        &NativeAdmission,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the checked-system compatibility entry feeds the one FR-752 entry"
+)]
+fn run_model_based_test_with_system_and_admission(
+    system: &ModelSystem<'_>,
+    identity: &NodeKey,
+    sampler: &DefinitionRef,
+    seed: u64,
+    max_cases: u64,
+    max_trace_length: usize,
+    max_value_bits: Option<u64>,
+    position_limit: u64,
+    reachability_limits: Limits,
+    admission: &dyn RootAdmission,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let package = system
         .source_package()
@@ -614,6 +847,7 @@ pub fn run_model_based_test_with_value_bits(
             max_value_bits,
             position_limit,
             reachability_limits,
+            admission,
         );
     }
     if let Some(clause) = graph
@@ -644,7 +878,6 @@ pub fn run_model_based_test_with_value_bits(
             .collect();
         let _value_bits = install_value_bits(system, max_value_bits, &parameter_types, false)?;
         return run_model_based_value_function(
-            system,
             package,
             identity,
             &function,
@@ -653,8 +886,9 @@ pub fn run_model_based_test_with_value_bits(
             max_cases,
             max_trace_length,
             max_value_bits,
-            position_limit,
-            reachability_limits,
+            system.meter_limits(),
+            ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
+            admission,
         );
     }
     Err(ModelBasedTestError::InvalidClause {
@@ -928,8 +1162,92 @@ fn model_size_bounded_roots(
     clippy::too_many_arguments,
     reason = "these are the model-based request inputs"
 )]
+fn run_model_based_value_function_entry(
+    package: &fsl_package::CheckedPackage,
+    identity: &NodeKey,
+    sampler: &DefinitionRef,
+    seed: u64,
+    max_cases: u64,
+    max_trace_length: Option<u64>,
+    max_value_bits: Option<u64>,
+    accounting: filament_exact::ScalarLimits,
+    expansion: super::ExpansionLimits,
+    exploration: Limits,
+    position_limit: u64,
+    admission: &dyn RootAdmission,
+) -> Result<ModelBasedTestRecord, ModelBasedTestError> {
+    validate_case_limit(max_cases)?;
+    let function = package
+        .graph()
+        .callable_by_identity(identity.clone())
+        .ok_or_else(|| ModelBasedTestError::InvalidClause {
+            clause: format!("{identity:?}"),
+        })?;
+    let name = package
+        .graph()
+        .function_by_identity(identity.clone())
+        .map(|function| function.name.to_owned())
+        .ok_or_else(|| ModelBasedTestError::InvalidClause {
+            clause: format!("{identity:?}"),
+        })?;
+    let requires_value_bits = function
+        .parameters
+        .iter()
+        .any(|(_, value_type)| matches!(value_type, ValueType::Integer));
+    match (requires_value_bits, max_value_bits) {
+        (true, None) => return Err(ModelBasedTestError::MissingValueBits),
+        (false, Some(_)) => return Err(ModelBasedTestError::UnknownValueBits),
+        (_, Some(bits)) if !(1..=64).contains(&bits) => {
+            return Err(ModelBasedTestError::InvalidLimit {
+                member: "max_value_bits",
+            });
+        }
+        _ => {}
+    }
+    let limits = ModelBasedRunLimits {
+        accounting,
+        expansion,
+        exploration,
+        positions: position_limit,
+    };
+    let trace_length = usize::try_from(max_trace_length.unwrap_or(0)).map_err(|_| {
+        ModelBasedTestError::InvalidLimit {
+            member: "max_trace_length",
+        }
+    })?;
+    let mut meter = Meter::new(accounting);
+    if let Err(stop) = prepare_text_roots(
+        function.parameters.iter().map(|(_, ty)| ty.clone()),
+        &mut meter,
+    ) {
+        return Ok(text_limit_record(
+            None,
+            limits,
+            name,
+            sampler,
+            seed,
+            max_cases,
+            trace_length,
+            max_value_bits,
+            stop,
+        ));
+    }
+    run_model_based_value_function(
+        package,
+        identity,
+        &function,
+        sampler,
+        seed,
+        max_cases,
+        trace_length,
+        max_value_bits,
+        accounting,
+        limits,
+        admission,
+    )
+}
+
 fn run_model_based_value_function(
-    system: &ModelSystem<'_>,
     package: &fsl_package::CheckedPackage,
     identity: &NodeKey,
     function: &CallableFunction<'_>,
@@ -938,8 +1256,9 @@ fn run_model_based_value_function(
     max_cases: u64,
     max_trace_length: usize,
     max_value_bits: Option<u64>,
-    position_limit: u64,
-    reachability_limits: Limits,
+    meter_limits: filament_exact::ScalarLimits,
+    run_limits: ModelBasedRunLimits,
+    admission: &dyn RootAdmission,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let name = package
         .graph()
@@ -954,30 +1273,17 @@ fn run_model_based_value_function(
         }
     })?;
     let mut domains = Vec::with_capacity(function.parameters.len());
-    let mut generation_meter = Meter::new(system.meter_limits());
-    if let Err(stop) = prepare_text_roots(
-        function.parameters.iter().map(|(_, ty)| ty.clone()),
-        &mut generation_meter,
-    ) {
-        return Ok(text_limit_record(
-            None,
-            ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
-            name,
-            sampler,
-            seed,
-            max_cases,
-            max_trace_length,
-            max_value_bits,
-            stop,
-        ));
-    }
+    let types = package.graph().scope().types();
+    let orders = BTreeMap::new();
     let mut partitions = Vec::new();
     for (index, (parameter, value_type)) in function.parameters.iter().enumerate() {
-        let domain = system.value_domain(value_type, &[]).ok_or_else(|| {
-            ModelBasedTestError::ValueDomain {
-                parameter: parameter.clone(),
-            }
-        })?;
+        let bits = max_value_bits.and_then(|bits| u8::try_from(bits).ok());
+        let domain =
+            Domain::of_bounded(value_type, &[], types, &orders, bits).ok_or_else(|| {
+                ModelBasedTestError::ValueDomain {
+                    parameter: parameter.clone(),
+                }
+            })?;
         if domain.len() == 0 {
             return Err(ModelBasedTestError::ValueDomain {
                 parameter: parameter.clone(),
@@ -1137,17 +1443,19 @@ fn run_model_based_value_function(
             })
             .collect::<Result<Vec<_>, _>>()?;
         let partition_value = if refusal {
-            Some(partition_refusal_value(system, partition).ok_or_else(|| {
+            Some(value_partition_refusal(partition).ok_or_else(|| {
                 ModelBasedTestError::ValueDomain {
                     parameter: parameter.clone(),
                 }
             })?)
         } else {
-            Some(partition_native_value(partition, system).ok_or_else(|| {
-                ModelBasedTestError::ValueDomain {
-                    parameter: parameter.clone(),
-                }
-            })?)
+            Some(
+                value_partition_native(partition, meter_limits).ok_or_else(|| {
+                    ModelBasedTestError::ValueDomain {
+                        parameter: parameter.clone(),
+                    }
+                })?,
+            )
         };
         if let Some(value) = &partition_value {
             assignment[*parameter_index] = value.clone();
@@ -1161,7 +1469,7 @@ fn run_model_based_value_function(
 
         let admitted = partition_value
             .as_ref()
-            .is_some_and(|value| value_type.admits(value));
+            .is_some_and(|value| admission.parameter(value_type, value));
         match partition.kind {
             super::ModelBoundaryKind::LowerRefusal | super::ModelBoundaryKind::UpperRefusal => {
                 if admitted {
@@ -1196,11 +1504,12 @@ fn run_model_based_value_function(
                         parameter: parameter.clone(),
                     });
                 }
-                let outcome = value_function_result(package, &qualified_name, &assignment, system)?;
+                let outcome =
+                    value_function_result(package, &qualified_name, &assignment, meter_limits)?;
                 checks.evaluated += 1;
                 if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
                     cover_value_partitions(
-                        system,
+                        meter_limits,
                         &assignment,
                         &mut generated_partitions,
                         case_index,
@@ -1217,7 +1526,7 @@ fn run_model_based_value_function(
                             shrink_value_assignment(
                                 package,
                                 &qualified_name,
-                                system,
+                                meter_limits,
                                 &domains,
                                 &assignment,
                                 case_index,
@@ -1267,9 +1576,14 @@ fn run_model_based_value_function(
             assignment: Some(assignment.clone()),
             max_value_bits,
         });
-        let outcome = value_function_result(package, &qualified_name, &assignment, system)?;
+        let outcome = value_function_result(package, &qualified_name, &assignment, meter_limits)?;
         if matches!(outcome, CaseResult::Pass | CaseResult::Fail(_)) {
-            cover_value_partitions(system, &assignment, &mut generated_partitions, case_index);
+            cover_value_partitions(
+                meter_limits,
+                &assignment,
+                &mut generated_partitions,
+                case_index,
+            );
         }
         match outcome {
             CaseResult::Pass => counts.passing = counts.passing.saturating_add(1),
@@ -1282,7 +1596,7 @@ fn run_model_based_value_function(
                     shrink_value_assignment(
                         package,
                         &qualified_name,
-                        system,
+                        meter_limits,
                         &domains,
                         &assignment,
                         case_index,
@@ -1320,7 +1634,7 @@ fn run_model_based_value_function(
         })
         .collect();
     Ok(ModelBasedTestResult {
-        limits: ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
+        limits: run_limits,
         clause: name,
         profile: sampler.clone(),
         seed,
@@ -1363,13 +1677,13 @@ fn value_function_result(
     package: &fsl_package::CheckedPackage,
     function: &QualifiedName,
     assignment: &[Value],
-    system: &ModelSystem<'_>,
+    meter_limits: filament_exact::ScalarLimits,
 ) -> Result<CaseResult, ModelBasedTestError> {
     let evaluation = package.call(
         function,
         assignment.to_vec(),
         &ObjectEnvironment::default(),
-        &mut Meter::new(system.meter_limits()),
+        &mut Meter::new(meter_limits),
     )?;
     Ok(match evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))) => CaseResult::Pass,
@@ -1398,14 +1712,14 @@ fn value_function_result(
 fn shrink_value_assignment(
     package: &fsl_package::CheckedPackage,
     function: &QualifiedName,
-    system: &ModelSystem<'_>,
+    meter_limits: filament_exact::ScalarLimits,
     domains: &[Domain],
     assignment: &[Value],
     _case_index: u64,
     _seed: u64,
 ) -> Result<Vec<Value>, ModelBasedTestError> {
     let CaseResult::Fail(disposition) =
-        value_function_result(package, function, assignment, system)?
+        value_function_result(package, function, assignment, meter_limits)?
     else {
         return Err(ModelBasedTestError::Shrink(
             ModelShrinkError::NotCounterexample,
@@ -1427,7 +1741,7 @@ fn shrink_value_assignment(
                         })?;
                 let mut reduced = minimized.clone();
                 reduced[parameter] = candidate;
-                match value_function_result(package, function, &reduced, system)? {
+                match value_function_result(package, function, &reduced, meter_limits)? {
                     CaseResult::Fail(candidate_disposition)
                         if candidate_disposition == disposition =>
                     {
@@ -1491,6 +1805,7 @@ fn run_model_based_contract_clause(
     max_value_bits: Option<u64>,
     position_limit: u64,
     reachability_limits: Limits,
+    admission: &dyn RootAdmission,
 ) -> Result<ModelBasedTestResult, ModelBasedTestError> {
     let identity = clause.identity.clone();
     system.reset_value_bound_cuts();
@@ -1510,13 +1825,30 @@ fn run_model_based_contract_clause(
             stop,
         ));
     }
-    let partitions = contract_partition_cases(
+    let partitions = match contract_partition_cases(
         system,
         clause,
         &identity,
         max_trace_length,
         reachability_limits,
-    )?;
+        admission,
+    ) {
+        Ok(partitions) => partitions,
+        Err(ModelBasedTestError::OracleDisagreement { .. }) => {
+            return tool_failure_record(
+                system,
+                clause,
+                sampler,
+                seed,
+                max_cases,
+                max_trace_length,
+                max_value_bits,
+                position_limit,
+                reachability_limits,
+            );
+        }
+        Err(error) => return Err(error),
+    };
     run_model_based_with_oracle(
         system,
         &clause.name,
@@ -1821,7 +2153,7 @@ where
 }
 
 fn cover_value_partitions(
-    system: &ModelSystem<'_>,
+    meter_limits: filament_exact::ScalarLimits,
     assignment: &[Value],
     partitions: &mut [ModelBoundaryPartition],
     case: u64,
@@ -1842,7 +2174,7 @@ fn cover_value_partitions(
         if usize::try_from(*position)
             .ok()
             .and_then(|position| assignment.get(position))
-            .is_some_and(|value| partition_has_value(system, partition, value))
+            .is_some_and(|value| value_partition_has_value(meter_limits, partition, value))
         {
             partition.status = Some(ModelPartitionStatus::Covered { first_case: case });
         }
@@ -2298,6 +2630,7 @@ fn contract_partition_cases(
     identity: &NodeKey,
     max_trace_length: usize,
     limits: Limits,
+    admission: &dyn RootAdmission,
 ) -> Result<Vec<PartitionRunCase>, ModelBasedTestError> {
     let mut cases = Vec::new();
     for mut partition in system.boundary_partitions() {
@@ -2310,7 +2643,13 @@ fn contract_partition_cases(
                 .unwrap_or_else(|| format!("{:?}", partition.node));
             let admitted = partition_refusal_value(system, &partition)
                 .zip(partition_value_type(system, &partition))
-                .is_some_and(|(value, value_type)| value_type.admits(&value));
+                .is_some_and(|(value, value_type)| {
+                    if partition.path.first() == Some(&1) {
+                        admission.parameter(&value_type, &value)
+                    } else {
+                        admission.value(&value_type, &value)
+                    }
+                });
             require_refusal(admitted, parameter)?;
             cases.push(PartitionRunCase {
                 partition,
@@ -2473,6 +2812,37 @@ fn partition_parameter_name(
         })
 }
 
+fn value_partition_refusal(partition: &ModelBoundaryPartition) -> Option<Value> {
+    if let Some(text) = &partition.text_value {
+        let profile = partition.text_profile?;
+        let length = profile.length(text);
+        let widened = filament_exact::TextType::new(0, length.max(1), profile).ok()?;
+        return admitted_text_value(&widened, text);
+    }
+    Some(Value::Integer(partition.value.clone()))
+}
+
+fn value_partition_native(
+    partition: &ModelBoundaryPartition,
+    meter_limits: filament_exact::ScalarLimits,
+) -> Option<Value> {
+    if let Some(text) = &partition.text_value {
+        let text_type = filament_exact::TextType::new(
+            partition.domain.lower().to_u64()?,
+            partition.domain.upper().to_u64()?,
+            partition.text_profile?,
+        )
+        .ok()?;
+        let payload = filament_exact::TextPayload::from_utf8(text.as_bytes()).ok()?;
+        return match filament_exact::admit_text(&payload, &text_type, &mut Meter::new(meter_limits))
+        {
+            Outcome::Completed(value) => Some(Value::Text(value)),
+            Outcome::Undefined(_) | Outcome::Refused(_) | Outcome::Incomplete(_) => None,
+        };
+    }
+    Some(Value::Integer(partition.value.clone()))
+}
+
 fn partition_refusal_value(
     system: &ModelSystem<'_>,
     partition: &ModelBoundaryPartition,
@@ -2510,6 +2880,72 @@ mod refusal_tests {
             Err(ModelBasedTestError::OracleDisagreement { parameter }) if parameter == "by"
         ));
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the tool-failure record preserves the exact request limits"
+)]
+fn tool_failure_record(
+    system: &ModelSystem<'_>,
+    clause: &ContractClause,
+    sampler: &DefinitionRef,
+    seed: u64,
+    max_cases: u64,
+    max_trace_length: usize,
+    max_value_bits: Option<u64>,
+    position_limit: u64,
+    reachability_limits: Limits,
+) -> Result<ModelBasedTestResult, ModelBasedTestError> {
+    let partitions = system.boundary_partitions();
+    let declared: Vec<ModelOperation> = system
+        .operations()
+        .into_iter()
+        .map(|(_, name, identity)| ModelOperation {
+            identity: identity.to_owned(),
+            name: name.to_owned(),
+        })
+        .collect();
+    let reachability = operation_reachability(system, max_trace_length, reachability_limits)?;
+    let operation_coverage = model_operation_coverage(&declared, &[], &reachability)
+        .ok_or(ModelBasedTestError::Coverage)?;
+    let value_bound_cuts = system.value_bound_cuts();
+    let evidence = ModelBasedTestEvidence::Failed;
+    Ok(ModelBasedTestResult {
+        limits: ModelBasedRunLimits::for_run(system, position_limit, reachability_limits),
+        clause: clause.name.clone(),
+        profile: sampler.clone(),
+        seed,
+        max_cases,
+        max_trace_length,
+        max_value_bits,
+        counts: ModelBasedTestCounts::default(),
+        discarded_by: discard_counts(),
+        checks: ModelBasedTestChecks::default(),
+        partition_coverage: partition_coverage(&partitions),
+        partitions,
+        provenance: ModelBasedProvenance {
+            max_value_bits,
+            size_bounded: model_size_bounded_roots(system, max_value_bits),
+            value_bound_cuts: ModelBasedValueBoundCuts {
+                count: u64::try_from(value_bound_cuts.len()).unwrap_or(u64::MAX),
+                entries: value_bound_cuts,
+            },
+            cases: Vec::new(),
+        },
+        operations: Some(operation_coverage.operations.clone()),
+        coverage: Some(ModelBasedCoverage {
+            status: operation_coverage.status,
+            uncovered: operation_coverage.uncovered,
+            limits: operation_coverage.limits,
+        }),
+        result: evidence,
+        cause: Some(ModelBasedTestCause::ToolFailure {
+            defect: ModelBasedTestDefect::OracleDisagreement,
+        }),
+        counterexample: None,
+        evidence,
+    })
 }
 
 enum PathSearch {
@@ -2955,6 +3391,15 @@ fn partition_has_value(
     value: &Value,
 ) -> bool {
     partition_native_value(partition, system)
+        .is_some_and(|expected| super::probabilistic::same_value(&expected, value))
+}
+
+fn value_partition_has_value(
+    meter_limits: filament_exact::ScalarLimits,
+    partition: &ModelBoundaryPartition,
+    value: &Value,
+) -> bool {
+    value_partition_native(partition, meter_limits)
         .is_some_and(|expected| super::probabilistic::same_value(&expected, value))
 }
 
