@@ -90,7 +90,6 @@ fn state_core_locates_live_and_dead_division_in_each_state_clause() {
                 };
                 let source = format!(
                     "language \"ix:native\" edition \"1-draft\";\n\
-                     profile m = \"filament.model.complete/v1\";\n\
                      profile v = \"filament.state.core/v1\";\n\
                      object Cell {{ n: Int[0, 9]; population cells; operation bump(): Boolean modifies self.n; }}\n\
                      {kind} Rule using v on {target} {{ {body} }}\n"
