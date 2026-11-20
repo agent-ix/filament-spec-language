@@ -106,8 +106,8 @@ fn a_two_model_event_position_hyper_clause_emits_rows_and_replays_its_verdict() 
         .expect("trace n has its own clock row");
     assert_eq!(s.trace.as_deref(), Some("s"));
     assert_eq!(n.trace.as_deref(), Some("n"));
-    assert_eq!(s.clock_name, "model-steps");
-    assert_eq!(n.clock_name, "model-steps");
+    assert_eq!(s.clock_name.as_ref(), "model-steps");
+    assert_eq!(n.clock_name.as_ref(), "model-steps");
     assert_eq!(
         s.clock,
         ClockConfiguration::EventPosition {
