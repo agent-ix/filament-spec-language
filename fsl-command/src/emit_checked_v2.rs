@@ -672,6 +672,18 @@ pub(crate) fn clock_selections(
             if aliases.len() > 1 {
                 return Err(per_trace_clocks(checked, &selection.clause, span));
             }
+            // FR-640: one row per quantified trace, each with the one
+            // clock its single model reads.
+            for quantifier in hyper.quantifiers() {
+                let mut traced = fsl_package::TemporalClockSelection::new(
+                    checked.source().reference().clone(),
+                    span,
+                    selection.clock.clone(),
+                );
+                traced.trace = Some(quantifier.variable.as_str().into());
+                joined.push(traced);
+            }
+            continue;
         }
         joined.push(fsl_package::TemporalClockSelection::new(
             checked.source().reference().clone(),

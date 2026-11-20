@@ -3106,41 +3106,43 @@ fn handoff_clock_selections(
     checked: &fsl_replay::spine::CheckedUnit,
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Vec<crate::emit_checked_v2::ClockSelection> {
-    selections
-        .iter()
-        .filter_map(|selection| {
-            let name = checked
-                .package()
-                .graph()
-                .temporal_clauses()
-                .iter()
-                .find(|node| node.clause().span() == selection.declaration_span)
-                .map(|node| node.clause().name().to_owned())
-                .or_else(|| {
-                    checked
-                        .package()
-                        .graph()
-                        .protocols()
-                        .iter()
-                        .flat_map(|protocol| &protocol.obligations.compensations)
-                        .find(|template| template.span == selection.declaration_span)
-                        .map(|template| template.name.clone())
-                })
-                .or_else(|| {
-                    checked
-                        .package()
-                        .graph()
-                        .hyper_clauses()
-                        .iter()
-                        .find(|hyper| hyper.span() == selection.declaration_span)
-                        .map(|hyper| hyper.name().to_owned())
-                })?;
-            Some(crate::emit_checked_v2::ClockSelection {
-                clause: name,
-                clock: selection.clock.clone(),
+    let graph = checked.package().graph();
+    let mut named: Vec<crate::emit_checked_v2::ClockSelection> = Vec::new();
+    for selection in selections {
+        let name = graph
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().span() == selection.declaration_span)
+            .map(|node| node.clause().name().to_owned())
+            .or_else(|| {
+                graph
+                    .protocols()
+                    .iter()
+                    .flat_map(|protocol| &protocol.obligations.compensations)
+                    .find(|template| template.span == selection.declaration_span)
+                    .map(|template| template.name.clone())
             })
-        })
-        .collect()
+            .or_else(|| {
+                graph
+                    .hyper_clauses()
+                    .iter()
+                    .find(|hyper| hyper.span() == selection.declaration_span)
+                    .map(|hyper| hyper.name().to_owned())
+            });
+        let Some(name) = name else {
+            continue;
+        };
+        let found = crate::emit_checked_v2::ClockSelection {
+            clause: name,
+            clock: selection.clock.clone(),
+        };
+        // A hyper clause has one selection per quantified trace (FR-640);
+        // its clause-name selection is written once when they agree.
+        if !named.contains(&found) {
+            named.push(found);
+        }
+    }
+    named
 }
 
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
