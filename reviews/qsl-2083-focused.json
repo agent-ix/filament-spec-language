@@ -45,8 +45,8 @@
   ],
   "pending_counted_as_coverage": false,
   "lint": "Not rerun: accepted unchanged fsl-semantics blocker; package compilation itself reports unchanged reader_protocol_projection unused binders and probabilistic timed_claims_source. No lint pass is claimed.",
-  "independent_review": "pending",
-  "final_component_gate": "pending",
+  "independent_review": "PASS SR-1483/SR-1484 at 51b9efb9",
+  "final_component_gate": "PASS: 38 passed, 0 failed, 11 strict ignored across two non-overlapping segments",
   "original_failures_preserved": true,
   "review_fix_round_1": {
     "code_revision": "5fc6b6ce6",
@@ -69,6 +69,6 @@
     },
     "known_faults_reexecuted": false,
     "initial_metadata_assertion_failure_preserved": true,
-    "disposition": "pending"
+    "disposition": "PASS"
   }
 }
