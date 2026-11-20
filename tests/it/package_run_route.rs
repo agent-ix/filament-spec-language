@@ -112,7 +112,7 @@ fn a_package_run_selects_its_form_by_the_member() {
             directory.path(),
             json!({"models": [], "package": package, "synthesis": {"declaration": "Pick"}}),
         );
-        assert_eq!(exit, 0, "{value}");
+        assert_eq!(exit, 0, "package selection {package}: {value}");
         assert_eq!(
             value["synthesis"]["candidate"],
             json!({"type": "integer", "value": "7"}),
