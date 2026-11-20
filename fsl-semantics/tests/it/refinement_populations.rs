@@ -225,6 +225,7 @@ fn only_over_a_population_lowers() {
         only.operation.member(),
         Some(&fsl_semantics::value::Member::TypeArgument {
             declaration: result_type.clone(),
+                alias: None,
         })
     );
     let [MemberTerm::Leaf(LeafTerm::Reference { target: filtered }), MemberTerm::Binding(Binding {
@@ -287,6 +288,7 @@ fn only_without_where_uses_all_instances_as_its_source() {
         only.operation.member(),
         Some(&fsl_semantics::value::Member::TypeArgument {
             declaration: result_type.clone(),
+                alias: None,
         })
     );
     let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {

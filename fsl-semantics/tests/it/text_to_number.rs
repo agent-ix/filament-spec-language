@@ -134,7 +134,7 @@ fn text_and_string_conversions_build_their_typed_operations() {
                 .operation
                 .member()
                 .expect("type_argument member");
-            let Member::TypeArgument { declaration } = member else {
+            let Member::TypeArgument { declaration, .. } = member else {
                 panic!("{identity}: type_argument member, got {member:?}");
             };
             assert_eq!(

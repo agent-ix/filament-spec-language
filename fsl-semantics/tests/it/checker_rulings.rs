@@ -514,6 +514,7 @@ fn a_population_only_lowers_to_collection_only() {
             only.operation.member(),
             Some(&fsl_semantics::value::Member::TypeArgument {
                 declaration: result_type.clone(),
+                alias: None,
             }),
             "the member names the selected value type"
         );
