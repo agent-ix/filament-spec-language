@@ -6,7 +6,8 @@ type: reference
 QSL-2079 adds 32 active public-input producer test groups in
 `tests/it/error_producer_inputs.rs`. Their focused authoring runs passed.
 Four strict functions remain ignored under implementation owners; they do
-not count as passing coverage. No final component gate has run yet.
+not count as passing coverage. The scoped post-review gate passed; its
+non-overlapping segments are recorded below.
 
 The tests use real source, request files, host edits, checked declarations,
 model documents, observation provisions and replay inputs. They assert the
@@ -133,3 +134,35 @@ retain explicit requirement/ADR bindings where the governing behavior has no
 matching criterion in this scoped correction; no replacement criterion was
 invented. Active runtime assertions and their 32 passing authoring results are
 unchanged. These corrections ran no tests, builds or lint.
+
+## Final post-review gate
+
+The gate ran at `7bc410146226ded23cfc77da0e7b86b8cc20a120`, retaining the
+same owned target and jobs2/debug0/incremental0 profile. Each test segment
+used one thread and both standing skip operands. The disk had 209 GiB free
+before the gate. Review records SR-1481 and SR-1482 are retained unchanged.
+
+| Segment | Result | Receipt |
+| --- | --- | --- |
+| Root `--test it error_producer_inputs::` | 32 passed, 0 failed, 4 ignored; exit0 | `qsl-2079-final-producers.log` |
+| Foundation `--test code_catalogue` | 3 passed, 0 failed, 0 ignored; exit0 | `qsl-2079-final-catalogue.log` |
+| Whitespace check of the two changed docs | exit0 | `qsl-2079-final-docs.log` |
+
+The root command is the authoring command above with module filter
+`error_producer_inputs::` and without `--exact`. The foundation command is
+`cargo test --locked -p fsl-foundation --test code_catalogue --` followed by
+the same thread and skip operands. The docs command was:
+
+```sh
+git diff --check f38cb49aebd84b3d8ca54bd86e01db7c298c01df..HEAD -- \
+  docs/native-error-codes.md docs/qsl-2079-producer-validation.md
+```
+
+The catalogue segment also checks the native-code documentation rows. The
+Python docs structure checker was not run under the repository's no-Python
+rule; the independent review already inspected docs style and accuracy.
+The aggregate scoped gate passed. The three catalogue tests remain metadata
+checks and are not counted as additional producer coverage. Original focused
+failures, the failed lint receipt, four owned ignored cases and the coverage
+boundaries above remain unchanged. No unrelated component, product binary,
+workspace, proof or lint gate ran.
