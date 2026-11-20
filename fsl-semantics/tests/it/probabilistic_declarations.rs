@@ -1740,9 +1740,12 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
 #[test]
 fn delay_weighting_is_a_timed_subject_form() {
     let timed = |form: &str| {
-        format!(
-            "time Service dense unit ms;\nprobabilistic C using tm on Service {OVER} \
-             under Steady on origin {{ {form} }}"
+        service(
+            None,
+            &format!(
+                "time Service dense unit ms;\nprobabilistic C using tm on Service {OVER} \
+                 under Steady on origin {{ {form} }}"
+            ),
         )
     };
     let long_run = checked_timed_service(&timed(&format!(
