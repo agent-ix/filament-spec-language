@@ -1155,7 +1155,6 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// `ieee_operand_0` around a comparison prints as written. Both routes agree.
 #[test]
 #[trace("TC-3039", "FR-931-AC-14")]
-#[ignore = "QSL-2628: a float literal in a temporal clause refuses invalid_package at compile; canonical.rs unit tests cover the printer shape"]
 fn the_checker_ieee_operand_binder_never_prints() {
     const A: &str = "float64(bits: 0x3ff0000000000000)";
     const Z: &str = "float64(bits: 0x0000000000000000)";
