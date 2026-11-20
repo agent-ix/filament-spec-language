@@ -349,7 +349,11 @@ fn publishing_provider(
         },
     )
     .expect("the descriptor advertises the external value arm")
-    .with_options(published.iter().map(|name| ((*name).to_owned(), "1".to_owned())));
+    .with_options(
+        published
+            .iter()
+            .map(|name| ((*name).to_owned(), "1".to_owned())),
+    );
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
@@ -669,6 +673,127 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
         seen.lock().unwrap().settle_calls,
         1,
         "the unused clock refuses before provider settlement"
+    );
+}
+
+/// FR-961-AC-6: a provider-backed run applies the caller's S1 node limit to
+/// compilation, so an incomplete compile settles no requirement items.
+#[trace("TC-2701", "FR-961-AC-6")]
+#[test]
+fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
+    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_replay::Operation;
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let mut stage_limits = fsl_replay::spine::SpineLimits::default();
+    assert!(stage_limits.set_bound(Setting::S1Nodes, 1));
+    let overrides = command::RequestOverrides {
+        limits: Some(&stage_limits),
+        ..command::RequestOverrides::default()
+    };
+    let limits = command::RunLimits::default();
+
+    let plain_error = command::run_with_limits_and_overrides(&request, limits, &overrides, &Fr290)
+        .expect_err("the caller's S1 node limit prevents compilation");
+
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let negotiate = Counting {
+        negotiations: AtomicUsize::new(0),
+    };
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let cancel = filament_exact::Cancel::new();
+    let provider_error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &overrides,
+        &negotiate,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider-backed run applies the caller's S1 node limit");
+
+    assert_eq!(
+        provider_error.cause.code(),
+        fsl_foundation::Code::StageLimitExceeded
+    );
+    assert!(provider_error.cause.is_incomplete());
+    assert_eq!(provider_error.category().exit_code(), 22);
+    let outcome =
+        serde_json::to_value(provider_error.outcome_document(Operation::Execute)).unwrap();
+    let plain_outcome =
+        serde_json::to_value(plain_error.outcome_document(Operation::Execute)).unwrap();
+    assert_eq!(
+        outcome, plain_outcome,
+        "the typed limit outcome matches plain run"
+    );
+    assert_eq!(outcome["category"], "incomplete");
+    assert_eq!(outcome["diagnostics"][0]["code"], "stage_limit_exceeded");
+    assert!(outcome["diagnostics"][0].to_string().contains("s1.nodes"));
+    assert!(
+        outcome["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("limit 1 reached")),
+        "the typed limit names configured bound 1: {outcome}"
+    );
+    assert_eq!(negotiate.negotiations.load(Ordering::SeqCst), 0);
+    assert_eq!(seen.lock().unwrap().settle_calls, 0);
+
+    let default_limits = fsl_replay::spine::SpineLimits::default();
+    let default_overrides = command::RequestOverrides {
+        limits: Some(&default_limits),
+        ..command::RequestOverrides::default()
+    };
+    let default_seen = Arc::new(Mutex::new(Seen::default()));
+    let default_result = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &default_overrides,
+        &Fr290,
+        vec![recording_provider(
+            &default_seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect("the provider run with default caller limits settles its items");
+    let (default_document, default_outcome) = documents(&default_result);
+
+    let ac1_seen = Arc::new(Mutex::new(Seen::default()));
+    let ac1_result = command::run_with_providers(
+        &request,
+        &Fr290,
+        vec![recording_provider(
+            &ac1_seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("FR-961-AC-1 result");
+    let (ac1_document, ac1_outcome) = documents(&ac1_result);
+    assert_eq!(
+        default_document, ac1_document,
+        "the default-limit result equals AC-1"
+    );
+    assert_eq!(
+        default_outcome, ac1_outcome,
+        "the default-limit outcome equals AC-1"
+    );
+    assert_eq!(
+        default_seen.lock().unwrap().settle_calls,
+        1,
+        "the default-bound provider run settles every item"
     );
 }
 

@@ -33,6 +33,7 @@ use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
+use fsl_replay::spine::SpineLimits;
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
 use settle::Settle;
 use std::{
@@ -577,6 +578,7 @@ struct FunctionRunData {
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
     extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
+    limits: fsl_replay::spine::SpineLimits,
     call: fsl_replay::spine::Call,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     /// FR-960: the call's `requirements`; `None` settles no item.
@@ -3336,7 +3338,8 @@ fn with_request_limits<T>(
 
 /// Request settings a caller supplies beside the request file rather than
 /// inside it. Each request member is read exactly as its in-file counterpart
-/// would be (FR-640); `limits` configures compile stages (FR-869).
+/// would be (FR-640); `limits` configures run and compile stages (FR-869,
+/// FR-961).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
@@ -3346,8 +3349,8 @@ pub struct RequestOverrides<'a> {
     /// names it (FR-810). Only a compile reads it; a request that also carries
     /// `output` is refused `invalid-request` at stage `request`.
     pub output: Option<&'a Path>,
-    /// Compile-stage limits supplied by the caller (FR-869). `None` uses the
-    /// published defaults.
+    /// Run or compile stage limits supplied by the caller (FR-869, FR-961).
+    /// `None` uses the published defaults.
     pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
     /// Clause observation limits supplied by the caller (FR-312). A request
     /// that also carries `clause.observation_limits` is refused at request
@@ -3543,6 +3546,7 @@ fn prepare_run_bytes_with_sources(
             source,
             integer_division,
             library_integer_division,
+            overrides.limits.copied().unwrap_or_default(),
             overrides.observation.copied(),
         )
     })();
@@ -3659,6 +3663,7 @@ fn prepare_complete_run(
     source: FormalSource,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
+    stage_limits: SpineLimits,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
@@ -3774,6 +3779,7 @@ fn prepare_complete_run(
             packages,
             dependencies,
             extension_catalog,
+            limits: stage_limits,
             call: spine_call,
             integer_division,
             requirements,
@@ -3904,7 +3910,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                 source.source().text().as_bytes(),
                 &prepared.packages,
                 &prepared.dependencies,
-                fsl_replay::spine::SpineLimits::default(),
+                prepared.limits,
                 &prepared.call,
                 &objects,
                 fsl_replay::spine::ProfileCatalogInput {
@@ -3922,7 +3928,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             source.source().text().as_bytes(),
             &prepared.packages,
             &prepared.dependencies,
-            fsl_replay::spine::SpineLimits::default(),
+            prepared.limits,
             &prepared.call,
             &objects,
             fsl_replay::spine::ProfileCatalogInput {
@@ -3938,7 +3944,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             source.source().text().as_bytes(),
             &prepared.packages,
             &prepared.dependencies,
-            fsl_replay::spine::SpineLimits::default(),
+            prepared.limits,
             &prepared.call,
             &objects,
             &call_cancel,
@@ -3972,7 +3978,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                 bytes: source.source().text().as_bytes(),
                 packages: &prepared.packages,
                 dependencies: &prepared.dependencies,
-                limits: fsl_replay::spine::SpineLimits::default(),
+                limits: prepared.limits,
                 call: &prepared.call,
                 objects: &objects,
                 cancel: &call_cancel,
