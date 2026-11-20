@@ -2481,6 +2481,30 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     vec![source, body],
                 ))
             }
+            Some("filament.op.collection.seq") => {
+                // FR-322 `seq`: two bounds outside the binder, the body inside.
+                let [low_term, high_term, CheckedTerm::Binding { name, value }] = arguments else {
+                    return Err(fault("reader-seq-has-two-bounds-and-binder").into());
+                };
+                let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), value, slot, context)?;
+                let low = self.project_argument(id, low_term, context, locals)?;
+                let high = self.project_argument(id, high_term, context, locals)?;
+                let mut body_locals = locals.clone();
+                body_locals.extend(binder.map(|binder| (binder, slot)));
+                let body = self.project_argument(id, value, context, &body_locals)?;
+                self.grow_frame(context, slot.saturating_add(1));
+                Ok((
+                    NodeKind::Seq {
+                        slot,
+                        name: name.as_ref().to_owned(),
+                        low,
+                        high,
+                        body,
+                    },
+                    vec![low, high, body],
+                ))
+            }
             Some("filament.op.collection.convert") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
                 let [operand] = children.as_slice() else {

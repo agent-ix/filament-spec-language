@@ -56,6 +56,12 @@ enum Opening<'t> {
         name: &'t str,
         body: &'t CheckedTerm,
     },
+    /// `seq`: the two bounds are outside the scope, the body inside.
+    Seq {
+        bounds: [&'t CheckedTerm; 2],
+        name: &'t str,
+        body: &'t CheckedTerm,
+    },
     /// `case`: the scrutinee is outside, each arm's binders and body inside.
     Case(&'t [CheckedTerm]),
     /// No scope.
@@ -106,6 +112,14 @@ fn opening<'t>(identity: Option<&str>, arguments: &'t [CheckedTerm]) -> Opening<
                 body: value,
             }
         }
+        (
+            Some("filament.op.collection.seq"),
+            [low, high, CheckedTerm::Binding { name, value }],
+        ) => Opening::Seq {
+            bounds: [low, high],
+            name: name.as_ref(),
+            body: value,
+        },
         (Some("filament.op.control.case"), [_, ..]) => Opening::Case(arguments),
         _ => Opening::None,
     }
@@ -213,6 +227,16 @@ impl<'w> Walk<'_, 'w> {
                         let inner = self.scoped(&shadow, name);
                         reading.push((Reading::Term(body), inner));
                         reading.push((Reading::Term(source), shadow));
+                    }
+                    Opening::Seq { bounds, name, body } => {
+                        let inner = self.scoped(&shadow, name);
+                        reading.push((Reading::Term(body), inner));
+                        reading.extend(
+                            bounds
+                                .into_iter()
+                                .rev()
+                                .map(|bound| (Reading::Term(bound), Rc::clone(&shadow))),
+                        );
                     }
                     Opening::Case(arms) => {
                         if let Some((scrutinee, arms)) = arms.split_first() {
@@ -382,6 +406,50 @@ mod tests {
         found.sort();
         found.dedup();
         found
+    }
+
+    /// FR-390 rule 3 and FSpec FR-322 `seq`: the binder of `seq` scopes its body
+    /// only. The binder `i` is no source, and the bounds and the body's read
+    /// of `outer` stay sources.
+    #[trace("FR-390-AC-68", "TC-1071")]
+    #[test]
+    fn a_seq_binder_is_not_a_source() {
+        let seq = node(
+            "seq",
+            "expression",
+            "collection",
+            &["lo", "hi", "body", "i", "outer"],
+            json!({
+                "term": "application",
+                "operator": "collection",
+                "operation": {"identity": "filament.op.collection.seq", "laws": [], "leaves": [], "member": null, "mode": null},
+                "arguments": [
+                    reference("lo"),
+                    reference("hi"),
+                    {"term": "binding", "name": "i", "value": reference("body")},
+                ],
+                "result_type": id("type"),
+            }),
+        );
+        let body = node(
+            "body",
+            "expression",
+            "call",
+            &["i", "outer"],
+            json!({"term": "aggregate", "members": [reference("i"), reference("outer")]}),
+        );
+        let found = sources(
+            vec![
+                seq,
+                body,
+                parameter("lo", "lo"),
+                parameter("hi", "hi"),
+                parameter("i", "i"),
+                parameter("outer", "outer"),
+            ],
+            "seq",
+        );
+        assert_eq!(found, vec!["hi", "lo", "outer"]);
     }
 
     /// FR-390 rule 3: the binders of a `case` arm are not sources. The package
