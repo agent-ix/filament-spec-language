@@ -3,7 +3,7 @@
 
 use super::*;
 
-#[trace("FR-149-AC-1", "FR-149-AC-4")]
+#[trace("FR-149-AC-1")]
 #[test]
 fn each_listed_position_counts_at_the_exact_state_budget() {
     let world = safety_only();

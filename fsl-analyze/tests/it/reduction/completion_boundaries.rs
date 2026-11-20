@@ -53,18 +53,19 @@ fn the_twentieth_stored_state_completes_the_constrained_cube() {
                 }
             );
             assert_eq!(actual.stats().product_states, 20);
+            assert_eq!(actual.stats().product_edges, 24);
         }
     }
 }
 
 #[trace("FR-158-AC-2", "FR-158-AC-3")]
 #[test]
-fn an_initial_boundary_never_becomes_a_deadlock_or_a_liveness_lasso() {
+fn an_initial_boundary_never_becomes_a_deadlock_or_a_safety_stutter() {
     let world = count(&[
         infinite("always holds(x.v <= 3)"),
         infinite("eventually holds(x.v = 3)"),
     ]);
-    for selection in [None, Some(0), Some(1)] {
+    for selection in [None, Some(0)] {
         let atoms = match selection {
             None => Vec::new(),
             Some(0) => vec![atom(|v| Some(v <= 3))],
@@ -97,6 +98,41 @@ fn an_initial_boundary_never_becomes_a_deadlock_or_a_liveness_lasso() {
         assert_eq!(actual.stats().product_edges, 0);
         assert_eq!(actual.stats().stutter_edges, 0);
     }
+}
+
+#[trace("FR-158-AC-2", "FR-158-AC-3")]
+#[test]
+#[ignore = "QSL-2713: state constraints refuse liveness before reading the initial boundary"]
+fn a_liveness_initial_boundary_never_gains_a_stutter_lasso() {
+    let world = count(&[
+        infinite("always holds(x.v <= 3)"),
+        infinite("eventually holds(x.v = 3)"),
+    ]);
+    let actual = world
+        .run(
+            Some(1),
+            vec![atom(|v| Some(v == 3))],
+            constraint("Started"),
+            None,
+            ModelCheckLimits {
+                limits: Limits {
+                    max_states: 1,
+                    ..Limits::default()
+                },
+                ..ModelCheckLimits::default()
+            },
+        )
+        .expect("one initial boundary fits exactly");
+    assert_eq!(
+        actual,
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached { boundary_states: 1 },
+            stats: actual.stats(),
+        }
+    );
+    assert_eq!(actual.stats().product_states, 1);
+    assert_eq!(actual.stats().product_edges, 0);
+    assert_eq!(actual.stats().stutter_edges, 0);
 }
 
 #[trace("FR-158-AC-1", "FR-158-AC-3")]

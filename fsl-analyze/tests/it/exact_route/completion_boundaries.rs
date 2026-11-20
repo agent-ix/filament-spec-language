@@ -15,6 +15,7 @@ fn thresholds_one_decimal_unit_around_the_exact_probability_remain_distinct() {
     ] {
         let claims = CLAIMS.replacen("0.95", threshold, 1);
         let world = World::new(&prob_world::link(&claims));
+        assert!(world.claim("Likely").exact_only());
         let records = served(
             &world,
             &[item(&world, 17, ExactProbLimits::default())],
