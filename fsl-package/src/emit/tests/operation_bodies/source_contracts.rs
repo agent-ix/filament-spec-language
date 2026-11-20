@@ -20,7 +20,7 @@ fn admitted(
 
 #[trace("TC-1011", "FR-576-AC-1", "FR-576-AC-2", "FR-576-AC-9")]
 #[test]
-fn strict_body_lookup_recovers_integer_and_boolean_values_without_an_invocation() {
+fn strict_body_lookup_recovers_called_integer_and_uncalled_boolean_values() {
     for (name, type_ref, source_expression, expected) in [
         (
             "score",
@@ -37,10 +37,15 @@ fn strict_body_lookup_recovers_integer_and_boolean_values_without_an_invocation(
     ] {
         let mut op = query("ConfigVersion", name, None);
         op["returns"]["typeRef"] = json!(type_ref);
-        let document = package(vec![op], &[]);
-        let source = format!(
+        let document = package(vec![op, query("ConfigVersion", "probe", None)], &[]);
+        let mut source = format!(
             "body authored using v on Config::ConfigVersion::{name}() {{ {source_expression} }}\n"
         );
+        if name == "score" {
+            source.push_str(
+                "pre invokesScore using v on Config::ConfigVersion::probe { self.score() > 0 }\n",
+            );
+        }
         let emission = emitted(&document, &source);
         let checked = admitted(&document, &emission);
         let row = checked
