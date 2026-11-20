@@ -1368,13 +1368,27 @@ fn read_map_type(
     index += 1;
     let keys = tokens.get(index)?.text.clone();
     index += 1;
-    while tokens.get(index)?.text != "," {
+    let mut nesting = 0usize;
+    while let Some(token) = tokens.get(index) {
+        match token.text.as_str() {
+            "<" | "[" => nesting += 1,
+            ">" | "]" if nesting > 0 => nesting -= 1,
+            "," if nesting == 0 => break,
+            _ => {}
+        }
         index += 1;
     }
     index += 1;
     let values = tokens.get(index)?.text.clone();
     index += 1;
-    while tokens.get(index)?.text != ">" {
+    nesting = 0;
+    while let Some(token) = tokens.get(index) {
+        match token.text.as_str() {
+            "<" | "[" => nesting += 1,
+            ">" if nesting == 0 => break,
+            ">" | "]" if nesting > 0 => nesting -= 1,
+            _ => {}
+        }
         index += 1;
     }
     index += 1;

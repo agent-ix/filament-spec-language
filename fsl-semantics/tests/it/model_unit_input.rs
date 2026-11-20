@@ -632,3 +632,82 @@ object Holder { maybe: Option<Integer>; }
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn one_model_unit_compiles_and_admits_every_declaration_form() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/all";
+type Small = Int[0, 3];
+record Point { x: Integer; }
+tuple Pair(Integer, Boolean);
+enum Tier { Gold, Standard }
+union Mark { Circle(Integer), Blank }
+map Index = Map<Text, Integer>[0, 4];
+dimension Length;
+unit m: Length = 1;
+object Node identity (id) {
+  id: Int[0, 9];
+  note: Option<Text>;
+  tags: Integer [0, *] ordered unique;
+  relationship next: Node [0, 1] inverse prev [0, 1];
+  operation bump(): Boolean modifies self.id {
+    pre Room { self.id < 9 };
+    post Grew { self.id > pre(self.id) };
+  }
+  invariant Bounded { self.id >= 0 };
+}
+event Placed { at: Timestamp; occurs at; }
+machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
+store Nodes persists Node { operation save(n: Reference<Node>); }
+namespace Terms { members Node, Gate; term node = "a node"; }
+population nodes: Node;
+open symmetric population peers: Node;
+interface Pump { rate: Integer; operation start(); }
+object Sys { level: Integer; }
+part pump: Sys [1, 1] in Sys;
+port out_port: Pump [1, 1] out on pump;
+port in_port: Pump [1, 1] in on pump;
+connection Pipe pump.out_port -> pump.in_port;
+allocate Alloc from pump to pump;
+"#;
+    let packages = package_input([source.as_bytes()]).expect("all-form model unit compiles");
+    let document: serde_json::Value =
+        serde_json::from_slice(&packages["example/all"]).expect("compiled model unit is JSON");
+    let meanings = document["constructs"]
+        .as_array()
+        .expect("constructs is an array")
+        .iter()
+        .filter_map(|construct| construct["construct"]["meaning"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for meaning in [
+        "filament.meaning.model.object-type/v1",
+        "filament.meaning.model.value-type/v1",
+        "filament.meaning.model.record-value-type/v1",
+        "filament.meaning.model.tuple-value-type/v1",
+        "filament.meaning.model.variant-type/v1",
+        "filament.meaning.model.event-type/v1",
+        "filament.meaning.model.state-machine/v1",
+        "filament.meaning.model.process/v1",
+        "filament.meaning.model.persistence-interface/v1",
+        "filament.meaning.model.namespace/v1",
+        "filament.meaning.model.population/v1",
+        "filament.meaning.systems.interface/v1",
+        "filament.meaning.systems.part/v1",
+        "filament.meaning.systems.port/v1",
+        "filament.meaning.systems.connection/v1",
+        "filament.meaning.systems.allocation/v1",
+    ] {
+        assert!(
+            meanings.contains(meaning),
+            "missing construct meaning {meaning}"
+        );
+    }
+    admit(
+        "example/all",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the all-form document");
+}
