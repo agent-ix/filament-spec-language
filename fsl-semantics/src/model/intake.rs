@@ -1486,6 +1486,11 @@ fn validate_with_semantic_ir(document: &PackageDocument) -> Result<(), Vec<Model
         // validation and this filter suppresses only its corresponding
         // closed-vocabulary diagnostics.
         .filter(|located| !rational_value_type_schema_diagnostic(document, located))
+        // FR-056's Decimal policy is an FCD extension too. Keep only the
+        // validator diagnostics for the member spelling that this reader
+        // owns; malformed policies and operands still surface from the
+        // shared validator unchanged.
+        .filter(|located| !decimal_schema_diagnostic(document, located))
         // The upstream validator also emits generic supertype diagnostics for
         // process cross-meaning edges and cycles, and for record, event and
         // state machine cycles. The binder retains those edges so
@@ -1845,6 +1850,69 @@ fn rational_value_type_schema_diagnostic(
                 ]
                 .contains(&keyword)
             }),
+        _ => false,
+    }
+}
+
+/// Whether a shared schema diagnostic is one of the Decimal schema members
+/// whose semantic interpretation belongs to FR-056's Decimal reader.
+#[ix_trace_rs::string_edge]
+fn decimal_schema_diagnostic(
+    document: &PackageDocument,
+    located: &agent_ix_semantic_ir::diag::Located,
+) -> bool {
+    if located.code != agent_ix_semantic_ir::schema::SCHEMA_VIOLATION {
+        return false;
+    }
+    let Some(rest) = located.pointer.strip_prefix("/ir/types/") else {
+        return false;
+    };
+    let mut segments = rest.split('/');
+    let Some(position) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
+        return false;
+    };
+    let Some(member) = segments.next() else {
+        return false;
+    };
+    let Some(type_value) = document
+        .tree
+        .get("types")
+        .and_then(Value::as_array)
+        .and_then(|types| types.get(position))
+    else {
+        return false;
+    };
+    let is_decimal_value_type = type_value.get("scalar").and_then(Value::as_str) == Some("decimal");
+    let is_decimal_alias = type_value.get("kind").and_then(Value::as_str) == Some("alias")
+        && type_value.get("target").and_then(Value::as_str) == Some("ix://filament/native/Decimal");
+    if !is_decimal_value_type && !is_decimal_alias {
+        return false;
+    }
+    let Some(policy) = type_value.get("decimal").and_then(Value::as_object) else {
+        return false;
+    };
+    let Some(precision) = policy.get("precision").and_then(Value::as_u64) else {
+        return false;
+    };
+    let Some(scale) = policy.get("scale").and_then(Value::as_u64) else {
+        return false;
+    };
+    if !(1..=38).contains(&precision) || scale > precision {
+        return false;
+    }
+    match member {
+        "scalar" | "unit" | "decimal" => true,
+        "constraints" => segments
+            .next()
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| {
+                type_value
+                    .get("constraints")
+                    .and_then(Value::as_array)
+                    .and_then(|constraints| constraints.get(index))
+            })
+            .and_then(|constraint| constraint.get("keyword"))
+            .is_some(),
         _ => false,
     }
 }
