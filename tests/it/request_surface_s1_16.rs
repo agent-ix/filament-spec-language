@@ -2023,3 +2023,15 @@ fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
         assert_eq!(from_package, expected, "{unit}");
     }
 }
+
+/// FR-931-AC-18, FR-1039-AC-6: a clause that reads a model object lowers over
+/// a `{file}` selection to the atom the source route prints, from the package
+/// alone.
+#[test]
+#[trace("TC-2601", "FR-931-AC-18")]
+fn a_model_object_atom_lowers_alike_over_a_file_selection() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let (from_source, from_package) = unit_both_routes(&unit, json!({"file": "package.json"}));
+    assert_eq!(from_source, "holds(c.versionNumber <= 2)");
+    assert_eq!(from_package, from_source);
+}
