@@ -5,9 +5,9 @@
 //! the `fsl:` comment spelling, population bounds and `Init`.
 
 use crate::plan_export_surface::{braking_request, counter_export, outcome_json};
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SPINE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.model.complete/v1\";\n\
@@ -589,7 +589,7 @@ fn a_shared_closure_node_is_charged_once() {
                 let mut member = tla(obligations.clone());
                 member["limits"] = json!({"export.nodes": nodes});
                 let (exit, value) = export(&unit, true, member);
-                assert!(exit == 22 || exit == 30, "{exit}: {value}");
+                assert!(exit == 22 || exit == 21, "{exit}: {value}");
                 exit != 22
             })
             .expect("the export assembles under some export.nodes")

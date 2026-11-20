@@ -10,19 +10,20 @@ mod map;
 mod request;
 
 use super::{
-    check_sources, intake_with_bytes, output::NativeResult, output_file, wire, FileCounts,
-    RequestOverrides, Result, RunCause, RunLimits, RunResult,
+    FileCounts, RequestOverrides, Result, RunCause, RunLimits, RunResult, check_sources,
+    intake_with_bytes, output::NativeResult, output_file, wire,
 };
 use filament_semantic_value::catalog::Category;
 use fsl_replay::{OutcomeDocument, OutcomeStage};
 use request::Request;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// FSpec FR-298's disposition of one record, as FR-269 names it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Disposition {
     Preserved,
+    Conditional,
     Unrepresented,
     Refused,
 }
@@ -31,6 +32,7 @@ impl Disposition {
     const fn name(self) -> &'static str {
         match self {
             Self::Preserved => "preserved",
+            Self::Conditional => "conditional",
             Self::Unrepresented => "unrepresented",
             Self::Refused => "refused",
         }
@@ -43,7 +45,7 @@ impl Disposition {
 pub(super) struct Record {
     pub(super) obligation: String,
     pub(super) disposition: Disposition,
-    pub(super) conditions: Vec<String>,
+    pub(super) conditions: Vec<Value>,
     pub(super) causes: Vec<Value>,
     pub(super) regions: Vec<(usize, usize)>,
 }
@@ -98,6 +100,12 @@ pub(super) struct Unlowered {
     pub(super) construct: String,
     /// What the build does not lower; empty when the whole construct is not.
     pub(super) detail: String,
+    /// The node the construct is at, and its FR-203 region.
+    pub(super) node: String,
+    pub(super) locus: Value,
+    /// Whether the mapper broke its own invariant, a defect and not a
+    /// construct it does not lower yet.
+    pub(super) fault: bool,
 }
 
 /// The facts of the compiled program the outcome's `package` member names.
@@ -291,16 +299,18 @@ fn unsupported_observer(request: &Request, observer: &str, output: Option<&Path>
     }
     let document = OutcomeDocument::new(fsl_replay::Operation::Export, None, Category::Unsupported)
         .with_export(export.clone())
-        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-            Some("unsupported-requested-capability"),
-            "unsupported_projection",
-            None,
-            reason,
-        )
-        .with_details(Some(serde_json::Map::from_iter([(
-            "path".to_owned(),
-            Value::String(path.to_owned()),
-        )])))]);
+        .with_diagnostics(vec![
+            fsl_replay::OutcomeDiagnostic::new(
+                Some("unsupported-requested-capability"),
+                "unsupported_projection",
+                None,
+                reason,
+            )
+            .with_details(Some(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String(path.to_owned()),
+            )]))),
+        ]);
     RunResult {
         exit_code: Category::Unsupported.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
@@ -424,10 +434,7 @@ fn compile_and_map(
                     fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
                 ),
             )
-            .map_err(|refusal| RunCause::ExportMapper {
-                construct: "checked package".to_owned(),
-                reason: admission_reason(&refusal),
-            })?;
+            .map_err(admission_cause)?;
             let graph = checked.package().graph();
             let clauses: Vec<map::ClauseFact> = graph
                 .state_clauses()
@@ -521,12 +528,28 @@ fn finish(
     if let Some(named) = output_name(request, output) {
         export["output"] = json!({"path": named, "bytes_written": written});
     }
-    let document = OutcomeDocument::new(
+    let mut document = OutcomeDocument::new(
         fsl_replay::Operation::Export,
         Some(OutcomeStage::S4),
         category,
     )
     .with_export(export.clone());
+    if export["refusal"]["code"] == "unimplemented_capability" {
+        let refusal = &export["refusal"];
+        let text = |member: &str| refusal[member].as_str().unwrap_or_default().to_owned();
+        document = document.with_diagnostics(vec![
+            fsl_replay::OutcomeDiagnostic::new(
+                Some("unimplemented-meaning"),
+                "unimplemented_capability",
+                None,
+                format!("the export does not lower {}", text("construct")),
+            )
+            .with_details(Some(serde_json::Map::from_iter([(
+                "capability".to_owned(),
+                Value::String(text("capability")),
+            )]))),
+        ]);
+    }
     Ok(Some(RunResult {
         exit_code: category.exit_code(),
         value: NativeResult::export_document(json!({"export": export})),
@@ -552,7 +575,8 @@ fn incomplete(export: &mut Value, setting: &str, bound: u64) {
 /// Fill `export` for an assembled mapping. The stop order is admission,
 /// classification, the floor, then the text (FR-1015): below the floor the
 /// request is `refused` with no package and no text; a representable
-/// obligation this build does not lower is a mapper failure; a text over
+/// obligation this build does not lower is `unimplemented_capability` (the
+/// classification stops at its node, before the floor); a text over
 /// `export.output_bytes` is `incomplete`.
 fn assembled(
     export: &mut Value,
@@ -564,6 +588,35 @@ fn assembled(
     work: u64,
 ) -> Result<Category> {
     let effective = request.limits.effective();
+    if let Some(unlowered) = unlowered {
+        if unlowered.fault {
+            return Err(RunCause::ExportMapper {
+                construct: unlowered.construct.clone(),
+                reason: format!(
+                    "obligation `{}` is representable in {} and the mapper broke its own invariant{}",
+                    unlowered.obligation,
+                    request.target.profile(),
+                    if unlowered.detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", unlowered.detail)
+                    }
+                ),
+            });
+        }
+        let family = request.target.family();
+        export["status"] = json!("refused");
+        export["refusal"] = json!({
+            "code": "unimplemented_capability",
+            "cause": "unimplemented-meaning",
+            "capability": format!("export:{family}:{}", unlowered.construct),
+            "target": family,
+            "construct": unlowered.construct,
+            "node": unlowered.node,
+            "locus": unlowered.locus,
+        });
+        return Ok(Category::Unsupported);
+    }
     export["records"] = json!(records.iter().map(Record::value).collect::<Vec<_>>());
     let failing: Vec<Value> = records
         .iter()
@@ -578,21 +631,6 @@ fn assembled(
             "failing": failing,
         });
         return Ok(Category::Unsupported);
-    }
-    if let Some(unlowered) = unlowered {
-        return Err(RunCause::ExportMapper {
-            construct: unlowered.construct.clone(),
-            reason: format!(
-                "obligation `{}` is representable in {} and this build has no lowering for it{}",
-                unlowered.obligation,
-                request.target.profile(),
-                if unlowered.detail.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", unlowered.detail)
-                }
-            ),
-        });
     }
     if work > effective.work_units {
         incomplete(export, "export.work_units", effective.work_units);
@@ -621,22 +659,68 @@ fn assembled(
     Ok(Category::Success)
 }
 
-/// The reason an admission refusal of the compiled package states: the
-/// catalogued code, the reader's typed cause, the pointer it names and the
-/// unsupplied domain package identity.
-fn admission_reason(refusal: &fsl_package::PackageAdmissionRefusal) -> String {
-    let mut reason = format!(
-        "the package the run compiled is not admitted: {}",
-        refusal.code
+/// The cause of an admission refusal of the compiled package: the refusal's
+/// own catalogued code, typed cause and pointer, and the identity at fault.
+fn admission_cause(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    let fsl_package::PackageAdmissionRefusal {
+        code,
+        cause,
+        pointer,
+        identity,
+    } = refusal;
+    let label = cause.as_ref().map_or_else(
+        || code.as_str().to_owned(),
+        |cause| format!("{}/{cause}", code.as_str()),
     );
-    if let Some(cause) = &refusal.cause {
-        reason.push_str(&format!(", cause {cause}"));
+    let mut message = format!("the package the run compiled is not admitted: {label}");
+    if let Some(pointer) = &pointer {
+        message.push_str(&format!(" at {pointer}"));
     }
-    if let Some(pointer) = &refusal.pointer {
-        reason.push_str(&format!(" at {pointer}"));
+    if let Some(identity) = &identity {
+        message.push_str(&format!(" for {identity}"));
     }
-    if let Some(identity) = &refusal.identity {
-        reason.push_str(&format!(" for {identity}"));
+    RunCause::AnalyzePackage {
+        code,
+        cause,
+        pointer,
+        message,
     }
-    reason
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::RunError;
+    use fsl_foundation::Code;
+    use ix_trace_rs::trace;
+
+    /// FSpec FR-817-AC-17: a package the run compiled but admission refuses
+    /// stops the export with the refusal's own code, cause and pointer and
+    /// that code's exit, never as an `ExportMapper` failure (exit 30).
+    #[test]
+    #[trace("FSpec-TC-2040", "FSpec-FR-817-AC-17")]
+    fn an_admission_refusal_keeps_its_own_code_cause_and_exit() {
+        for (code, exit) in [
+            (Code::InvalidPackage, 20),
+            (Code::ResourceExhausted, 22),
+            (Code::MissingImport, 20),
+        ] {
+            let cause = admission_cause(fsl_package::PackageAdmissionRefusal {
+                code,
+                cause: Some("invalid-value".to_owned()),
+                pointer: Some("/claim_names/2".to_owned()),
+                identity: None,
+            });
+            assert_eq!(cause.code(), code);
+            let message = cause.to_string();
+            assert!(message.contains("invalid-value"), "{message}");
+            assert!(message.contains("/claim_names/2"), "{message}");
+            let error = RunError {
+                cause,
+                sources: crate::Sources::default(),
+            };
+            assert_eq!(error.category().exit_code(), exit, "{code:?}");
+            assert_ne!(error.category().exit_code(), 30);
+        }
+    }
 }

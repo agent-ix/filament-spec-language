@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1015 and FSpec FR-811 stops that need no lowering: a representable
-//! obligation this build does not lower is a mapper failure, never a record,
+//! obligation this build does not lower is the typed `unimplemented_capability`
+//! refusal (exit 21), never a record,
 //! a package or a file; the `initial` member is checked.
 
 use crate::plan_export_surface::{braking_member, braking_request, counter_request, outcome_json};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");
