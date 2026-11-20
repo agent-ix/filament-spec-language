@@ -296,3 +296,316 @@ fn open_upper_intervals_are_decided_by_zone_search() {
     );
     let _ = violated(decide(&late));
 }
+
+mod interval_boundaries {
+    use super::*;
+    use crate::timed_world::{document, unit_text, world, DENSE, PACKAGE};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+    use fsl_eval::model_subject::ModelSubject;
+    use fsl_eval::temporal::TemporalOutcome;
+    use fsl_foundation::bound::InvalidTimedInterval;
+    use fsl_foundation::diagnostic::Code;
+    use fsl_foundation::{SourceIdentity, Span};
+    use fsl_replay::{
+        evaluate_model_trace, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceEnd,
+    };
+    use fsl_semantics::check::{CheckCause, PackageDeclarations, TemporalCause};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::intake::{admit_unit, package_input};
+
+    // A pulse is true only in phase 1. Entry is forced at x=event and its
+    // location is urgent, so clearing cannot leave it true at a later instant.
+    fn pulse(event: u32, formula: &str) -> World {
+        let model = document(
+            &["x"],
+            &[
+                ("pulse", &["phase"]),
+                ("clear", &["phase"]),
+                ("idle", &["phase"]),
+            ],
+        );
+        world(
+            &model,
+            TIMED,
+            &format!(
+                "{DENSE}
+pre AtInstant using v on M::Call::pulse {{ self.phase = 0 and self.x >= {event} ms }}
+post Pulsed using v on M::Call::pulse {{ self.phase = 1 }}
+pre ClearPulse using v on M::Call::clear {{ self.phase = 1 }}
+post Cleared using v on M::Call::clear {{ self.phase = 2 }}
+pre IdleAllowed using v on M::Call::idle {{ self.phase = 2 }}
+post Idled using v on M::Call::idle {{ self.phase = 2 }}
+time invariant ReachInstant when {{ self.phase = 0 }} {{ self.x <= {event} ms }}
+time invariant InstantOnly when {{ self.phase = 1 }} {{ self.x <= {event} ms }}
+temporal Boundary using tt over (c: M::Call) clock \"model-time\" on origin {{ {formula} }}
+"
+            ),
+        )
+    }
+
+    fn checked_verdict(world: &World, holds: bool) {
+        if holds {
+            let certificate = proved(decide(world));
+            assert_eq!(
+                check(world, &certificate, CertificateCheckLimits::default()),
+                Ok(ZoneCertificateVerdict::Accepted)
+            );
+        } else {
+            let counterexample = violated(decide(world));
+            let settlement =
+                replay(world, &counterexample).expect("actual timed counterexample re-executes");
+            assert!(reproduced(&settlement), "{settlement:?}");
+        }
+    }
+
+    fn eventual(interval: &str, event: u32, holds: bool) {
+        let world = pulse(event, &format!("eventually{interval} holds(c.phase = 1)"));
+        checked_verdict(&world, holds);
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    fn open_lower_bound_excludes_the_boundary_instant() {
+        eventual("(1 ms, 3 ms]", 2, true);
+        eventual("(1 ms, 3 ms]", 1, false);
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    fn closed_lower_bound_includes_the_boundary_instant() {
+        eventual("[1 ms, 3 ms]", 1, true);
+        eventual("[1 ms, 3 ms]", 0, false);
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    fn open_upper_bound_excludes_the_boundary_instant() {
+        eventual("[1 ms, 3 ms)", 2, true);
+        eventual("[1 ms, 3 ms)", 3, false);
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    fn closed_upper_bound_includes_the_boundary_instant() {
+        eventual("[1 ms, 3 ms]", 3, true);
+        eventual("[1 ms, 3 ms]", 4, false);
+    }
+
+    #[trace("FR-242-AC-2", "FR-234-AC-3", "FR-237-AC-1")]
+    #[test]
+    fn punctual_bound_requires_the_exact_instant() {
+        eventual("[2 ms, 2 ms]", 2, true);
+        eventual("[2 ms, 2 ms]", 1, false);
+        eventual("[2 ms, 2 ms]", 3, false);
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    fn always_with_each_admitted_bound_kind() {
+        for (interval, outside) in [
+            ("[1 ms, 3 ms]", 4),
+            ("(1 ms, 3 ms]", 1),
+            ("[1 ms, 3 ms)", 3),
+            ("(1 ms, 3 ms)", 1),
+            ("[2 ms, 2 ms]", 1),
+        ] {
+            let formula = format!("always{interval} holds(not (c.phase = 1))");
+            checked_verdict(&pulse(outside, &formula), true);
+            checked_verdict(&pulse(2, &formula), false);
+        }
+    }
+
+    fn nested(c_event: u32) -> World {
+        let model = document(
+            &["x"],
+            &[
+                ("rise", &["phase"]),
+                ("pulse", &["phase"]),
+                ("clear", &["phase"]),
+                ("idle", &["phase"]),
+            ],
+        );
+        world(
+            &model,
+            TIMED,
+            &format!(
+                "{DENSE}
+pre RiseAtOne using v on M::Call::rise {{ self.phase = 0 and self.x >= 1 ms }}
+post Rose using v on M::Call::rise {{ self.phase = 1 }}
+pre PulseAtInstant using v on M::Call::pulse {{ self.phase = 1 and self.x >= {c_event} ms }}
+post Pulsed using v on M::Call::pulse {{ self.phase = 2 }}
+pre ClearPulse using v on M::Call::clear {{ self.phase = 2 }}
+post Cleared using v on M::Call::clear {{ self.phase = 3 }}
+pre IdleAllowed using v on M::Call::idle {{ self.phase = 3 }}
+post Idled using v on M::Call::idle {{ self.phase = 3 }}
+time invariant FirstDeadline when {{ self.phase = 0 }} {{ self.x <= 1 ms }}
+time invariant SecondDeadline when {{ self.phase = 1 }} {{ self.x <= {c_event} ms }}
+time invariant InstantOnly when {{ self.phase = 2 }} {{ self.x <= {c_event} ms }}
+temporal NestedIntervals using tt over (c: M::Call) clock \"model-time\" on origin {{
+    holds(c.phase = 0) until[0 ms, 5 ms] (holds(c.phase = 1) until[1 ms, 2 ms] holds(c.phase = 2))
+}}
+"
+            ),
+        )
+    }
+
+    #[trace("FR-242", "FR-234", "FR-237-AC-1")]
+    #[test]
+    #[ignore = "QSL-2689: EN-6 faults admitting the nested-interval witness"]
+    fn nested_until_with_inner_and_outer_bounds() {
+        checked_verdict(&nested(3), true);
+        checked_verdict(&nested(4), false);
+    }
+
+    fn untimed(formula: &str) -> World {
+        let model = document(
+            &[],
+            &[
+                ("pulse", &["phase"]),
+                ("clear", &["phase"]),
+                ("idle", &["phase"]),
+            ],
+        );
+        world(
+            &model,
+            crate::zone_search::INFINITE,
+            &format!(
+                "
+pre PulseAllowed using v on M::Call::pulse {{ self.phase = 0 }}
+post Pulsed using v on M::Call::pulse {{ self.phase = 1 }}
+pre ClearPulse using v on M::Call::clear {{ self.phase = 1 }}
+post Cleared using v on M::Call::clear {{ self.phase = 2 }}
+pre IdleAllowed using v on M::Call::idle {{ self.phase = 2 }}
+post Idled using v on M::Call::idle {{ self.phase = 2 }}
+temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin {{ {formula} }}
+"
+            ),
+        )
+    }
+
+    fn untimed_verdict(world: &World) -> bool {
+        let system = world.system();
+        let node = &world.package.graph().temporal_clauses()[0];
+        let letters = system.clause_letters(node).expect("actual model letters");
+        let outcome = check_model(
+            ModelCheckRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                temporal_clock_selections: &[],
+                item: ModelCheckItem::Clause {
+                    clause: node.clause(),
+                    letters: &letters,
+                },
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                reductions: Default::default(),
+            },
+            &Cancel::new(),
+        )
+        .expect("the actual untimed checker admits the projected model");
+        match outcome {
+            ModelCheckOutcome::Holds { .. } => true,
+            ModelCheckOutcome::Violated { counterexample, .. } => {
+                let replayed = evaluate_model_trace(
+                    &system,
+                    &counterexample,
+                    node.clause(),
+                    &letters,
+                    system.meter_limits(),
+                )
+                .expect("untimed counterexample re-executes");
+                let ModelTraceEnd::Evaluated(run) = replayed else {
+                    panic!("untimed replay stopped: {replayed:?}");
+                };
+                assert!(
+                    matches!(run.outcome, Ok(TemporalOutcome::Violated { .. })),
+                    "{:?}",
+                    run.outcome
+                );
+                false
+            }
+            other => panic!("untimed projection must decide, got {other:?}"),
+        }
+    }
+
+    #[trace("FR-1034", "FR-242", "FR-237-AC-1")]
+    #[test]
+    #[ignore = "QSL-2689: EN-6 faults admitting the unbounded pulse witness"]
+    fn unbounded_upper_bound_matches_the_actual_untimed_checker() {
+        // All pulse events in this model occur at 2 ms, beyond the 1 ms
+        // lower bound. Dropping clocks preserves the same discrete phase path.
+        // No general equivalence of a positive timed lower bound is assumed.
+        for (target, expected) in [(1, true), (3, false)] {
+            let timed = pulse(2, &format!("eventually[1 ms, *] holds(c.phase = {target})"));
+            let projected = untimed(&format!("eventually holds(c.phase = {target})"));
+            let actual_untimed = untimed_verdict(&projected);
+            assert_eq!(actual_untimed, expected);
+            checked_verdict(&timed, actual_untimed);
+        }
+    }
+
+    #[trace("FR-234-AC-2")]
+    #[test]
+    fn reversed_and_empty_open_intervals_are_typed_refusals_before_a_verdict() {
+        for (interval, reason) in [
+            ("[3 ms, 1 ms]", InvalidTimedInterval::Inverted),
+            ("(2 ms, 2 ms]", InvalidTimedInterval::EmptyOpenEnd),
+        ] {
+            let model = document(&["x"], &[]);
+            let text = unit_text(PACKAGE,TIMED,&format!("{DENSE}temporal Bad using tt over (c: M::Call) clock \"model-time\" on origin {{ eventually{interval} holds(c.phase = 1) }}"));
+            let parsed = fsl_cst::parse(
+                SourceIdentity::new("test", "zone-interval-refusal"),
+                "zone-interval.native",
+                text.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .expect("source read");
+            assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+            let built = fsl_forms::build_unit(&parsed).expect("interval syntax builds");
+            let packages = package_input([model.as_slice()]).expect("model input");
+            let models = admit_unit(
+                &built.selections().models,
+                &packages,
+                ModelNormalizationLimits::default(),
+            )
+            .expect("model selection");
+            let declarations = PackageDeclarations::assemble(
+                parsed.source().reference().clone(),
+                "zone-refusal".to_owned(),
+                built,
+                models,
+                Vec::new(),
+            )
+            .expect("package assembly");
+            let Err(refusals) = declarations.with_unwritten_timed_members().check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            ) else {
+                panic!("{interval} must refuse, not produce a checked package");
+            };
+            let [refusal] = refusals.as_slice() else {
+                panic!("one typed interval refusal: {refusals:?}");
+            };
+            let CheckCause::Temporal(cause) = &refusal.cause else {
+                panic!("expected temporal refusal, got {refusal:?}");
+            };
+            let start = text.find(interval).expect("interval source");
+            assert_eq!(
+                cause.as_ref(),
+                &TemporalCause::InvalidTimedInterval {
+                    reason,
+                    span: Span {
+                        start,
+                        end: start + interval.len()
+                    }
+                }
+            );
+            assert_eq!(cause.code(), Code::InvalidTimedModel);
+            assert_eq!(cause.tag(), "invalid-interval");
+        }
+    }
+}
