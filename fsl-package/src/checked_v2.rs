@@ -493,13 +493,13 @@ fn occurrence(
 /// "Operand index segments"): every id the package holds resolves its index
 /// segments against this graph.
 pub(crate) fn wire_graph(package: &CheckedPackageV2) -> Result<WireGraph, WireIdError> {
-    WireGraph::new(
-        package
-            .resolved_graph()
-            .nodes
-            .iter()
-            .map(|node| &node.node_id),
-    )
+    let graph = package.resolved_graph();
+    let ids: Vec<_> = graph
+        .nodes
+        .iter()
+        .map(|node| node.node_id.clone())
+        .collect();
+    WireGraph::with_operand_rows(&ids, &graph.operand_rows)
 }
 
 /// Exact unit identity carried by one admitted compound-unit type node.
