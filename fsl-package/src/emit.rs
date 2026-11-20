@@ -9244,13 +9244,15 @@ fn temporal_binding_rows(
                 .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
                 .map(|occurrence| occurrence.ordinal)
             {
-                rows.push(filament_contract_model::TemporalBinding {
+                let row = filament_contract_model::TemporalBinding {
                     declaration: declaration.clone(),
                     occurrence: ordinal,
                     clock_name: awaited.clock.as_str().into(),
                     clock: clock.clone(),
                     trace: None,
-                });
+                };
+                keyed.rows.push((node_key.clone(), row.clone()));
+                rows.push(row);
             }
         }
     }
@@ -9273,6 +9275,8 @@ fn temporal_binding_rows(
             Some((path, &node.node_id))
         })
         .collect();
+    let key_of_id: BTreeMap<&CheckedNodeId, &NodeKey> =
+        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
     for protocol in graph.protocols() {
         let source = graph.source().clone();
         for template in &protocol.obligations.compensations {
@@ -9306,6 +9310,9 @@ fn temporal_binding_rows(
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            let node_key = key_of_id
+                .get(&declaration)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
             for node in nodes.iter().filter(|node| node.node_id == declaration) {
                 for ordinal in node
                     .occurrences
@@ -9313,13 +9320,15 @@ fn temporal_binding_rows(
                     .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
                     .map(|occurrence| occurrence.ordinal)
                 {
-                    rows.push(filament_contract_model::TemporalBinding {
+                    let row = filament_contract_model::TemporalBinding {
                         declaration: declaration.clone(),
                         occurrence: ordinal,
                         clock_name: template.clock.as_str().into(),
                         clock: clock.clone(),
                         trace: None,
-                    });
+                    };
+                    keyed.rows.push(((*node_key).clone(), row.clone()));
+                    rows.push(row);
                 }
             }
         }

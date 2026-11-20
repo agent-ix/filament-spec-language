@@ -369,8 +369,18 @@ fn a_compensation_without_a_selected_temporal_profile_is_refused_by_i2() {
         refusal.cause,
         Some(filament_contract_model::CheckedPackageRefusalCause::MissingSelection)
     );
+    // The reader refuses at the first compensation node, wherever the
+    // declared graph order places it.
+    let first = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|node| node["semantic_form"] == "compensation")
+        .expect("a compensation node");
     assert_eq!(
         refusal.loci[0].path.as_ref().map(|path| path.as_str()),
+        Some(format!("/semantic_graph/nodes/{first}").as_str())
+    );|path| path.as_str()),
         Some("/semantic_graph/nodes/1")
     );
 }
@@ -583,3 +593,4 @@ fn a_sum_binder_in_a_recovery_predicate_is_a_parameter_named_by_its_source() {
     let read = &capture["members"][1]["value"];
     assert_eq!(parameter(nodes, read), ("saved", "2"), "{capture}");
 }
+
