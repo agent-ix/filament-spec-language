@@ -86,7 +86,7 @@ struct Builder {
 }
 
 impl Builder {
-    fn render(&self, rule: &Rule, seek: bool, tokens: &mut Vec<String>) {
+    fn render(&self, rule: &Rule, seek: bool, timed: bool, tokens: &mut Vec<String>) {
         match rule {
             Rule::Terminal(terminal) => {
                 let token = match terminal {
@@ -114,9 +114,13 @@ impl Builder {
                 self.render(
                     &self.grammar[production],
                     seek && *production != self.target,
+                    timed || *production == Production::TimedInterval,
                     tokens,
                 );
-                if matches!(production, Production::Hex32 | Production::Hex64) {
+                if matches!(
+                    production,
+                    Production::Hex32 | Production::Hex64 | Production::ReferenceLiteral
+                ) {
                     let hex = tokens.drain(start..).collect::<String>();
                     tokens.push(hex);
                 }
@@ -144,10 +148,21 @@ impl Builder {
                     })
                     .flatten();
                 for (index, rule) in rules.iter().enumerate() {
-                    self.render(rule, selected == Some(index), tokens);
+                    self.render(rule, selected == Some(index), timed, tokens);
                 }
             }
             Rule::Choice(rules) => {
+                // A timed upper endpoint must be a quantity or `*`; this
+                // shared choice also contains the untimed integer form.
+                if timed {
+                    if let Some(rule) = rules
+                        .iter()
+                        .find(|rule| matches!(rule, Rule::Production(Production::QuantityLiteral)))
+                    {
+                        self.render(rule, seek, timed, tokens);
+                        return;
+                    }
+                }
                 if let Some(rule) = rules.iter().min_by_key(|rule| {
                     if seek {
                         targeted_cost(rule, &self.normal, &self.targeted)
@@ -155,17 +170,17 @@ impl Builder {
                         cost(rule, &self.normal)
                     }
                 }) {
-                    self.render(rule, seek, tokens);
+                    self.render(rule, seek, timed, tokens);
                 }
             }
             Rule::Optional(rule) => {
                 if seek {
-                    self.render(rule, true, tokens);
+                    self.render(rule, true, timed, tokens);
                 }
             }
             Rule::Repeat { rule, minimum, .. } => {
                 for index in 0..(*minimum).max(usize::from(seek)) {
-                    self.render(rule, seek && index == 0, tokens);
+                    self.render(rule, seek && index == 0, timed, tokens);
                 }
             }
         }
@@ -230,6 +245,7 @@ pub fn covering_derivations() -> Vec<Derivation> {
         builder.render(
             &Rule::Production(Production::CompleteUnit),
             true,
+            false,
             &mut tokens,
         );
         output.push(Derivation {

@@ -52,12 +52,12 @@ impl SmallModel {
     }
 
     fn post(&self) -> String {
-        format!("(pre(self.value) < {0} and self.value = pre(self.value) + 1) or (pre(self.value) = {0} and self.value = pre(self.value))", self.maximum)
+        format!("(pre(self.level) < {0} and self.level = pre(self.level) + 1) or (pre(self.level) = {0} and self.level = pre(self.level))", self.maximum)
     }
 
     /// Standalone native object/operation declarations, with an admitted precondition.
     pub fn source(&self) -> String {
-        format!("{MODEL_HEADER}object Counter {{ value: Int[0, {}]; population counters; operation inc() modifies self.value; }}\npre Enabled using v on Counter::inc {{ self.value <= {} }}\npost Advances using v on Counter::inc {{ {} }}\n", self.maximum, self.maximum, self.post())
+        format!("{MODEL_HEADER}object Counter {{ level: Int[0, {}]; population counters; operation inc() modifies self.level; }}\npre Enabled using v on Counter::inc {{ self.level <= {} }}\npost Advances using v on Counter::inc {{ {} }}\n", self.maximum, self.maximum, self.post())
     }
 
     /// The same domain and transition relation as the benchmark library representation.
@@ -66,11 +66,11 @@ impl SmallModel {
         Model {
             package: "bench/property-counters".into(), object: "Counter".into(), population: "counters".into(), symmetric: false,
             integers: vec![("Level".into(), 0, i64::from(self.maximum))],
-            fields: vec![("value".into(), "ix://bench/property-counters/Level".into())],
-            operations: vec![Operation { name: "inc".into(), parameters: Vec::new(), modifies: vec!["value".into()] }],
+            fields: vec![("level".into(), "ix://bench/property-counters/Level".into())],
+            operations: vec![Operation { name: "inc".into(), parameters: Vec::new(), modifies: vec!["level".into()] }],
             profiles: String::new(),
-            body: format!("pre Enabled using v on M::Counter::inc {{ self.value <= {} }}\npost Advances using v on M::Counter::inc {{ {} }}", self.maximum, self.post()),
-            objects: (0..self.processes).map(|index| (format!("counter{index}"), vec![("value".into(), 0)])).collect(),
+            body: format!("pre Enabled using v on M::Counter::inc {{ self.level <= {} }}\npost Advances using v on M::Counter::inc {{ {} }}", self.maximum, self.post()),
+            objects: (0..self.processes).map(|index| (format!("counter{index}"), vec![("level".into(), 0)])).collect(),
             unrelated: 0,
         }
     }

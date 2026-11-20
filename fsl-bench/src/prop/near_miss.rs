@@ -51,8 +51,8 @@ pub fn near_misses() -> BoxedStrategy<NearMiss> {
                 NearMissKind::OutOfRange => (
                     "Int[0, 3]",
                     value.to_string(),
-                    Code::IllTyped,
-                    "type-mismatch",
+                    Code::UndefinedExpression,
+                    "unproved-range",
                 ),
                 NearMissKind::DivisionByZero => (
                     "Integer",

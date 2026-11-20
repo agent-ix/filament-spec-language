@@ -142,7 +142,7 @@ pub enum Expr {
         scale: u8,
     },
     /// A present optional value.
-    Present(Box<Expr>),
+    OptionSome(Box<Expr>),
     /// A one-field record constructor.
     Record(Box<Expr>),
     /// A two-member tuple constructor.
@@ -193,7 +193,7 @@ impl Expr {
                 denominator,
             } => format!("rational({numerator}, {denominator})"),
             Self::Decimal { coefficient, scale } => format!("decimal({coefficient}, {scale})"),
-            Self::Present(member) => format!("present({})", member.source()),
+            Self::OptionSome(member) => format!("Some({})", member.source()),
             Self::Record(member) => format!("RecordValue {{ field: {} }}", member.source()),
             Self::Tuple(member, flag) => format!("TupleValue({}, {flag})", member.source()),
             Self::Collection { kind, members } => {
@@ -249,7 +249,7 @@ fn inhabit(ty: &Type, choice: u8) -> Expr {
             scale: choice % 3,
         },
         Type::Text => Expr::Text("a".repeat(usize::from(choice % 10))),
-        Type::Option(member) => Expr::Present(Box::new(inhabit(member, choice))),
+        Type::Option(member) => Expr::OptionSome(Box::new(inhabit(member, choice))),
         Type::Record(member) => Expr::Record(Box::new(inhabit(member, choice))),
         Type::Tuple(member) => Expr::Tuple(Box::new(inhabit(member, choice)), choice % 2 == 0),
         Type::Collection { kind, member } => Expr::Collection {
