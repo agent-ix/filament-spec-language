@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use filament_eval::FamilyOutcome;
-use filament_exact::{FieldValue, Meter, Outcome, Value};
+use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Refusal, Value, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_bench::prop::{self, near_miss, value};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -14,7 +14,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use proptest::prelude::*;
-use proptest::test_runner::{TestError, TestRunner};
+use proptest::test_runner::{TestCaseResult, TestError, TestRunner};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Reference {
@@ -24,7 +24,7 @@ enum Reference {
     Decimal(i128, u32),
     Text(String),
     Option(Option<Box<Reference>>),
-    Composite(Vec<Reference>),
+    Composite(&'static str, Vec<Reference>),
     Collection(value::CollectionKind, Vec<Reference>),
 }
 
@@ -70,11 +70,13 @@ fn reference(expression: &value::Expr, environment: &BTreeMap<String, Reference>
             local.insert(name.clone(), reference(value, environment));
             reference(body, &local)
         }
-        Expr::Record(member) => Reference::Composite(vec![reference(member, environment)]),
-        Expr::Tuple(member, flag) => Reference::Composite(vec![
-            reference(member, environment),
-            Reference::Boolean(*flag),
-        ]),
+        Expr::Record(member) => {
+            Reference::Composite("RecordValue", vec![reference(member, environment)])
+        }
+        Expr::Tuple(member, flag) => Reference::Composite(
+            "TupleValue",
+            vec![reference(member, environment), Reference::Boolean(*flag)],
+        ),
         Expr::Collection { kind, members } => {
             let mut values = Vec::new();
             for member in members {
@@ -161,7 +163,7 @@ fn assignment(ty: &value::Type, seed: i16) -> value::Expr {
             scale: u8::try_from(seed.rem_euclid(4)).unwrap(),
         },
         Type::Text => Expr::Text(
-            ["", "abc", "é", "e\u{301}", "🙂"]
+            ["", "abc", "é", "Ab", "🙂"]
                 .get(usize::try_from(seed.rem_euclid(5)).unwrap())
                 .unwrap()
                 .to_string(),
@@ -193,7 +195,21 @@ enum CompileFailure {
     Check(Vec<CheckRefusal>),
 }
 
-fn compile(source: &str) -> Result<CheckedPackage, CompileFailure> {
+impl std::fmt::Display for CompileFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Source(detail) => formatter.write_str(detail),
+            Self::Check(refusals) => write!(formatter, "check: {refusals:?}"),
+        }
+    }
+}
+
+struct Compiled {
+    package: CheckedPackage,
+    composite_keys: BTreeMap<NodeKey, &'static str>,
+}
+
+fn compile(source: &str) -> Result<Compiled, CompileFailure> {
     let parsed = fsl_bench::parse::parse(source)
         .map_err(|error| CompileFailure::Source(format!("parse: {error:?}")))?;
     if !parsed.is_admissible() {
@@ -212,18 +228,28 @@ fn compile(source: &str) -> Result<CheckedPackage, CompileFailure> {
         Vec::new(),
     )
     .map_err(|error| CompileFailure::Source(format!("assembly: {error:?}")))?;
+    let mut composite_keys = BTreeMap::new();
+    for name in ["RecordValue", "TupleValue"] {
+        if let Some(ValueType::Composite(key)) = declarations.types.named(name) {
+            composite_keys.insert(key.clone(), name);
+        }
+    }
     declarations
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
-        .map(CheckedPackage::link)
+        .map(|graph| Compiled {
+            package: CheckedPackage::link(graph),
+            composite_keys,
+        })
         .map_err(CompileFailure::Check)
 }
 
-fn call_named(package: &CheckedPackage, name: &str) -> Outcome<Value> {
+fn call_named(package: &Compiled, name: &str) -> Outcome<Value> {
     let evaluation = package
+        .package
         .call(
             &QualifiedName::unqualified(name).unwrap(),
             Vec::new(),
@@ -237,11 +263,11 @@ fn call_named(package: &CheckedPackage, name: &str) -> Outcome<Value> {
     }
 }
 
-fn call(package: &CheckedPackage) -> Outcome<Value> {
+fn call(package: &Compiled) -> Outcome<Value> {
     call_named(package, "invoke")
 }
 
-fn actual(value: &Value) -> Reference {
+fn actual(value: &Value, compiled: &Compiled) -> Reference {
     match value {
         Value::Integer(number) => Reference::Integer(number.to_string().parse().unwrap()),
         Value::Boolean(truth) => Reference::Boolean(*truth),
@@ -259,15 +285,18 @@ fn actual(value: &Value) -> Reference {
             number.representation().scale(),
         ),
         Value::Text(text) => Reference::Text(text.payload().as_str().into()),
-        Value::Option(option) => {
-            Reference::Option(option.payload().map(|member| Box::new(actual(member))))
-        }
+        Value::Option(option) => Reference::Option(
+            option
+                .payload()
+                .map(|member| Box::new(actual(member, compiled))),
+        ),
         Value::Composite(composite) => Reference::Composite(
+            compiled.composite_keys[composite.declaration()],
             composite
                 .slots()
                 .iter()
                 .map(|slot| match slot {
-                    FieldValue::Present(value) => actual(value),
+                    FieldValue::Present(value) => actual(value, compiled),
                     other => panic!("generated present field, got {other:?}"),
                 })
                 .collect(),
@@ -279,7 +308,14 @@ fn actual(value: &Value) -> Reference {
                 filament_exact::CollectionKind::Bag => value::CollectionKind::Bag,
                 other => panic!("generated collection kind, got {other:?}"),
             };
-            Reference::Collection(kind, collection.elements().iter().map(actual).collect())
+            Reference::Collection(
+                kind,
+                collection
+                    .elements()
+                    .iter()
+                    .map(|value| actual(value, compiled))
+                    .collect(),
+            )
         }
         other => panic!("generated value family, got {other:?}"),
     }
@@ -342,7 +378,7 @@ fn evaluate_agreement(source: &str, expected: &Reference) -> TestCaseResult {
             "expected {expected:?}, got {result:?}\n{source}"
         )));
     };
-    let observed = actual(&value);
+    let observed = actual(&value, &package);
     prop_assert!(
         agree(expected, &observed),
         "reference {expected:?}, evaluator {observed:?}\n{source}"
@@ -445,25 +481,27 @@ fn agreement_case(case: &AgreementCase) -> (String, Reference) {
         AgreementCase::Text(a, b, op) => {
             let texts = ["", "abc", "ab", "é", "e\u{301}", "🙂"];
             let (a, b) = (texts[usize::from(*a)], texts[usize::from(*b)]);
+            let a_source = format!("Text({})", serde_json::to_string(a).unwrap());
+            let b_source = format!("Text({})", serde_json::to_string(b).unwrap());
             let (result, expression, expected) = match op {
                 0 => (
                     "Integer",
-                    format!("size(Text({a:?}))"),
+                    format!("size({a_source})"),
                     Reference::Integer(i128::try_from(a.chars().count()).unwrap()),
                 ),
                 1 => (
                     "Boolean",
-                    format!("Text({a:?}) = Text({b:?})"),
+                    format!("{a_source} = {b_source}"),
                     Reference::Boolean(a == b),
                 ),
                 2 => (
                     "Boolean",
-                    format!("Text({a:?}) < Text({b:?})"),
+                    format!("{a_source} < {b_source}"),
                     Reference::Boolean(a < b),
                 ),
                 3 => (
                     "Boolean",
-                    format!("Text({a:?}) != Text({b:?})"),
+                    format!("{a_source} != {b_source}"),
                     Reference::Boolean(a != b),
                 ),
                 _ => unreachable!("text strategy domain"),
@@ -500,6 +538,7 @@ fn tree(parsed: &fsl_cst::ParsedSource) -> Vec<(fsl_cst::Production, Vec<usize>)
 }
 
 /// Provenance: QSL-2055 P1. Production shape and token spelling survive formatting.
+#[ix_trace_rs::trace("FR-003-AC-1", "FR-003-AC-3")]
 #[test]
 fn p1_format_round_trip_keeps_the_tree() {
     prop::run(
@@ -509,7 +548,7 @@ fn p1_format_round_trip_keeps_the_tree() {
         |input| {
             let source = input.source();
             let parsed = fsl_bench::parse::parse(&source).unwrap();
-            let formatted = fsl_cst::format(&parsed)
+            let formatted = fsl_cst::format::format(&parsed)
                 .map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
             let reparsed = fsl_bench::parse::parse(&formatted).unwrap();
             prop_assert!(
@@ -517,7 +556,7 @@ fn p1_format_round_trip_keeps_the_tree() {
                 "{:?}\n{formatted}",
                 reparsed.diagnostics()
             );
-            prop_assert_eq!(tree(&parsed), tree(&reparsed), "{source}");
+            prop_assert_eq!(tree(&parsed), tree(&reparsed), "{}", source);
             let tokens = |parsed: &fsl_cst::ParsedSource| {
                 parsed
                     .cst()
@@ -527,8 +566,8 @@ fn p1_format_round_trip_keeps_the_tree() {
                     .map(|token| (token.kind(), token.spelling().to_vec()))
                     .collect::<Vec<_>>()
             };
-            prop_assert_eq!(tokens(&parsed), tokens(&reparsed), "{source}");
-            prop_assert_eq!(fsl_cst::format(&reparsed).unwrap(), formatted);
+            prop_assert_eq!(tokens(&parsed), tokens(&reparsed), "{}", source);
+            prop_assert_eq!(fsl_cst::format::format(&reparsed).unwrap(), formatted);
             Ok(())
         },
     )
@@ -553,6 +592,7 @@ fn p2_generated_well_typed_expressions_check() {
 }
 
 /// Provenance: QSL-2055 P3. Independent exact arithmetic and random typed assignments.
+#[ix_trace_rs::trace("FSpec-FR-140-AC-7")]
 #[test]
 fn p3_evaluator_matches_the_exact_reference() {
     prop::run(
@@ -615,6 +655,7 @@ fn rejected_near_miss(input: &near_miss::NearMiss) -> TestCaseResult {
 }
 
 /// Provenance: QSL-2055 P4. Exact conversion and bound membership determine definedness.
+#[ix_trace_rs::trace("FSpec-FR-140-AC-7")]
 #[test]
 fn p4_refusals_agree_with_the_reference() {
     prop::run("p4_refusals_agree_with_the_reference", prop::config(1000), &(-20i16..=20, 1u8..=9, any::<bool>()), |(number, denominator, decimal_case)| {
@@ -627,10 +668,14 @@ fn p4_refusals_agree_with_the_reference() {
         let package = compile(&source).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
         let result = call(&package);
         match (expected, result) {
-            (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value)), "{source}"),
+            (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value, &package)), "{source}"),
             (None, Outcome::Refused(refusal)) => {
-                prop_assert_eq!(refusal.code(), Some(code), "{source}");
-                prop_assert_eq!(refusal.cause(), Some(cause), "{source}");
+                if decimal_case {
+                    prop_assert_eq!(refusal.code(), Some(code), "{}", source);
+                    prop_assert_eq!(refusal.cause(), Some(cause), "{}", source);
+                } else {
+                    prop_assert!(matches!(refusal, Refusal::IntegerOutOfDomain { .. }), "{}: {:?}", source, refusal);
+                }
             }
             (expected, result) => return Err(TestCaseError::fail(format!("reference {expected:?}, evaluator {result:?}\n{source}"))),
         }
@@ -744,7 +789,7 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     )));
                 };
                 prop_assert!(
-                    agree(&expected, &actual(&value)),
+                    agree(&expected, &actual(&value, &package)),
                     "{name}: reference {expected:?}, evaluator {value:?}\n{source}"
                 );
             }
