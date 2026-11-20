@@ -1129,6 +1129,8 @@ pub struct Scope {
     /// The source unit of each top-level declaration, by declared name; a
     /// name with no entry is the primary unit's.
     source_owners: BTreeMap<String, RawSourceRef>,
+    /// The primary source unit, owner of a declaration with no entry above.
+    primary_source: Option<RawSourceRef>,
     /// Admitted systems-model ports by their package identity and source
     /// artifact name, with the exact declaration and owning object type
     /// used by a role.
@@ -1510,6 +1512,7 @@ impl Scope {
             complete_model: false,
             model_spellings: ModelSpellings::default(),
             source_owners: BTreeMap::new(),
+            primary_source: None,
             model_ports: BTreeMap::new(),
             dispatch_operations,
             symmetric_objects: BTreeMap::new(),
@@ -1704,6 +1707,12 @@ impl Scope {
 
     /// The source unit declaring the top-level declaration `name`, `None`
     /// for the primary unit.
+    /// This scope with its primary source unit.
+    pub(crate) fn with_primary_source(mut self, source: RawSourceRef) -> Self {
+        self.primary_source = Some(source);
+        self
+    }
+
     pub(crate) fn source_of(&self, name: &str) -> Option<&RawSourceRef> {
         self.source_owners.get(name)
     }
@@ -1754,7 +1763,11 @@ impl Scope {
         if !self.index.type_aliases.contains(written) {
             return None;
         }
-        let identity = self.source_owners.get(written)?.identity();
+        let identity = self
+            .source_owners
+            .get(written)
+            .or(self.primary_source.as_ref())?
+            .identity();
         let path = written.split("::").collect::<Vec<_>>().join("/");
         Some(crate::value::TypeArgumentAlias {
             package: identity.to_owned(),

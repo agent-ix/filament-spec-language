@@ -2023,7 +2023,7 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
         assert_eq!(code, 0, "{value}");
         let from_source = value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned();
         let expected = format!("count<{printed}>(x in q: x > 1)");
-        assert!(from_source.contains(&expected), "{from_source}");
+        assert!(from_source.contains(&expected), "{declarations} / {argument}: want {expected}, got {from_source}");
     }
 }
 
