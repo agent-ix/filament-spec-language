@@ -323,8 +323,8 @@ fn probabilistic_claims_with_repeated_expression_operands_keep_identity_when_reo
     ];
     let declaration = |(name, expression): (&str, &str)| {
         format!(
-            "probabilistic {name} using ev on Config under every scheduler \
-             on each (c: Config::ConfigVersion) \
+            "probabilistic {name} using ev on Config over (c: Config::ConfigVersion) \
+             under every scheduler on origin \
              {{ probability >= 0.5 [ always[0,2] holds({expression}) ] }}"
         )
     };
