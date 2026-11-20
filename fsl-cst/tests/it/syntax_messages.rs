@@ -24,14 +24,16 @@ fn messages(text: &str) -> Vec<String> {
         .collect()
 }
 
-#[trace("TC-2198", "FR-762-AC-1")]
+#[trace("TC-2198")]
 #[test]
 fn long_expected_sets_use_a_short_category_phrase() {
-    let output = messages(&format!("{HEADER}{{\n"));
+    let output = messages(&format!(
+        "{HEADER}function truncated using v(): Boolean pure {{ ) }}\n"
+    ));
     assert!(
         output
             .iter()
-            .any(|message| message == "expected a declaration"),
+            .any(|message| message == "expected an expression"),
         "{output:?}"
     );
     assert!(

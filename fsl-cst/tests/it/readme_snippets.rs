@@ -48,7 +48,7 @@ fn readme_protocol_excerpt_parses_and_native_fences_parse() {
     let mut native = Vec::new();
     let mut fences = Vec::new();
     for line in README.lines() {
-        if !in_native_fence && line.trim() == "```ix:native" {
+        if !in_native_fence && line.split_whitespace().next() == Some("```ix:native") {
             in_native_fence = true;
             native.clear();
         } else if in_native_fence && line.trim() == "```" {

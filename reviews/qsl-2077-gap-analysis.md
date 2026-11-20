@@ -13,7 +13,7 @@ Compared the frozen QSL-2077 additions at `f2b325878280771ec739aa057809f8cd8e27b
 
 ## Verdict
 
-**CONDITIONAL** — cover the bodyless unique-path fairness refusal. This is a scoped change review, not a repository-wide assurance verdict.
+**PASS** at `387405a2bcae3618602eaae662d3edd076b4053b` — the bodyless unique-path fairness refusal is covered. This is a scoped change review, not a repository-wide assurance verdict.
 
 ## Findings
 
@@ -29,6 +29,7 @@ Compared the frozen QSL-2077 additions at `f2b325878280771ec739aa057809f8cd8e27b
 | FSpec FR-339-AC-2 | examined | Parsing and lossless rendering reproduce accepted UTF-8 source bytes exactly, including comments and whitespace. |
 | FSL FR-002-AC-6 | examined | The bounded malformed/truncation corpus returns a `ParsedSource` or a located diagnostic from `fsl_cst::parse` without panic; any admissible variant retains its exact submitted bytes. |
 | FSL FR-165-AC-4, S1 clauses | examined | S1 parses `possible Anything using v { true }` (no `over`) to a claim with no `over` binding. |
+| FSL FR-165-AC-6, unique-path example | examined | `unique path ... to (c.versionNumber = 2); fair weak Config::ConfigVersion::attemptUpdate` at `fair` |
 | Pinned shared grammar, state-graph table final row | examined | Syntax errors: a temporal operator in an `if` condition, and a fairness constraint on a clause with no body. |
 | Pinned relation and aggregate productions | context_only | `execution-binding = ident, ':', qualified-name ;` |
 
@@ -41,4 +42,15 @@ The 13 accepted state-graph vectors and paired negative cases were inspected, to
 The current table includes hyper/temporal rows and both positive and negative state-graph examples; this review uses those meanings rather than the ticket's historical line numbers or count. The missing unique-path fairness vector is a specific table obligation, not a request to expand into an unrelated grammar family.
 
 Matrix and repository-wide reverse-gap work were intentionally excluded by the user's scoped-review instruction. Author-focused test and Clippy evidence was accepted without remeasurement; no tests, builds, product probes, history audit or inventory were run. The final component gate remains the original coder's next stage.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At `387405a2bcae3618602eaae662d3edd076b4053b`, a new traced test parses the valid bodyless unique-path counterpart and then asserts the appended fairness constraint gives `InvalidSyntax`/`UnexpectedToken` at the exact `fair` byte span through the existing shared refusal helper. |
+
+### Round 1 evidence
+
+Only the confined new case and the existing shared helper usage were inspected, with the exact newly referenced FR-165-AC-6 example. No broader grammar or prior corpus review was repeated. Author-reported passing results for the modified/new cases and scoped Clippy were accepted; the feature now has 37 active cases and no pending cases. No tests, builds, product probes or known gate failures were rerun. Later PR opening at this unchanged reviewed code does not require another review.
+
 

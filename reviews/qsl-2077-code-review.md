@@ -13,7 +13,7 @@ Reviewed frozen branch `codex/qsl-2077-claim-near-misses` at `f2b325878280771ec7
 
 ## Verdict
 
-**CONDITIONAL** — add the ordinary-expression binding assertion. No production implementation, public API, dependency or workflow is changed.
+**PASS** at `387405a2bcae3618602eaae662d3edd076b4053b` — the ordinary-expression binding assertion is present. No production implementation, public API, dependency or workflow is changed.
 
 ## Findings
 
@@ -40,4 +40,15 @@ The author's 36 focused passing cases and scoped CST integration Clippy result a
 ## Coverage limits
 
 Review scope is the frozen feature diff. No matrix, repository inventory, historical corpus audit, test, build or product probe was run. Current repository requirements and exact sections of pinned FSpec `f32bca6c7937e0652742b2bbe27a52419bf5a0ae` were used. One diagnostic lookup included unrelated recovery criteria; that read was stopped and reported, and none became a finding or was reverified.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At `387405a2bcae3618602eaae662d3edd076b4053b`, the same parsed ordinary-not vector asserts comparison text `not c.n = 2`, a unary node `not c.n`, and no `StateGraphUnary`. These assertions distinguish the required ordinary-expression binding from graph-unary negation. |
+
+### Round 1 evidence
+
+Inspected only the confined fix diff. The accepted helper now returns its already parsed source so the original test can inspect its structure; no second parse or replacement parser is introduced. The author reports the modified and new named cases and scoped Clippy passed; those receipts were accepted without rerunning them. The feature now has 37 active cases and no pending cases. No new finding, test, build, old precedence check or unrelated component failure check was added by this disposition.
+
 

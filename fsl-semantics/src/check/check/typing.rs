@@ -1848,11 +1848,11 @@ impl<'a> Typer<'a> {
                     super::super::state_model::Form::ReachesContext(self.in_state_clause()),
                     &location,
                 )?;
-                let source_location = location.child(0);
+                let (source_location, target_location) = (location.child(0), location.child(1));
                 frames.push(Frame::Reaches(Box::new(ReachesFrame {
                     edge,
                     location,
-                    pair: Pair::First(target, source_location.clone()),
+                    pair: Pair::First(target, target_location),
                 })));
                 return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
             }

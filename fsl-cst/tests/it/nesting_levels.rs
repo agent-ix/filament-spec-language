@@ -285,14 +285,9 @@ fn nested_trailing_comma_typo_exposes_a_recovery_within_the_work_budget() {
     });
 }
 
-// The memoized recovery must point at the innermost
-// offending token, not wherever the outermost `Choice` gave up. Every level
-// of `f(g(f(g(x,)),))` falls back from a failed call to a bare
-// `QualifiedName` (the identifier alone, no arguments), so the only failure
-// that survives every level's backtracking is the deepest one: the
-// argument list of the innermost `g(x,)` expects another expression or a
-// closing `)` after its trailing comma, and finds `)` there. That is the
-// token right after the comma, one of the two spans FR-302-AC-2 accepts.
+// The diagnostic locates the innermost offending token. FR-762 separately
+// defines the recovery region as the whole skipped declaration; that region
+// is not the diagnostic's token span (FSpec FR-302-AC-2).
 #[trace("TC-012", "FSpec-TC-222", "FSpec-FR-302-AC-2")]
 #[test]
 fn nested_trailing_comma_typo_recovery_points_at_the_offending_comma() {
@@ -309,26 +304,39 @@ fn nested_trailing_comma_typo_recovery_points_at_the_offending_comma() {
         let offending = function_prefix().len() + comma + 1;
         assert_eq!(
             (recoveries[0].span.start, recoveries[0].span.end),
-            (offending, offending + 1),
-            "{:?}",
-            recoveries[0]
+            (HEADER.len(), text.trim_end().len()),
+            "FR-762 recovers the whole failed declaration"
         );
-        assert_eq!(&text[recoveries[0].span.start..recoveries[0].span.end], ")");
+        let diagnostic = parsed.diagnostics().first().expect("located grammar error");
+        assert_eq!(
+            diagnostic.byte_span(),
+            Some(fsl_foundation::Span {
+                start: offending,
+                end: offending + 1,
+            })
+        );
+        assert_eq!(&text[offending..offending + 1], ")");
         assert_eq!(recoveries[0].kind, RecoveryKind::Delete);
     });
 }
 
-// NFR-001: a work-budget refusal names the work limit. No production
-// matches inside them, so nothing is memoized: every level re-reads the
-// failing levels inside it under each alternative that starts with `set`,
-// and the work grows quadratically with depth. At depth 40 it is about
-// 39,700 steps against a budget of 28,160.
+// NFR-001 and FR-255: a caller-selected work budget is honored independently
+// of the parser's memoization and the default allowance per source token.
 #[trace("TC-012")]
 #[test]
 fn a_work_budget_refusal_names_the_work_limit() {
     on_bounded_stack(|| {
-        let body = format!("{}x", "set[".repeat(40));
-        let error = parse(&function(&body)).expect_err("the work budget is exhausted");
+        let text = function("not not not not true");
+        assert!(parse(&text)
+            .expect("valid under default limits")
+            .is_admissible());
+        let error = fsl_cst::parse(
+            identity("work-limit"),
+            "work-limit.native",
+            text.as_bytes(),
+            Limits::default().with_work_units(1),
+        )
+        .expect_err("the selected work budget is exhausted");
         assert!(
             matches!(refused_limit(&error), SyntaxLimit::Work { .. }),
             "{error:?}"
