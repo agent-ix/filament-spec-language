@@ -26,6 +26,73 @@ pub(super) struct CanonicalRows {
     union_members: BTreeMap<NodeKey, Vec<String>>,
 }
 
+impl CanonicalRows {
+    /// Build the declaration and function spellings a package-backed
+    /// expression needs from its FR-940 read projection and admitted world.
+    pub(super) fn from_projection(
+        projection: &fsl_package::ReaderProtocolProjection,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+    ) -> Result<Self, String> {
+        use filament_semantic_value::declaration::CompositeShape;
+
+        let expression = CheckedExpression::from_projection(projection)?;
+        let mut rows = Self::default();
+        for composite in types.composites() {
+            let key = composite.key();
+            rows.declarations
+                .insert(key.clone(), canonical_identity(&key)?);
+            match composite.shape() {
+                CompositeShape::Record(fields) => {
+                    rows.record_fields.insert(
+                        key,
+                        fields.iter().map(|field| field.name().to_owned()).collect(),
+                    );
+                }
+                CompositeShape::Union(members) => {
+                    rows.union_members.insert(
+                        key,
+                        members
+                            .iter()
+                            .map(|member| member.identifier().to_owned())
+                            .collect(),
+                    );
+                }
+                CompositeShape::Tuple(_) => {}
+            }
+        }
+        for node in &expression.nodes {
+            match &node.kind {
+                NodeKind::Call {
+                    function: function_index,
+                    ..
+                } => {
+                    let function = projection
+                        .function(*function_index)
+                        .ok_or_else(|| "reader call has its admitted function".to_owned())?;
+                    rows.functions
+                        .insert(*function_index, canonical_identity(function.node)?);
+                }
+                NodeKind::ImportedCall { callee, .. } => {
+                    rows.declarations
+                        .insert(callee.clone(), canonical_identity(callee)?);
+                }
+                NodeKind::Literal(CheckedLiteral(Value::Enum(member))) => {
+                    let owner = member.variant().owner().clone();
+                    rows.declarations
+                        .insert(owner.clone(), canonical_identity(&owner)?);
+                }
+                NodeKind::Field { field, .. } => {
+                    let declaration = field.declaration();
+                    rows.declarations
+                        .insert(declaration.clone(), canonical_identity(&declaration)?);
+                }
+                _ => {}
+            }
+        }
+        Ok(rows)
+    }
+}
+
 /// A checked expression arena with children remapped to its own indices.
 pub(super) struct CheckedExpression {
     nodes: Vec<ExpressionNode>,
@@ -864,6 +931,20 @@ fn postfix_base(base: String, precedence: u8) -> String {
 
 fn malformed(what: &str) -> String {
     format!("checked expression is malformed: {what}")
+}
+
+fn canonical_identity(key: &NodeKey) -> Result<String, String> {
+    let path = key
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text.to_owned()),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "package declaration has a canonical text identity".to_owned())?;
+    Ok(format!("ix://{}/{}", key.package(), path.join("/")))
 }
 
 /// Build labels solely from the retained checked source conditions and their
