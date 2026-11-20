@@ -195,7 +195,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
     assert_eq!(populations.len(), 1);
     assert_eq!(
         populations[0]["identity"],
-        "ix://example/shop/population/orders"
+        "ix://example/shop/orders"
     );
     assert_eq!(populations[0]["extent"], "closed");
     let constructs = document["constructs"]

@@ -1315,7 +1315,6 @@ fn read_scalar_alias(
             "identity": identity,
             "displayName": identity,
             "kind": {"module": package, "name": "value_type"},
-            "roles": [],
             "origin": source_origin(parsed, Span { start, end }),
             "extensions": [], "unknownPolicy": "reject", "scalar": scalar,
             "constraints": constraints,
@@ -1498,6 +1497,7 @@ fn read_map_type(
             "identity": format!("ix://{package}/{name}"),
             "displayName": name,
             "kind": "map",
+            "roles": [],
             "keys": type_ref(&keys, package),
             "values": type_ref(&values, package),
             "bound": {"lower": lower, "upper": upper},
@@ -1524,7 +1524,6 @@ fn read_event_type(
     let (mut event, next) = read_object(tokens, index, package, parsed)?;
     let event_name = event.name.clone();
     event.wire["kind"]["name"] = json!("event_type");
-    event.wire["identityFields"] = json!([]);
     event.wire["supertypes"] = json!([]);
     event.wire["occurrenceField"] = json!(format!("ix://{package}/{event_name}/{occurrence}"));
     if let Some(object) = event.wire.as_object_mut() {
@@ -2422,6 +2421,7 @@ fn read_clause_declaration(
         "language": "quire",
         "text": text,
         "origin": source_origin(parsed, Span { start, end }),
+        "sourceSpan": source_span(parsed, Span { start, end }),
     });
     if include_identity {
         clause["identity"] = json!(format!("ix://{package}/{owner}/{clause_id}"));
@@ -2465,7 +2465,7 @@ fn read_population(
     }
     let end = tokens.get(index)?.span.end;
     index += 1;
-    let identity = format!("ix://{package}/population/{name}");
+    let identity = format!("ix://{package}/{name}");
     Some((
         json!({
             "identity": identity, "displayName": identity,
@@ -2529,6 +2529,25 @@ fn source_origin(parsed: &ParsedSource, span: Span) -> Value {
         "sourceIdentity": format!("ix://{}/{}", source.identity().authority, source.identity().identity),
         "path": source.path(), "startLine": line, "startColumn": column,
     }})
+}
+
+fn source_span(parsed: &ParsedSource, span: Span) -> Value {
+    let source = parsed.source();
+    let position = source.locate(Span {
+        end: span.end,
+        ..span
+    });
+    let (line, column) = position.map_or((1, 1), |position| {
+        (position.start.line, position.start.column)
+    });
+    let (end_line, end_column) = position.map_or((1, 1), |position| {
+        (position.end.line, position.end.column)
+    });
+    json!({
+        "sourceIdentity": format!("ix://{}/{}", source.identity().authority, source.identity().identity),
+        "path": source.path(), "startLine": line, "startColumn": column,
+        "endLine": end_line, "endColumn": end_column,
+    })
 }
 
 fn diagnostic(

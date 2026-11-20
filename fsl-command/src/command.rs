@@ -2873,13 +2873,30 @@ fn package_input_from_formal_sources(
     sources: &[FormalSource],
 ) -> Result<fsl_semantics::model::intake::PackageInput> {
     let mut packages = fsl_semantics::model::intake::PackageInput::new();
-    for ((selected_identity, _), source) in selections.iter().zip(sources) {
+    for ((selected_identity, selected_path), source) in selections.iter().zip(sources) {
         let bytes = if fsl_semantics::model::intake::is_model_unit_source(
             source.source().text().as_bytes(),
         ) {
+            let relative_path = selected_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| RunCause::ClauseRequest {
+                    member: "models".to_owned(),
+                    reason: "a model-unit source needs a relative file name".to_owned(),
+                })?;
+            let model_source = Source::read_typed(
+                source.source().identity().clone(),
+                relative_path,
+                source.source().text().as_bytes(),
+                fsl_cst::Limits::default().source_bytes,
+            )
+            .map_err(|refusal| RunCause::ClauseRequest {
+                member: "models".to_owned(),
+                reason: refusal.to_string(),
+            })?;
             fsl_semantics::model::intake::package_input_from_sources([(
                 selected_identity.as_str(),
-                source.source(),
+                &model_source,
             )])
             .map_err(|refusal| RunCause::ClauseRequest {
                 member: "models".to_owned(),
