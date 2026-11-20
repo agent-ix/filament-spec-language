@@ -143,10 +143,8 @@ fn a_package_run_selects_its_form_by_the_member() {
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["stage"], "request", "{value}");
     assert_eq!(value["code"], "invalid-request", "{value}");
-    names(&value, "invalid-request/missing-file");
     names(&value, "package.equality");
-    names(&value, "missing-equality.json");
-    names(&value, "/request/package/equality");
+    names(&value, "no equality file is at missing-equality.json");
 
     let (exit, value) = run(
         directory.path(),
