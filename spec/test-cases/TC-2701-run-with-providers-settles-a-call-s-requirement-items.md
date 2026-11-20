@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the run-side provider entry: the negotiator parameter, the order of work, one provider request per backend after negotiation, plain `command::run` as the linked-only entry, and the refusing and cancelled cases. Scope: FR-961-AC-1 to FR-961-AC-5.
+Verify the run-side provider entry: the negotiator parameter, the order of work, one provider request per backend after negotiation, plain `command::run` as the linked-only entry, and the refusing and cancelled cases. Scope: FR-961-AC-1 to FR-961-AC-6.
 
 ## Test Procedure
 
@@ -19,6 +19,7 @@ Verify the run-side provider entry: the negotiator parameter, the order of work,
 3. Call `run_with_providers` over a run without `requirements`.
 4. Register two providers with one `BackendId`; run a call whose compile refuses.
 5. Have the provider report a counterexample the evaluator does not reproduce; run with a cancelled handle.
+6. Run the `Even` request through `run_with_providers_and_limits_and_overrides` and through `run_with_limits_and_overrides` with `overrides.limits` holding `s1.nodes` 1, then with that bound at its default; run it with accounting `work_units` 0 through both entries.
 
 Test: `fsl-command/tests/it/run_requirement_items.rs` `run_with_providers_settles_the_call_s_items_after_negotiation`, `plain_run_settles_with_the_linked_engines_only`, `run_with_providers_refuses_and_settles_the_negative_cases`.
 
@@ -29,3 +30,4 @@ Test: `fsl-command/tests/it/run_requirement_items.rs` `run_with_providers_settle
 - Step 3: neither negotiator nor provider called; result equals `command::run`'s.
 - Step 4: `invalid-request` naming `providers` before any stage; no item settled.
 - Step 5: `inconclusive` `replay-parity`; every item `incomplete` `cancelled` and no request sent.
+- Step 6: both entries settle the typed limit outcome naming `s1.nodes`, value 1, `incomplete`, exit 22, with no item settled and no negotiator or provider call; at the default bound the result equals step 1's; with `work_units` 0 both outcomes are `incomplete` on `work_units` and the provider entry settles every item.

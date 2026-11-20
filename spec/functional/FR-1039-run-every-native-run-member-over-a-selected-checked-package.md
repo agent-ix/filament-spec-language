@@ -66,7 +66,11 @@ request member that would restate one of them (a `program`, `libraries`,
   their documents (FR-710), each matched by identity to one of the package's
   recorded model selections.
 - Exactly one run member: `call`, `clause`, `items`, `synthesis`,
-  `verification_plan` (with its `document`, FSpec FR-824) or `export`.
+  `verification_plan` (with its `document`, FSpec FR-824), `export` or
+  `tl_lowering`. `tl_lowering` is FR-931's member: an object with exactly the
+  members `clause` (required), `correspondence` (optional) and
+  `cross_evaluate` (optional), decoded under FR-026's closed-envelope rules
+  and refused as FR-931 "The member" states.
 
 ## Outputs
 
@@ -88,6 +92,13 @@ request echo carrying `package` where a source request carries `program`.
   `temporal_clause_names` or `claim_names` (FR-850), a synthesis declaration
   through `claim_names` (FR-1037), a plan through the supplied plan
   document (FSpec FR-824).
+- A `tl_lowering` member over a package SHALL lower the temporal clause that
+  `tl_lowering.clause` names, resolved through `temporal_clause_names`
+  (FR-850), under the correspondence it names or the clause's default, and
+  SHALL return the record the source route returns for the same unit and
+  member (FR-931 "Atom text": both routes print byte-equal atom text). It
+  SHALL NOT refuse the member as unimplemented, and SHALL NOT run another
+  member in its place.
 - A `{directory}` selection SHALL attach the handoff's identity and equality
   rows as FR-850 "Admission" states. A member whose run builds states over
   the package's model world (a `clause` run, a plan synthesis, a
@@ -222,6 +233,7 @@ reader refusal in the table.
 | FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1` (`unknown_wire`/`unsupported-wire` with `actual` `filament.checked-package/v1` at `/request/package/contract_version`, never `invalid_package`); a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
 | FR-1039-AC-4 | FR-1015-AC-4's counter compiled to a package file and exported over `package` `{"file": P, "source_package": {"identity": "example/counter-unit", "version": "7"}}`, with the source file removed, writes `package.source_package` `{"identity": "example/counter-unit", "version": "7"}` and otherwise the source export's `records` and `target_text`; the same request without `source_package` refuses `invalid-request` with `invalid_runtime_input`/`missing-member` at `/request/package/source_package`, exit 20, before the package file is opened (a request naming a missing file gives this refusal, not the missing-file one); `"source_package": null` and `"source_package": "x"` each refuse `wrong-value-kind` at `/request/package/source_package`, `{"identity": "a"}` `missing-member` at `/request/package/source_package/version`, `{"identity": 7, "version": "1"}` `wrong-value-kind` at `/request/package/source_package/identity`, `{"identity": "", "version": "1"}` `invalid-value` there, and an extra member `digest` `unknown-member` at `/request/package/source_package/digest`, each exit 20; FR-1039-AC-1's `call` request over the package runs to `-4` with and without a well-formed `source_package`. | Test (TC-3019) |
 | FR-1039-AC-5 | FR-961-AC-2's `Even` request with `call.requirements` `{}` and no providers, and FR-062's RR-12 unit called as `f` with `n = 4` and `requirements` `{}`, each compiled to a package file and run over `package` `{"file": P}` with the source file removed, write `requirements` and `registry` members equal byte for byte to the source route's (the same request indices, claims, extents, path conditions, records and categories), and the `execute` outcome's `items` equal the source route's; RR-12's `g` called over the package writes `requirements` `[]`; an `items` entry naming a claim of `f` in a call of `g` refuses `UnknownRequirementClaim` before any item is negotiated, as on the source route; the package with the row of `f`'s `+` record removed refuses at stage `request`, exit 20, `invalid_package`/`invalid-value` at `/request/package/semantic_graph/nodes/{n}/body` (FSpec FR-825 rule 14), and settles no item; no request over the package refuses `call.requirements` as not implemented. | Test (TC-3019) |
+| FR-1039-AC-6 | FR-931-AC-1's `Low` unit compiled to a package file and selected as `package` `{"file": P}`, with the source file removed, runs `tl_lowering` `{"clause": "Low"}` and `{"clause": "Low", "correspondence": "mltl.online-prefix/v1"}` and returns the records the source route returns for the same members, byte-equal, exit 0; `{"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}` returns the source route's `unsupported` record, exit 21; `{"clause": "Nothing"}` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; `{"clause": "Low", "formula": 1}` refuses `invalid-request` at stage `request` naming `tl_lowering.formula`, exit 20; and `tl_lowering` beside `call` refuses `invalid-request` naming `tl_lowering`, exit 20. No response is the not-implemented refusal, and none is a `call` or `clause` outcome. | Test (TC-3019) |
 
 ## Dependencies
 

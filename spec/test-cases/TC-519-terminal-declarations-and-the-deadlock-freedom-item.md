@@ -14,7 +14,7 @@ Verify the `terminal` declaration's forms and refusals, the classification of
 terminal states as intended or deadlocked, and the request writer's
 deadlock-freedom item with its per-model opt-out.
 
-Scope: FR-124-AC-1 to FR-124-AC-3 and FR-124-AC-5 to FR-124-AC-10.
+Scope: FR-124-AC-1 to FR-124-AC-3 and FR-124-AC-5 to FR-124-AC-11.
 
 ## Test Procedure
 

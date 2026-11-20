@@ -124,7 +124,18 @@ When the S3 typer checks a call `name(arguments)`:
 - If `name` names a declared tuple type, `Application` SHALL resolve the call
   to that type's constructor, SHALL refuse an argument count that differs
   from the tuple's position count as `ill_typed`/`type-mismatch`, and SHALL
-  build a tuple node of that type.
+  build a tuple node of that type. `Application` SHALL supply each argument's
+  expected type from the declared type of its position, and an integer
+  argument SHALL widen to that type by the rule above for a parameter: an
+  argument whose type the position's type contains carries the exact integer
+  conversion to the position's type, so that the `tuple_value` position term
+  has exactly the position's type node (Contract IR FR-347 "Tuple
+  positions"); an argument already of that type takes none; an argument that
+  does not fit is a narrowing whose range obligation, when not proved,
+  refuses `undefined_expression`/`unproved-range` at the argument; and a
+  non-integer argument of another type is refused `ill_typed`/`type-mismatch`
+  at the argument. A tuple position therefore takes FSpec FR-149's widening
+  exactly as a union payload position does (FR-317).
 - If `name` names a declared type that is not a tuple, or a model operation,
   `Application` SHALL refuse the call as `ill_typed`/`operator-ineligible`.
 - If `name` names no callable function, no type and no model operation,
@@ -253,6 +264,8 @@ for the function family.
 | FR-065-AC-7 | Checking the declaration `g() -> Boolean = 1` (an `Integer` body against a declared `Boolean` result) through the `Value` family's contract `check` hook returns `StageFailure::Refused` whose cause is `ill_typed` / `type-mismatch`, and the diagnostic sink holds no entry afterwards. Checking the well-typed declaration `f() -> Boolean = true` through the same hook admits it. `PackageDeclarations::check` keys `f` once every declaration is typed, and under source owner (`a`, `u`) its checked identity is FR-092 vector F1, the `filament.structural-node/v1` key of its function node. | Test (TC-380) |
 | FR-065-AC-8 | Under source owner (`a`, `u`), the checked identity of `function both using v(a: Boolean, b: Boolean): Boolean pure { a and b }` is FR-092 vector F2, a `filament.structural-node/v1` key whose preimage carries that owner, and the checked identity of the call `both(a, true)` in `function nb using v(a: Boolean): Boolean pure { both(a, true) }` is FR-092 vector E2, a `filament.application-node/v1` key whose preimage has no `owner` member. FSL's application-node key builder returns the published expected key for every operation-node vector in FSpec FR-322. | Test (TC-163) |
 | FR-065-AC-9 | Given a declared function `g using v(a: Integer)`, checking the call `g(x)` for `x` of type `Int[0, 1000]` yields a call node whose argument is an exact integer conversion to `Integer`; the call `g(n)` for `n` of type `Integer` yields none; and the checked package of a unit calling `g` with a bounded field reads back through the strict reader. A helper whose parameter is `Int[0, 2000]` called with an `Int[0, 1000]` argument does the same (QSL-1824). | Test (TC-376) |
+| FR-065-AC-10 | In a unit declaring `tuple Pair(Integer, Int[0, 2000]);`, `tuple Small(Int[0, 9]);` and `function g using v(a: Integer): Boolean pure { true }`, in a function with parameters `x: Int[0, 1000]` and `n: Integer`, `Pair(x, x)` checks as a tuple construction of `Pair` whose position-0 argument is the exact integer conversion of `x` to `Integer`, the same node `g(x)` gives its argument, and whose position-1 argument is the exact conversion of `x` to `Int[0, 2000]`; `Pair(n, x)` and `Pair(7, x)` carry no conversion at position 0 and the exact conversion of `x` to `Int[0, 2000]` at position 1. The checked package of that unit reads back through the strict Contract IR reader, and each position term of each `tuple_value` node has its position's declared type node. The same package edited by hand so that `Pair(x, x)`'s position-0 term is `x` itself, typed `Int[0, 1000]` at the `Integer` position, with the then-unreferenced conversion node removed and every node's `dependencies` and identity re-derived, is first shown to pass strict wire, graph and identity admission with the `Pair(x, x)` construction left out, and with it is refused by that reader `ill_typed`/`type-mismatch` at the `tuple_value` node. | Test (TC-376) |
+| FR-065-AC-11 | In the unit of FR-065-AC-10, with a parameter `w: Int[0, 20]`, `Small(w)` and `Small(n)` are each refused `undefined_expression`/`unproved-range` at the argument, the verdict and location role a call `t(w)` and `t(n)` of `function t using v(a: Int[0, 9]): Boolean pure { true }` get at their argument; `if w <= 9 then Small(w) else Small(0)` is admitted; `Small(true)` is refused `ill_typed`/`type-mismatch` at `true`; and `Pair(x)` stays `ill_typed`/`type-mismatch` for its argument count. | Test (TC-376) |
 
 ## Dependencies
 
