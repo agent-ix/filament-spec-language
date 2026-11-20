@@ -8,7 +8,11 @@
 //! every polynomial an evaluation of an obligation reads, so the obligation's
 //! truth, and the instants at which an expression has no value, are constant
 //! over each open cell and are read at one rational sample of it; each
-//! rational cut is read at the cut itself. The cuts are found by the same
+//! cut is read at the cut itself, a rational one directly and an algebraic
+//! one through the section `t = tau` ([`super::super::section::Section`]):
+//! the cells of an atom along a dwell are cut at the roots of the resultant
+//! with `tau`'s polynomial of every polynomial read, and each polynomial's
+//! sign is read at a point `(tau, x)` of the plane by a Sturm-Tarski query. The cuts are found by the same
 //! lazy fixpoint as the quantifier elimination of [`super::super::section`]:
 //! a cell is evaluated, the polynomials the evaluation read are projected,
 //! and the roots found cut the dwell until a pass finds none.
@@ -23,8 +27,12 @@
 //! every sample of `tau`, every re-evaluation of a segment's atoms at a
 //! sample, every cell of an atom read bivariately, every capture read, every
 //! root isolation of a projected polynomial, every period of the past-reach
-//! ceiling, and (in [`super::super::poly2::projection`]) every evaluation
-//! point of a subresultant interpolation. Arithmetic on one polynomial and
+//! ceiling, at an algebraic activation instant every capture read, every
+//! evaluation of the atoms at an instant and every evaluation point of a
+//! resultant with `tau`'s polynomial ([`super::super::poly2::eliminate`]),
+//! and (in [`super::super::poly2::projection`] and
+//! [`super::super::section::Section`]) every evaluation point of a
+//! subresultant interpolation and every step of a Sturm-Tarski sequence. Arithmetic on one polynomial and
 //! the sorting of cuts are not charged.
 
 use std::cmp::Ordering;
@@ -32,17 +40,21 @@ use std::cmp::Ordering;
 use filament_exact::Rational;
 
 use super::super::eval::{
-    ceiling_bound, cells, eval_in, floor_bound, Algebra, Bi, Constant, Env, Ev, Probe,
+    ceiling_bound, cells, cells_of, eval_in, floor_bound, Algebra, Bi, Constant, Env, Ev, Evaluate,
+    Probe,
 };
 use super::super::expand::{result_kind, Exp, ResultKind};
 use super::super::interval::Tri;
 use super::super::poly::Poly;
-use super::super::poly2::{projection, Poly2};
+use super::super::poly2::{eliminate, projection, Poly2};
 use super::super::real::ExactReal;
+use super::super::section::{Sample, Section};
 use super::super::signal::{partition, Span, Timeline};
 use super::super::trace::zero;
 use super::super::{ExactGap, ExpressionSite, HybridReplayMeter, HybridReplayRefusal};
-use super::{Claim, ClaimSegment, Formula, Period, Record, Records};
+use super::{
+    Claim, ClaimSegment, ExpressionLocus, Formula, Period, Record, Records, UndefinedCause,
+};
 
 fn one() -> Rational {
     Rational::from_integer(1_i64.into())
@@ -66,6 +78,80 @@ struct Instant<'a> {
 impl Probe<Bi> for Instant<'_> {
     fn sign(&self, poly: &Poly2) -> Ordering {
         self.t.sign_of(&poly.at_t(self.tau))
+    }
+}
+
+/// The point `(tau, x)` of the plane at the activation instant `tau` of the
+/// section the polynomials are read through, a real algebraic number.
+struct SectionAt<'a, 'u, 'm> {
+    section: &'a Section<'u, 'm>,
+    at: &'a Sample,
+}
+
+impl Probe<Bi> for SectionAt<'_, '_, '_> {
+    fn sign(&self, poly: &Poly2) -> Ordering {
+        self.section.sign_of(poly, self.at)
+    }
+}
+
+/// The atoms read along a dwell at an algebraic activation instant: each
+/// polynomial in `(tau, x)` a decision reads is split at the roots of its
+/// resultant with `tau`'s polynomial, which hold its roots in `x` at `tau`.
+struct Atoms<'a, 'u, 'm> {
+    section: &'a Section<'u, 'm>,
+    minimal: &'a Poly,
+    atoms: &'a [Exp],
+    env: &'a Env<'a, Bi>,
+    /// Every polynomial read, and each one's resultant with `tau`'s
+    /// polynomial.
+    read: Vec<Poly2>,
+    eliminated: Vec<Poly>,
+}
+
+impl Evaluate for Atoms<'_, '_, '_> {
+    fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
+        self.section.charge()?;
+        let sample = Sample::of(at);
+        let probe = SectionAt {
+            section: self.section,
+            at: &sample,
+        };
+        let mut decisions: Vec<Poly2> = Vec::new();
+        let mut values = Vec::with_capacity(self.atoms.len());
+        for atom in self.atoms {
+            let value = eval_in::<Bi, _>(atom, self.env, &probe, &mut decisions)?;
+            if let Some(refusal) = self.section.take_failure() {
+                return Err(refusal);
+            }
+            values.push(match value {
+                Ev::Boolean(value) => Ev::Boolean(value),
+                Ev::Undefined { locus, cause } => Ev::Undefined { locus, cause },
+                Ev::Number(_) => return Err(ExactGap::IllKindedTerm.into()),
+            });
+        }
+        let mut splits: Vec<Poly> = Vec::new();
+        for decision in decisions {
+            let known = self.read.iter().position(|known| *known == decision);
+            let eliminated = match known {
+                Some(index) => self.eliminated[index].clone(),
+                None => {
+                    let section = self.section;
+                    let eliminated = if decision.degree().is_some_and(|degree| degree > 0) {
+                        eliminate(self.minimal, &decision, &mut || section.charge())?
+                    } else {
+                        Poly::zero()
+                    };
+                    self.read.push(decision);
+                    self.eliminated.push(eliminated.clone());
+                    eliminated
+                }
+            };
+            if eliminated.degree().is_some_and(|degree| degree > 0) && !splits.contains(&eliminated)
+            {
+                splits.push(eliminated);
+            }
+        }
+        Ok((values, splits))
     }
 }
 
@@ -185,9 +271,8 @@ fn offsets(formula: &Formula) -> Vec<Rational> {
 /// What one cell of activation instants decides.
 #[derive(Clone)]
 struct Outcome {
-    /// The obligation's truth; `None` for an irrational instant, which is
-    /// not read.
-    value: Option<Tri>,
+    /// The obligation's truth.
+    value: Tri,
     /// The earliest expression with no value.
     record: Option<Record>,
 }
@@ -317,7 +402,7 @@ impl<'a, 'c> Decider<'a, 'c> {
         state: &[Poly],
         captures: Option<&[Constant]>,
         meter: &mut HybridReplayMeter,
-    ) -> Result<Vec<Poly>, HybridReplayRefusal> {
+    ) -> Result<(Vec<Poly>, Vec<Poly2>), HybridReplayRefusal> {
         let mut read: Vec<Poly2> = Vec::new();
         let activation: Vec<Poly2> = segment
             .values
@@ -389,10 +474,25 @@ impl<'a, 'c> Decider<'a, 'c> {
                 }
             }
         }
+        self.project(read, &mut || meter.charge())
+    }
+
+    /// The projection onto `tau` of `read` and the lines, with the shifted
+    /// copies of `read`, and the polynomials `read` held.
+    fn project(
+        &self,
+        read: Vec<Poly2>,
+        charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+    ) -> Result<(Vec<Poly>, Vec<Poly2>), HybridReplayRefusal> {
         let mut set = self.lines.clone();
         let mut fresh: Vec<Poly2> = Vec::new();
+        let mut held: Vec<Poly2> = Vec::new();
         for poly in read {
-            if !set.contains(&poly) && !fresh.contains(&poly) {
+            if held.contains(&poly) {
+                continue;
+            }
+            held.push(poly.clone());
+            if !set.contains(&poly) {
                 fresh.push(poly);
             }
         }
@@ -409,7 +509,7 @@ impl<'a, 'c> Decider<'a, 'c> {
                 set.push(poly);
             }
         }
-        projection(&set, &mut || meter.charge())
+        Ok((projection(&set, charge)?, held))
     }
 
     /// The obligation activated at `tau` in `segment` (position `j`), its
@@ -421,7 +521,7 @@ impl<'a, 'c> Decider<'a, 'c> {
         segment: &ClaimSegment,
         tau: &Rational,
         meter: &mut HybridReplayMeter,
-    ) -> Result<(Outcome, Vec<Poly>), HybridReplayRefusal> {
+    ) -> Result<(Outcome, Vec<Poly>, Vec<Poly2>), HybridReplayRefusal> {
         let at: ExactReal = tau.clone().into();
         let state: Vec<Poly> = segment
             .values
@@ -471,14 +571,263 @@ impl<'a, 'c> Decider<'a, 'c> {
                 value = guard.not().or(Timeline::value(&signal, j, &at));
             }
         }
-        let read = self.reads(segment, tau, &state, captures.as_deref(), meter)?;
+        let (bounds, read) = self.reads(segment, tau, &state, captures.as_deref(), meter)?;
         Ok((
             Outcome {
-                value: Some(value),
+                value,
                 record: records.0,
             },
+            bounds,
             read,
         ))
+    }
+
+    /// [`Self::at`] at the activation instant `tau`, a real algebraic
+    /// number: every expression is read at the point `(tau, x)` of the
+    /// plane, through the section `t = tau` (FR-450 "Exact replay"). The
+    /// atoms' cells over each dwell are cut at the roots of the resultant
+    /// with `tau`'s polynomial of every polynomial an evaluation read,
+    /// which holds the roots of each at `tau` and the roots of its
+    /// conjugates, and each cell is read at one sample of it.
+    fn at_algebraic(
+        &self,
+        j: usize,
+        segment: &ClaimSegment,
+        tau: &ExactReal,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<(Outcome, Vec<Poly>, Vec<Poly2>), HybridReplayRefusal> {
+        let root = match tau {
+            ExactReal::Rational(tau) => return self.at(j, segment, tau, meter),
+            ExactReal::Root(root) => root,
+        };
+        let minimal = Poly::new(root.coefficients().to_vec());
+        let section = Section::new(tau, meter);
+        let activation: Vec<Poly2> = segment
+            .values
+            .iter()
+            .cloned()
+            .map(Poly2::constant)
+            .collect();
+        let env = Env::<Bi> {
+            variables: &activation,
+            captures: &[],
+            activation: &activation,
+        };
+        let origin = Sample::Rational(zero());
+        let probe = SectionAt {
+            section: &section,
+            at: &origin,
+        };
+        let mut read: Vec<Poly2> = Vec::new();
+        let mut records = Records::default();
+        let keep = |records: &mut Records, value: Ev<_>, site: ExpressionSite| {
+            if let Ev::Undefined { locus, cause } = value {
+                records.keep(Record {
+                    segment: segment.segment,
+                    time: tau.clone(),
+                    open: false,
+                    state: segment.state,
+                    locus: ExpressionLocus { site, term: locus },
+                    cause,
+                });
+            }
+        };
+        let guard = match &self.claim.guard {
+            None => Tri::True,
+            Some(guard) => {
+                let value = eval_in::<Bi, _>(guard, &env, &probe, &mut read)?;
+                if let Some(refusal) = section.take_failure() {
+                    return Err(refusal);
+                }
+                match value {
+                    Ev::Boolean(value) => Tri::from_bool(value),
+                    Ev::Number(_) => return Err(ExactGap::IllKindedTerm.into()),
+                    undefined => {
+                        keep(&mut records, undefined, ExpressionSite::Activation);
+                        Tri::Unknown
+                    }
+                }
+            }
+        };
+        let mut value = Tri::True;
+        if guard != Tri::False {
+            let mut valid = true;
+            for (capture, exp) in self.captures.iter().enumerate() {
+                section.charge()?;
+                let site = ExpressionSite::Capture { capture };
+                let found = eval_in::<Bi, _>(exp, &env, &probe, &mut read)?;
+                if let Some(refusal) = section.take_failure() {
+                    return Err(refusal);
+                }
+                match found {
+                    Ev::Boolean(_) => {}
+                    Ev::Number(number) => {
+                        let range = self
+                            .claim
+                            .claim
+                            .captures
+                            .get(capture)
+                            .and_then(|c| result_kind(&c.ty));
+                        let mut inside = true;
+                        if let Some(ResultKind::Number(range)) = range {
+                            let ends = [
+                                range
+                                    .lower
+                                    .as_ref()
+                                    .map(|lower| Bi::sub(&number, &Bi::constant(lower))),
+                                range
+                                    .upper
+                                    .as_ref()
+                                    .map(|upper| Bi::sub(&Bi::constant(upper), &number)),
+                            ];
+                            for end in ends.into_iter().flatten() {
+                                let poly = Bi::sign_poly(&end);
+                                inside &= probe.sign(&poly) != Ordering::Less;
+                                if let Some(refusal) = section.take_failure() {
+                                    return Err(refusal);
+                                }
+                                read.push(poly);
+                            }
+                        }
+                        if !inside && valid {
+                            records.keep(Record {
+                                segment: segment.segment,
+                                time: tau.clone(),
+                                open: false,
+                                state: segment.state,
+                                locus: ExpressionLocus {
+                                    site,
+                                    term: super::super::TermLocus::default(),
+                                },
+                                cause: UndefinedCause::OutsideCaptureRange { capture },
+                            });
+                        }
+                        valid &= inside;
+                    }
+                    undefined => {
+                        if valid {
+                            keep(&mut records, undefined, site);
+                        }
+                        valid = false;
+                    }
+                }
+            }
+            if valid {
+                for _ in self.segments {
+                    section.charge()?;
+                }
+                let signal = self.claim.formula_signal_over(
+                    self.timeline,
+                    self.segments,
+                    &mut records,
+                    &mut |k| {
+                        let variables: Vec<Poly2> = k.values.iter().map(in_x).collect();
+                        let env = Env::<Bi> {
+                            variables: &variables,
+                            captures: &[],
+                            activation: &activation,
+                        };
+                        let mut atoms = Atoms {
+                            section: &section,
+                            minimal: &minimal,
+                            atoms: &self.atoms,
+                            env: &env,
+                            read: Vec::new(),
+                            eliminated: Vec::new(),
+                        };
+                        let found =
+                            cells_of(&mut atoms, &k.span.low, &k.span.high, k.span.high_closed)?;
+                        for poly in atoms.read {
+                            if !read.contains(&poly) {
+                                read.push(poly);
+                            }
+                        }
+                        Ok(found)
+                    },
+                )?;
+                value = guard.not().or(Timeline::value(&signal, j, tau));
+            }
+        }
+        let (bounds, held) = self.project(read, &mut || section.charge())?;
+        Ok((
+            Outcome {
+                value,
+                record: records.0,
+            },
+            bounds,
+            held,
+        ))
+    }
+
+    /// `record`, an expression with no value at every activation instant
+    /// of the open cell `cell` (`tau` one of them), as the one earliest over
+    /// the cell. At an activation instant it is the cell's start, not
+    /// attained. At a claim atom it is the instant the atom has no value at:
+    /// when that is the same instant for every activation instant of the
+    /// cell it is the record itself; when it moves with the activation
+    /// instant `tau` along `x = tau + c` it is the cell's start shifted by
+    /// `c`, not attained. The instant is the root of a polynomial in
+    /// `(tau, x)` that the evaluation read (or the end of a dwell, which is
+    /// the same for every `tau`), and no root of another read polynomial
+    /// meets it inside the cell (the projection cuts the cell where two
+    /// meet), so the root curve it lies on is the whole of it.
+    fn over(
+        &self,
+        record: Option<Record>,
+        cell: &Cell,
+        tau: &Rational,
+        read: &[Poly2],
+        segment: &ClaimSegment,
+    ) -> Result<Option<Record>, HybridReplayRefusal> {
+        let Some(mut record) = record else {
+            return Ok(None);
+        };
+        if matches!(
+            record.locus.site,
+            ExpressionSite::Activation | ExpressionSite::Capture { .. }
+        ) {
+            record.time = cell.0.clone();
+            record.open = true;
+            return Ok(Some(record));
+        }
+        let Some(time) = record.time.as_rational().cloned() else {
+            return Err(ExactGap::ActivationInfimum.into());
+        };
+        let ends = self
+            .segments
+            .iter()
+            .chain(std::iter::once(segment))
+            .flat_map(|k| [k.span.low.as_rational(), k.span.high.as_rational()]);
+        if ends.flatten().any(|end| *end == time) {
+            return Ok(Some(record));
+        }
+        let at = ExactReal::Rational(time.clone());
+        let shift = time.sub(tau);
+        let moving = Poly::new(vec![shift.clone(), one()]);
+        for poly in read {
+            if (Instant { tau, t: &at }).sign(poly) != Ordering::Equal {
+                continue;
+            }
+            if poly.at_x(&time).is_zero() {
+                return Ok(Some(record));
+            }
+            let along = poly.coefficients().iter().enumerate().fold(
+                Poly::zero(),
+                |sum, (power, coefficient)| {
+                    let mut factor = Poly::constant(one());
+                    for _ in 0..power {
+                        factor = factor.mul(&moving);
+                    }
+                    sum.add(&coefficient.mul(&factor))
+                },
+            );
+            if along.is_zero() {
+                record.time = cell.0.shifted(&shift);
+                record.open = true;
+                return Ok(Some(record));
+            }
+        }
+        Err(ExactGap::ActivationInfimum.into())
     }
 
     /// The cells of `span`, each decided, in order, once the cuts at the
@@ -502,31 +851,28 @@ impl<'a, 'c> Decider<'a, 'c> {
                     results.push((cell, outcome.clone()));
                     continue;
                 }
-                let sample = if cell.2 {
-                    cell.0.as_rational().cloned()
+                let tau: ExactReal = if cell.2 {
+                    cell.0.clone()
                 } else {
-                    Some(cell.0.between(&cell.1))
+                    cell.0.between(&cell.1).into()
                 };
-                let outcome = match sample {
-                    None => Outcome {
-                        value: None,
-                        record: None,
-                    },
-                    Some(tau) => {
-                        meter.charge()?;
-                        let (outcome, bounds) = self.at(j, segment, &tau, meter)?;
-                        for poly in bounds {
-                            meter.charge()?;
-                            for root in poly.roots_in(&floor, &ceiling) {
-                                if root > span.low && root < span.high && !cuts.contains(&root) {
-                                    cuts.push(root);
-                                    grew = true;
-                                }
-                            }
+                meter.charge()?;
+                let (mut outcome, bounds, read) = match &tau {
+                    ExactReal::Rational(tau) => self.at(j, segment, tau, meter)?,
+                    ExactReal::Root(_) => self.at_algebraic(j, segment, &tau, meter)?,
+                };
+                for poly in bounds {
+                    meter.charge()?;
+                    for root in poly.roots_in(&floor, &ceiling) {
+                        if root > span.low && root < span.high && !cuts.contains(&root) {
+                            cuts.push(root);
+                            grew = true;
                         }
-                        outcome
                     }
-                };
+                }
+                if let (false, ExactReal::Rational(tau)) = (cell.2, &tau) {
+                    outcome.record = self.over(outcome.record, &cell, tau, &read, segment)?;
+                }
                 done.push((cell.clone(), outcome.clone()));
                 results.push((cell, outcome));
             }
@@ -556,42 +902,17 @@ impl Claim<'_> {
         };
         let decider = Decider::new(self, segments, &timeline);
         let mut claim = Tri::True;
-        let mut unread: Option<(usize, ExactReal)> = None;
         for (j, segment) in segments.iter().enumerate() {
             let Some(span) = activations(segment, obligations.until.as_ref()) else {
                 continue;
             };
-            for ((low, _, point), outcome) in decider.scan(j, segment, &span, meter)? {
-                let Some(value) = outcome.value else {
-                    unread.get_or_insert((segment.segment, low));
-                    continue;
-                };
-                claim = claim.and(value);
-                let Some(mut record) = outcome.record else {
-                    continue;
-                };
-                if !point {
-                    // The record holds throughout the open cell: its
-                    // infimum is the cell's start, when an activation
-                    // instant is what it is read at.
-                    if !matches!(
-                        record.locus.site,
-                        ExpressionSite::Activation | ExpressionSite::Capture { .. }
-                    ) {
-                        return Err(ExactGap::ActivationInfimum.into());
-                    }
-                    record.time = low;
-                    record.open = true;
+            for (_, outcome) in decider.scan(j, segment, &span, meter)? {
+                claim = claim.and(outcome.value);
+                if let Some(record) = outcome.record {
+                    records.keep(record);
                 }
-                records.keep(record);
             }
         }
-        match (&records.0, unread) {
-            (_, None) => Ok(claim),
-            (Some(kept), Some((segment, at))) if (kept.segment, &kept.time) < (segment, &at) => {
-                Ok(claim)
-            }
-            (_, Some(_)) => Err(ExactGap::ActivationInfimum.into()),
-        }
+        Ok(claim)
     }
 }

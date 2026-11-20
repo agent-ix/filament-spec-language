@@ -387,14 +387,11 @@ impl UndefinedCause {
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
     /// An `on each` claim under `model-time` whose obligations read the
-    /// activation position's state, where the decisive instant is not
-    /// isolated. It is raised when (1) an activation instant that is
-    /// irrational and a critical value of the obligations is left unread and
-    /// no earlier expression with no value decides the result, or (2) a
-    /// claim atom (any expression with no value other than the guard or a
-    /// capture) has no value in an open cell of activation instants, whether
-    /// or not its instant moves with the activation instant. Remaining work:
-    /// QSL-2690.
+    /// activation position's state, where a claim atom has no value over an
+    /// open cell of activation instants at an instant that moves with the
+    /// activation instant along a curve other than `x = tau + c` (the
+    /// infimum of the instant over the cell is a limit of a root curve of
+    /// degree above one). Remaining work: QSL-2690.
     #[error("the decisive activation instant of an `on each` claim is not isolated")]
     ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
@@ -518,8 +515,8 @@ pub fn exact_replay(
         //
         // TEMPORARY (QSL-2690 for `ActivationInfimum`, QSL-2639 for
         // `CoupledReset`): both are gaps FR-750 deletes, because exact
-        // replay decides those claims (an irrational critical activation
-        // instant; quantifier elimination over several coupled free
+        // replay decides those claims (the infimum of a curved instant with
+        // no value; quantifier elimination over several coupled free
         // variables). Until then they also settle `NotExact`, the only
         // honest answer short of a verdict.
         Err(HybridReplayRefusal::Exact(

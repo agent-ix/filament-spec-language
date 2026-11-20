@@ -300,6 +300,53 @@ fn principal_subresultant(
     Ok(interpolate(&values))
 }
 
+/// The resultant in `t` of the polynomial `f` in `t` and `p`, as a
+/// polynomial in `x`: it vanishes at every `x` at which `p(t, x)` and `f`
+/// have a common root `t`, so its roots hold the roots in `x` of `p(u, .)`
+/// for every root `u` of `f`. The degree in `t` of `p` is taken formally,
+/// so the result may differ from the resultant by a nonzero constant.
+pub(crate) fn eliminate(
+    f: &Poly,
+    p: &Poly2,
+    charge: &mut dyn FnMut() -> Result<(), HybridReplayRefusal>,
+) -> Result<Poly, HybridReplayRefusal> {
+    let (Some(n), Some(dx)) = (f.degree(), p.degree()) else {
+        return Ok(Poly::zero());
+    };
+    let m = p.parameter_degree();
+    if m == 0 {
+        return Ok(p.at_t(&zero()));
+    }
+    if n == 0 {
+        return Ok(Poly::zero());
+    }
+    let size = m + n;
+    let mut values: Vec<Rational> = Vec::with_capacity(n * dx + 1);
+    for point in 0..=n * dx {
+        charge()?;
+        let at = p.at_x(&Rational::from_integer(point.into()));
+        let mut rows = Vec::with_capacity(size);
+        for (shifts, polynomial) in [(m, f), (n, &at)] {
+            for shift in (0..shifts).rev() {
+                rows.push(
+                    (0..size)
+                        .map(|column| {
+                            let power = size - 1 - column;
+                            power
+                                .checked_sub(shift)
+                                .and_then(|degree| polynomial.coefficients().get(degree))
+                                .cloned()
+                                .unwrap_or_else(zero)
+                        })
+                        .collect(),
+                );
+            }
+        }
+        values.push(determinant(rows));
+    }
+    Ok(interpolate(&values))
+}
+
 /// The nonconstant polynomials in `t` whose roots bound every cell over
 /// which the real roots in `x` of every polynomial of `set`, their number
 /// and their order, are constant.

@@ -205,6 +205,33 @@ const RAMP: &str = "hybrid Ramp using p {\n\
      temporal Deep using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [2, 9] always [1, 6] eventually [0, 1] holds(h.v >= 4 and h.v <= 4 + 12 * v0) }\n\
+     temporal Cube using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(v0 * v0 * v0 != 4) }\n\
+     temporal CubeHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(v0 * v0 * v0 != 4 or h.v >= 0) }\n\
+     temporal Touch using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [1, 1] holds(h.v * h.v * h.v != 4 + v0 - v0) }\n\
+     temporal TouchHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [1, 1] holds(h.v * h.v * h.v != 4 + v0 - v0 or h.v >= 0) }\n\
+     temporal Meet using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       always [0, 2] holds(v0 * v0 * v0 != 4 or h.v != v0 + 1) }\n\
+     temporal MeetHeld using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 2) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       always [0, 2] holds(v0 * v0 * v0 != 4 or h.v != v0 + 3) }\n\
+     temporal Moves using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0) != 0) }\n\
+     temporal MovesOne using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - v0 - 1) != 0) }\n\
+     temporal Fixed using p over (h: Ramp) clock \"model-time\" \
+       on each (q: Ramp) when (q.v > 0 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+       eventually [0, 1] holds(1 / (h.v - 2) != 0 and v0 > 0) }\n\
      temporal NestedHeld using p over (h: Ramp) clock \"model-time\" \
        on each (q: Ramp) when (q.v >= 1 / 4 and q.v < 1) { capture v0: Rational[0, 2; 1, 2] = q.v; \
        eventually [0, 5] always [0, 1] holds(h.v >= 2 and h.v <= 2 + 4 * v0) }\n";
@@ -291,6 +318,10 @@ fn the_activation_scan_is_charged_to_the_meter() {
         (&shuttle, "Origin", &lasso, 35),
         (&ramp, "Nested", &ramp_trace, 9224),
         (&phase, "Twice", &phase_trace, 70),
+        (&ramp, "Cube", &ramp_trace, 305),
+        (&ramp, "Touch", &ramp_trace, 684),
+        (&ramp, "Moves", &ramp_trace, 281),
+        (&ramp, "Meet", &ramp_trace, 587),
     ];
     for (graph, name, trace, expected) in cases {
         let spent = units(graph, name, trace);
@@ -308,6 +339,103 @@ fn the_activation_scan_is_charged_to_the_meter() {
             "{name}"
         );
     }
+}
+
+/// The first undefined evaluation a replay of `name` over `trace` reports.
+fn undefined(graph: &Unit, name: &str, trace: &HybridTrace) -> (UndefinedCause, ExactReal) {
+    let Ok(ExactReplay::Reproduced(found)) = exact_replay(graph, claim(graph, name), trace) else {
+        panic!("{name} reproduces");
+    };
+    let HybridCounterexampleKind::UndefinedEvaluation { at, cause } = &found.kind else {
+        panic!("{name}: an undefined evaluation: {:?}", found.kind);
+    };
+    (*cause, at.time.clone())
+}
+
+/// FR-450-AC-12 (irrational critical instant): over `Ramp` the capture
+/// `v0 = tau` makes `v0^3 != 4` false at exactly the activation instant
+/// `tau = 4^(1/3)`, an irrational critical value of the projection (the root
+/// of `tau^3 - 4`). The obligation is false there only, so the claim is
+/// reproduced; with `or h.v >= 0` it is true there too and the claim holds.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn an_obligation_false_at_an_irrational_activation_instant_is_reproduced() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Cube"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "CubeHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (irrational critical instant, atom depending on `tau`):
+/// at `tau = 4^(1/3)` the atom `h.v != v0 + 1` is false at the irrational
+/// instant `tau + 1 = 1 + 4^(1/3)`, inside the window `[tau, tau + 2]`, and
+/// `v0^3 != 4` is false there too, so `always [0, 2]` of their disjunction
+/// is false at that one activation instant and the claim is reproduced.
+/// With `v0 + 3` the instant `tau + 3` lies outside the window and every
+/// obligation holds.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn an_atom_depending_on_the_activation_instant_is_read_at_an_irrational_one() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Meet"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "MeetHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (irrational instant read at an irrational instant):
+/// `eventually [1, 1]` reads the atom `h.v^3 != 4` at `tau + 1`, which is the
+/// irrational `4^(1/3)` exactly at `tau = 4^(1/3) - 1`, the root of
+/// `(tau + 1)^3 - 4`, where the obligation alone is false.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn an_atom_read_at_an_irrational_instant_of_an_irrational_activation_is_decided() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "Touch"), &trace),
+        Ok(reproduced_formula(&trace))
+    );
+    assert_eq!(
+        exact_replay(&graph, claim(&graph, "TouchHeld"), &trace),
+        not_reproduced()
+    );
+}
+
+/// FR-450-AC-12 (b): the atom `1 / (h.v - v0)` has no value at `t = v0 =
+/// tau`, an instant that moves with the activation instant along the line
+/// `x = tau` over the open cell `(0, 1)` of activation instants: the
+/// earliest instant with no value has infimum 0, not attained. With
+/// `h.v - v0 - 1` the line is `x = tau + 1` and the infimum is 1. With
+/// `h.v - 2` the instant 2 is the same for every `tau`.
+#[trace("TC-1221", "FR-450-AC-12")]
+#[test]
+fn an_atom_with_no_value_at_a_moving_instant_reports_its_infimum() {
+    let graph = check(RAMP);
+    let trace = ramp_trace();
+    assert_eq!(
+        undefined(&graph, "Moves", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(0, 1)))
+    );
+    assert_eq!(
+        undefined(&graph, "MovesOne", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(1, 1)))
+    );
+    assert_eq!(
+        undefined(&graph, "Fixed", &trace),
+        (UndefinedCause::DivisionByZero, ExactReal::Rational(q(2, 1)))
+    );
 }
 
 /// FR-450-AC-12 (budget): three nested windows over a tau-dependent atom.

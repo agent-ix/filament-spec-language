@@ -65,6 +65,27 @@ pub(crate) enum Sample {
     Root(Root2),
 }
 
+impl Sample {
+    /// The point `x` of the line as a sample: a rational, or the one root of
+    /// a rational polynomial in an isolating interval.
+    pub(crate) fn of(x: &ExactReal) -> Self {
+        match x {
+            ExactReal::Rational(q) => Self::Rational(q.clone()),
+            ExactReal::Root(root) => Self::Root(Root2 {
+                poly: Poly2::new(
+                    root.coefficients()
+                        .iter()
+                        .cloned()
+                        .map(Poly::constant)
+                        .collect(),
+                ),
+                low: root.lower().clone(),
+                high: root.upper().clone(),
+            }),
+        }
+    }
+}
+
 /// The line `t = u` over which polynomials in `x` are read.
 pub(crate) struct Section<'u, 'm> {
     u: &'u ExactReal,
@@ -80,6 +101,17 @@ impl<'u, 'm> Section<'u, 'm> {
             meter: RefCell::new(meter),
             failure: RefCell::new(None),
         }
+    }
+
+    /// The sign of `p` at the point `(u, at)`. A refusal met on the way is
+    /// kept for [`Self::take_failure`], and the sign is then `Equal`.
+    pub(crate) fn sign_of(&self, p: &Poly2, at: &Sample) -> Ordering {
+        XPoint { section: self, at }.sign(p)
+    }
+
+    /// The refusal a [`Self::sign_of`] met, if any.
+    pub(crate) fn take_failure(&self) -> Option<HybridReplayRefusal> {
+        self.failure.borrow_mut().take()
     }
 
     /// Charge one work step to the meter.
