@@ -312,19 +312,24 @@ fn with_value_alias_construct(document: &mut Value) {
 }
 
 /// A `Cash` value type bound to native Decimal by `target`, declared under the
-/// alias-shaped construct, with no policy.
-fn cash_value_type() -> Value {
+/// alias-shaped construct, with no policy. It keeps every other member of the
+/// golden `Price` value type it is derived from.
+fn cash_value_type(document: &mut Value) -> Value {
     let identity = "ix://test/decimal/Cash";
-    json!({
-        "identity": identity, "displayName": "Cash",
-        "kind": {"module": "test/decimal", "name": "value_alias"},
-        "roles": [], "constraints": [], "extensions": [],
-        "target": "ix://filament/native/Decimal",
-        "origin": {"generated": {
-            "generatorIdentity": identity, "generatorVersion": "1.0.0",
-            "inputIdentities": [identity],
-        }},
-    })
+    let mut cash = type_mut(document, "Price").clone();
+    let object = cash.as_object_mut().expect("Cash");
+    object.remove("scalar");
+    object.remove("decimal");
+    object.insert("identity".to_owned(), identity.into());
+    object.insert("displayName".to_owned(), "Cash".into());
+    object.insert(
+        "kind".to_owned(),
+        json!({"module": "test/decimal", "name": "value_alias"}),
+    );
+    object.insert("target".to_owned(), "ix://filament/native/Decimal".into());
+    cash["origin"]["generated"]["generatorIdentity"] = identity.into();
+    cash["origin"]["generated"]["inputIdentities"] = json!([identity]);
+    cash
 }
 
 /// FR-056-AC-63 (TC-3031 step 2): the value type `Cash`, bound to native
@@ -335,10 +340,8 @@ fn cash_value_type() -> Value {
 fn target_bound_cash_without_policy_is_operator_ineligible() {
     let mut document = golden();
     with_value_alias_construct(&mut document);
-    document["types"]
-        .as_array_mut()
-        .expect("types")
-        .push(cash_value_type());
+    let cash = cash_value_type(&mut document);
+    document["types"].as_array_mut().expect("types").push(cash);
     let mut cash_field = field_mut(&mut document, "price").clone();
     cash_field["identity"] = "ix://test/decimal/Meter/cash".into();
     cash_field["name"] = "cash".into();
@@ -681,7 +684,7 @@ fn decimal_policy_defects_refuse_once() {
     ));
     let mut document = golden();
     with_value_alias_construct(&mut document);
-    let mut cash = cash_value_type();
+    let mut cash = cash_value_type(&mut document);
     cash["decimal"] = json!({"precision": 5, "scale": 2});
     document["types"].as_array_mut().expect("types").push(cash);
     cases.push((
