@@ -194,6 +194,11 @@ impl<O> Checker<'_, '_, O> {
         initial: bool,
     ) -> Step<Option<Letter>, O> {
         let live = self.live()?;
+        // The admission instance reads no claim: its letter has no atom, no
+        // activation and no capture, so no position of it is undefined.
+        if instance >= live.instances.len() {
+            return Ok(Some(Letter::default()));
+        }
         let state_key = self.state_key(state)?;
         let key = (
             state_key.clone(),
@@ -203,10 +208,9 @@ impl<O> Checker<'_, '_, O> {
         if let Some(known) = live.readings.borrow().get(&key) {
             return Ok(*known);
         }
-        // The admission instance reads the letters of the first.
         let binding = live
             .instances
-            .get(instance.min(live.instances.len().saturating_sub(1)))
+            .get(instance)
             .ok_or(fault(CheckerFault::UnreachedNode))?;
         let limits = self.timed.system().meter_limits();
         let mut letter = Letter::default();
@@ -718,7 +722,20 @@ impl<O> Checker<'_, '_, O> {
                         transitions.len() - 1
                     }
                 };
-                enabled.push(index);
+                // FR-232: a step is enabled at a node when its guard meets
+                // the node's zone, as the search reads enabledness.
+                let mut meets = false;
+                for part in self.enabling_parts(&step)? {
+                    let mut at = self.certificate.nodes[node].zone.clone();
+                    self.constrain(&mut at, &part)?;
+                    if !at.is_empty() {
+                        meets = true;
+                        break;
+                    }
+                }
+                if meets {
+                    enabled.push(index);
+                }
             }
         }
         let identities: Vec<_> = (0..transitions.len())

@@ -19,7 +19,7 @@ use filament_exact::{Cancel, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::automaton::{
-    bounded_shape, translate, translate_counted, AutomatonError, AutomatonKind, BoundedTranslation,
+    closure_shape, translate, translate_counted, AutomatonError, AutomatonKind, BoundedTranslation,
     BuchiStates, ContextBinding, PropertyAutomaton, SafetyTranslation, StateContext, SubjectKind,
     TranslationRefusal, MAX_ATOMS,
 };
@@ -316,7 +316,7 @@ impl ModelCheckItem<'_> {
                         };
                         let context =
                             StateContext::clause(clause, identity.occurrence().clone(), binding);
-                        let translation = if bounded_shape(clause).is_some() {
+                        let translation = if closure_shape(clause).is_some() {
                             Translation::Bounded(BoundedTranslation::clause(clause, &context)?)
                         } else if let Some(tp4) =
                             tp4.filter(|_| clause.property_form() == Some(PropertyForm::Liveness))

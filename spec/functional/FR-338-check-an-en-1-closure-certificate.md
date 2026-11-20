@@ -547,6 +547,32 @@ last model state's letter. No terminal/cache marker is needed because
 profile, clock and all open debt/memory facts select those moves; marking
 a state "closed" cannot bypass recomputation.
 
+A bounded `on each` monitor keeps at most one window entry, merged across
+its live activations, and each position reads in this order: the step
+subtracts its counted distance (a closed `eventually` deadline rejects, a
+closed `always` extent is discharged), the letter is read against the entry
+that survives, and the activation at the position, if any, then adds its own
+window, which includes the position.
+
+- A letter that satisfies the operand of an `eventually` or `until` window
+  with lower bound zero and no nested interval removes that occurrence's
+  deadline entry entirely, because the position lies in every open window of
+  the occurrence: `eventually[0,2] holds(p)` with `p` false at positions 0
+  and 1 reads to `["bounded",["each"],[[[],[],[[[],"positive","deadline","1"]],[]]]]`,
+  and `p` true at position 2 then reads to `["bounded",["each"],[[[],[],[],[]]]]`.
+- At a position that is also a new activation, an operand that holds
+  there carries nothing, and one that fails keeps the older debt, whose merged
+  deadline is the lesser of its remaining distance and `u`:
+  `eventually[0,3] holds(p)` with `p` false at positions 0 and 1 reads to
+  deadline `"3"`, then `"2"`.
+- For `always` and `release`, an operand false at a position with an open
+  extent reads to `["reject"]`, and an activation adds the extent `u`, merged
+  with the older entry as the greater of its remaining distance and `u`:
+  `always[0,2] holds(p)` with `p` true at positions 0 and 1 reads to extent
+  `"2"`, then `"2"`, and `p` false at position 2 reads to `["reject"]`.
+- Activations of different `on each` bindings are keyed separately, because
+  the binding is part of the key context.
+
 ### Guarded `on each` activation
 
 A clause whose `on each` activation has a `when` condition (FR-126) SHALL
@@ -1097,6 +1123,7 @@ Note: a rejected certificate settles `inconclusive`, `CertificateRejected`
 | FR-338-AC-25 | TP-4 foreign context. A well-formed TP-4 key of another clause context in a product state is rejected `ShapeMismatch` at that `ProductState` before certificate membership is checked. | Test (TC-525) |
 | FR-338-AC-26 | Protocol cycle keys. Over FR-205-AC-10's `Echo` subject and the claim `always holds(c.v = 0)`, `check_protocol_closure` accepts the certificate whose protocol states are cycle keys, `s1`'s among them. The same certificate with `s1`'s cycle key replaced by `s2`'s raw `ProtocolKey` (delivery 1 queued, `next-delivery` 2) is rejected `SuccessorMissing` at the product state of `Echo`'s initial state, because the checker canonicalises the recomputed `send` successor to `s1`'s cycle key, which the certificate no longer holds. | Test (TC-525) |
 | FR-338-AC-27 | Capture vectors. FR-337-AC-12's `on origin` monitor `always holds(c.value >= n)` with `capture n: Int[0, 3] = c.value;` returns `Holds` with a certificate whose every obligation ends in `["captures", [[<n node>, <Int 0>]], null]`, accepted by the checker; the same certificate with that vector replaced by one holding 1, with the vector omitted, or with a second member for an unread capture is rejected `ShapeMismatch` at the first such `ProductState`. Over FSpec FR-828-AC-8's `Once` protocol, the message obligation's keys carry `bound` `["instance","0","live"]` until the step that removes the first instance and `["instance","0","removed"]` with the captured message replaced by `null` after it, so the states after the two lifetimes' removals coincide; a certificate keeping the dead message is rejected `ShapeMismatch`. A clause reading no capture yields keys byte-equal to those it yielded before capture vectors existed. FSpec FR-828-AC-8's `on origin` variant over an `on each` `Once` has context `activation` `"each-activate"`. | Test (TC-525) |
+| FR-338-AC-28 | Bounded `on each` windows. Over the Counter subject (values 0 to 3, then the terminal state), `on each eventually[0,2] holds(c.value >= 2)` returns `Holds` whose certificate holds value 0 with body `["bounded",["each"],[[[],[],[[[],"positive","deadline","2"]],[]]]]`, value 1 with deadline `"1"` (the older deadline of two live activations) and values 2 and 3 with body `["bounded",["each"],[[[],[],[],[]]]]`, and `check_closure` accepts it; the same certificate with the value-1 state under deadline `"2"`, with a clock `["each","1"]` or `["origin","1"]` or with a second window or branch in any state is rejected (`SuccessorMissing` at the value-1 product state for the first, `ShapeMismatch` at the least refused state for the others). `on each always[0,0] holds(c.value <= 3)` is accepted with every value under extent `"0"`, and the same certificate with an extent of `"1"` is rejected `ShapeMismatch`. `on each always[0,1] holds(c.value <= 3)` is refuted, a certificate of the extent states being rejected `BadState` at the terminal state. | Test (TC-525) |
 
 ## Dependencies
 

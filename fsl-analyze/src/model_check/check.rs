@@ -42,9 +42,11 @@
 //! PC-3, FR-338): for a TP-1 clause under infinite-trace and the
 //! deadlock-freedom item, every explored model state with the canonical key,
 //! under each instance's context, of the carried root; for a bounded clause
-//! `eventually[0,u] holds(A)` or `always[0,u] holds(A)` on origin (TP-2), every
-//! explored model state with the key of the bounded monitor state it was read
-//! to, which the run follows beside its own monitor's. A run that reaches its
+//! `eventually[0,u] holds(A)` or `always[0,u] holds(A)` on origin under a
+//! bounded or the infinite-trace profile, or `on each` (guarded or not) over a
+//! model subject under a bounded profile (TP-2), every explored model state
+//! with the key of the bounded monitor state it was read to, which the run
+//! follows beside its own monitor's. A run that reaches its
 //! horizon with a state left unexpanded settles V-5; a run that reaches a
 //! limit or is cancelled settles V-7; neither is ever `Holds`.
 //!
@@ -73,7 +75,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    bounded_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
+    closure_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
     BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
     SafetyState, StateId,
 };
@@ -1616,16 +1618,22 @@ fn prepare(
     if automaton.kind() == AutomatonKind::Liveness {
         return Err(fault("a-safety-form-translates-to-a-safety-automaton"));
     }
-    // A closure certificate keys the unguarded translation, which reads no
-    // `when` condition, so a guarded clause's proof carries none.
+    // A closure certificate keys an unguarded TP-1 translation, which reads
+    // no `when` condition, so a guarded TP-1 clause's proof carries none. An
+    // `on each` bounded operator keys the condition's reading into its
+    // canonical state (FR-338 "Guarded `on each` activation"), but only a
+    // model subject's steps all count, so a protocol run of one carries no
+    // certificate.
     let guarded = matches!(clause.activation(), Activation::Each { guarded: true });
-    let certified = !guarded
-        && ((form == Some(PropertyForm::ReachableInvariant)
-            && clause.profile() == TemporalProfile::InfiniteTrace)
-            || (bounded && bounded_shape(clause).is_some()));
+    let each = matches!(clause.activation(), Activation::Each { .. });
+    let certified = (!guarded
+        && form == Some(PropertyForm::ReachableInvariant)
+        && clause.profile() == TemporalProfile::InfiniteTrace)
+        || (closure_shape(clause).is_some() && (!each || counting == Counting::Every));
     let last_read = match clause.activation() {
         Activation::Origin if bounded => clause.horizon(),
-        Activation::Origin | Activation::Each { .. } => None,
+        Activation::Origin => closure_shape(clause).map(|(_, upper, _)| upper),
+        Activation::Each { .. } => None,
     };
     let prepared = Item::Clause {
         bindings: Vec::new(),
@@ -2641,6 +2649,14 @@ impl<S: SubjectSystem> Run<'_, S> {
                 counting: Counting::ByKind,
                 last_read: Some(last),
                 ..
+            }
+            // An infinite-trace bounded clause stutters its terminal state
+            // past the horizon, so the stutters before and after it are two
+            // product states under their own canonical bounded state.
+            | Item::Clause {
+                bounded: false,
+                last_read: Some(last),
+                ..
             } => usize::try_from(*last).map_or(usize::MAX, |last| last.saturating_add(1)),
             Item::Clause { .. } | Item::Deadlock | Item::Race | Item::Invariant { .. } => 0,
         };
@@ -2764,7 +2780,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         let mut canonical = Vec::new();
         let mut bad = None;
         for (instance, from) in before.iter().enumerate() {
-            let (state, finding, holds) = self.read(node, instance, *from, counted)?;
+            let (state, finding, holds, activates) = self.read(node, instance, *from, counted)?;
             after.push(state);
             if let Item::Clause {
                 canonical: translations,
@@ -2775,9 +2791,13 @@ impl<S: SubjectSystem> Run<'_, S> {
                     // A position the claim does not read carries no letter;
                     // a step out of the window closes it before one.
                     let holds = holds.unwrap_or(false);
-                    canonical.push(match earlier.get(instance) {
-                        Some(previous) => translation.step(*previous, counted, holds),
-                        None => translation.start(holds),
+                    canonical.push(match (earlier.get(instance), translation.each()) {
+                        (Some(previous), false) => translation.step(*previous, counted, holds),
+                        (Some(previous), true) => {
+                            translation.step_each(*previous, counted, holds, activates)
+                        }
+                        (None, false) => translation.start(holds),
+                        (None, true) => translation.start_each(holds, activates),
                     });
                 }
             }
@@ -2806,7 +2826,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         instance: usize,
         from: StateId,
         counted: bool,
-    ) -> Step<(StateId, Option<CounterexampleKind>, Option<bool>)> {
+    ) -> Step<(StateId, Option<CounterexampleKind>, Option<bool>, bool)> {
         let Item::Clause {
             bindings,
             letters,
@@ -2855,7 +2875,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                         site,
                         cause,
                     });
-                    return Ok((from, Some(kind), None));
+                    return Ok((from, Some(kind), None, false));
                 }
             }
         }
@@ -2886,7 +2906,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                 let site = Self::site(node, UndefinedLocus::Capture(capture), None);
                 let kind =
                     CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation { site, cause });
-                return Ok((from, Some(kind), None));
+                return Ok((from, Some(kind), None, false));
             }
         }
         // The first atom's reading, the one atom a canonical bounded clause
@@ -2925,13 +2945,13 @@ impl<S: SubjectSystem> Run<'_, S> {
                         site,
                         cause,
                     });
-                    return Ok((from, Some(kind), None));
+                    return Ok((from, Some(kind), None, false));
                 }
             }
         }
         let after = self.monitor.step(from, letter).map_err(Self::automaton)?;
         let finding = self.rejects(after)?.then_some(CounterexampleKind::Formula);
-        Ok((after, finding, holds))
+        Ok((after, finding, holds, activates))
     }
 
     /// FSpec FR-091's closed-boundary rule at the terminal node `at` of a
