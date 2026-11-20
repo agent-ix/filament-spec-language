@@ -884,6 +884,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "filament-verification-contracts",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
