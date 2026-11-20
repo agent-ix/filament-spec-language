@@ -7,8 +7,8 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    deadlock_model_item, AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision,
-    SubjectBinding, TemporalItem,
+    AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision, SubjectBinding, TemporalItem,
+    deadlock_model_item,
 };
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
@@ -25,8 +25,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{
-    declarations, document, key, other_document, other_key, snapshot, unit_text_with_functions,
-    Vault,
+    Vault, declarations, document, key, other_document, other_key, snapshot,
+    unit_text_with_functions,
 };
 
 /// Each vault steps once to `l = i` while `l = 0`, so it is terminal at `l = 1`.
@@ -50,6 +50,10 @@ const ANY: &str = "terminal Halt using v on V any;\n";
 const OTHER_FALSE: &str = "terminal Stop using v on N when { false };\n";
 /// The declaration on `test/vault-other` that is undefined at `l = 1`.
 const OTHER_UNDEFINED_WHEN: &str = "terminal Done using v on N when { q(1 - self.l) = 0 };\n";
+
+const ONE_IDENTITY_CONTRACTS: &str = "pre Fresh using v on M::Vault::step { self.l = 0 }\n\
+     post Step using v on M::Vault::step { self.l = i }\n";
+const ONE_IDENTITY_DISABLED_STEP: &str = "pre Disabled using v on M::Vault::step { false }\n";
 
 /// A two-model unit, its package and its initial snapshot: each vault at
 /// `(h, l) = (0, 0)`; a `step` sets `l`, and a vault is terminal once `l` is 1.
@@ -140,6 +144,98 @@ impl Two {
     }
 }
 
+/// One selected vault identity under two aliases, used by FR-124-AC-11.
+struct OneIdentity {
+    text: String,
+    source: SourceProvision,
+    package: CheckedPackage,
+    packages: fsl_semantics::model::intake::PackageInput,
+    snapshots: DocumentProvision,
+    initial: Vec<DocumentRef>,
+    vault_keys: Vec<String>,
+}
+
+fn one_identity(terminals: &str) -> OneIdentity {
+    one_identity_with(terminals, ONE_IDENTITY_CONTRACTS, &[("v", (0, 0))], "")
+}
+
+fn one_identity_with(
+    terminals: &str,
+    contracts: &str,
+    vaults: &[(&str, (i64, i64))],
+    declarations: &str,
+) -> OneIdentity {
+    let document = document(false, false);
+    let text = unit_text_with_functions(
+        None,
+        Vault::Custom(contracts),
+        false,
+        FUNCTIONS,
+        &format!("{declarations}{terminals}"),
+    )
+    .replace(
+        "model V = \"test/vault\";",
+        "model M = \"test/vault\";\nmodel N = \"test/vault\";",
+    );
+    let documents: [&[u8]; 1] = [&document];
+    let graph = declarations(&documents, &text)
+        .check(
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
+    let source = SourceProvision::single(graph.source(), text.as_bytes());
+    let mut snapshots = DocumentProvision::new();
+    let start = snapshot(&mut snapshots, "one-identity-start", vaults, None, None);
+    OneIdentity {
+        text,
+        source,
+        package: CheckedPackage::link(graph),
+        packages: package_input(documents.iter().copied()).unwrap(),
+        snapshots,
+        initial: vec![start],
+        vault_keys: vaults.iter().map(|(key, _)| (*key).to_owned()).collect(),
+    }
+}
+
+impl OneIdentity {
+    fn binding(&self) -> SubjectBinding<'_> {
+        SubjectBinding {
+            packages: &self.packages,
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: key("vaults"),
+                keys: self.vault_keys.clone(),
+            }],
+        }
+    }
+
+    fn simulation<'a>(
+        &'a self,
+        input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    ) -> ModelSimulationRequest<'a> {
+        ModelSimulationRequest {
+            emit: EmitLimits::fixture(),
+            input,
+            packages: &self.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &self.snapshots,
+            initial: self.initial.clone(),
+            universes: vec![PopulationUniverse {
+                population: key("vaults"),
+                keys: self.vault_keys.clone(),
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: UNLIMITED,
+        }
+    }
+}
+
 /// The package written to its handoff bytes, with the rows of its supply.
 struct Handoff {
     bytes: Vec<u8>,
@@ -151,11 +247,17 @@ struct Handoff {
 }
 
 fn handoff(world: &Two) -> Handoff {
-    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emits");
+    handoff_package(&world.package, &world.packages)
+}
+
+fn handoff_package(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+) -> Handoff {
+    let emission = fsl_package::emit_checked(package, EmitLimits::fixture()).expect("emits");
     let bytes = emission.package().bytes().to_vec();
-    let admitted =
-        fsl_package::admit_checked_package(&bytes, &world.packages, V2ReadLimits::fixture())
-            .expect("the strict reader admits the bytes");
+    let admitted = fsl_package::admit_checked_package(&bytes, packages, V2ReadLimits::fixture())
+        .expect("the strict reader admits the bytes");
     let mut budget = V2ReadLimits::fixture().native_join_budget();
     let identities = emission
         .identity_rows(&admitted, &mut budget)
@@ -356,7 +458,7 @@ fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route()
 
 /// The Counter unit selecting `test/counter` as `M` and as `N`, with `body`.
 fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
-    use crate::counter::{document, unit_text_in, PACKAGE};
+    use crate::counter::{PACKAGE, document, unit_text_in};
     let doc = document(false);
     let text = unit_text_in(PACKAGE, body).replace(
         "model M = \"test/counter\";",
@@ -520,4 +622,195 @@ fn terminal_ordinals_are_stable_when_source_placements_swap() {
     };
 
     assert_eq!(keys(&first, &packages), keys(&swapped, &swapped_packages));
+}
+
+/// FR-124-AC-11: the same identity selected by two aliases keeps the
+/// undefined declaration's identity+ordinal key while the source label
+/// follows the alias that owns `Done`; a false sibling does not make it
+/// intended.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn one_identity_undefined_terminal_keeps_key_and_source_label_across_routes() {
+    for (done_alias, stop_alias) in [("M", "N"), ("N", "M")] {
+        let terminals = format!(
+            "terminal Done using v on {done_alias} when {{ q(1 - self.l) = 0 }};\n\
+             terminal Stop using v on {stop_alias} when {{ false }};\n"
+        );
+        let world = one_identity(&terminals);
+        let selection = world
+            .package
+            .graph()
+            .model_selections()
+            .first()
+            .expect("the shared model identity is selected")
+            .clone();
+        let claim = OccurrenceKey::generated(
+            fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+        );
+        let form = TemporalItem {
+            item_kind: ItemKind::DeadlockFreedom,
+            ..TemporalItem::default()
+        };
+        let run = RunInput::source(&world.package);
+        let source_item = || {
+            deadlock_model_item(
+                &run,
+                &world.binding(),
+                AnalyzeLimits::unbounded(),
+                &world.source,
+                &claim,
+                &form,
+            )
+            .expect("the derived target is formed")
+        };
+        let handoff = handoff_package(&world.package, &world.packages);
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+                .expect("the package route reads both terminal nodes");
+        let package_item = || {
+            PackageDeadlockSubject::new(
+                &input,
+                &handoff.bytes,
+                handoff.supply(),
+                world.binding(),
+                AnalyzeLimits::unbounded(),
+                &claim,
+                &form,
+            )
+            .model_item()
+        };
+        let check = |item: fsl_analyze::analyze::ModelItem<'_>| {
+            fsl_analyze::model_check::check_model(item.request, &Cancel::new())
+        };
+        let from_source = check(source_item()).expect("the source checks");
+        let from_package = check(package_item()).expect("the package checks");
+        assert_eq!(format!("{from_package:?}"), format!("{from_source:?}"));
+        let fsl_replay::ModelCheckOutcome::Violated { counterexample, .. } = from_source else {
+            panic!("the undefined terminal refutes the item: {from_source:?}");
+        };
+        let fsl_replay::CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind
+        else {
+            panic!("the counterexample names undefined evaluation: {counterexample:?}");
+        };
+        let fsl_replay::UndefinedLocus::Terminal(model) = &evaluation.site.locus else {
+            panic!("the undefined site names a terminal declaration: {evaluation:?}");
+        };
+        let done = fsl_package::resolve_terminals(&world.package)
+            .expect("the source terminal nodes resolve")
+            .into_iter()
+            .find(|terminal| terminal.name == "Done")
+            .expect("Done resolves");
+        assert_eq!(model.identity(), "test/vault");
+        assert_eq!(model.ordinal(), done.ordinal);
+        assert_eq!(model.label(), done_alias);
+        assert!(world.text.contains(&format!("model {done_alias}")));
+    }
+}
+
+/// FR-124-AC-11: a refused `Done` predicate paired with false `Stop` is
+/// undecided, retaining Done's identity, ordinal and source alias in the
+/// source model class, and settles inconclusive on both routes.
+#[trace("TC-519", "FR-124-AC-11")]
+#[test]
+fn one_identity_refused_terminal_is_inconclusive_and_names_done() {
+    let world = one_identity_with(
+        "terminal Done using v on M when { exists(p in M::vaults : true) };\n\
+         terminal Stop using v on N when { false };\n",
+        ONE_IDENTITY_DISABLED_STEP,
+        &[("a", (0, 0)), ("b", (0, 0))],
+        "bound OnePerSet on M::vaults [1]\n",
+    );
+    let selection = world
+        .package
+        .graph()
+        .model_selections()
+        .first()
+        .expect("the shared model identity is selected")
+        .clone();
+    let claim = OccurrenceKey::generated(
+        fsl_semantics::check::model_root_key(&selection).expect("the model root"),
+    );
+    let form = TemporalItem {
+        item_kind: ItemKind::DeadlockFreedom,
+        ..TemporalItem::default()
+    };
+    let run = RunInput::source(&world.package);
+    let source_item = || {
+        deadlock_model_item(
+            &run,
+            &world.binding(),
+            AnalyzeLimits::unbounded(),
+            &world.source,
+            &claim,
+            &form,
+        )
+        .expect("the derived target is formed")
+    };
+    let handoff = handoff_package(&world.package, &world.packages);
+    let bare = handoff.bare();
+    let input = PackageModelInput::of(&bare, &world.packages, ModelNormalizationLimits::default())
+        .expect("the package route reads both terminal nodes");
+    let package_item = || {
+        PackageDeadlockSubject::new(
+            &input,
+            &handoff.bytes,
+            handoff.supply(),
+            world.binding(),
+            AnalyzeLimits::unbounded(),
+            &claim,
+            &form,
+        )
+        .model_item()
+    };
+    let check = |item: fsl_analyze::analyze::ModelItem<'_>| {
+        fsl_analyze::model_check::check_model(item.request, &Cancel::new())
+    };
+    let from_source = check(source_item()).expect("the source check completes");
+    let from_package = check(package_item()).expect("the package check completes");
+    assert_eq!(format!("{from_package:?}"), format!("{from_source:?}"));
+    assert!(matches!(
+        from_source,
+        fsl_replay::ModelCheckOutcome::Undecided {
+            cause: fsl_replay::UndecidedCause::UndecidedSuccessor,
+            ..
+        }
+    ));
+
+    let mut source_system = ModelSystem::new(world.simulation(
+        fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+    ))
+    .expect("the source admits");
+    let mut package_system =
+        ModelSystem::new(world.simulation(input.input())).expect("the package admits");
+    let classify = |system: &ModelSystem<'_>| {
+        let state = system.initial().into_iter().next().expect("initial state");
+        let expansion = system.successors(&state).expect("expands");
+        system
+            .terminal_class(&state, !expansion.successors.is_empty())
+            .expect("the terminal predicates read")
+    };
+    let fsl_eval::simulation::model::TerminalClass::Undecided {
+        model: source_model,
+    } = classify(&source_system)
+    else {
+        panic!("the source class is undecided");
+    };
+    let fsl_eval::simulation::model::TerminalClass::Undecided {
+        model: package_model,
+    } = classify(&package_system)
+    else {
+        panic!("the package class is undecided");
+    };
+    let done = fsl_package::resolve_terminals(&world.package)
+        .expect("the source terminal nodes resolve")
+        .into_iter()
+        .find(|terminal| terminal.name == "Done")
+        .expect("Done resolves");
+    assert_eq!(source_model.identity(), "test/vault");
+    assert_eq!(source_model.ordinal(), done.ordinal);
+    assert_eq!(source_model.label(), "M");
+    assert_eq!(package_model.identity(), source_model.identity());
+    assert_eq!(package_model.ordinal(), source_model.ordinal());
+    assert_eq!(source_model, package_model);
 }
