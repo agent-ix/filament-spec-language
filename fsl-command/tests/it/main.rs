@@ -13,6 +13,7 @@ mod native_source_projection;
 mod negotiation;
 mod package_run;
 mod prepared_command;
+mod reaches_optional_reference;
 mod protocol_refusal_text;
 mod probabilistic_package_locus;
 mod protocol_refusal_names;
