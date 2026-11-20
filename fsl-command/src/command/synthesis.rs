@@ -453,7 +453,7 @@ pub(super) fn run_bytes(
     };
     let mut intake = super::intake_with_bytes(directory, counts, run_limits.dependent_bytes)?;
     let source = intake.source(&program.source, "/request/program/source")?;
-    super::require_complete_edition(source.source())?;
+    super::require_native_header(source.source())?;
     let model_sources = request
         .models
         .iter()
