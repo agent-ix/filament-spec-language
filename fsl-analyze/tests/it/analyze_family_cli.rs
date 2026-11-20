@@ -524,8 +524,6 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     assert_eq!(miss["miss"]["bound"]["numerator"], "11", "{miss}");
 }
 
-
-
 /// FR-633, FR-247: EDF and AMC each settle their holding and low-mode or
 /// utilization miss cases through the native-analyze request wire.
 #[trace("TC-1593", "FR-633-AC-3", "FR-247-AC-2", "FR-247-AC-3")]
@@ -613,6 +611,39 @@ fn edf_and_amc_schedulability_items_settle_through_the_wire() {
     assert_eq!(amc_miss["miss"]["task"], "b");
 }
 
+/// FR-247-AC-4, FR-633 budgets: EDF's default QPA demand-point cap settles
+/// incomplete through the native-analyze request path.
+#[trace("TC-702", "FR-247-AC-4")]
+#[trace("TC-1593", "FR-633")]
+#[test]
+fn edf_qpa_default_demand_point_cap_settles_incomplete_through_analyze() {
+    let period = 1_048_580_u64;
+    let long_period = period * period + 1;
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         taskset Many {{\n\
+         task a periodic {period} ms deadline {period} ms wcet {} ms priority 1 lo;\n\
+         task b periodic {long_period} ms deadline {long_period} ms wcet {period} ms priority 2 lo;\n\
+         }}\n\
+         schedulable ManyEdf on Many under edf;\n",
+        period - 1
+    );
+    let ws = Workspace::new("family-edf-demand-point-limit");
+    let request = request_over(
+        &ws,
+        &unit,
+        &crate::counter::document(false),
+        &[],
+        json!({"models": [], "items": [{"claim": "ManyEdf"}]}),
+    );
+    let run = analyze(&request);
+    let item = run.item(0);
+    assert_eq!(run.exit, 22, "{}", run.document());
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+}
 
 /// FR-635-AC-1, AC-2: an item naming a process provider handed to
 /// `analyze_with_providers` settles on it, the registry lists it, and another

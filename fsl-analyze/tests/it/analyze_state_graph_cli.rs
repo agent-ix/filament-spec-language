@@ -85,7 +85,10 @@ fn sampled_witnesses_repeat_under_one_seed() {
     let sampled = evidence["sampled"].as_array().expect("sampled witnesses");
     assert_eq!(sampled.len(), 1, "{evidence}");
     assert!(
-        sampled[0]["source"]["trace"].as_u64().is_some_and(|index| index < 3),
+        sampled[0]["source"]["trace_index"]
+            .as_str()
+            .and_then(|index| index.parse::<u64>().ok())
+            .is_some_and(|index| index < 3),
         "{evidence}"
     );
     assert_eq!(evidence["sampled"][0]["source"]["type"], "sampled");
@@ -156,9 +159,11 @@ fn a_refuted_unique_path_claim_carries_two_distinct_replaying_paths() {
     let item = run.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
     let counterexample = &item["counterexample"];
-    let paths = counterexample["paths"].as_array().expect("two paths");
-    assert_eq!(paths.len(), 2, "{counterexample}");
-    assert_ne!(paths[0], paths[1], "{counterexample}");
+    assert_eq!(counterexample["arm"], "path-pair", "{counterexample}");
+    assert_ne!(
+        counterexample["first"], counterexample["second"],
+        "{counterexample}"
+    );
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
