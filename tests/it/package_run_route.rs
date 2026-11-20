@@ -99,7 +99,8 @@ fn a_package_only_run_uses_the_recorded_law_without_source() {
 /// directory.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-2")]
-#[ignore = "FR-754: the synthesis lowering is not installed, so the package this run selects cannot be compiled (SynthesisNotChecked)"]
+#[trace("TC-3019", "FR-1037-AC-1")]
+#[trace("TC-3019", "FR-754-AC-3")]
 fn a_package_run_selects_its_form_by_the_member() {
     let directory = tempfile::tempdir().unwrap();
     compile(directory.path(), PICK, json!({}));
