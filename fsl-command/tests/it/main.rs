@@ -2,6 +2,7 @@
 //! External consumers of the non-core request-file owner.
 
 mod check_imports;
+mod cli_contract;
 mod check_source_identity;
 mod compile_limits;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
