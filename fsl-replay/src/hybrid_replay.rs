@@ -386,11 +386,13 @@ impl UndefinedCause {
 /// A claim form exact replay does not decide.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
-    /// An `on each` claim under `model-time` whose body or captures read the
-    /// activation position's state: a continuum of obligations, each with
-    /// its own captured values.
-    #[error("an `on each` claim under model-time reads its activation position's state")]
-    ActivationState,
+    /// An `on each` claim under `model-time` whose obligations read the
+    /// activation position's state, where the decisive instant is not
+    /// isolated: an activation instant that is irrational and a critical
+    /// value of the obligations, or an atom with no value at an instant that
+    /// moves with the activation instant. Remaining work: QSL-2529.
+    #[error("the decisive activation instant of an `on each` claim is not isolated")]
+    ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
     /// reset leaves two or more variables free that the target mode's
     /// invariant couples in one condition. Remaining work: QSL-2639.
@@ -510,15 +512,14 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2529 for `ActivationState`, QSL-2639 for
-        // `CoupledReset`): both are
-        // gaps FR-750 deletes, because exact replay decides those claims
-        // (tau as a second real variable; quantifier elimination over
-        // several coupled free variables). Until that replay exists they
-        // also settle `NotExact`, the only honest answer short of a
-        // verdict; the ignored tests name the cases.
+        // TEMPORARY (QSL-2529 for `ActivationInfimum`, QSL-2639 for
+        // `CoupledReset`): both are gaps FR-750 deletes, because exact
+        // replay decides those claims (an irrational critical activation
+        // instant; quantifier elimination over several coupled free
+        // variables). Until then they also settle `NotExact`, the only
+        // honest answer short of a verdict.
         Err(HybridReplayRefusal::Exact(
-            ExactGap::RecursiveCall | ExactGap::ActivationState | ExactGap::CoupledReset { .. },
+            ExactGap::RecursiveCall | ExactGap::ActivationInfimum | ExactGap::CoupledReset { .. },
         )) => Ok(ExactReplay::NotExact),
         other => other,
     }

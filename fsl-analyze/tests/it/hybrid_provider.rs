@@ -535,3 +535,39 @@ fn the_class_check_locates_the_first_construct_in_source_order() {
         None
     );
 }
+
+/// FR-1019-AC-14: a mode's flow equations are walked in the declaration
+/// order of the variables they define, not the order the mode writes them:
+/// `Late` writes `a'` before `v'`, both outside the class, and the first
+/// construct reported is `v`'s.
+#[trace("TC-2869", "FR-1019-AC-14")]
+#[test]
+fn flow_equations_are_walked_in_variable_declaration_order() {
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n\
+         hybrid Order using p {\n\
+           initial { mode Early when { v = 1 and a = 1 }; }\n\
+           mode Early invariant { v >= 0 and a >= 0 } flow { v' = 1; a' = 1; }\n\
+           mode Late invariant { v >= 0 and a >= 0 } flow { a' = 1 / 2; v' = 1 / 2; }\n\
+         }\n\
+         temporal Holds using p over (h: Order) clock \"model-time\" \
+         on origin { always [0, 1] holds(h.v >= 0) }\n";
+    let world = world_of(unit);
+    let graph = world.package.graph();
+    let gap = fsl_replay::polynomial_class_gap(
+        graph,
+        &graph.hybrid_models()[0],
+        &mut fsl_replay::HybridReplayMeter::new(1_000_000),
+    )
+    .expect("the class check finishes")
+    .expect("`Late`'s flows are outside the class");
+    assert_eq!(gap.form, "division");
+    assert_eq!(
+        gap.site,
+        ExpressionSite::Rate {
+            mode: 1,
+            variable: 0
+        }
+    );
+    assert_eq!(gap.variable, Some(VariableIndex::new(0)));
+}

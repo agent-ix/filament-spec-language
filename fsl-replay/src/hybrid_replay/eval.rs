@@ -217,9 +217,9 @@ pub(crate) fn eval_in<A: Algebra, P: Probe<A>>(
             env.variables.get(*i).ok_or(ExactGap::IllKindedTerm)?,
         )),
         Exp::Activation(i) => Ev::Number(A::variable(
-            env.activation.get(*i).ok_or(ExactGap::ActivationState)?,
+            env.activation.get(*i).ok_or(ExactGap::IllKindedTerm)?,
         )),
-        Exp::Capture(i) => match env.captures.get(*i).ok_or(ExactGap::ActivationState)? {
+        Exp::Capture(i) => match env.captures.get(*i).ok_or(ExactGap::IllKindedTerm)? {
             Constant::Number(value) => Ev::Number(A::constant(value)),
             Constant::Boolean(value) => Ev::Boolean(*value),
         },
@@ -323,7 +323,7 @@ pub(crate) struct Cell {
 }
 
 /// A rational at or below `x`.
-fn floor_bound(x: &ExactReal) -> Rational {
+pub(super) fn floor_bound(x: &ExactReal) -> Rational {
     match x {
         ExactReal::Rational(q) => q.clone(),
         ExactReal::Root(root) => root.lower().clone(),
@@ -331,7 +331,7 @@ fn floor_bound(x: &ExactReal) -> Rational {
 }
 
 /// A rational at or above `x`.
-fn ceiling_bound(x: &ExactReal) -> Rational {
+pub(super) fn ceiling_bound(x: &ExactReal) -> Rational {
     match x {
         ExactReal::Rational(q) => q.clone(),
         ExactReal::Root(root) => root.upper().clone(),

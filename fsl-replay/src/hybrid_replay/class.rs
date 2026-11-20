@@ -149,9 +149,10 @@ fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option
 /// source order: the initial entries, then each mode in declared order (its
 /// invariant, its flow equations, then each transition's guard and reset
 /// values), each expression by a pre-order walk. A checked model stores a
-/// mode's rates by variable, so its equations are taken in variable order,
-/// which is the written order whenever the modes write them in the order the
-/// variables first appear. `Ok(None)` when every construct is inside it.
+/// mode's rates by variable, in the order the variables are first declared
+/// across the modes, so a mode's flow equations are taken in the declaration
+/// order of the variables they define, not in the order the mode writes
+/// them (FR-1019 "Class"). `Ok(None)` when every construct is inside it.
 ///
 /// # Errors
 ///

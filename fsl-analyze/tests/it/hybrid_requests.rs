@@ -1138,7 +1138,12 @@ fn shuttle(reset: &str) -> String {
          }}\n{}{}",
         claim("Whole", "Moving"),
         claim("Named", "Moving::Stopped"),
-    )
+    ) + "temporal Capture using p over (h: Shuttle) clock \"model-time\" \
+         on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+         eventually [0, 1] holds(h.v >= v0 + 1 / 2) }\n\
+         temporal CaptureHeld using p over (h: Shuttle) clock \"model-time\" \
+         on each (q: Shuttle) when (q.v > 0) { capture v0: Rational[0, 2; 1, 2] = q.v; \
+         eventually [0, 1] holds(h.v >= v0) }\n"
 }
 
 /// The point lasso `L` of `Shuttle` as a provider's `refuted` entry: from
@@ -1203,14 +1208,36 @@ fn exact_replay_decides_nondeterministic_reset_fairness_claims() {
     );
 }
 
-/// FR-750-AC-12 (exact-replay half, activation state): over `Shuttle`, a
-/// lasso trace for an `on each` claim that reads its activation state
-/// reproduces or does not reproduce by exact replay instead of refusing.
+/// FR-750-AC-12 (exact-replay half, activation state): over `Shuttle` and
+/// its point lasso `L`, the capture claim whose obligation at `tau` needs
+/// `h.v >= tau + 1/2` within `[tau, tau + 1]` is false for `tau` in
+/// `(1/2, 1)`: it reproduces with kind `formula` and the item settles
+/// `refuted`; with body `h.v >= v0`, true for every `tau`, the replay is
+/// `NotReproduced` at check 5 and the item settles `inconclusive`.
 #[test]
 #[trace("TC-3037", "FR-750-AC-12")]
-#[ignore = "QSL-2529 remaining work: exact replay of activation-state claims (tau as a second real variable) is not implemented; those claims still settle `NotExact`"]
 fn exact_replay_decides_activation_state_claims() {
-    todo!("QSL-2529: FR-450 exact replay of the Shuttle activation-state claims");
+    let run = |name: &str, claim: &str| {
+        let (fixture, _) = answering("hybrid-fixture", entry_answer(shuttle_lasso_entry()));
+        first_item(
+            name,
+            &shuttle("v >= 0"),
+            named(claim, "hybrid-fixture"),
+            json!({}),
+            vec![fixture],
+        )
+        .1
+    };
+    let refuted = run("hybrid-750-12-capture", "Capture");
+    assert_eq!(refuted["record"]["result"], "refuted", "{refuted}");
+    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
+    let held = run("hybrid-750-12-capture-held", "CaptureHeld");
+    assert_eq!(held["record"]["result"], "inconclusive", "{held}");
+    assert_eq!(held["record"]["cause"]["kind"], "replay-parity", "{held}");
+    assert_eq!(
+        held["record"]["cause"]["parity"]["reason"], "hybrid-trace",
+        "{held}"
+    );
 }
 
 /// FR-750-AC-12 (replay-request half): the same refusals on FR-098's replay
