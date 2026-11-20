@@ -14,7 +14,7 @@ use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::memory::{MemoryChoice, MemoryStepId};
 use super::race::{AccessRecord, DataRace};
-use crate::simulation::model::encode::{Enc, reference_enc};
+use crate::simulation::model::encode::{reference_enc, Enc};
 
 /// One step of a thread's path (FSpec FR-425): for a branch thread, the
 /// `parallel` that forked it, its branch label and the parallel instance's
@@ -1047,6 +1047,7 @@ impl ProtocolTransition {
         application: ModelTransition,
         receiver: Enc,
         arguments: Vec<Enc>,
+        binder_record: Option<filament_exact::Value>,
     ) -> Self {
         Self {
             kind: StepKind::Attempt,
@@ -1059,7 +1060,7 @@ impl ProtocolTransition {
                 arguments,
                 choice: None,
             },
-            binder_record: None,
+            binder_record,
             removed: None,
             send_record: None,
             memory: None,
@@ -1749,10 +1750,9 @@ impl ProtocolTransition {
         }
     }
 
-    /// The typed binder record carried by an `event`, `send`, `receive`, a
-    /// compensation attempt, `finish` or recovery-view `cend` transition. Refinement rows compare
-    /// their expressions with these admitted binder values; they do not
-    /// infer a record from the transition's display identity.
+    /// The typed value carried by a bound `attempt` result, `event`, `send`,
+    /// `receive`, compensation attempt, `finish` or recovery-view `cend`
+    /// transition. It is diagnostic metadata outside the transition identity.
     pub fn binder_record(&self) -> Option<&filament_exact::Value> {
         self.binder_record.as_ref()
     }

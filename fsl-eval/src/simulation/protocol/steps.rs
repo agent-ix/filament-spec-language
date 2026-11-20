@@ -39,16 +39,16 @@ use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    Bound, Disposition, Instance, Parallel, ParallelKey, PendingAccess, ProtocolRefusal,
-    ProtocolState, ProtocolSystem, Thread, undetermined,
+    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, PendingAccess,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
+use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::FootprintError;
-use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
+    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
 
@@ -892,12 +892,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     ) -> Option<String> {
         let path = transition.node()?;
         let thread = transition.thread()?;
-        let (node, control) = self
+        let node = *self
             .program
             .controls
             .iter()
-            .find(|(_, control)| control.text == path)?;
-        let node = *node;
+            .find(|(_, control)| control.text == path)?
+            .0;
         let clauses = self.program.related.get(&node)?;
         let instance = state.instances.get(&thread.instance)?;
         let observation = self.model.observation_of(&state.model).ok()?;
@@ -1939,6 +1939,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .iter()
                         .map(|value| value_enc(value, self.model.typing()))
                         .collect(),
+                    bound.as_ref().and_then(|bound| bound.value.clone()),
                 )
                 .choosing(chosen.choice);
                 if matches!(memory_access.class, AccessClass::Load | AccessClass::Rmw) {
@@ -2134,6 +2135,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     pending.transition.clone(),
                     pending.receiver.clone(),
                     pending.arguments.clone(),
+                    None,
                 )
                 .choosing(chosen.choice);
                 if let Some(read_depth) =
@@ -2280,6 +2282,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .iter()
                         .map(|value| value_enc(value, self.model.typing()))
                         .collect(),
+                    attempt.binds.and(applied.result.as_ref()).cloned(),
                 )
                 .choosing(chosen.choice);
                 for location in reads {
