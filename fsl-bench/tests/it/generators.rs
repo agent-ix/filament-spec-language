@@ -69,6 +69,9 @@ fn grammar_unit_generator_covers_every_production() {
     }
     let missing = fsl_cst::Production::all()
         .iter()
+        // ExtensionDeclaration exists only in complete_v1_with(nonempty forms),
+        // not in the base Grammar that these derivations walk.
+        .filter(|production| **production != fsl_cst::Production::ExtensionDeclaration)
         .filter(|production| !covered.contains(production))
         .collect::<Vec<_>>();
     eprintln!("property suite grammar: {:?}", start.elapsed());
@@ -88,11 +91,9 @@ fn near_miss_generator_output_is_refused() {
         &prop::near_miss::near_misses(),
         |input| {
             let failure = check(&input.source).expect_err("a near miss must never be accepted");
-            let fsl_foundation::diagnostic::StageFailure::Refused(refusal) = failure else {
-                return Err(TestCaseError::fail(format!(
-                    "expected typed refusal, got {failure:?}"
-                )));
-            };
+            let refusal = failure.into_refused().map_err(|stopped| {
+                TestCaseError::fail(format!("expected typed refusal, got {stopped:?}"))
+            })?;
             proptest::prop_assert_eq!(refusal.code(), input.code, "{}", input.source);
             proptest::prop_assert_eq!(
                 refusal.cause(),
