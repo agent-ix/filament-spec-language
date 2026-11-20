@@ -25,26 +25,18 @@ fn a_timed_witness_requires_a_delay_on_each_transition() {
     }
 }
 
-#[trace("FR-237-AC-1")]
+#[trace("FR-237")]
 #[test]
-fn an_admissible_fractional_timeout_replays_without_rounding_clock_values() {
-    let world = rpc(2);
+fn a_legal_fractional_trace_without_a_violation_does_not_reproduce_the_claim() {
+    let world = rpc(3);
     let mut witness = returned(&world);
-    witness.prefix = walk(
-        &world,
-        &[
-            ("send", whole(0)),
-            ("timeout", exact(5, 2)),
-            ("reply", whole(0)),
-        ],
-    );
-    assert_eq!(delays(&witness), [whole(0), exact(5, 2), whole(0)]);
-    assert_eq!(
-        replay(&world, &witness).expect("the exact fractional clock states reproduce"),
-        ModelTraceSettlement::Reproduced {
-            value: ModelTraceValue::Truth(false),
-            trace_position: Some(3),
-        }
+    witness.prefix = walk(&world, &[("send", whole(0)), ("reply", exact(3, 2))]);
+    assert_eq!(operations(&witness), ["send", "reply"]);
+    assert_eq!(delays(&witness), [whole(0), exact(3, 2)]);
+    let settlement = replay(&world, &witness).expect("the fractional trace is executable");
+    assert!(
+        matches!(settlement, ModelTraceSettlement::Inconclusive(_)),
+        "reply before timeout leaves late false, so this is not a refutation: {settlement:?}"
     );
 }
 
