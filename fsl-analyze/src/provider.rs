@@ -6,14 +6,15 @@ use crate::analyze::{
     SourceProvision, SubjectBinding,
 };
 use filament_exact::Cancel;
-pub use fsl_replay::{
-    HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict, OptionRefusal, UnsupportedConstruct,
-};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_package::CheckedPackage;
 use fsl_replay::ToolFailure;
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
+pub use fsl_replay::{
+    HybridAnswer, HybridProvider, HybridSolveRequest, HybridVerdict, OptionRefusal,
+    UnsupportedConstruct,
+};
 use std::collections::BTreeMap;
 
 use filament_exact::NodeKey;

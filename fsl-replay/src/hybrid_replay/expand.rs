@@ -197,7 +197,9 @@ impl Exp {
             }
             Self::Compare(op, a, b) => Self::Compare(*op, map(a), map(b)),
             Self::Logic(op, a, b) => Self::Logic(*op, map(a), map(b)),
-            Self::Conditional(a, b, c) => Self::Conditional(map(a), map(b), map(c)),
+            Self::Conditional(a, b, c, locus) => {
+                Self::Conditional(map(a), map(b), map(c), locus.clone())
+            }
             Self::Ranged {
                 value,
                 range,
@@ -587,7 +589,12 @@ impl<'g> Expander<'g> {
                             let no = values.pop().expect("otherwise branch");
                             let yes = values.pop().expect("then branch");
                             let condition = values.pop().expect("condition");
-                            Exp::Conditional(Box::new(condition), Box::new(yes), Box::new(no), locus)
+                            Exp::Conditional(
+                                Box::new(condition),
+                                Box::new(yes),
+                                Box::new(no),
+                                locus,
+                            )
                         }
                     };
                     values.push(value);
