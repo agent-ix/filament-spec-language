@@ -14,13 +14,21 @@ pub enum Type {
     /// Unbounded exact integer.
     Integer,
     /// Inclusive integer interval.
-    BoundedInt { lower: i64, upper: i64 },
+    BoundedInt {
+        /// Inclusive lower bound.
+        lower: i64,
+        /// Inclusive upper bound.
+        upper: i64,
+    },
     /// Boolean truth values.
     Boolean,
     /// Bounded numerator and denominator.
     Rational,
     /// Bounded coefficient and scale with explicit rounding.
-    Decimal { mode: DecimalMode },
+    Decimal {
+        /// Explicit coefficient-rounding policy.
+        mode: DecimalMode,
+    },
     /// Bounded scalar text, unicode-scalars profile.
     Text,
     /// Optional member.
@@ -31,7 +39,9 @@ pub enum Type {
     Tuple(Box<Type>),
     /// Bounded sequence, set or bag.
     Collection {
+        /// Collection ordering and multiplicity.
         kind: CollectionKind,
+        /// Domain of each member.
         member: Box<Type>,
     },
 }
@@ -118,9 +128,19 @@ pub enum Expr {
     /// ASCII text literal.
     Text(String),
     /// Exact rational numerator and positive denominator.
-    Rational { numerator: i64, denominator: u8 },
+    Rational {
+        /// Signed numerator.
+        numerator: i64,
+        /// Positive denominator.
+        denominator: u8,
+    },
     /// Exact decimal coefficient and scale.
-    Decimal { coefficient: i64, scale: u8 },
+    Decimal {
+        /// Base-ten coefficient.
+        coefficient: i64,
+        /// Nonnegative decimal scale.
+        scale: u8,
+    },
     /// A present optional value.
     Present(Box<Expr>),
     /// A one-field record constructor.
@@ -129,7 +149,9 @@ pub enum Expr {
     Tuple(Box<Expr>, bool),
     /// A finite collection constructor.
     Collection {
+        /// Source constructor to use.
         kind: CollectionKind,
+        /// Members in source order.
         members: Vec<Expr>,
     },
     /// Arithmetic addition with integer operands.
@@ -140,14 +162,20 @@ pub enum Expr {
     Equal(Box<Expr>, Box<Expr>),
     /// Universal aggregate over a finite collection.
     ForAll {
+        /// Lexical member binding.
         binder: String,
+        /// Collection to quantify over.
         collection: Box<Expr>,
+        /// Boolean expression in the binder's scope.
         predicate: Box<Expr>,
     },
     /// Branch on a Boolean with same-domain arms.
     If {
+        /// Boolean condition.
         condition: Box<Expr>,
+        /// Arm evaluated when the condition is true.
         yes: Box<Expr>,
+        /// Arm evaluated when the condition is false.
         no: Box<Expr>,
     },
 }
