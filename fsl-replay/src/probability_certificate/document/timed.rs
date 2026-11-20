@@ -1048,6 +1048,25 @@ fn enumerate_digital_deadline(
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let enabled = digital_enabled_actions(system, timed, &current.timed, cancel)?;
+        let delta = rational_units(1, key_scale)?;
+        let can_delay = timed
+            .delay(&current.timed, &delta)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .is_some();
+        if enabled.is_empty() && !can_delay {
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: Some(false),
+                    choices: Vec::new(),
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
         let mut given_choices = Vec::with_capacity(actions.len());
         for action in &actions {
             if let Some(support) = discrete_delay(system, &action.identity.operation) {
