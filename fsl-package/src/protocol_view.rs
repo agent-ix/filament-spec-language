@@ -730,7 +730,7 @@ pub fn protocol_execution_view<'p>(
         .copied()
         .ok_or_else(|| missing(view.clause, "finish"))?;
     let finish_binder = single(finish_node, "binder")?;
-    let finish_constraint = optional(finish_node, "constraint")?
+    let finish_constraint = argument(finish_node, "constraint")
         .map(|term| reference(term).ok_or_else(|| malformed(&finish_node.node_id, "constraint")))
         .transpose()?;
     let finish = ProtocolFinishView {
