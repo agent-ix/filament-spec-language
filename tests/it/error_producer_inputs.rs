@@ -319,11 +319,16 @@ fn a_cancelled_real_parse_stops_at_its_public_entry() {
 
 #[test]
 #[ignore = "QSL-2687: malformed escapes must not produce unrelated selection-identity refusals"]
+#[trace("FR-002-AC-6")]
 fn an_invalid_escape_reaches_its_lexical_producer_before_selection_cascades() {
     let text = source("enum Caption { Label = \"bad\\q\" }");
-    let diagnostic = refused(text.as_bytes(), Limits::default());
+    let parsed = parsed(&text);
+    let diagnostic = parsed
+        .diagnostics()
+        .first()
+        .expect("actual lexical refusal");
     produced(
-        &diagnostic,
+        diagnostic,
         CompleteCode::InvalidSyntax,
         CompleteCause::InvalidEscape,
         Phase::Lex,
@@ -332,6 +337,24 @@ fn an_invalid_escape_reaches_its_lexical_producer_before_selection_cascades() {
         .byte_span()
         .expect("the actual string is located");
     assert!(text[span.start..span.end].contains("\\q"));
+    assert!(
+        parsed.diagnostics().iter().all(|diagnostic| {
+            !matches!(
+                diagnostic.code,
+                CompleteCode::UnknownLanguage
+                    | CompleteCode::UnknownEdition
+                    | CompleteCode::UnknownProfile
+                    | CompleteCode::InvalidIdentifier
+                    | CompleteCode::InvalidSourceIdentity
+            ) && !matches!(
+                diagnostic.cause,
+                CompleteCause::UnsupportedSelection
+                    | CompleteCause::Host(HostCause::SelectionIdentity)
+            )
+        }),
+        "a lexical refusal must not leave selection or identity cascades: {:?}",
+        parsed.diagnostics()
+    );
 }
 
 #[test]
@@ -371,6 +394,7 @@ fn a_real_node_from_another_parse_reaches_the_foreign_node_host_cause() {
 
 /// Provenance: QSL-2079; real layer-3 resolution, not synthetic CompleteCause conversion.
 #[test]
+#[trace("FR-111-AC-2", "FR-111-AC-3", "FR-111-AC-4", "FR-111-AC-7")]
 fn exact_definition_inputs_reach_bundle_refusal_producers() {
     use fsl_foundation::selection::DefinitionRef;
     use fsl_semantics::library::bundle::{
@@ -450,6 +474,7 @@ fn exact_definition_inputs_reach_bundle_refusal_producers() {
 
 #[test]
 /// Provenance: QSL-2079; actual public request I/O, JSON and envelope dispatch.
+#[trace("FR-027-AC-2")]
 fn public_compile_intake_inputs_reach_io_json_and_wire_codes() {
     use fsl_command::command;
     let directory = tempfile::tempdir().expect("owned temporary input directory");
@@ -491,6 +516,7 @@ fn compile_text(text: &str) -> Result<Vec<u8>, Box<fsl_command::command::RunErro
 
 #[test]
 /// Provenance: QSL-2079; actual S3 refusal classes, not a frontend JSON claim.
+#[trace("FR-278-AC-2")]
 fn public_compile_semantic_inputs_keep_missing_typing_and_definedness_codes() {
     for (body, code) in [
         (
@@ -546,6 +572,7 @@ fn actual_model_document_inputs_reach_malformed_and_noncanonical_codes() {
 }
 
 #[test]
+#[trace("FR-027-AC-7")]
 fn source_selection_inputs_reach_language_and_identifier_codes() {
     let text =
         "language \"producer:unknown\" edition \"1-draft\";\nrecord Boxed { amount: Integer; }";
@@ -780,6 +807,7 @@ fn real_population_inputs_reach_foreign_incomplete_and_cardinality_codes() {
 }
 
 #[test]
+#[trace("FSpec-FR-151")]
 fn an_actual_abstract_instance_produces_invalid_runtime_input() {
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
@@ -830,6 +858,7 @@ fn an_actual_abstract_instance_produces_invalid_runtime_input() {
 }
 
 #[test]
+#[trace("ADR-013")]
 fn duplicate_real_model_selections_produce_duplicate_selection() {
     use fsl_semantics::model::intake::{admit_selections, package_input};
     let document = population_fixture::document(false);
@@ -849,6 +878,7 @@ fn duplicate_real_model_selections_produce_duplicate_selection() {
 }
 
 #[test]
+#[trace("FSpec-FR-046-AC-3")]
 fn real_invocations_distinguish_recorded_delta_from_frame_permission() {
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::OperationEffect;
@@ -915,6 +945,7 @@ fn real_invocations_distinguish_recorded_delta_from_frame_permission() {
 }
 
 #[test]
+#[trace("FR-106-AC-3")]
 fn real_snapshot_provisions_distinguish_absence_from_wrong_role() {
     use filament_semantic_value::declaration::TypeEnvironment;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1044,6 +1075,7 @@ fn original_extraction_requests_reach_combination_refusal_producers() {
 }
 
 #[test]
+#[trace("FR-031-AC-7")]
 fn an_original_extraction_request_preserves_quire_context_diagnostics() {
     let directory = tempfile::tempdir().expect("owned Markdown input");
     std::fs::write(directory.path().join("original.md"), "# Parcel guide\n")
@@ -1079,6 +1111,7 @@ fn an_original_extraction_request_preserves_quire_context_diagnostics() {
 }
 
 #[test]
+#[trace("FR-230-AC-65")]
 fn a_source_clock_without_time_reaches_the_timed_model_producer() {
     // FR-230, source-model time member: selected-model time cannot supply a
     // source clock, and a source clock without dense time is a model defect.
@@ -1100,6 +1133,7 @@ fn a_source_clock_without_time_reaches_the_timed_model_producer() {
 
 #[test]
 /// Provenance: QSL-2079; public probability diagnostic-code producer.
+#[trace("FR-185-AC-2")]
 fn an_original_zero_weight_reaches_the_probabilistic_model_producer() {
     let text = format!("{HEADER}profile q = \"filament.model.complete/v1\";\nobject ParcelSorter {{ population sorters; operation route(left: Boolean); }}\nrandom ParcelSorter::route(left) ~ {{ true: 0, false: 1 }};\n");
     let refusal = compile_text(&text).expect_err("each authored random weight must be positive");
@@ -1118,6 +1152,7 @@ fn an_original_zero_weight_reaches_the_probabilistic_model_producer() {
 }
 
 #[test]
+#[trace("FSpec-FR-376-AC-2")]
 fn an_original_sequence_bound_reaches_fixed_representability_refusal() {
     // FR-139's seq maximum is max(0, hi_max - lo_min + 1), FSpec
     // FR-376-AC-2. These endpoints fit Integer; the cardinality exceeds u64.
@@ -1151,6 +1186,7 @@ fn original_duplicate_operation_bodies_reach_conflicting_declaration() {
 }
 
 #[test]
+#[trace("FR-302-AC-3")]
 fn a_real_called_family_without_a_body_reaches_ambiguous_dispatch() {
     // FSpec FR-151-AC-3 and FSL FR-302: a declared operation without an
     // applicable authored body cannot be supplied a dispatch target.
@@ -1203,6 +1239,7 @@ fn an_original_call_request_reaches_unsupplied_execution_capability() {
 
 #[test]
 #[ignore = "QSL-2692: public observation inputs omit source-declared models"]
+#[trace("FR-569-AC-9")]
 fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
@@ -1279,9 +1316,8 @@ fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
             "format":"filament.state.snapshot/v1",
             "identity":{"authority":selected.authority,"identity":selected.identity},
             "observation":"current",
-            "model":{"identity":domain.model_selection.identity},
-            "populations":[{"population":population.key.node,"complete":complete,
-                "objects":[{"key":"parcel-present","type":member_type.node,"fields":{}}]}]
+            "populations":[{"population":"parcels","complete":complete,
+                "objects":[{"key":"parcel-present","type":"Parcel","fields":{}}]}]
         }))
         .expect("original state encodes");
         let provision = BTreeMap::from([(selected.clone(), bytes)]);
@@ -1357,6 +1393,7 @@ fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
 }
 
 #[test]
+#[trace("FR-106-AC-65")]
 fn selected_model_protocol_seeds_require_complete_present_targets() {
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::observation::{
@@ -1445,6 +1482,7 @@ fn selected_model_protocol_seeds_require_complete_present_targets() {
 }
 
 #[test]
+#[trace("FR-106", "FR-285-AC-1")]
 fn a_host_that_loses_the_checked_model_input_reaches_a_real_internal_fault() {
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::observation::{
@@ -1493,6 +1531,7 @@ fn a_host_that_loses_the_checked_model_input_reaches_a_real_internal_fault() {
 
 #[test]
 #[ignore = "QSL-2693: command erases unknown capability classification"]
+#[trace("FR-111", "FR-660")]
 fn an_unknown_request_capability_keeps_the_required_feature_classification() {
     // FR-111 Behavior/capability inventory: a capability outside the closed
     // inventory is unknown_required_feature/unknown-feature, not a malformed
@@ -1527,7 +1566,7 @@ fn an_unknown_request_capability_keeps_the_required_feature_classification() {
 }
 
 #[test]
-#[trace("FR-122-AC-3")]
+/// Provenance: QSL-2079; FR-122's stale-identity Behavior, not its missing-name AC-3.
 fn an_original_replay_rejects_a_stale_clause_before_missing_observation_admission() {
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1680,6 +1719,7 @@ fn an_original_replay_rejects_a_stale_clause_before_missing_observation_admissio
 }
 
 #[test]
+#[trace("FR-111-AC-4", "FR-111-AC-7")]
 fn an_original_definition_closure_reaches_missing_required_capability() {
     use fsl_foundation::selection::DefinitionRef;
     use fsl_semantics::library::bundle::{
@@ -1726,6 +1766,7 @@ fn an_original_definition_closure_reaches_missing_required_capability() {
 }
 
 #[test]
+#[trace("FR-383-AC-18")]
 fn real_protocol_refusals_require_the_result_preserving_projection_entry() {
     use fsl_semantics::check::PackageDeclarations;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;

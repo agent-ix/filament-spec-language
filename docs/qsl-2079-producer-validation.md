@@ -117,3 +117,19 @@ contract evidence for that frozen driver cohort. It was not rebuilt or run
 again here, and is not evidence for this newer language cohort. No required
 code variant was removed, no fake fault or private engine was introduced, and
 no upward crate dependency was added.
+
+## Confined review corrections
+
+The ignored QSL-2687 case retains its located first lexical diagnostic and now
+rejects unrelated selection/identity errors anywhere in the complete diagnostic
+list. It was not run again. The ignored QSL-2692 observation uses source names
+and omits the `model` member, as FR-569-AC-9 requires; its known authority
+failure was not probed again.
+
+The stale-clause case no longer claims FR-122-AC-3's missing-name criterion.
+Producer tests bind the current criteria their assertions exercise. The abstract
+instance rule, duplicate selection rule and unknown request capability rule
+retain explicit requirement/ADR bindings where the governing behavior has no
+matching criterion in this scoped correction; no replacement criterion was
+invented. Active runtime assertions and their 32 passing authoring results are
+unchanged. These corrections ran no tests, builds or lint.
