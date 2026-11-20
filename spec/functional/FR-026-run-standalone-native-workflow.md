@@ -78,7 +78,7 @@ no verb turns it into exit code 20. Writing the outcome to a
 stream, and a stream that fails or closes, are the driver's (FR-287,
 Overlap). Command error spellings belong to the native code catalog. A
 reached intake limit's outcome carries one diagnostic with code
-`resource_exhausted` whose message names the limit reached
+`resource_exhausted`, `cause` `null` and `locus` `null`, whose message names the limit reached
 (`request_bytes`, `dependent_bytes` or the selected-file count), its
 configured value and, for a caller-configured limit, the option that raises
 it; its FR-286 document has `items` empty and `last_stage` `null`.
@@ -111,7 +111,7 @@ The command shall begin each invocation with fresh budgets.
 | FR-026-AC-4 | Through `command` in process, a `1-draft` run request one byte over `request_bytes`, and dependent files one byte over `dependent_bytes`, each stop at intake naming the setting and its configured value; the same requests with each limit raised to their size run; a fresh default request then succeeds. | Test (TC-104) |
 | FR-026-AC-5 | `command` given one `1-draft` request file by its path from two different process working directories returns equal outcomes, the request's relative, absolute and parent-relative file paths resolving against the request's directory and as written; no call writes a byte to stdout or stderr. | Test (TC-104) |
 | FR-026-AC-6 | A `1-draft` run request whose program source names `authority` `agent-ix` and `identity` `p` runs, and its `spine-run-result/1` `source` renders those two labels and no other identity member. The same request without the program source's `authority`, and again without its `identity`, refuses at the request stage with `invalid-request`, exit code 20. A present but blank `authority` refuses with `invalid_source_identity`, cause `blank-label`, field `label` `authority` (FR-001). | Test (TC-430) |
-| FR-026-AC-7 | Through `command` in process, a `1-draft` run request padded with trailing JSON whitespace to exactly `request_bytes` bytes, and one whose dependent files total exactly `dependent_bytes`, each run with exit code 0. The first with one more whitespace byte, and the second with `dependent_bytes` one lower, each settle category `incomplete`, exit code 22, with one diagnostic of code `resource_exhausted` whose message names the setting (`request_bytes`, `dependent_bytes`), its configured value and the option `--request-bytes` or `--dependent-bytes`; neither gives category `refusal` or exit code 20. A request selecting 65 files settles `incomplete`, exit code 22, `resource_exhausted` naming the selected-file count and its maximum 64. | Test (TC-104) |
+| FR-026-AC-7 | Through `command` in process, a `1-draft` run request padded with trailing JSON whitespace to exactly `request_bytes` bytes, and one whose dependent files total exactly `dependent_bytes`, each run with exit code 0. The first with one more whitespace byte, and the second with `dependent_bytes` one lower, each settle category `incomplete`, exit code 22, with one diagnostic of code `resource_exhausted`, `cause` `null` and `locus` `null`, whose message names the setting (`request_bytes`, `dependent_bytes`), its configured value and the option `--request-bytes` or `--dependent-bytes`; neither gives category `refusal` or exit code 20. A request selecting 65 files settles `incomplete`, exit code 22, `resource_exhausted` with `cause` `null` naming the selected-file count and its maximum 64. | Test (TC-104) |
 
 ## Dependencies
 

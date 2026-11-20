@@ -98,13 +98,21 @@ pub enum HyperForm {
   negotiation settles HP-4 V-8, `unsupported-requested-capability`, with no
   engine run.
 - A `behaviours` clause under `filament.temporal.event-position.false-extension/v1`
-  SHALL be classified by the same rules, in the same order, and SHALL record
-  its form beside its profile. A body under this profile is in the safety
-  fragment wherever a rule names it, because its truth on a trace is decided
-  by a finite prefix (ADR-018 TP-2, CX-1). It records the form beside the
-  profile, so `CheckedHyperClause::form()` returns that
-  form for it. Its form is read over closed finite traces ("Event-position
-  form" below), it reaches a verdict and it replays (FR-640-AC-12).
+  SHALL be classified by the same rules, in the same order, except rule 2
+  (`SingleExistential`), and SHALL record its form beside its profile, so
+  `CheckedHyperClause::form()` returns that form for it. Wherever a
+  classification rule requires the safety fragment, a body under this
+  profile meets it, because a closed finite trace decides its truth
+  (ADR-018 TP-2, CX-1). Its form is read over closed finite traces
+  ("Event-position form" below), it reaches a verdict and it replays
+  (FR-640-AC-12).
+- HP-5's construction is a search for a fair accepting cycle (ADR-023
+  SE-3), which has no counterpart on closed finite traces. An
+  event-position clause that only rule 2 would classify, a prefix of exactly
+  one `exists` with no `align skip`, SHALL record its profile and no form,
+  and SHALL settle V-8, result `unknown`, with the form-not-decided cause
+  (`HyperRefusal::FormNotDecided`); its `match` block is still refused by
+  SE-1 as above.
 - A `behaviours` clause under any profile other than infinite-trace and
   event-position false-extension SHALL record its profile and no form, so
   negotiation settles it V-8 (ADR-023 HS-7, as amended).
@@ -136,7 +144,15 @@ variable, so its form is decided over tuples of closed finite traces.
 - Lockstep alignment (ADR-023 HM-2) pairs positions by their index. A joint
   position past a component's last position lies outside that component's
   closed scope, and every atom that reads that component there evaluates
-  false (FR-043 false extension).
+  false (FR-043 false extension). A joint step past a component's last
+  position carries no step of that component: a `match` conjunct that
+  reads that component's step label is not evaluated there, so `μ`
+  constrains only the joint steps every component it reads takes.
+- A trace variable of an event-position clause carries no fairness set: a
+  closed finite execution admits every behaviour (ADR-018 SM-5, FA-1), and
+  S4 refuses a clause with a non-empty set
+  `unsupported_construct`/`not-yet-implemented` at its first constraint
+  (FR-488 item 3).
 - Each trace is read under its own clock configuration: the
   `event_position` configuration of the `temporal_bindings` row the
   compiler writes for that trace variable at the clause's `claim`
@@ -161,7 +177,7 @@ variable, so its form is decided over tuples of closed finite traces.
 | FR-173-AC-3 | `SingleExistential` with a `match` block refuses `unsupported_construct`/`expression-form` at the block. `NonInterference` under the event-position profile records profile event-position and form `Universal`, and `form()` returns `Some(Universal)`; the same clause under the fixed-sample profile records its profile and no form, `form()` returns `None`, and negotiation settles it V-8 `unsupported-requested-capability` with no engine run. | Test (TC-598) |
 | FR-173-AC-4 | A request with `SavesPower` supplies subjects for `S` and `N` and carries two deadlock-freedom items; a request with `NonInterference` and `Opaque` over `V` carries one. | Test (TC-598) |
 | FR-173-AC-5 | For a request containing an HP-4 `Other` item and a supported `Universal` sibling, negotiation settles the HP-4 item as `unsupported` V-8 without an engine outcome and `fsl-route` gives it no target; the sibling keeps its `supported` disposition and selected candidate. | Test (TC-598) |
-| FR-173-AC-6 | FR-640-AC-12's event-position clause `Saves` over `forall trace s of S forall trace n of N`, whose body has ADR-014 TR-4 horizon `h`, analyzed through `native-analyze/1` runs EN-1 and settles `proved` or `refuted`, never `not-yet-implemented`, `FormNotDecided` or V-8. When it settles `refuted`, its counterexample holds exactly two traces, one for `s` and one for `n`, neither with a loop, each ending at a terminal state of its subject or holding at least the `h + 1` positions 0 to `h`; `fsl_replay::replay` reads each as a closed trace under its own `temporal_bindings` row and reproduces the refutation. | Test (TC-2243) |
+| FR-173-AC-6 | Under the event-position profile, analyzed through `native-analyze/1` with EN-1, never `not-yet-implemented` except as stated for HP-5. Fixtures: `fsl-analyze`'s two Secure vault models `V` and `N` (`v: V::Vault`, `w: N::Vault`), each with the one initial state `h = 1`, `l = 0`, whose `step(i)` sets `l = i` for `i` in `{0, 1}` and which have no terminal state, and FR-178-AC-1's busy vault. (HP-2) `forall trace a of V forall trace b of N { always [0, 3] holds(v.l @ a = w.l @ b) }` settles `refuted`: its counterexample holds one trace for `a` and one for `b`, neither with a loop, each of at most four positions, and `fsl_replay::replay` reads each as a closed trace under its own `temporal_bindings` row and reproduces the refutation; the same clause with body `always [0, 3] holds(v.h @ a = w.h @ b)` settles `proved`. (HP-3) `forall trace a of V exists trace b of N { always [0, 3] holds(v.l @ a = w.l @ b) }` settles `proved`, and with `!=` in place of `=` settles `refuted` at position 0 with a universal trace that has no loop. (HP-6) FR-178-AC-1's `align skip { V::Vault::mix }` clause over the busy vault from its idle initial states, with body `always [0, 2] holds(v.l @ a = v.l @ b)`, settles `proved`, and FR-178-AC-2's leaky vault started mid-operation with the same body settles `refuted` with a projected counterexample of two closed traces, no loop, that replays. (HP-5) `exists trace b of V { eventually [0, 2] holds(v.l @ b = 1) }` records no form and settles V-8, result `unknown`, with the form-not-decided cause, and no engine runs. FR-640-AC-12's `Saves` settles `proved` or `refuted` by the HP-2 construction above, never `FormNotDecided`. | Test (TC-2243) |
 
 ## Dependencies
 

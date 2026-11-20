@@ -69,7 +69,8 @@ One `filament-outcome/1` document or text diagnostic, and an exit code.
   reading it stopped at a resource bound, so `analyze` settles it as every
   verb does (FR-026 Outputs, ADR-029 CB-4): the document has category
   `incomplete`, `items` empty, `last_stage` `null` and one
-  `resource_exhausted` diagnostic whose message names the limit, its
+  `resource_exhausted` diagnostic with `cause` `null` and `locus` `null`
+  whose message names the limit, its
   configured value and the option that raises it, and the exit code is 22.
   A request exactly at a limit is admitted.
 - Stdout is empty in machine mode only when the stream itself fails, which is
@@ -103,7 +104,7 @@ tests.
 | FR-624-AC-3 | A request whose snapshot names an undeclared population gives the binding refusal's code, empty `items`, exit 20. | Test (TC-1584) |
 | FR-624-AC-4 | For each of `generate`, `prove`, `replay`, `inspect`, `render` and `monitor` invoked in a build that does not route it, the driver binary writes a document with that `operation`, category `unsupported`, code `unsupported_operation`, cause `operation-not-routed` and payload `verb` naming it, and exits 21; stdout is never empty. | Driver test (TC-1584): the `fsl` binary decides verb routing, so the driver code ticket QSL-1995 adds the test in the driver repository; the command adapter takes no verb. |
 | FR-624-AC-5 | For the same unrouted invocations in text mode, the driver binary prints the named message on stderr and exits 21. | Driver test (TC-1584): text rendering exists only in the driver binary, so QSL-1995 adds the test in the driver repository. |
-| FR-624-AC-6 | A valid `native-analyze/1` request padded with trailing JSON whitespace to exactly `request_bytes` bytes is admitted and analyzed to its own outcome. The same request with one more whitespace byte gives a document with category `incomplete`, empty `items`, `last_stage` `null` and one diagnostic of code `resource_exhausted` whose message names `request_bytes`, its configured value and `--request-bytes`, and exit code 22; it never gives category `refusal` or exit code 20. | Test (TC-1584) |
+| FR-624-AC-6 | A valid `native-analyze/1` request padded with trailing JSON whitespace to exactly `request_bytes` bytes is admitted and analyzed to its own outcome. The same request with one more whitespace byte gives a document with category `incomplete`, empty `items`, `last_stage` `null` and one diagnostic of code `resource_exhausted`, `cause` `null` and `locus` `null`, whose message names `request_bytes`, its configured value and `--request-bytes`, and exit code 22; it never gives category `refusal` or exit code 20. | Test (TC-1584) |
 
 ## Dependencies
 

@@ -63,13 +63,13 @@ same two selections and hands them to the same intake.
 - The operand splits at its first `=`. A file path is resolved against the
   working directory.
 - `--dependent-bytes <bytes>` sets FR-026's `dependent_bytes` ceiling for
-  the dependent documents, the model and library files (default 8 MiB):
-  every model and library file counts toward it by its size, and toward
+  the dependent documents, each model, library and extension definition
+  file (default 8 MiB): every one counts toward it by its size, and toward
   FR-026's 64-file ceiling, as in a compile. The checked source is not a
   dependent document and is never charged to `dependent_bytes`: `check` has
   no request file, and the source it is handed is bounded by FR-869's
-  `s1.input_bytes` alone. A check with no `--model` or `--library` selection
-  therefore reads no byte under `dependent_bytes`, whatever its value.
+  `s1.input_bytes` alone. A check with no model, library or extension definition
+  selection therefore reads no byte under `dependent_bytes`, whatever its value.
   Reaching the ceiling settles the check `incomplete` with
   `resource_exhausted`, exit 22 (FR-026 Outputs), and never reports
   success.
@@ -150,9 +150,10 @@ FR-286's `check` outcome document, in the format `--format` selects
   option and the identity.
 - If a selected model is not supplied, then the `missing_import` diagnostic
   SHALL name the identity, `--model` and the request's `models` member.
-- `check_outcome` SHALL charge only the model and library files to
-  `dependent_bytes`; the checked source SHALL be read under FR-869's
-  `s1.input_bytes` and SHALL NOT be charged to `dependent_bytes`.
+- `check_outcome` SHALL charge only the dependent documents (each model,
+  library and extension definition file) to `dependent_bytes`; the checked
+  source SHALL be read under FR-869's `s1.input_bytes` and SHALL NOT be
+  charged to `dependent_bytes`.
 
 ## Acceptance Criteria
 
@@ -164,7 +165,7 @@ FR-286's `check` outcome document, in the format `--format` selects
 | FR-866-AC-4 | `check_outcome` with a model selection under `example/other` over FR-108's unit, and with any model selection over `tests/fixtures/spine-compile.native` (no `model` line), each refuse `invalid-request` naming `--model` and the identity, and read no model file; a library selection the unit does not import refuses the same way naming `--library`. | Test (TC-2457) |
 | FR-866-AC-5 | `fsl check im.fsl --model example/config-version=m.json` over the unit `model Config = "example/config-version"; invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }` exits 0; without `--model` it exits 20 with `missing_import` naming the identity and `--model`; `--model example/config-version=m.json` given twice, `--model m.json` (no `=`) and `--model =m.json` each exit 20 `invalid-request` naming `--model` before reading `m.json`. | Driver test (TC-2458): the `fsl` binary parses the options, so the code ticket adds the test in the filament-driver repository. |
 | FR-866-AC-6 | `check_outcome` over a source at path `P` that does not parse (`function f using v(: Boolean pure { true }`) returns a `check` refusal whose every diagnostic locus names the source `{"authority": "filament", "identity": P}`, with `P` byte-equal to the path given, whose admitted `sources` hold that identity, and whose document contains neither `fsl-command` nor `check-source`; the document is byte-equal to the one `parse` and `check` give for the same bytes under that identity. A source that parses and refuses at S3 names the same identity. | Test (TC-2977) |
-| FR-866-AC-7 | `check_outcome` with `dependent_bytes` 0 and no model or library selection, over the source `language "ix:native" edition "1-draft"; profile v = "filament.value.complete/v1"; function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }`, returns a `check` document with category success, `last_stage` S4 and no diagnostic. Over FR-866-AC-2's program with its `test/geometry` library file of `N` bytes selected, `dependent_bytes` `N` returns success at S4, the same with the checked source padded by trailing whitespace to more than `N` bytes still returns success, and `dependent_bytes` `N - 1` returns category `incomplete`, `last_stage` `null` (FR-285 exit 22), with one diagnostic of code `resource_exhausted` whose message names `dependent_bytes`, the value `N - 1` and `--dependent-bytes`; no over-limit call reports success. | Test (TC-2457) |
+| FR-866-AC-7 | `check_outcome` with `dependent_bytes` 0 and no model or library selection, over the source `language "ix:native" edition "1-draft"; profile v = "filament.value.complete/v1"; function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }`, returns a `check` document with category success, `last_stage` S4 and no diagnostic. Over FR-866-AC-2's program with its `test/geometry` library file of `N` bytes selected, `dependent_bytes` `N` returns success at S4, the same with the checked source padded by trailing whitespace to more than `N` bytes still returns success, and `dependent_bytes` `N - 1` returns category `incomplete`, `last_stage` `null` (FR-285 exit 22), with one diagnostic of code `resource_exhausted`, `cause` `null` and `locus` `null`, whose message names `dependent_bytes`, the value `N - 1` and `--dependent-bytes`; no over-limit call reports success. | Test (TC-2457) |
 
 ## Dependencies
 
