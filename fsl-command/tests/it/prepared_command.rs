@@ -5,12 +5,12 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
+use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
@@ -233,7 +233,10 @@ fn prepared_function_input_retains_the_request_integer_division_law() {
     let integer_division = input
         .integer_division
         .expect("prepared input retains the request's integer-division law");
-    assert_eq!(integer_division.profile(), filament_exact::DivisionProfile::Floor);
+    assert_eq!(
+        integer_division.profile(),
+        filament_exact::DivisionProfile::Floor
+    );
 }
 
 #[test]
@@ -589,12 +592,10 @@ fn observation_override_conflict_refuses_before_observation_read() {
     let envelope = error.value().expect("refusal envelope");
     assert_eq!(envelope["stage"], "request", "{envelope}");
     assert_eq!(envelope["code"], "invalid-request", "{envelope}");
-    assert!(
-        envelope["message"]
-            .as_str()
-            .unwrap()
-            .contains("observation_limits")
-    );
+    assert!(envelope["message"]
+        .as_str()
+        .unwrap()
+        .contains("observation_limits"));
 }
 
 #[test]
@@ -711,12 +712,10 @@ fn extracted_clause_observation_override_conflict_refuses_before_observation_rea
     let envelope = error.value().expect("refusal envelope");
     assert_eq!(envelope["stage"], "request", "{envelope}");
     assert_eq!(envelope["code"], "invalid-request", "{envelope}");
-    assert!(
-        envelope["message"]
-            .as_str()
-            .unwrap()
-            .contains("observation_limits")
-    );
+    assert!(envelope["message"]
+        .as_str()
+        .unwrap()
+        .contains("observation_limits"));
 }
 
 #[test]
@@ -850,16 +849,12 @@ fn command_outcome_documents_include_category_and_last_stage() {
         filament_semantic_value::catalog::Category::Unsupported,
     )
     .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-        None,
+        Some("backend-not-supplied"),
         fsl_foundation::diagnostic::Code::UnimplementedCapability.as_str(),
         None,
         "the AOT engine is not built",
     )]);
-    assert_members(
-        &document(&unsupported),
-        "unsupported",
-        Value::Null,
-    );
+    assert_members(&document(&unsupported), "unsupported", Value::Null);
 }
 
 fn assert_members(document: &Value, category: &str, last_stage: Value) {

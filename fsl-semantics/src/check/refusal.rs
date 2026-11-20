@@ -965,12 +965,6 @@ pub enum ProtocolConstruct {
     /// scope" reads them at the repeat's entry only (a `repeat` is
     /// pre-test), so they have no node form (STD-539).
     RepeatDecisionReadsBody,
-    /// A `repeat` whose body steps only through a nested `repeat` whose
-    /// guard cannot be false (FSL FR-218-AC-32). FSpec #481 (STD-539) now
-    /// supports it (FR-464 "Nested `repeat` rule"); it is withheld until
-    /// IR's reader decides that rule (IR-1100), which today refuses the
-    /// outer repeat.
-    RepeatStepsThroughRepeat,
     /// A reference, from a function or a clause, to a protocol that holds an
     /// `attempt`: that protocol's node is written after the state clauses
     /// its attempts list, which are written after the functions. QSL-1121g.
@@ -988,7 +982,6 @@ impl ProtocolConstruct {
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
-            Self::RepeatStepsThroughRepeat => "IR-1100",
         }
     }
 }

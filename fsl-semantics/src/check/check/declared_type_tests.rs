@@ -139,7 +139,7 @@ fn owner_storage_classes_and_units_survive_conversion() {
 
 #[trace("TC-1339", "FR-534-AC-1")]
 #[test]
-fn declared_type_semantics_keep_success_and_missing_type_location() {
+fn declared_types_admit_float_keyed_collections_and_keep_missing_declaration_refusals() {
     use filament_semantic_value::declaration::{CompositeDeclaration, ObjectTypeDeclaration};
     let record = key("Record");
     let reference = object("Object");
@@ -185,39 +185,73 @@ fn declared_type_semantics_keep_success_and_missing_type_location() {
     ] {
         assert_eq!(typer.check_declared_type(&ty, &location), Ok(()));
     }
-    let ieee = ValueType::Float(filament_exact::FloatType::exact(
-        filament_exact::IeeeWidth::Binary64,
-    ));
-    let ty = ValueType::collection(CollectionType::new(CollectionKind::Set, ieee, None));
-    let expected = CheckRefusal::from_ill_typed(
+    let ieee = || {
+        ValueType::Float(filament_exact::FloatType::exact(
+            filament_exact::IeeeWidth::Binary64,
+        ))
+    };
+    let collection =
+        |kind, element| ValueType::collection(CollectionType::new(kind, element, None));
+    let map_of = |values| {
+        ValueType::map(
+            filament_exact::MapType::new(ValueType::Integer, values, None).expect("a leaf key"),
+        )
+    };
+    // Set, bag and ordered-set element types holding a float leaf are
+    // admitted: members compare by bit identity.
+    for ty in [
+        collection(CollectionKind::Set, ieee()),
+        collection(CollectionKind::Bag, ieee()),
+        collection(CollectionKind::OrderedSet, ieee()),
+        collection(
+            CollectionKind::Bag,
+            collection(CollectionKind::Set, ValueType::option(ieee())),
+        ),
+        collection(CollectionKind::Sequence, map_of(ieee())),
+    ] {
+        assert_eq!(typer.check_declared_type(&ty, &location), Ok(()), "{ty:?}");
+    }
+    let mismatch = CheckRefusal::from_ill_typed(
+        &location,
+        filament_exact::IllTyped {
+            cause: IllTypedCause::TypeMismatch,
+        },
+    );
+    let ineligible = CheckRefusal::from_ill_typed(
         &location,
         filament_exact::IllTyped {
             cause: IllTypedCause::OperatorIneligible,
         },
     );
-    assert_eq!(
-        typer.check_declared_type(&ty, &location),
-        Err(expected.clone())
-    );
-    // Both unordered collection layers prohibit the nested IEEE element;
-    // the outer layer retains the owner's first-refusal priority.
-    let competing = ValueType::collection(CollectionType::new(CollectionKind::Bag, ty, None));
-    assert_eq!(
-        typer.check_declared_type(&competing, &location),
-        Err(expected)
-    );
+    // A missing declaration keeps its semantic cause and source location,
+    // directly and beneath float-keyed collection layers.
     for ty in [
         ValueType::Composite(key("Missing")),
         ValueType::Reference(object("Missing")),
+        collection(
+            CollectionKind::Bag,
+            collection(CollectionKind::Set, ValueType::Composite(key("Missing"))),
+        ),
+        collection(
+            CollectionKind::OrderedSet,
+            collection(CollectionKind::Bag, ValueType::Reference(object("Missing"))),
+        ),
     ] {
         assert_eq!(
             typer.check_declared_type(&ty, &location),
-            Err(CheckRefusal::from_ill_typed(
-                &location,
-                filament_exact::IllTyped {
-                    cause: IllTypedCause::TypeMismatch
-                }
-            ))
+            Err(mismatch.clone()),
+            "{ty:?}"
         );
     }
+    // More than one possible semantic failure: the bag's element and the
+    // set's element each hold a map and an IEEE float. The outer layer's
+    // refusal is reported.
+    let competing = collection(
+        CollectionKind::Bag,
+        collection(CollectionKind::Set, map_of(ValueType::option(ieee()))),
+    );
+    assert_eq!(
+        typer.check_declared_type(&competing, &location),
+        Err(ineligible)
+    );
 }
