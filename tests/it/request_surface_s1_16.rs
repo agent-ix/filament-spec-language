@@ -1097,6 +1097,16 @@ fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
 
 /// [`both_routes_over`] over the whole `unit`.
 fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
+    unit_both_routes_with(unit, package, |_| {})
+}
+
+/// [`unit_both_routes`] with `edit` run over the compiled directory before the
+/// package route reads it.
+fn unit_both_routes_with(
+    unit: &str,
+    package: Value,
+    edit: impl FnOnce(&Path),
+) -> (String, String) {
     let unit = unit.to_owned();
     let lower = json!({"clause": "Low"});
     let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
@@ -1124,6 +1134,7 @@ fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
     .unwrap();
     fsl_command::command::compile(&compile).expect("the unit compiles");
     std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    edit(directory.path());
     let (code, value) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {"models": models,
@@ -1995,33 +2006,63 @@ fn declaring_low(declarations: &str, leaf: &str) -> String {
     )
 }
 
+/// Every `alias` member of a `type_argument` removed from `value`, in place.
+fn strip_aliases(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if map.get("kind").is_some_and(|kind| kind == "type_argument") {
+                map.remove("alias");
+            }
+            map.values_mut().for_each(strip_aliases);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_aliases),
+        _ => {}
+    }
+}
+
 /// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630, package
-/// half): the source route prints the declaration key a `count` type argument
-/// names, and a chain of aliases at the outer alias. The package route cannot yet print this atom: its reader
-/// projection has no `sequence` literal operation.
+/// half): a `count` type argument naming the unit's alias prints the alias's
+/// declaration key on both routes, a chain of aliases at the outer alias, and
+/// a package whose `alias` members are removed prints the structural type.
 #[test]
 #[trace("TC-2601", "FR-931-AC-16")]
-fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
-    let items = "q";
+fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
     let identity = "test:s1-16:unit.native";
-    for (declarations, argument, printed) in [
-        ("type Small = Int[0, 2];", "Small", format!("ix://{identity}/Small")),
+    for (declarations, printed) in [
+        ("type Small = Int[0, 4];", format!("ix://{identity}/Small")),
         (
-            "type Small = Tiny;\ntype Tiny = Int[0, 2];",
-            "Small",
+            "type Small = Tiny;\ntype Tiny = Int[0, 4];",
             format!("ix://{identity}/Small"),
         ),
     ] {
-        let leaf = format!(
-            "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
-             in count<{argument}>(x in {items}: x > 1) >= 1)"
+        let leaf = "holds(forall(b in bags: count<Small>(x in deref(b).xs: x > 1) >= 1))";
+        let unit = declaring_low(
+            &format!("{declarations}\nobject Bag {{ xs: Sequence<Int[0, 9]>[0, 4]; population bags; }}"),
+            leaf,
         );
-        let unit = declaring_low(declarations, &leaf);
-        let (code, value) = run(&unit, true, ("tl_lowering", json!({"clause": "Low"})));
-        assert_eq!(code, 0, "{value}");
-        let from_source = value["tl_lowering"]["atoms"]["p0"].as_str().unwrap().to_owned();
-        let expected = format!("count<{printed}>(x in q: x > 1)");
-        assert!(from_source.contains(&expected), "{declarations} / {argument}: want {expected}, got {from_source}");
+        let (from_source, from_package) =
+            unit_both_routes(&unit, json!({"directory": "handoff"}));
+        assert!(
+            from_source.contains(&format!("count<{printed}>(x in ")),
+            "{declarations}: {from_source}"
+        );
+        assert_eq!(from_package, from_source, "{unit}");
+        let (_, stripped) = unit_both_routes_with(
+            &unit,
+            json!({"directory": "handoff"}),
+            |directory| {
+                for path in [directory.join("package.json"), directory.join("handoff/package.json")] {
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    let mut package: Value = serde_json::from_slice(&bytes).unwrap();
+                    strip_aliases(&mut package);
+                    std::fs::write(&path, serde_json::to_vec(&package).unwrap()).unwrap();
+                }
+            },
+        );
+        assert!(
+            stripped.contains("count<Int[0, 4]>(x in "),
+            "the alias removed prints the structural type: {stripped}"
+        );
     }
 }
 
