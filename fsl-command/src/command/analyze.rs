@@ -355,7 +355,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
             extraction: false,
         },
         refinement_internals: request.refinement_internals,
-        libraries: request.libraries,
+        libraries: Some(request.libraries),
         extensions: Vec::new(),
         clocks: None,
         output: None,

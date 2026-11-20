@@ -337,6 +337,7 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
 
     for (member, value) in [
         ("models", json!([])),
+        ("libraries", json!([])),
         (
             "libraries",
             json!([{"identity": "test/geometry", "source": source("shop.fsl")}]),

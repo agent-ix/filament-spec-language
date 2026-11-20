@@ -641,7 +641,7 @@ fn drive(
             extraction: false,
         },
         refinement_internals: None,
-        libraries: std::mem::take(&mut request.libraries),
+        libraries: Some(std::mem::take(&mut request.libraries)),
         extensions: Vec::new(),
         clocks: Some(std::mem::take(&mut request.clocks)),
         output: None,

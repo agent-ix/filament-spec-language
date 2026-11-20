@@ -43,8 +43,8 @@ pub(super) struct CompileRequest {
     pub refinement_internals: Option<serde_json::Value>,
     /// A `1-draft` program's supplied libraries (FR-027, ADR-015 D-1); none
     /// when absent.
-    #[serde(default, deserialize_with = "deserialize_objects")]
-    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "optional_objects")]
+    pub libraries: Option<Vec<Library>>,
     /// FR-660: request supplied extension definitions.
     #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,

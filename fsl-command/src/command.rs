@@ -2482,7 +2482,8 @@ fn compile_outcome_inner(
             // imports, and counts toward the same file limits (FR-027).
             programs: request
                 .libraries
-                .len()
+                .as_ref()
+                .map_or(0, Vec::len)
                 .saturating_add(request.program.sources.len()),
             models: request.models.as_ref().map_or(0, Vec::len),
             observations: 0,
@@ -2510,7 +2511,7 @@ fn compile_outcome_inner(
         {
             for (member, present) in [
                 ("models", request.models.is_some()),
-                ("libraries", !request.libraries.is_empty()),
+                ("libraries", request.libraries.is_some()),
                 ("clocks", request.clocks.is_some()),
             ] {
                 if present {
@@ -2694,11 +2695,15 @@ fn write_compile_handoff(
     let source_path = directory.join(&request.program.sources[0].file);
     let models = request
         .models
+        .as_deref()
+        .unwrap_or_default()
         .iter()
         .map(|model| directory.join(&model.source.file))
         .collect();
     let libraries = request
         .libraries
+        .as_deref()
+        .unwrap_or_default()
         .iter()
         .map(|library| {
             (
@@ -3338,13 +3343,13 @@ fn library_sources<'r>(
     request: &'r wire::CompileRequest,
     intake: &mut Intake<'_>,
 ) -> Result<Vec<(&'r wire::Library, FormalSource)>> {
-    for library in &request.libraries {
+    let libraries = request.libraries.as_deref().unwrap_or_default();
+    for library in libraries {
         if library.identity.is_empty() {
             return Err(RunCause::Libraries(LibrarySelection::EmptyIdentity));
         }
     }
-    request
-        .libraries
+    libraries
         .iter()
         .enumerate()
         .map(|(index, library)| {
