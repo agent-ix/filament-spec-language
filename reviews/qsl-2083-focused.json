@@ -19,15 +19,56 @@
     "fsl-package --lib emit::tests::operation_bodies::source_contracts: original new cases and exact filters for corrected or strengthened cases"
   ],
   "final_focused_filters": [
-    {"name": "different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type", "passed": 1, "failed": 0, "exit": 0},
-    {"name": "a_parameterized_conditional_body_keeps_its_branches_in_order", "passed": 1, "failed": 0, "exit": 0},
-    {"name": "a_bodyless_void_operation_has_explicit_absence_beside_a_real_body", "passed": 1, "failed": 0, "exit": 0}
+    {
+      "name": "different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "name": "a_parameterized_conditional_body_keeps_its_branches_in_order",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    },
+    {
+      "name": "a_bodyless_void_operation_has_explicit_absence_beside_a_real_body",
+      "passed": 1,
+      "failed": 0,
+      "exit": 0
+    }
   ],
   "event_owner_evidence": "Both event-owner refusal assertions completed successfully in the combined owner run before the record-control fixture failed. The isolated event wrapper retains that same accepted branch; no confidence rerun was added.",
-  "strict_pending_owners": ["QSL-2696", "QSL-2697"],
+  "strict_pending_owners": [
+    "QSL-2696",
+    "QSL-2697"
+  ],
   "pending_counted_as_coverage": false,
   "lint": "Not rerun: accepted unchanged fsl-semantics blocker; package compilation itself reports unchanged reader_protocol_projection unused binders and probabilistic timed_claims_source. No lint pass is claimed.",
   "independent_review": "pending",
   "final_component_gate": "pending",
-  "original_failures_preserved": true
+  "original_failures_preserved": true,
+  "review_fix_round_1": {
+    "code_revision": "5fc6b6ce6",
+    "findings": [
+      "Exact conditional parameter target",
+      "Required refusal reordering groups",
+      "Both operation collision participants"
+    ],
+    "reordering": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 3,
+      "exit": 0
+    },
+    "conditional": {
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "exit": 0
+    },
+    "known_faults_reexecuted": false,
+    "initial_metadata_assertion_failure_preserved": true,
+    "disposition": "pending"
+  }
 }
