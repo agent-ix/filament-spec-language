@@ -365,7 +365,6 @@ fn compile_bytes(unit: &str) -> Result<Vec<u8>, Value> {
 #[test]
 #[trace("TC-2103", "FR-753-AC-3")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-11")]
-#[ignore = "QSL-2509: plan emission outside the checked package (S4) is not on main yet"]
 fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
     let plan_free = RELEASE_PLAN.split("verify Release").next().unwrap();
     let without = compile_bytes(&format!("{MODEL_HEADER}{plan_free}")).expect("compiles");
@@ -403,7 +402,6 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[trace("TC-2103", "FR-753-AC-4")]
 #[trace("TC-3018", "FR-1038-AC-1")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
-#[ignore = "QSL-2511: the plan coordinator (execute_plan) and QSL-2509 plan documents are not on main yet"]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     let (exit, value) = run(
         &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
@@ -411,7 +409,7 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
         (
             "verification_plan",
             json!({"plan": "Release", "execute": true,
-            "initial": "spine-snapshot.json", "seed": 7}),
+            "initial": "spine-snapshot.json", "seed": 7, "max_trace_length": 8}),
         ),
     );
     let nodes = &value["verification_plan"]["dispositions"];
@@ -427,6 +425,7 @@ fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
     );
     assert_eq!(outcome["failed_steps"], json!(["safe"]), "{value}");
     assert_eq!(outcome["inputs"]["seed"], 7, "{value}");
+    assert_eq!(outcome["inputs"]["max_trace_length"], 8, "{value}");
     assert_eq!(exit, 22, "{value}");
 }
 
@@ -519,13 +518,19 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
         true,
         (
             "verification_plan",
-            json!({"plan": "Release", "seed": null, "emit": null, "initial": null}),
+            json!({"plan": "Release", "seed": null, "emit": null, "initial": null,
+                "max_value_bits": null, "max_trace_length": 8}),
         ),
     );
     let path = value["details"]["path"].as_str().unwrap_or_default();
     assert!(
         !path.starts_with("/request/verification_plan/"),
         "the reader refused a null member: {value}"
+    );
+    assert_eq!(
+        value["verification_plan"]["inputs"],
+        json!({"initial": null, "seed": 0, "max_trace_length": 8, "max_value_bits": null}),
+        "{value}"
     );
 }
 
@@ -536,7 +541,6 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 #[trace("TC-3018", "FR-1038-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
-#[ignore = "QSL-2508/QSL-2509: plan selection over emitted plan documents is not on main yet; the request members are read (QSL-2510)"]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
     let (_, value) = run(

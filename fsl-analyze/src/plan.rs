@@ -112,7 +112,18 @@ impl CatalogCoded for PlanRefusal {
     }
 }
 
-/// Closed FR-824 status, with the measured decision retained by its record.
+/// A `measured` step's FSpec FR-409 decision, read from its FR-410 verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlanDecision {
+    /// The measurement met its acceptance bound.
+    Accepted,
+    /// The measurement missed it.
+    Rejected,
+    /// The measurement decided nothing.
+    Undecided,
+}
+
+/// Closed FR-824 status: the FR-331 result vocabulary plus `blocked`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlanStatus {
     /// A proof.
@@ -121,8 +132,8 @@ pub enum PlanStatus {
     Refuted,
     /// Generated tests evaluated successfully.
     Tested,
-    /// A statistical verdict.
-    Measured,
+    /// A statistical verdict, with the decision its record carries.
+    Measured(PlanDecision),
     /// No conclusive result.
     Inconclusive,
     /// No supporting engine or capability.
@@ -137,6 +148,19 @@ pub enum PlanStatus {
     Blocked,
 }
 
+impl PlanStatus {
+    /// Whether a step requiring this one may run (FSpec FR-824 "Outcome
+    /// document"): `proved`, `tested`, or `measured` with decision
+    /// `accepted`.
+    #[must_use]
+    pub const fn satisfies_requires(self) -> bool {
+        matches!(
+            self,
+            Self::Proved | Self::Tested | Self::Measured(PlanDecision::Accepted)
+        )
+    }
+}
+
 /// A step's native result, without converting simulation runs into a proof.
 #[derive(Debug)]
 pub enum PlanResult {
@@ -144,6 +168,19 @@ pub enum PlanResult {
     Analysis(Box<TerminalRecord>),
     /// The simulation item's FR-181 runs.
     Simulation(serde_json::Value),
+    /// The FR-752 entry's FR-190 record, whose `result` and `cause` carry
+    /// the step's FR-331 settlement.
+    ModelBasedTest(Box<fsl_eval::simulation::model::ModelBasedTestRecord>),
+    /// A step that ran no engine: the FR-752 entry refused its request, or
+    /// the step names no bound for a method with no unbounded extent.
+    NotRun {
+        /// The FR-805 catalog code.
+        code: &'static str,
+        /// The catalog cause.
+        cause: &'static str,
+        /// The request member at fault.
+        member: &'static str,
+    },
 }
 
 /// One node's five-member disposition. The step name is held by `PlanOutcome`.
@@ -161,22 +198,6 @@ pub struct PlanDisposition {
     pub result: Option<PlanResult>,
 }
 
-impl PlanDisposition {
-    fn satisfies_requires(&self) -> bool {
-        match self.status {
-            PlanStatus::Proved | PlanStatus::Tested => true,
-            PlanStatus::Measured => matches!(
-                self.result.as_ref(),
-                Some(PlanResult::Analysis(record))
-                    if matches!(record.value(), TerminalValue::Measured(verdict)
-                    if matches!(verdict.decision, fsl_replay::statistical::Decision::Accepted)
-                    )
-            ),
-            _ => false,
-        }
-    }
-}
-
 /// One disposition per node in source order; the coordinator renders nothing.
 #[derive(Debug)]
 pub struct PlanOutcome {
@@ -192,8 +213,7 @@ fn fault(site: &'static str) -> StageFailure<PlanRefusal> {
 ///
 /// # Errors
 /// Returns a whole-plan `PlanRefusal` before any step runs. Internal engine
-/// adapter failures remain stage failures. The model-based-test integration
-/// requires the FR-752 entry point (QSL-2237); see `model_based_test` below.
+/// adapter failures remain stage failures.
 pub fn execute_plan(
     package: &CheckedPackage,
     plan: &VerificationPlan,
@@ -208,60 +228,17 @@ pub fn execute_plan(
     read_verification_plan(package, &bytes)
         .map_err(|cause| StageFailure::Refused(PlanRefusal::Reader(cause)))?;
     let order = execution_order(plan)?;
-    let input = fsl_eval::simulation::model::ModelCheckInput::source(package);
-    let mut admitted_initial = false;
-    let mut initial_failure = None;
-    let mut value_consumer = None;
-    for node in &plan.nodes {
-        if node.method.name == "model_based_test"
-            && !consumes_initial(package, node)
-            && value_consumer.is_none()
-            && value_clause_consumes_bits(package, node)?
-        {
-            value_consumer = Some(node.name.clone());
-        }
-        if let Some(binding) = inputs.bindings.get(&node.name) {
-            if consumes_initial(package, node) {
-                match fsl_eval::simulation::model::ModelSystem::over_model(
-                    crate::analyze::request::simulation(&input, binding, limits),
-                    &node.domain.package,
-                ) {
-                    Ok(system) => {
-                        admitted_initial |= !binding.initial.is_empty();
-                        if node.method.name == "model_based_test"
-                            && value_consumer.is_none()
-                            && consumes_value_bits(&system)?
-                        {
-                            value_consumer = Some(node.name.clone());
-                        }
-                    }
-                    Err(cause) if !binding.initial.is_empty() => {
-                        initial_failure.get_or_insert(cause);
-                    }
-                    Err(_) => {}
-                }
-            }
-        }
-    }
-    if !admitted_initial {
-        if let Some(cause) = initial_failure {
-            return Err(StageFailure::Refused(PlanRefusal::Initial(cause)));
-        }
-    }
+    let consumers = plan_consumers(package, plan, inputs, limits)?;
     if inputs.max_trace_length.is_none() {
-        if let Some(node) = plan
-            .nodes
-            .iter()
-            .find(|node| node.method.name == "model_based_test" && consumes_initial(package, node))
-        {
+        if let Some(step) = consumers.max_trace_length.first().cloned() {
             return Err(StageFailure::Refused(PlanRefusal::MissingMember {
                 member: "max_trace_length",
-                step: node.name.clone(),
+                step,
             }));
         }
     }
     if inputs.max_value_bits.is_none() {
-        if let Some(step) = value_consumer {
+        if let Some(step) = consumers.max_value_bits.first().cloned() {
             return Err(StageFailure::Refused(PlanRefusal::MissingMember {
                 member: "max_value_bits",
                 step,
@@ -277,22 +254,40 @@ pub fn execute_plan(
     let execution = Execution {
         package,
         inputs,
+        consumers: &consumers,
         engines,
         registry: &registry,
         negotiate,
         limits,
         cancel,
     };
+    let dispositions = settle_in_order(plan, &order, |index| {
+        execution.run_step(&plan.nodes[index], index)
+    })?;
+    Ok(Staged::new(PlanOutcome { dispositions }))
+}
+
+/// FSpec FR-824 "Outcome document": settle each node in `order` (every
+/// prerequisite before its dependents). A node whose `requires`
+/// prerequisite is not satisfied is `blocked` by the first such prerequisite
+/// in source order and is never handed to `run`, so it is not negotiated and
+/// runs no engine; every other node is settled by `run`. The dispositions
+/// come back in source order.
+fn settle_in_order(
+    plan: &VerificationPlan,
+    order: &[usize],
+    mut run: impl FnMut(usize) -> Result<PlanDisposition, StageFailure<PlanRefusal>>,
+) -> Result<Vec<(String, PlanDisposition)>, StageFailure<PlanRefusal>> {
     let mut settled: BTreeMap<usize, PlanDisposition> = BTreeMap::new();
-    for index in order {
-        let node = &plan.nodes[index];
+    for &index in order {
+        let node = plan.nodes.get(index).ok_or_else(|| fault("plan-order"))?;
         let blocked = plan.nodes.iter().enumerate().find(|(at, prerequisite)| {
             plan.edges
                 .iter()
                 .any(|edge| edge.from == node.name && edge.to == prerequisite.name)
                 && settled
                     .get(at)
-                    .is_some_and(|step| !step.satisfies_requires())
+                    .is_some_and(|step| !step.status.satisfies_requires())
         });
         let disposition = if let Some((_, prerequisite)) = blocked {
             PlanDisposition {
@@ -303,15 +298,100 @@ pub fn execute_plan(
                 result: None,
             }
         } else {
-            execution.run_step(node, index)?
+            run(index)?
         };
         settled.insert(index, disposition);
     }
-    let dispositions = settled
+    settled
         .into_iter()
-        .map(|(index, disposition)| (plan.nodes[index].name.clone(), disposition))
-        .collect();
-    Ok(Staged::new(PlanOutcome { dispositions }))
+        .map(|(index, disposition)| {
+            let node = plan.nodes.get(index).ok_or_else(|| fault("plan-order"))?;
+            Ok((node.name.clone(), disposition))
+        })
+        .collect()
+}
+
+/// The steps, in source order, that consume each request input (FSpec
+/// FR-824 "Request"); empty when no step consumes it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlanConsumers {
+    /// Each `model_check`, `model_based_test`, `simulate` or
+    /// `contract_check` step whose claim's subject is a state model.
+    pub initial: Vec<String>,
+    /// Each `model_based_test` or `probabilistic_statistical` step.
+    pub seed: Vec<String>,
+    /// Each `model_based_test` step whose claim's subject is a state model.
+    pub max_trace_length: Vec<String>,
+    /// Each `model_based_test` step with a generation root or an operation
+    /// result of no finite bound (FSpec FR-190 "Value domains").
+    pub max_value_bits: Vec<String>,
+}
+
+/// The steps of `plan` that consume each request input, admitting each
+/// consuming step's `initial` snapshot for its model on the way.
+///
+/// The request reader (FR-1038) closes the member set with this before it
+/// runs the plan, and [`execute_plan`] checks a direct caller's inputs with
+/// it.
+///
+/// # Errors
+///
+/// [`PlanRefusal::Initial`] when a supplied `initial` is admitted by no
+/// consuming step's model; a stage fault when a step names a claim the
+/// package does not hold.
+pub fn plan_consumers(
+    package: &CheckedPackage,
+    plan: &VerificationPlan,
+    inputs: &PlanInputs<'_>,
+    limits: &AnalyzeLimits,
+) -> Result<PlanConsumers, StageFailure<PlanRefusal>> {
+    let input = fsl_eval::simulation::model::ModelCheckInput::source(package);
+    let mut consumers = PlanConsumers::default();
+    let mut admitted_initial = false;
+    let mut initial_failure = None;
+    for node in &plan.nodes {
+        let tester = node.method.name == "model_based_test";
+        let state_subject = consumes_initial(package, node);
+        if tester || node.method.name == "probabilistic_statistical" {
+            consumers.seed.push(node.name.clone());
+        }
+        if state_subject {
+            consumers.initial.push(node.name.clone());
+        }
+        if tester && state_subject {
+            consumers.max_trace_length.push(node.name.clone());
+        }
+        if tester && !state_subject && value_clause_consumes_bits(package, node)? {
+            consumers.max_value_bits.push(node.name.clone());
+        }
+        let Some(binding) = inputs.bindings.get(&node.name) else {
+            continue;
+        };
+        if !state_subject {
+            continue;
+        }
+        match fsl_eval::simulation::model::ModelSystem::over_model(
+            crate::analyze::request::simulation(&input, binding, limits),
+            &node.domain.package,
+        ) {
+            Ok(system) => {
+                admitted_initial |= !binding.initial.is_empty();
+                if tester && consumes_value_bits(&system)? {
+                    consumers.max_value_bits.push(node.name.clone());
+                }
+            }
+            Err(cause) if !binding.initial.is_empty() => {
+                initial_failure.get_or_insert(cause);
+            }
+            Err(_) => {}
+        }
+    }
+    if !admitted_initial {
+        if let Some(cause) = initial_failure {
+            return Err(StageFailure::Refused(PlanRefusal::Initial(cause)));
+        }
+    }
+    Ok(consumers)
 }
 
 fn consumes_initial(package: &CheckedPackage, node: &VerificationPlanNode) -> bool {
@@ -383,7 +463,11 @@ fn status(record: &TerminalRecord) -> PlanStatus {
         TerminalValue::Proved { .. } => PlanStatus::Proved,
         TerminalValue::Refuted => PlanStatus::Refuted,
         TerminalValue::Tested => PlanStatus::Tested,
-        TerminalValue::Measured(_) => PlanStatus::Measured,
+        TerminalValue::Measured(verdict) => PlanStatus::Measured(match verdict.decision {
+            fsl_replay::statistical::Decision::Accepted => PlanDecision::Accepted,
+            fsl_replay::statistical::Decision::Rejected => PlanDecision::Rejected,
+            fsl_replay::statistical::Decision::Undecided(_) => PlanDecision::Undecided,
+        }),
         TerminalValue::Declined { .. } => PlanStatus::Declined,
         TerminalValue::Unsupported(_) => PlanStatus::Unsupported,
         TerminalValue::Incomplete(_) => PlanStatus::Incomplete,
@@ -392,23 +476,128 @@ fn status(record: &TerminalRecord) -> PlanStatus {
     }
 }
 
+/// FR-753 "Dispatch per method": a `model_based_test` step runs on
+/// `fsl-eval`'s FR-752 entry, never negotiated. The step's `bound` is
+/// `max_cases`; the request's `seed`, `max_trace_length` and
+/// `max_value_bits` reach it only where the step consumes them (FSpec
+/// FR-824), and a clause over a state model runs from the step's admitted
+/// `initial` binding. The FR-190 record is the step's result.
 fn model_based_test(
-    _package: &CheckedPackage,
-    _node: &VerificationPlanNode,
-    _inputs: &PlanInputs<'_>,
-    _limits: &AnalyzeLimits,
-    _cancel: &Cancel,
+    package: &CheckedPackage,
+    node: &VerificationPlanNode,
+    inputs: &PlanInputs<'_>,
+    consumers: &PlanConsumers,
+    limits: &AnalyzeLimits,
+    cancel: &Cancel,
 ) -> Result<PlanDisposition, StageFailure<PlanRefusal>> {
-    // QSL-2237 owns the FR-752 fsl-eval entry. Replace only this adapter
-    // with that call, passing clause, domain, bound as max_cases, seed and
-    // the consumed trace/value bounds. Its FR-190 record is the result;
-    // no negotiated engine, synthesized test result or alternate route is valid.
-    Err(fault("model-based-test-entry-unavailable-QSL-2237"))
+    use fsl_eval::simulation::model::{
+        run_model_based_test, ModelBasedTestEvidence, ModelBasedTestRequest,
+        ModelBasedTestSubject, NativeAdmission,
+    };
+    let not_run = |code, cause, member| PlanDisposition {
+        status: PlanStatus::Unsupported,
+        method: node.method.name.clone(),
+        evidence: None,
+        blocked_by: None,
+        result: Some(PlanResult::NotRun {
+            code,
+            cause,
+            member,
+        }),
+    };
+    // FSpec FR-192: a step with no `bound` asks for the method's unbounded
+    // extent, and FR-190 has no run without `max_cases`.
+    let Some(bound) = node.bound.as_deref() else {
+        return Ok(not_run("unsupported_projection", "requires-bound", "bound"));
+    };
+    let max_cases = bound
+        .parse::<u64>()
+        .map_err(|_| fault("invalid-method-bound"))?;
+    let key = claim(package, node).ok_or_else(|| fault("unknown-plan-claim"))?;
+    let graph = package.graph();
+    // A Boolean value clause is named by its function's body; the FR-752
+    // entry takes the function's identity.
+    let clause = graph
+        .semantic_graph()
+        .nodes()
+        .find(|declaration| declaration.function_body().as_ref() == Some(key.node()))
+        .map_or_else(|| key.node().clone(), |declaration| declaration.key());
+    let state_subject = consumes_initial(package, node);
+    let consumes = |steps: &[String]| steps.iter().any(|step| *step == node.name);
+    let subject = if state_subject {
+        let binding = inputs
+            .bindings
+            .get(&node.name)
+            .ok_or_else(|| fault("missing-step-binding"))?;
+        Some(ModelBasedTestSubject {
+            packages: binding.packages,
+            snapshots: binding.snapshots,
+            initial: binding.initial.clone(),
+            universes: binding.universes.clone(),
+        })
+    } else {
+        None
+    };
+    let profile =
+        fsl_foundation::selection::DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1")
+            .map_err(|_| fault("sampler-identity"))?;
+    let request = ModelBasedTestRequest {
+        clause: Some(clause),
+        profile,
+        seed: inputs.seed.unwrap_or(0),
+        max_cases,
+        max_trace_length: state_subject
+            .then_some(inputs.max_trace_length)
+            .flatten(),
+        max_value_bits: if consumes(&consumers.max_value_bits) {
+            inputs.max_value_bits
+        } else {
+            None
+        },
+        subject,
+        expansion: fsl_eval::simulation::model::ExpansionLimits {
+            max_candidates: u64::MAX,
+        },
+        accounting: limits.accounting,
+        normalization: limits.normalization,
+        observation: limits.observation,
+        emit: limits.emit,
+        exploration: fsl_eval::simulation::Limits::default(),
+        position_limit: MODEL_BASED_POSITIONS,
+    };
+    let record = match run_model_based_test(package, &request, &NativeAdmission, cancel) {
+        Ok(record) => record,
+        Err(refusal) => {
+            let mut settled = not_run("invalid_runtime_input", refusal.cause, refusal.member);
+            settled.status = PlanStatus::Failed;
+            return Ok(settled);
+        }
+    };
+    let (status, evidence) = match record.result {
+        ModelBasedTestEvidence::Tested => (PlanStatus::Tested, Some("tested")),
+        ModelBasedTestEvidence::Refuted => (PlanStatus::Refuted, Some("refutation")),
+        ModelBasedTestEvidence::Inconclusive => (PlanStatus::Inconclusive, None),
+        ModelBasedTestEvidence::Incomplete => (PlanStatus::Incomplete, None),
+        ModelBasedTestEvidence::Failed => (PlanStatus::Failed, None),
+        ModelBasedTestEvidence::Unsupported => (PlanStatus::Unsupported, None),
+    };
+    Ok(PlanDisposition {
+        status,
+        method: node.method.name.clone(),
+        evidence: evidence.map(str::to_owned),
+        blocked_by: None,
+        result: Some(PlanResult::ModelBasedTest(Box::new(record))),
+    })
 }
+
+/// The longest generated trace the FR-752 entry admits for a plan step, in
+/// positions; `max_trace_length` is the request's own bound under it.
+const MODEL_BASED_POSITIONS: u64 = 10_000;
 
 struct Execution<'a> {
     package: &'a CheckedPackage,
     inputs: &'a PlanInputs<'a>,
+    consumers: &'a PlanConsumers,
     engines: &'a Engines,
     registry: &'a Registry,
     negotiate: &'a dyn Negotiate,
@@ -432,7 +621,7 @@ impl Execution<'_> {
             self.cancel,
         );
         if node.method.name == "model_based_test" {
-            return model_based_test(package, node, inputs, limits, cancel);
+            return model_based_test(package, node, inputs, self.consumers, limits, cancel);
         }
         let binding = inputs
             .bindings
@@ -589,7 +778,7 @@ impl Execution<'_> {
         }
         let status = status(&record);
         let evidence = match status {
-            PlanStatus::Proved | PlanStatus::Refuted | PlanStatus::Measured
+            PlanStatus::Proved | PlanStatus::Refuted | PlanStatus::Measured(_)
                 if node.method.name == "probabilistic_exact" =>
             {
                 Some("exact")
@@ -606,7 +795,7 @@ impl Execution<'_> {
                 "proof"
             }),
             PlanStatus::Refuted => Some("refutation"),
-            PlanStatus::Measured => Some("statistical"),
+            PlanStatus::Measured(_) => Some("statistical"),
             _ => None,
         }
         .map(str::to_owned);
@@ -805,4 +994,126 @@ fn types_consume_value_bits(
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    /// A plan of `steps` (name, prerequisites) over one placeholder claim;
+    /// the gate reads only names and `requires` edges.
+    fn plan(steps: &[(&str, &[&str])]) -> VerificationPlan {
+        let nodes: Vec<_> = steps
+            .iter()
+            .map(|(name, _)| {
+                json!({
+                    "name": name,
+                    "claim": {
+                        "node": {"package": "p", "path": ["c"], "ordinal": 0},
+                        "occurrence": {"role": "claim", "ordinal": 0},
+                    },
+                    "method": {"name": "model_check", "kind": "temporal-satisfaction",
+                        "extent": "unbounded", "evidence_kind": ["proof", "refutation"]},
+                    "domain": {"package": "p", "node": "ix://p/M"},
+                })
+            })
+            .collect();
+        let edges: Vec<_> = steps
+            .iter()
+            .flat_map(|(name, requires)| {
+                requires
+                    .iter()
+                    .map(move |to| json!({"from": name, "to": to, "type": "requires"}))
+            })
+            .collect();
+        serde_json::from_value(json!({
+            "format": "filament.verification-plan/v1", "package": "p",
+            "plan": {"name": "P", "qualified_name": ["P"], "source_location": {
+                "source": {"authority": "a", "identity": "u"}, "start": 0, "end": 1}},
+            "profile": "v", "nodes": nodes, "edges": edges,
+        }))
+        .expect("plan document")
+    }
+
+    fn settled(status: PlanStatus) -> PlanDisposition {
+        PlanDisposition {
+            status,
+            method: "model_check".to_owned(),
+            evidence: None,
+            blocked_by: None,
+            result: None,
+        }
+    }
+
+    /// Settle `plan` through the coordinator's gate, every handed node with
+    /// `status(name)`; returns the dispositions and the handed names.
+    fn gate(
+        plan: &VerificationPlan,
+        status: impl Fn(&str) -> PlanStatus,
+    ) -> (Vec<(String, PlanDisposition)>, Vec<String>) {
+        let order = execution_order(plan).expect("acyclic");
+        let mut handed = Vec::new();
+        let dispositions = settle_in_order(plan, &order, |index| {
+            let name = plan.nodes[index].name.clone();
+            let disposition = settled(status(&name));
+            handed.push(name);
+            Ok(disposition)
+        })
+        .expect("settles");
+        (dispositions, handed)
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-4")]
+    #[trace("TC-2103", "FR-753-AC-4")]
+    fn a_step_requiring_a_later_step_waits_for_it_and_is_blocked_when_it_fails() {
+        let plan = plan(&[("early", &["late"]), ("late", &[])]);
+        let (dispositions, handed) = gate(&plan, |_| PlanStatus::Refuted);
+        assert_eq!(handed, ["late"], "early is not handed on before late settles");
+        assert_eq!(dispositions[0].0, "early");
+        assert_eq!(dispositions[0].1.status, PlanStatus::Blocked);
+        assert_eq!(dispositions[0].1.blocked_by.as_deref(), Some("late"));
+        assert_eq!(dispositions[1].1.status, PlanStatus::Refuted);
+        let (dispositions, handed) = gate(&plan, |_| PlanStatus::Proved);
+        assert_eq!(handed, ["late", "early"]);
+        assert_eq!(dispositions[0].1.status, PlanStatus::Proved);
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-4")]
+    #[trace("TC-2103", "FR-753-AC-4")]
+    fn a_blocked_prerequisite_blocks_its_dependents_by_the_first_unsatisfied_one() {
+        let plan = plan(&[("a", &[]), ("b", &["a"]), ("c", &["b", "a"])]);
+        let (dispositions, handed) = gate(&plan, |_| PlanStatus::Inconclusive);
+        assert_eq!(handed, ["a"]);
+        assert_eq!(dispositions[1].1.blocked_by.as_deref(), Some("a"));
+        assert_eq!(dispositions[2].1.blocked_by.as_deref(), Some("a"));
+    }
+
+    #[test]
+    #[trace("FSpec-TC-2045", "FSpec-FR-824-AC-5")]
+    fn a_measured_step_gates_its_dependent_by_its_decision() {
+        let plan = plan(&[("s", &[]), ("t", &["s"])]);
+        for (decision, dependent_runs) in [
+            (PlanDecision::Accepted, true),
+            (PlanDecision::Rejected, false),
+            (PlanDecision::Undecided, false),
+        ] {
+            let (dispositions, handed) = gate(&plan, |name| match name {
+                "s" => PlanStatus::Measured(decision),
+                _ => PlanStatus::Proved,
+            });
+            assert_eq!(handed.contains(&"t".to_owned()), dependent_runs, "{decision:?}");
+            assert_eq!(
+                dispositions[1].1.status,
+                if dependent_runs {
+                    PlanStatus::Proved
+                } else {
+                    PlanStatus::Blocked
+                }
+            );
+        }
+    }
 }

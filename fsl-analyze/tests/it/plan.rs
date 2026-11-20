@@ -179,7 +179,7 @@ fn value_generation_requires_only_its_consumed_bound_and_reports_catalog_fields(
     );
     assert!(negotiate.calls.borrow().is_empty());
     inputs.max_value_bits = Some(8);
-    let failure = execute_plan(
+    let outcome = execute_plan(
         &world.package,
         &plan,
         &inputs,
@@ -188,10 +188,19 @@ fn value_generation_requires_only_its_consumed_bound_and_reports_catalog_fields(
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
     )
-    .expect_err("only the FR-752 entry remains");
-    assert!(matches!(failure, StageFailure::Fault(fault)
-        if fault.invariant() == "model-based-test-entry-unavailable-QSL-2237"));
+    .expect("the plan runs once its consumed size is supplied")
+    .into_value();
     assert_eq!(*negotiate.calls.borrow(), [0]);
+    for (name, disposition) in &outcome.dispositions[1..] {
+        assert_eq!(disposition.status, PlanStatus::Tested, "{name}");
+        assert_eq!(disposition.evidence.as_deref(), Some("tested"), "{name}");
+        let Some(PlanResult::ModelBasedTest(record)) = &disposition.result else {
+            panic!("{name} carries its FR-190 record: {disposition:?}");
+        };
+        assert_eq!(record.max_cases, 5, "{name}: the step bound is max_cases");
+        assert_eq!(record.seed, 7, "{name}");
+        assert_eq!(record.max_value_bits, Some(8), "{name}");
+    }
 }
 
 #[trace("FR-753-AC-4", "TC-2103")]
@@ -202,7 +211,7 @@ fn declared_finite_value_generation_consumes_neither_trace_nor_size() {
         let mut plan = plan(&world, &[("value", "model_based_test")], &[]);
         select_value_claim(&world, &mut plan.nodes[0]);
         let negotiate = Recording::default();
-        let failure = execute_plan(
+        let outcome = execute_plan(
             &world.package,
             &plan,
             &inputs(&world, &plan),
@@ -211,12 +220,14 @@ fn declared_finite_value_generation_consumes_neither_trace_nor_size() {
             &AnalyzeLimits::unbounded(),
             &Cancel::new(),
         )
-        .expect_err("finite value reaches FR-752 seam without generation bounds");
-        assert!(
-            matches!(failure, StageFailure::Fault(fault)
-            if fault.invariant() == "model-based-test-entry-unavailable-QSL-2237"),
-            "{parameter}"
-        );
+        .expect("a finite value runs on the FR-752 entry without generation bounds")
+        .into_value();
+        let (_, disposition) = &outcome.dispositions[0];
+        assert_eq!(disposition.status, PlanStatus::Tested, "{parameter}");
+        let Some(PlanResult::ModelBasedTest(record)) = &disposition.result else {
+            panic!("{parameter}: the FR-190 record: {disposition:?}");
+        };
+        assert_eq!(record.max_value_bits, None, "{parameter}");
         assert!(negotiate.calls.borrow().is_empty());
     }
 }
@@ -660,13 +671,13 @@ fn initial_admission_precedes_missing_generation_bounds() {
 
 #[trace("FR-753-AC-4", "TC-2103")]
 #[test]
-fn finite_model_generation_consumes_no_value_size_and_reaches_only_the_owned_integration_seam() {
+fn finite_model_generation_consumes_no_value_size_and_runs_on_the_model_based_test_entry() {
     let world = world();
     let plan = plan(&world, &[("tested", "model_based_test")], &[]);
     let mut inputs = inputs(&world, &plan);
     inputs.max_trace_length = Some(8);
     let negotiate = Recording::default();
-    let failure = execute_plan(
+    let outcome = execute_plan(
         &world.package,
         &plan,
         &inputs,
@@ -675,15 +686,22 @@ fn finite_model_generation_consumes_no_value_size_and_reaches_only_the_owned_int
         &AnalyzeLimits::unbounded(),
         &Cancel::new(),
     )
-    .expect_err("FR-752 entry pending");
-    let StageFailure::Fault(fault) = failure else {
-        panic!("only the owned integration seam remains");
+    .expect("a finite model needs no value size")
+    .into_value();
+    let (name, disposition) = &outcome.dispositions[0];
+    assert_eq!(name, "tested");
+    let Some(PlanResult::ModelBasedTest(record)) = &disposition.result else {
+        panic!("the FR-752 entry's FR-190 record: {disposition:?}");
     };
-    assert_eq!(
-        fault.invariant(),
-        "model-based-test-entry-unavailable-QSL-2237"
-    );
-    assert!(negotiate.calls.borrow().is_empty());
+    assert_eq!(record.max_cases, 5);
+    assert_eq!(record.seed, 7);
+    assert_eq!(record.max_trace_length, 8);
+    assert_eq!(record.max_value_bits, None);
+    assert!(matches!(
+        disposition.status,
+        PlanStatus::Tested | PlanStatus::Refuted
+    ));
+    assert!(negotiate.calls.borrow().is_empty(), "never negotiated");
 }
 
 #[trace("FR-753-AC-5", "TC-3028")]
@@ -915,4 +933,116 @@ fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() 
             [backend]
         );
     }
+}
+
+/// A counter world whose clause holds in every reachable state: `inc` stops
+/// at 3 (`CanInc`), so `value <= 3` is never violated.
+fn holding_world() -> World {
+    World::new(
+        crate::model_world::counter(),
+        crate::counter::CONTRACT,
+        crate::model_world::INFINITE,
+        &[crate::model_world::Clause {
+            activation: "on each (q: M::Counter)",
+            formula: "always holds(c.value <= 3)",
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    )
+}
+
+/// FR-753-AC-5: over `Release` with no `temporal-satisfaction` engine,
+/// `safe` settles `unsupported`, `tested` runs on the FR-752 entry with
+/// `max_cases` 500, the seed and `max_trace_length` 8 and settles `tested`,
+/// and `timely` is blocked by `safe`; only `safe` is negotiated.
+#[trace("FR-753-AC-5", "TC-3028")]
+#[trace("FR-753-AC-4", "TC-2103")]
+#[test]
+fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_only() {
+    let world = holding_world();
+    let mut plan = plan(
+        &world,
+        &[
+            ("safe", "model_check"),
+            ("tested", "model_based_test"),
+            ("timely", "model_check"),
+        ],
+        &[("timely", "safe")],
+    );
+    plan.nodes[0].bound = Some("20".into());
+    plan.nodes[1].bound = Some("500".into());
+    plan.nodes[2].bound = None;
+    let mut inputs = inputs(&world, &plan);
+    inputs.max_trace_length = Some(8);
+    let negotiate = Recording::default();
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &negotiate,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("Release runs")
+    .into_value();
+    assert_eq!(*negotiate.calls.borrow(), [0], "only `safe` is negotiated");
+    let [(safe, safe_step), (tested, tested_step), (timely, timely_step)] =
+        outcome.dispositions.as_slice()
+    else {
+        panic!("one disposition per node: {:?}", outcome.dispositions);
+    };
+    assert_eq!((safe.as_str(), safe_step.status), ("safe", PlanStatus::Unsupported));
+    let Some(PlanResult::Analysis(record)) = &safe_step.result else {
+        panic!("safe's terminal record");
+    };
+    assert_eq!(
+        record.diagnostic(),
+        Some(NegotiationOutcome::UnsupportedRequestedCapability.code())
+    );
+    assert_eq!(tested, "tested");
+    assert_eq!(tested_step.status, PlanStatus::Tested);
+    assert_eq!(tested_step.evidence.as_deref(), Some("tested"));
+    let Some(PlanResult::ModelBasedTest(record)) = &tested_step.result else {
+        panic!("tested's FR-190 record: {tested_step:?}");
+    };
+    assert_eq!(record.max_cases, 500);
+    assert_eq!(record.seed, 7);
+    assert_eq!(record.max_trace_length, 8);
+    assert_eq!(
+        (timely.as_str(), timely_step.status, timely_step.blocked_by.as_deref()),
+        ("timely", PlanStatus::Blocked, Some("safe"))
+    );
+    assert!(timely_step.result.is_none());
+}
+
+/// FSpec FR-192: a `model_based_test` step with no `bound` asks for an
+/// unbounded extent FR-190 does not have, so it runs no case.
+#[trace("FR-753-AC-5", "TC-3028")]
+#[test]
+fn an_unbounded_model_based_test_step_runs_no_case() {
+    let world = holding_world();
+    let mut plan = plan(&world, &[("tested", "model_based_test")], &[]);
+    plan.nodes[0].bound = None;
+    let mut inputs = inputs(&world, &plan);
+    inputs.max_trace_length = Some(8);
+    let outcome = execute_plan(
+        &world.package,
+        &plan,
+        &inputs,
+        &Engines::default(),
+        &Recording::default(),
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    )
+    .expect("the plan runs")
+    .into_value();
+    let (_, step) = &outcome.dispositions[0];
+    assert_eq!(step.status, PlanStatus::Unsupported);
+    assert!(matches!(
+        step.result,
+        Some(PlanResult::NotRun {
+            cause: "requires-bound",
+            ..
+        })
+    ));
 }

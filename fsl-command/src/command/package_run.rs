@@ -144,6 +144,7 @@ pub(super) fn prepare(
     for (present, member) in [
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
+        (request.verification_plan.is_some(), "verification_plan"),
     ] {
         if present {
             return Err(invalid(
