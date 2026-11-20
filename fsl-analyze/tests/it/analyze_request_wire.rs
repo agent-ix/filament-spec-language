@@ -7,11 +7,11 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::counter::{unit_text, CONTRACT};
 use crate::analyze_cli_support::{
     analyze, below_three, bounded, counter_request, counter_request_with, label, request_members,
     Workspace,
 };
+use crate::counter::{unit_text, CONTRACT};
 
 /// FR-620-AC-1, AC-2: the admitted item is echoed as its FR-331 request item,
 /// and that echo, written back as a document item, reads to an equal item.
@@ -396,7 +396,9 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(diagnostic["code"], "missing_declaration", "{document}");
     assert_eq!(diagnostic["cause"], "missing-selection", "{document}");
     let source = unit_text(&format!("{CONTRACT}{body}"));
-    let div = source.find("a div 2").expect("the program's div expression") as u64;
+    let div = source
+        .find("a div 2")
+        .expect("the program's div expression") as u64;
     assert_eq!(diagnostic["locus"]["start"], div, "{document}");
     assert_eq!(diagnostic["locus"]["end"], div + 7, "{document}");
 
@@ -660,31 +662,4 @@ fn a_package_selection_analyzes_as_its_source() {
         default_run.document()["items"],
         default_source.document()["items"]
     );
-}
-
-/// A package that admits reaches the analysis gap: building the in-process
-/// checked package from package bytes conflicts with FR-087-AC-2, so
-/// analysis refuses `unsupported_construct`/`not-yet-implemented` naming
-/// `package`, never `invalid-request` or a profile prohibition (FR-763).
-#[trace("TC-1580", "FR-620-AC-3")]
-#[test]
-fn a_package_selection_names_its_implementation_gap() {
-    let ws = Workspace::new("wire-package-gap");
-    let request = request_members(Some(json!([{"claim": "Bounded"}])));
-    let _ = counter_request_with(&ws, &bounded(), request.clone());
-    let (selected, _) = crate::analyze_cli_support::package_selection(&ws, &request);
-    let document = json!({"format": "native-analyze/1", "request": selected});
-    let path = ws.write("analyze-package-gap.json", document.to_string().as_bytes());
-    let run = analyze(&path);
-    let document = run.document();
-    let diagnostic = &document["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{document}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{document}");
-    assert!(
-        diagnostic["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("package")),
-        "{document}"
-    );
-    assert_eq!(run.exit, 21, "{document}");
 }

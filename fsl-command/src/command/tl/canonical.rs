@@ -34,13 +34,14 @@ impl CanonicalRows {
     /// expression needs from its FR-940 read projection and admitted world.
     pub(super) fn from_projection(
         projection: &fsl_package::ReaderProtocolProjection,
-        types: &filament_semantic_value::declaration::TypeEnvironment,
+        types: Option<&filament_semantic_value::declaration::TypeEnvironment>,
+        declared: &[fsl_package::DeclaredComposite],
     ) -> Result<Self, String> {
         use filament_semantic_value::declaration::CompositeShape;
 
         let expression = CheckedExpression::from_projection(projection)?;
         let mut rows = Self::default();
-        for composite in types.composites() {
+        for composite in types.into_iter().flat_map(|types| types.composites()) {
             let key = composite.key();
             rows.declarations
                 .insert(key.clone(), canonical_identity(&key)?);
@@ -61,6 +62,28 @@ impl CanonicalRows {
                     );
                 }
                 CompositeShape::Tuple(_) => {}
+            }
+        }
+        // The names the package's own declaration nodes list, for a declaration
+        // no identity row selects.
+        for composite in declared {
+            let key = composite.key.clone();
+            if !rows.declarations.contains_key(&key) {
+                rows.declarations
+                    .insert(key.clone(), canonical_identity(&key)?);
+            }
+            match &composite.shape {
+                fsl_package::DeclaredShape::Record(fields) => {
+                    rows.record_fields
+                        .entry(key)
+                        .or_insert_with(|| fields.clone());
+                }
+                fsl_package::DeclaredShape::Union(members) => {
+                    rows.union_members
+                        .entry(key)
+                        .or_insert_with(|| members.clone());
+                }
+                fsl_package::DeclaredShape::Tuple => {}
             }
         }
         for node in &expression.nodes {

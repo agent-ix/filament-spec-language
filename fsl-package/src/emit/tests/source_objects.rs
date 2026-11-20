@@ -1690,3 +1690,107 @@ fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
         "{text}"
     );
 }
+
+/// FR-230 "Operation parameters" (QSL-2726): a timed source model whose
+/// operation guards a `Clock` parameter and resets it in the postcondition
+/// emits the guard's parameter constraint and the parameter reset.
+#[trace("FR-230-AC-65", "TC-1408")]
+#[test]
+fn a_source_clock_parameter_emits_its_constraint_and_reset() {
+    let text = format!(
+        "{HEADER}{TIMED_ARM}\
+         pre G using T on O::arm {{ x <= 3 ms }}\n\
+         post R using T on O::arm {{ x = 0 ms }}\n"
+    );
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("S4 emits the timed source model");
+    let wire = wire(&emission);
+    let of_form = |form: &str| {
+        nodes(&wire)
+            .iter()
+            .filter(|node| node["semantic_form"] == form)
+            .count()
+    };
+    assert_eq!(of_form("clock_constraint"), 1, "{wire}");
+    assert_eq!(of_form("clock_reset"), 1, "{wire}");
+}
+
+/// FSpec FR-789 rule 4 (QSL-2726): a source tuple position and a source union
+/// member are spelled `.../P/p0` and `.../U/armed` in a clock place's
+/// `resolved_path` rows.
+#[trace("FR-996-AC-1", "TC-2818", "FSpec-FR-789-AC-4")]
+#[test]
+fn a_source_tuple_and_union_clock_place_keep_the_source_spelling() {
+    let text = format!("{HEADER}{CLOCK_ENTRIES}");
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("S4 emits the timed source model");
+    let wire = wire(&emission);
+    let i = owner_identity(&wire, "O");
+    let identities: Vec<String> = places(&wire)
+        .into_iter()
+        .flat_map(|place| place_rows(&wire, place))
+        .map(|[_, member, _]| member)
+        .collect();
+    for expected in [format!("ix://{i}/P/p0"), format!("ix://{i}/U/armed")] {
+        assert!(
+            identities.contains(&expected),
+            "{expected} in {identities:?}"
+        );
+    }
+}
+
+/// FSpec FR-322 item 5 (QSL-2726): a source operation whose only precondition
+/// is one term still declares its own effective-precondition clause function
+/// `[O, op, "effective_precondition"]`.
+#[trace("FR-569-AC-6", "TC-1408")]
+#[test]
+fn a_source_operation_declares_its_effective_precondition_function() {
+    let text = format!("{HEADER}{S}");
+    let packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+    let mut declarations =
+        assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+    declarations
+        .link_dispatch(Default::default())
+        .expect("dispatch links");
+    let graph = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let emission = emit_checked(&package).expect("S4 emits the source model");
+    let wire = wire(&emission);
+    let named = nodes(&wire).iter().any(|node| {
+        node["declaration"]["qualified_name"]
+            == json!(["Order", "measure", "effective_precondition"])
+    });
+    assert!(
+        named,
+        "an effective_precondition function of Order::measure"
+    );
+}

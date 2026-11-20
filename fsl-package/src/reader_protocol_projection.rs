@@ -37,7 +37,7 @@ use fsl_semantics::check::wire_id::WireGraph;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
-use crate::wire_form::{has_form, split_tag_form, OperationSuffix, WireForm, WireTag};
+use crate::wire_form::{has_form, has_tag, split_tag_form, OperationSuffix, WireForm, WireTag};
 
 /// One projected protocol slot: owned evaluator nodes, the admitted function
 /// table its calls reach, and the frame its locals and case binders use.
@@ -828,6 +828,10 @@ struct WireIndex<'wire> {
     ids: BTreeMap<NodeKey, &'wire CheckedNodeId>,
     graph: WireGraph,
     identities: std::borrow::Cow<'wire, filament_contract_model::SelectedExactIdentities>,
+    /// Whether the walk reads names and term structure for printing an atom,
+    /// which needs no exact type of a declaration the identity rows select
+    /// (FR-931 "The lowering input").
+    print: bool,
 }
 
 /// What the projection reads beside the admitted package.
@@ -869,6 +873,7 @@ impl<'wire> WireIndex<'wire> {
             ids,
             graph,
             identities,
+            print: false,
         })
     }
 
@@ -921,6 +926,47 @@ impl<'wire> WireIndex<'wire> {
             }
         }
         first
+    }
+
+    /// The type a print walk gives node `id` when its exact type is not
+    /// selected: the record, tuple or union declaration its own type node is,
+    /// or the model object type it references, each named by the structural
+    /// key of that declaration node alone.
+    fn declared_type(&self, id: &CheckedNodeId) -> Option<ValueType> {
+        let node = self.node(id)?;
+        let declaration = if self.is_declared_type(node) {
+            node
+        } else {
+            self.node(&node.semantic_type)?
+        };
+        let key = self.key(&declaration.node_id).ok()?;
+        if has_tag(declaration, WireTag::CompositeType)
+            && (has_form(declaration, WireTag::CompositeType, WireForm::Record)
+                || has_form(declaration, WireTag::CompositeType, WireForm::Union)
+                || has_form(declaration, WireTag::CompositeType, WireForm::Tuple))
+        {
+            return Some(ValueType::Composite(key));
+        }
+        let object = if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
+            let CheckedTerm::Aggregate { members } = &declaration.body else {
+                return None;
+            };
+            let target = reference_target(members.first()?)?;
+            self.key(target).ok()?
+        } else {
+            key
+        };
+        let object_node = self.ids.get(&object)?;
+        self.admitted
+            .model_object_fields(object_node)
+            .ok()
+            .map(|_| ValueType::Reference(print_effective_id(&object)))
+    }
+
+    /// Whether `node` is itself a type declaration node.
+    fn is_declared_type(&self, node: &CheckedSemanticNodeV2) -> bool {
+        has_tag(node, WireTag::CompositeType)
+            || self.admitted.model_object_fields(&node.node_id).is_ok()
     }
 
     fn types(&self) -> TypeReader<'_> {
@@ -1207,6 +1253,13 @@ impl<'wire> BareWalker<'wire> {
         package: &'wire crate::bare::BarePackage<'wire>,
     ) -> Self {
         self.index.populations = Some(package);
+        self
+    }
+
+    /// A walk that reads a term for printing: a node whose exact type the
+    /// identity rows do not select is typed by its own declaration node.
+    pub(crate) fn printing(mut self) -> Self {
+        self.index.print = true;
         self
     }
 
@@ -2034,16 +2087,15 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
         };
         let type_argument = match &node.body {
-            CheckedTerm::Application { operation, .. } => operation
-                .read()
-                .ok()
-                .and_then(|read| match read.member {
+            CheckedTerm::Application { operation, .. } => {
+                operation.read().ok().and_then(|read| match read.member {
                     Some(filament_contract_model::CheckedOperationMember::TypeArgument {
                         alias: Some(alias),
                         ..
                     }) => Some(alias.node.clone()),
                     _ => None,
-                }),
+                })
+            }
             _ => None,
         };
         let value_type = self.value_type(id)?;
@@ -3073,7 +3125,21 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .declaration_rows()
             .find(|row| row.structural_node == *field_declaration)
             .map(|row| &row.exact_identity);
-        if let Some(filament_contract_model::SelectedExactIdentity::Object(owner)) = selected {
+        let object_owner = match selected {
+            Some(filament_contract_model::SelectedExactIdentity::Object(owner)) => {
+                Some(owner.clone())
+            }
+            None if self.index.print
+                && self
+                    .admitted()
+                    .model_object_fields(field_declaration)
+                    .is_ok() =>
+            {
+                Some(print_effective_id(&self.index.key(field_declaration)?))
+            }
+            _ => None,
+        };
+        if let Some(owner) = object_owner {
             // A model attribute reads the reference under its `model.deref`.
             let operand = self.node(operand_id)?;
             let explicit_deref = matches!(
@@ -3295,13 +3361,19 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     }
 
     fn value_type(&self, id: &CheckedNodeId) -> Result<ValueType, BuildError> {
-        node_value_type(&self.index.types(), id).map_err(|error| match error {
-            TypeError::Unsupported => BuildError::Unsupported {
-                reason: UnsupportedReason::MissingTypeRepresentation,
-                node: id.clone(),
-            },
-            TypeError::Fault(fault) => BuildError::Fault(fault),
-        })
+        match node_value_type(&self.index.types(), id) {
+            Ok(value_type) => Ok(value_type),
+            Err(TypeError::Unsupported) => self
+                .index
+                .print
+                .then(|| self.index.declared_type(id))
+                .flatten()
+                .ok_or_else(|| BuildError::Unsupported {
+                    reason: UnsupportedReason::MissingTypeRepresentation,
+                    node: id.clone(),
+                }),
+            Err(TypeError::Fault(fault)) => Err(BuildError::Fault(fault)),
+        }
     }
 
     fn project_inline_literal(
@@ -4161,4 +4233,22 @@ mod order_tests {
             "missing-type-representation"
         );
     }
+}
+
+/// The effective identity a print walk gives the model object type whose
+/// declaration node is `key`: the original declaration key alone.
+fn print_effective_id(key: &NodeKey) -> filament_exact::EffectiveId {
+    let node = key
+        .view()
+        .path()
+        .filter_map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .last()
+        .unwrap_or_default();
+    filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new(key.package(), node),
+    )
 }

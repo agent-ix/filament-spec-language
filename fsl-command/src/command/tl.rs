@@ -323,12 +323,17 @@ pub fn record(
                 .ok_or_else(|| format!("unknown correspondence {identity}"))?,
         ),
     };
-    lowering_record(&Subject::of_valuation(valuation), source, named, mapping, form).map_err(
-        |failure| match failure {
-            Failure::Fault(message) => message,
-            Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
-        },
+    lowering_record(
+        &Subject::of_valuation(valuation),
+        source,
+        named,
+        mapping,
+        form,
     )
+    .map_err(|failure| match failure {
+        Failure::Fault(message) => message,
+        Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
+    })
 }
 
 /// The four pieces FR-931 "The lowering input" says a lowering reads, and the
@@ -564,15 +569,17 @@ fn lowering_record(
         );
         exit_code = 30;
     }
-    let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> =
-        match subject.valuation.map(|valuation| (&valuation.positions, &valuation.behaviours)) {
-            Some((Some(positions), _)) => Some((vec![positions], true)),
-            Some((None, Some(behaviours))) => Some((
-                behaviours.traces.iter().collect(),
-                matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
-            )),
-            Some((None, None)) | None => None,
-        };
+    let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> = match subject
+        .valuation
+        .map(|valuation| (&valuation.positions, &valuation.behaviours))
+    {
+        Some((Some(positions), _)) => Some((vec![positions], true)),
+        Some((None, Some(behaviours))) => Some((
+            behaviours.traces.iter().collect(),
+            matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
+        )),
+        Some((None, None)) | None => None,
+    };
     if let Some((traces, complete)) = traces {
         let cross = cross_evaluate(subject.name, &tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
@@ -1374,21 +1381,27 @@ pub(super) fn lower_over_package(
     let key = view
         .declaration_key()
         .ok_or_else(|| fault("an admitted clause node has a structural key"))?;
-    let world = bare
-        .world()
-        .map_err(|failure| {
-            RunCause::TlFault(format!("the package world is unavailable: {failure:?}"))
-        })?;
+    // Printing an atom is not evaluation (FR-931 "The lowering input"): the
+    // names and term structure come from the package's own nodes, and a
+    // world the identity rows build only adds the declarations they select.
+    let world = bare.world().ok();
+    let declared = bare.declared_composites();
     let mut labels = BTreeMap::new();
     for (arena, position) in first_uses.iter().enumerate() {
         if !matches!(nodes.get(arena), Some(FormulaNode::Holds { .. })) {
             continue;
         }
-        let term = bare.project_holds(&key, *position).map_err(|failure| {
-            RunCause::TlFault(format!("an atom has no reader projection: {failure:?}"))
-        })?;
-        let rows = canonical::CanonicalRows::from_projection(term.projection(), world.types())
-            .map_err(RunCause::TlFault)?;
+        let term = bare
+            .project_holds_for_print(&key, *position)
+            .map_err(|failure| {
+                RunCause::TlFault(format!("an atom has no reader projection: {failure:?}"))
+            })?;
+        let rows = canonical::CanonicalRows::from_projection(
+            term.projection(),
+            world.as_ref().map(fsl_package::BareWorld::types),
+            &declared,
+        )
+        .map_err(RunCause::TlFault)?;
         let label = canonical::package_label(&term, &rows).map_err(RunCause::TlFault)?;
         labels.insert(FormulaNodeId::from_arena_index(arena), label);
     }
