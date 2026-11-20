@@ -3280,11 +3280,10 @@ fn fairness_and_operation_rows_name_operation_anchors() {
     assert_eq!(anchor(&step["target"]["receiver"]["target"]), "parameter");
 }
 
-/// The step, `assume` and `ensure` rows read back once IR resolves an
-/// `operation_anchor` against its declaring type (IR-1077).
+/// The step and `assume` rows read back with each `operation_anchor`
+/// resolved against its declaring type.
 #[trace("FR-375-AC-21", "TC-310")]
 #[test]
-#[ignore = "IR-1077: IR requires a row's operation_anchor context to be the model root"]
 fn operation_rows_read_back() {
     let (emitted, _) = emit_rows(
         &format!(

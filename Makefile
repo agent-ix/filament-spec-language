@@ -41,6 +41,7 @@ check-spec-validation:
 # of whatever feature set the caller's own `cargo build`/`clippy` steps used.
 seam-probe:
 	cargo run --package xtask -- seam-probe
+	cargo test --locked --package xtask --lib seam_probe::tests::a_capability_variant_with_no_applicable_family_entry_does_not_compile -- --ignored --exact --test-threads=1
 
 # QSL#214 (FR-064): scans the FSL crates' non-test source for a
 # string comparison or string `match` outside a `#[string_edge]`-marked

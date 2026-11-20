@@ -2281,27 +2281,27 @@ fn crash_residue_does_not_block_a_write_and_leaves_no_claim() {
     write(&request("event_position", Corpus::None), &other).expect("a later write is not refused");
 }
 
-/// FR-518-AC-11: with a reader that admits a declared name on a temporal
-/// clause, a package whose clause declares a name other than the sidecar's is
-/// admitted by the reader and refused by `Selection::check` with
-/// `clause.name`.
+/// FR-518-AC-11: a temporal name row that differs from the sidecar reads
+/// back, then fails selection on `clause.name`; the original name agrees.
 #[trace("FR-518-AC-11", "TC-1313")]
 #[test]
-#[ignore = "gated on IR-1278: the reader refuses a declaration member on a temporal clause node"]
 fn a_differing_declared_clause_name_is_refused_on_clause_name() {
     let (_holder, out) = written("event_position", Corpus::None, &Double::default());
     let files = tree(&out);
     let mut package: Value = serde_json::from_slice(&files["checked-package.json"]).unwrap();
-    let clause = package["semantic_graph"]["nodes"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|node| node["semantic_form"] == "temporal_clause")
-        .unwrap();
-    clause["declaration"] = serde_json::json!({"qualified_name": ["Renamed"]});
     let held = evidence(&request("event_position", Corpus::None)).unwrap();
-    let package = admitted(&serde_json::to_vec(&package).unwrap(), &held);
     let selection = Selection::read(&files["selection.json"]).unwrap();
+    let original = admitted(&serde_json::to_vec(&package).unwrap(), &held);
+    selection
+        .check(&original)
+        .expect("the original names agree");
+    let names = package["temporal_clause_names"]
+        .as_array_mut()
+        .expect("temporal clause name rows");
+    let name = names.first_mut().expect("a temporal clause name");
+    assert_ne!(name["name"], "Omega", "the mutation changes the name");
+    name["name"] = serde_json::json!("Omega");
+    let package = admitted(&serde_json::to_vec(&package).unwrap(), &held);
     assert_eq!(
         selection.check(&package).unwrap_err().axis,
         SelectionAxis::ClauseName

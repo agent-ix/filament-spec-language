@@ -231,6 +231,35 @@ fn expected(root: &str, commands: &[&[&str]]) -> String {
 
 const DEEP_THREADS: &str = "--test-threads=3";
 
+#[test]
+#[trace("TC-1302", "FR-507-AC-6")]
+fn seam_probe_executes_only_the_capability_applicability_test() {
+    let recipe = Recipe::new();
+    let calls = recipe.run(&["seam-probe"], Some("seam target"), &[]);
+    assert_eq!(
+        calls,
+        expected(
+            "seam target",
+            &[
+                &["run", "--package", "xtask", "--", "seam-probe"],
+                &[
+                    "test",
+                    "--locked",
+                    "--package",
+                    "xtask",
+                    "--lib",
+                    "seam_probe::tests::a_capability_variant_with_no_applicable_family_entry_does_not_compile",
+                    "--",
+                    "--ignored",
+                    "--exact",
+                    "--test-threads=1",
+                ],
+            ],
+        ),
+        "the Make recipe must execute the selected ignored test, without --no-run",
+    );
+}
+
 const DEEP_CASES: [&str; 5] = [
     "formatter_identity::deep_sum_source_generator_keeps_format_identity",
     "formatter_identity::deep_else_if_source_generator_keeps_format_identity",
