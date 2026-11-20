@@ -23,7 +23,8 @@
 //! - `identifier` (DT-2): inside the workspace, a module-level `struct`,
 //!   `enum`, `union`, `trait` or `type` alias with a canonical type's
 //!   identifier, other than its tagged definition, whatever its visibility or
-//!   shape, when the canonical definition is in a workspace member.
+//!   shape, when the canonical definition is in a workspace member, or is
+//!   the shared evaluation interface's `filament_eval::Evaluation`.
 //! - `re-export` (DT-2): in a workspace member other than the owner crate,
 //!   for a canonical type a workspace member owns, a `pub use` of its
 //!   identifier rooted at another scanned crate, or that renames it with
@@ -692,7 +693,13 @@ pub fn scan(workspace_root: &Path, packages: Vec<Package>) -> Result<Report> {
         }
         let home = packages[owner.package].repository;
         let here = packages[definition.package].repository;
-        let rule = if home == Repository::Workspace && here == Repository::Workspace {
+        // FR-272 also reserves the shared evaluation interface's name in
+        // FSL; other shared-leaf boundary types retain the copy rule.
+        let evaluation_interface =
+            packages[owner.package].name == "filament-eval" && owner.ident == "Evaluation";
+        let rule = if here == Repository::Workspace
+            && (home == Repository::Workspace || evaluation_interface)
+        {
             Some(Rule::Identifier)
         } else if home != here
             && definition.kind == owner.kind
@@ -1305,5 +1312,55 @@ mod tests {
         let mut clean = k_fixture();
         clean.member("w", "pub use k::Value;\n");
         assert!(summarize(clean.dir.path(), clean.packages()).is_ok());
+    }
+
+    /// The shared evaluation interface's canonical tag reserves Evaluation
+    /// in FSL, regardless of the namesake's kind, shape or visibility.
+    #[test]
+    #[trace("TC-748", "FR-273-AC-1")]
+    fn shared_leaf_evaluation_namesakes_fail_until_renamed() {
+        for (source, line) in [
+            ("struct Evaluation;\n", 1),
+            (
+                "mod output {\n    pub(crate) enum Evaluation { Pending }\n}\n",
+                2,
+            ),
+            ("pub type Evaluation = u8;\n", 1),
+        ] {
+            let mut fixture = Fixture::new();
+            fixture
+                .dependency(
+                    "filament-eval",
+                    "git+https://github.com/agent-ix/filament-eval?branch=main#2184793",
+                    "/// filament:canonical\npub struct Evaluation { pub value: u64 }\n",
+                )
+                .member("fsl-command", source);
+            assert_eq!(
+                fixture.findings(),
+                vec![finding(
+                    Rule::Identifier,
+                    "Evaluation",
+                    Some(site("filament-eval/src/lib.rs", 2)),
+                    site("fsl-command/src/lib.rs", line),
+                )],
+                "shared-leaf namesake: {source}",
+            );
+            let error = summarize(fixture.dir.path(), fixture.packages())
+                .expect_err("a shared-leaf namesake must fail the gate");
+            assert_eq!(error.code(), crate::error::Code::CanonicalTypes);
+            assert_eq!(error.exit_code(), 1);
+
+            // The same item with a meaning-specific name is admitted; the
+            // canonical type can still be imported from its owning leaf.
+            fixture.file(
+                "fsl-command/src/lib.rs",
+                &format!(
+                    "{}pub use filament_eval::Evaluation;\n",
+                    source.replace("Evaluation", "CommandEvaluation"),
+                ),
+            );
+            assert_eq!(fixture.findings(), vec![]);
+            assert!(summarize(fixture.dir.path(), fixture.packages()).is_ok());
+        }
     }
 }
