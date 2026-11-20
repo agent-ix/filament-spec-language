@@ -144,7 +144,6 @@ pub(super) fn prepare(
     for (present, member) in [
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
-        (request.tl_lowering.is_some(), "tl_lowering"),
         (request.model_based_test.is_some(), "model_based_test"),
     ] {
         if present {

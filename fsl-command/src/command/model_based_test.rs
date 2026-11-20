@@ -552,10 +552,12 @@ pub(super) fn prepare(
         &cancel,
     )
     .map_err(model_test_error)?;
+    let exit_code = record.exit_code();
     let record = result_json(&record, &package_name(source.source().identity()));
     let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::ModelBasedTest(PreparedModelBasedTestRun {
         record,
+        exit_code,
         sources,
     }))
 }

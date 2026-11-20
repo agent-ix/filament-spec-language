@@ -40,12 +40,29 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
     run_with_domain_package(unit, with_model, member, None)
 }
 
+fn run_with_members(
+    unit: &str,
+    with_model: bool,
+    members: Vec<(&str, Value)>,
+) -> (u8, Value) {
+    run_with_members_and_domain_package(unit, with_model, members, None)
+}
+
 /// Runs against a private domain-package string when a request-surface case
 /// needs a smaller model than the shared spine fixture.
 fn run_with_domain_package(
     unit: &str,
     with_model: bool,
     member: (&str, Value),
+    domain_package: Option<&str>,
+) -> (u8, Value) {
+    run_with_members_and_domain_package(unit, with_model, vec![member], domain_package)
+}
+
+fn run_with_members_and_domain_package(
+    unit: &str,
+    with_model: bool,
+    members: Vec<(&str, Value)>,
     domain_package: Option<&str>,
 ) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
@@ -64,7 +81,9 @@ fn run_with_domain_package(
         json!([])
     };
     let mut request = json!({"models": models, "program": {"source": source("unit.native")}});
-    request[member.0] = member.1;
+    for (name, member) in members {
+        request[name] = member;
+    }
     if request["model_based_test"]["initial"].is_string() {
         let snapshot_path = directory.path().join("spine-snapshot.json");
         let bytes = std::fs::read(&snapshot_path).expect("the spine snapshot exists");
@@ -105,7 +124,7 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
     let unit = format!(
         "{MODEL_HEADER}invariant Never using v on Config::ConfigVersion at current {{ false }}\n"
     );
-    let (_, value) = run(
+    let (code, value) = run(
         &unit,
         true,
         (
@@ -115,6 +134,7 @@ fn a_failing_clause_retains_a_one_minimal_replayed_counterexample() {
         "initial": "spine-snapshot.json"}),
         ),
     );
+    assert_eq!(code, 10, "{value}");
     let result = &value["model_based_test"];
     assert_eq!(result["status"], "refuted", "{value}");
     let counterexample = &result["counterexample"];
@@ -188,7 +208,7 @@ fn a_passing_run_records_tested_and_never_proved() {
         .expect("VersionNumber has a maximum");
     max["operands"]["value"] = json!("2");
     let domain_package = serde_json::to_string(&domain_package).expect("the model serializes");
-    let (_, value) = run_with_domain_package(
+    let (code, value) = run_with_domain_package(
         &unit,
         true,
         (
@@ -199,6 +219,7 @@ fn a_passing_run_records_tested_and_never_proved() {
         ),
         Some(&domain_package),
     );
+    assert_eq!(code, 0, "{value}");
     let result = &value["model_based_test"];
     assert_eq!(result["evidence"], "tested", "{value}");
     assert_eq!(result["status"], "tested", "{value}");
@@ -1004,6 +1025,22 @@ fn model_based_test_request_rules() {
         ),
     );
     refusal_names(&bounded_value, "max_value_bits");
+
+    let (code, conflict) = run_with_members(
+        &unit,
+        false,
+        vec![
+            ("tl_lowering", json!({"clause": "Nothing"})),
+            ("model_based_test", base),
+        ],
+    );
+    assert_eq!(code, 20, "{conflict}");
+    assert_eq!(conflict["code"], "invalid-request", "{conflict}");
+    assert_eq!(conflict["stage"], "request", "{conflict}");
+    assert_eq!(
+        conflict["details"]["member"], "model_based_test",
+        "{conflict}"
+    );
 }
 
 /// FSpec FR-190-AC-8 and FR-752-AC-5: a direct value-clause request evaluates
@@ -1016,7 +1053,7 @@ fn model_based_test_value_clause_runs_and_shrinks_natively() {
     let unit = format!(
         "{VALUE_HEADER}predicate BelowTwoHundred using v (x: Integer): Boolean {{ x < 200 }}\n"
     );
-    let (_, value) = run(
+    let (code, value) = run(
         &unit,
         false,
         (
@@ -1029,6 +1066,7 @@ fn model_based_test_value_clause_runs_and_shrinks_natively() {
             }),
         ),
     );
+    assert_eq!(code, 10, "{value}");
     let record = &value["model_based_test"];
     assert_eq!(record["status"], "refuted", "{value}");
     assert_eq!(record["cases"]["generated"], 5, "{value}");
@@ -1038,7 +1076,7 @@ fn model_based_test_value_clause_runs_and_shrinks_natively() {
     );
     assert_eq!(record["counterexample"]["replay"], "reproduced", "{value}");
     assert_eq!(
-        record["counterexample"]["assignment"][0]["value"],
+        record["counterexample"]["assignment"][0],
         json!({"type": "integer", "value": "200"}),
         "{value}"
     );

@@ -641,6 +641,7 @@ pub enum PreparedRun {
 /// The direct model-based test record and sources admitted to produce it.
 pub struct PreparedModelBasedTestRun {
     record: serde_json::Value,
+    exit_code: u8,
     sources: crate::Sources,
 }
 
@@ -3752,6 +3753,12 @@ fn prepare_run_bytes_with_sources(
     if let Some(member) = &request.model_based_test {
         model_based_test::decode(member)?;
     }
+    if request.tl_lowering.is_some() && request.model_based_test.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "model_based_test".to_owned(),
+            reason: "model_based_test and tl_lowering are mutually exclusive".to_owned(),
+        });
+    }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
@@ -4124,15 +4131,8 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Package(prepared) => return package_run::execute(*prepared),
         PreparedRun::ModelBasedTest(prepared) => {
-            let status = prepared.record.get("status").and_then(serde_json::Value::as_str);
-            let exit_code = match status {
-                Some("tested") => 0,
-                Some("refuted") => 10,
-                Some("inconclusive") => 11,
-                _ => 22,
-            };
             return Ok(RunResult {
-                exit_code,
+                exit_code: prepared.exit_code,
                 value: NativeResult::model_based_test_document(prepared.record),
                 outcome: None,
                 requirements: None,
