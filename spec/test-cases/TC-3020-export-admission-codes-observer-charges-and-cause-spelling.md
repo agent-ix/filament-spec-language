@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the structured refusal codes of malformed export members, the `unsupported` refusal of an observer the build cannot run, the `limit-reached` cause of a denied charge, the once-per-node charge of shared closure nodes, and the spelling of a cause's `node` and `locus`. Scope: FR-1015-AC-9 to AC-16.
+Verify the structured refusal codes of malformed export members, the `unsupported` refusal of an observer the build cannot run, the `limit-reached` cause of a denied charge, the once-per-node charge of shared closure nodes, and the spelling of a cause's `node` and `locus`. Scope: FR-1015-AC-9 to AC-17.
 
 ## Test Procedure
 
@@ -22,6 +22,7 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 6. Export the counter's `Bounded` to TLA+ and to Lean; count its export definitions N (the blank-line-separated blocks other than the header block and the footer) and find the least `export.nodes` C; export again under `export.work_units` C + N and C + N - 1.
 7. In a build that does not lower protocol subjects, export a temporal clause that a protocol requires, under the default floor and under `any`.
 8. Export a program whose checked package admission refuses `invalid_package`, and one with a missing import.
+9. Export with a `protocols` binding an analyze request accepts, then with an unknown member in it.
 
 ## Expected Results
 
@@ -33,3 +34,4 @@ Verify the structured refusal codes of malformed export members, the `unsupporte
 - Step 6: `assembled`, exit 0, under C + N; `incomplete` with `limit-reached` `work_units`, value C + N - 1, `export.work_units`, exit 22, under C + N - 1.
 - Step 7: `refused` with the seven-member `unimplemented_capability`/`unimplemented-meaning` refusal naming the protocol clause construct, exit 21, no text, package or file, under both floors.
 - Step 8: each keeps its own code, cause, locus and exit; neither exits 30.
+- Step 9: admitted with the binding; then the analyze reader's refusal at `/request/export/protocols/0`, exit 20.

@@ -43,7 +43,10 @@ writes no target bytes of its own, so the two give byte-identical files.
 - The `export` member SHALL carry `profile`, `target_family` (optional),
   `obligations`, `minimum_fidelity` (default `conditional`), `observer`
   (optional), `initial` (optional, a `filament.state.snapshot/v1` file
-  resolved against the request file's directory), `limits` (optional) and
+  resolved against the request file's directory), `protocols` and
+  `universes` (optional, FSpec FR-817 "Protocol subject inputs": the
+  protocol bindings and replicated-role universes an analyze request
+  carries, read by the same reader and validation), `limits` (optional) and
   `output` (optional, `{"file": P}`), as FSpec FR-817 states.
 - `limits` SHALL be keyed by FR-255 setting name: `export.output_bytes`,
   `export.nodes` and `export.work_units`, each an unsigned integer used as
@@ -221,6 +224,7 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-14 | Over the counter's `Bounded` export to TLA+ and to Lean, let N be the number of export definitions its `target_text` writes (its blank-line-separated blocks other than the header block and the footer, which include the generated helpers, the structural definitions and the TLA+ `VARIABLES` statement as one), and C the least `export.nodes` under which the export is not `incomplete` (its classification charge). Under `export.work_units` C + N the export is `assembled`, exit `0`. Under `export.work_units` C + N - 1 it is `incomplete` with `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": C + N - 1, "setting": "export.work_units"}`, exit `22`. Writing therefore charges one unit per export definition, each before it is written: a mapper that charges per `fsl:` comment, per byte, per line or per obligation, or that skips the helpers, the structural definitions or `VARIABLES`, assembles under C + N - 1 or is `incomplete` under C + N, and fails this criterion. | Test (TC-3020) |
 | FR-1015-AC-15 | In a build whose mapper does not lower a clause over a protocol subject, exporting a temporal clause that a protocol requires on an `origin` row writes `status` `refused` and `export.refusal` with exactly `code` `unimplemented_capability`, `cause` `unimplemented-meaning`, `capability` `export:tla:` followed by the protocol clause node's `node_tag`/`semantic_form`, `target` `tla`, `construct` that `node_tag`/`semantic_form`, `node` its canonical node-id string and `locus` its region or `null`, exit `21`, with no `target_text`, no `package` and no file; the same under `minimum_fidelity` `any`; never exit `30`. | Test (TC-3020) |
 | FR-1015-AC-16 | An export whose checked package admission refuses `invalid_package`, and one whose program has a missing import, each exit with the exit their compile gives and carry a diagnostic whose `code` is `invalid_package` or `missing_import` with that refusal's own cause and locus; neither exits `30` and neither message is the export mapper's text in place of the cause. | Test (TC-3020) |
+| FR-1015-AC-17 | An export request whose `protocols` member holds the protocol binding `{"protocol": P, "over": O, "roles": {}}` that an analyze request's `subject.protocol` accepts is admitted with that binding; the same binding with an unknown member refuses at `/request/export/protocols/0` with the code and cause the analyze reader gives the same binding, exit `20`; `universes` is read by the analyze reader of `subject.universes`. | Test (TC-3020) |
 
 
 ## Dependencies
