@@ -888,6 +888,7 @@ struct RegionState {
     timed: TimedState,
     elapsed: u64,
     phase: Phase,
+    tail: DigitalTail,
 }
 
 fn enumerate_digital_deadline(
@@ -939,6 +940,7 @@ fn enumerate_digital_deadline(
         timed: state,
         elapsed: 0,
         phase,
+        tail: DigitalTail::Running,
     };
     let first_key = digital_key(system, timed, binding, &first, &caps, key_scale, deadline)?;
     reserve_storage(
@@ -990,6 +992,57 @@ fn enumerate_digital_deadline(
                 continue;
             }
             Phase::Pending => {}
+        }
+        if current.tail != DigitalTail::Running {
+            let mut choices = Vec::new();
+            if let Some((target, delayed)) = digital_idle_delay(
+                system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+            )? {
+                admit_region_state(
+                    target.clone(),
+                    delayed,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+            }
+            if current.tail == DigitalTail::IdleDelayed {
+                let mut observed = current.clone();
+                observed.tail = DigitalTail::IdleReady;
+                let target = digital_key(
+                    system, timed, binding, &observed, &caps, key_scale, deadline,
+                )?;
+                admit_region_state(
+                    target.clone(),
+                    observed,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+            }
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
         }
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
@@ -1053,6 +1106,32 @@ fn enumerate_digital_deadline(
                 edges = edges.saturating_add(1);
                 charge_work(meter, cancel, 1)?;
             }
+            let invariants = timed
+                .invariants(current.timed.discrete())
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            let urgent = timed
+                .is_urgent(current.timed.discrete())
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            if invariants.is_empty() && !urgent {
+                if let Some((target, idle)) = digital_idle_delay(
+                    system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+                )? {
+                    admit_region_state(
+                        target.clone(),
+                        idle,
+                        &mut reached,
+                        &mut pending,
+                        limits,
+                        storage,
+                    )?;
+                    choices.push(vec![ProbabilityEdge {
+                        target,
+                        probability: one(),
+                    }]);
+                    edges = edges.saturating_add(1);
+                    charge_work(meter, cancel, 1)?;
+                }
+            }
         }
         let clocked_steps = timed
             .steps(&current.timed)
@@ -1101,6 +1180,7 @@ fn enumerate_digital_deadline(
                     timed: post,
                     elapsed: current.elapsed,
                     phase,
+                    tail: DigitalTail::Running,
                 };
                 let target = digital_key(
                     system,
@@ -1209,6 +1289,7 @@ fn enumerate_region_deadline(
         timed: state,
         elapsed: 0,
         phase,
+        tail: DigitalTail::Running,
     };
     let first_key = region_key(
         system,
@@ -1351,6 +1432,7 @@ fn enumerate_region_deadline(
                     timed: post,
                     elapsed: current.elapsed,
                     phase,
+                    tail: DigitalTail::Running,
                 };
                 let target = region_key(
                     system,
@@ -1757,7 +1839,7 @@ fn digital_key(
             limit: deadline,
             elapsed: state.elapsed,
         }),
-        tail: DigitalTail::Running,
+        tail: state.tail,
         monitor: Some(json!(["deadline", "eventually", phase])),
         accumulator: None,
         pending: None,
@@ -1808,6 +1890,7 @@ fn next_digital_delay(
             timed: delayed,
             elapsed,
             phase,
+            tail: current.tail,
         };
         let key = digital_key(system, timed, binding, &reached, caps, scale, deadline)?;
         if key != current_key {
@@ -1816,6 +1899,52 @@ fn next_digital_delay(
         state = reached;
     }
     Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn digital_idle_delay(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Option<(ProbabilityProductKey, RegionState)>, ProbabilityDocumentError> {
+    let delta = rational_units(1, scale)?;
+    let Some(delayed) = timed
+        .delay(&current.timed, &delta)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?
+    else {
+        return Ok(None);
+    };
+    let elapsed = current
+        .elapsed
+        .saturating_add(1)
+        .min(deadline.saturating_add(1));
+    let delayed = TimedState::new(
+        delayed.discrete().clone(),
+        ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
+    );
+    let phase = phase_at(
+        system,
+        predicate,
+        binding,
+        delayed.discrete(),
+        elapsed,
+        deadline,
+        cancel,
+    )?;
+    let state = RegionState {
+        timed: delayed,
+        elapsed,
+        phase,
+        tail: DigitalTail::IdleDelayed,
+    };
+    let key = digital_key(system, timed, binding, &state, caps, scale, deadline)?;
+    Ok(Some((key, state)))
 }
 
 fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rational, Rational)>> {
@@ -1967,6 +2096,7 @@ fn digital_discrete_delay_choice(
                                 timed: post,
                                 elapsed: state.elapsed,
                                 phase,
+                                tail: DigitalTail::Running,
                             },
                         ));
                     }
@@ -2106,6 +2236,7 @@ fn digital_state_after_delay(
             timed: delayed,
             elapsed,
             phase,
+            tail: current.tail,
         };
         if state.phase != Phase::Pending {
             return Ok(Some(state));
@@ -2169,6 +2300,7 @@ fn next_region_delay(
             timed: delayed,
             elapsed,
             phase,
+            tail: current.tail,
         };
         let key = region_key(
             system,
