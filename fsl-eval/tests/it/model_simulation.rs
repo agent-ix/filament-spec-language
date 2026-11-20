@@ -26,7 +26,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits, SelectedAnchor,
+    AdmissionFailure, AnchorKind, DocumentRef, ObservationLimits, PathStep, SelectedAnchor,
     declared_type_universe_for,
 };
 use fsl_semantics::model::state::{ModelState, StateModel};
@@ -2539,6 +2539,10 @@ fn float_world() -> World {
 
 /// The counter fixture with Float fields and a checked unit body.
 fn float_world_with_body(body: &str, operations: Vec<Json>) -> World {
+    float_world_with_body_and_set_bound(body, operations, 8)
+}
+
+fn float_world_with_body_and_set_bound(body: &str, operations: Vec<Json>, set_upper: u64) -> World {
     let mut document: Json =
         serde_json::from_slice(&counters_document_with(operations, false, Vec::new()))
             .expect("fixture JSON");
@@ -2559,7 +2563,7 @@ fn float_world_with_body(body: &str, operations: Vec<Json>) -> World {
     ));
     let mut levels = wire_field("levels", "ix://filament/native/Float64", "required");
     levels["multiplicity"]["lower"] = json!(0);
-    levels["multiplicity"]["upper"] = json!(8);
+    levels["multiplicity"]["upper"] = json!(set_upper);
     fields.push(levels);
     let mut taps = wire_field("taps", "ix://filament/native/Float32", "required");
     taps["multiplicity"]["lower"] = json!(0);
@@ -2717,7 +2721,7 @@ fn float_snapshot_admission_preserves_ieee_values_and_collections() {
         panic!("levels is an admitted Set<Float64>")
     };
     assert_eq!(levels.elements().len(), 8);
-    let level_bits: std::collections::BTreeSet<u64> = levels
+    let level_bits: Vec<u64> = levels
         .elements()
         .iter()
         .map(|value| match value {
@@ -2727,7 +2731,7 @@ fn float_snapshot_admission_preserves_ieee_values_and_collections() {
         .collect();
     assert_eq!(
         level_bits,
-        [
+        vec![
             0xfff0_0000_0000_0000,
             0xbff0_0000_0000_0000,
             0x8000_0000_0000_0000,
@@ -2737,8 +2741,6 @@ fn float_snapshot_admission_preserves_ieee_values_and_collections() {
             0x7ff8_0000_0000_0001,
             0x7ff8_0000_0000_0002,
         ]
-        .into_iter()
-        .collect()
     );
     let Some(Value::Collection(taps)) = state.populations[&counters()]["c1"]
         .fields
@@ -2747,11 +2749,10 @@ fn float_snapshot_admission_preserves_ieee_values_and_collections() {
         panic!("taps is an admitted Bag<Float32>")
     };
     assert_eq!(taps.elements().len(), 2);
-    assert!(
-        taps.elements()
-            .iter()
-            .all(|value| matches!(value, Value::Float(value) if value.bits() == 0x3f80_0000))
-    );
+    assert!(taps
+        .elements()
+        .iter()
+        .all(|value| matches!(value, Value::Float(value) if value.bits() == 0x3f80_0000)));
 }
 
 /// FR-106-AC-57: the evaluator executes a checked Float field graph over
@@ -2801,11 +2802,14 @@ fn checked_float_field_graph_evaluates_exact_and_rounded_sums() {
 #[trace("TC-3005", "FR-056-AC-58", "FR-106-AC-58")]
 #[test]
 fn checked_float_field_graph_compares_nan_and_signed_zero() {
-    let equal = concat!(
+    let comparisons = concat!(
         "invariant Equal using v on M::Counter at current { self.a = self.b }\n",
+        "invariant NotEqual using v on M::Counter at current { self.a != self.b }\n",
+        "invariant Less using v on M::Counter at current { self.a < self.b }\n",
+        "invariant LessEqual using v on M::Counter at current { self.a <= self.b }\n",
         "invariant LevelsSelf using v on M::Counter at current { self.levels = self.levels }"
     );
-    let mut nan_world = float_world_with_body(equal, Vec::new());
+    let mut nan_world = float_world_with_body(comparisons, Vec::new());
     let nan = float_snapshot(
         &mut nan_world,
         "nan-comparison",
@@ -2827,8 +2831,24 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
         )),
         "numeric equality of NaN is false: {nan_findings:?}"
     );
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantViolated { clause, .. } if clause == "NotEqual"
+        )),
+        "numeric inequality of NaN is true: {nan_findings:?}"
+    );
+    for clause in ["Less", "LessEqual"] {
+        assert!(
+            nan_findings.iter().any(|finding| matches!(
+                finding,
+                ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+            )),
+            "ordered comparison with NaN is false for {clause}: {nan_findings:?}"
+        );
+    }
 
-    let mut zero_world = float_world_with_body(equal, Vec::new());
+    let mut zero_world = float_world_with_body(comparisons, Vec::new());
     let plus_zero = float_snapshot(
         &mut zero_world,
         "plus-zero-graph",
@@ -2861,10 +2881,24 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
             .successors(state)
             .expect("evaluates checked signed-zero comparison")
             .findings;
-        assert!(
-            findings.is_empty(),
-            "numeric equality treats signed zeros equal: {findings:?}"
-        );
+        for clause in ["Equal", "LessEqual", "LevelsSelf"] {
+            assert!(
+                !findings.iter().any(|finding| matches!(
+                    finding,
+                    ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+                )),
+                "signed zero invariant {clause} holds: {findings:?}"
+            );
+        }
+        for clause in ["NotEqual", "Less"] {
+            assert!(
+                findings.iter().any(|finding| matches!(
+                    finding,
+                    ModelFinding::InvariantViolated { clause: found, .. } if found == clause
+                )),
+                "signed zero invariant {clause} is false: {findings:?}"
+            );
+        }
         let Some(Value::Collection(levels)) = state.state().populations[&counters()]["c1"]
             .fields
             .get(&field("levels"))
@@ -2995,9 +3029,18 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
     let failure = model
         .admit_initial(&world.snapshots, &duplicate, ObservationLimits::default())
         .expect_err("duplicate Float set members refuse");
+    let AdmissionFailure::Refused(record) = failure else {
+        panic!("duplicate Float set members refuse");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "duplicate-member");
     assert_eq!(
-        refusal_of(Some(failure)),
-        (Code::InvalidRuntimeInput, "duplicate-member")
+        record.fields.get("earlier-index").map(String::as_str),
+        Some("0")
+    );
+    assert_eq!(
+        record.path,
+        vec![PathStep::Field("levels".to_owned()), PathStep::Index(1)]
     );
     let duplicate_nan = float_snapshot(
         &mut world,
@@ -3014,8 +3057,43 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
             ObservationLimits::default(),
         )
         .expect_err("duplicate Float NaN members refuse");
+    let AdmissionFailure::Refused(record) = failure else {
+        panic!("duplicate Float NaN members refuse");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "duplicate-member");
     assert_eq!(
-        refusal_of(Some(failure)),
-        (Code::InvalidRuntimeInput, "duplicate-member")
+        record.fields.get("earlier-index").map(String::as_str),
+        Some("0")
     );
+    assert_eq!(
+        record.path,
+        vec![PathStep::Field("levels".to_owned()), PathStep::Index(1)]
+    );
+}
+
+/// FR-106-AC-57: a large unique Float set is admitted through the canonical
+/// membership-key path, not an all-pairs uniqueness scan.
+#[trace("TC-1171", "FR-106-AC-57")]
+#[test]
+fn a_large_unique_float_set_is_admitted() {
+    let mut world = float_world_with_body_and_set_bound("", Vec::new(), 8192);
+    let levels = (0..8192_u64)
+        .map(|bits| json!({"kind":"float64", "bits":format!("{bits:016x}")}))
+        .collect::<Vec<_>>();
+    let snapshot = float_snapshot(
+        &mut world,
+        "large-float-set",
+        json!({"levels":{"set":levels}}),
+    );
+    let system = system(&world, vec![snapshot], &["c1"], UNLIMITED);
+    let initial = system.initial();
+    assert_eq!(initial.len(), 1, "the large unique set is admitted");
+    let Some(Value::Collection(levels)) = initial[0].state().populations[&counters()]["c1"]
+        .fields
+        .get(&field("levels"))
+    else {
+        panic!("levels is an admitted Set<Float64>")
+    };
+    assert_eq!(levels.elements().len(), 8192);
 }
