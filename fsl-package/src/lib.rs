@@ -140,7 +140,7 @@ pub use checked_v2::{
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
-    ClaimWorkload, ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, Emission,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, Emission,
     EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
     ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
     SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
