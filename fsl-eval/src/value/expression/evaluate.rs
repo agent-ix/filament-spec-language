@@ -1453,7 +1453,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             return match halt {
                 Halt::Stop(stop) => self.stopped(stop, root_location.as_ref()),
                 Halt::Fault(fault) => Err(fault),
-                _ => Err(invariant("call-frame-limit-returned-non-stop")),
+                _ => Err(InternalFault::new(
+                    "S6a",
+                    "call-frame-limit-returned-non-stop",
+                )),
             };
         }
         let mut evaluation = self.drive(root)?;
@@ -1542,7 +1545,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         arguments: Vec<Value>,
     ) -> Result<(Evaluation, Trail), InternalFault> {
         self.enter_frame(slots, arguments, false, false)
-            .map_err(|_| invariant("traced-root-frame-unexpected-limit"))?;
+            .map_err(|halt| match halt {
+                Halt::Fault(fault) => fault,
+                _ => InternalFault::new("S6a", "traced-root-frame-unexpected-limit"),
+            })?;
         let evaluation = self.drive(root)?;
         let trail = self
             .trail
@@ -1804,7 +1810,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         };
         let (source, body) = (quantifier.at(*source), quantifier.at(*body));
         self.enter_frame(slots, arguments, false, false)
-            .map_err(|_| invariant("separation-root-frame-unexpected-limit"))?;
+            .map_err(|halt| match halt {
+                Halt::Fault(fault) => fault,
+                _ => InternalFault::new("S6a", "separation-root-frame-unexpected-limit"),
+            })?;
         for binding in lets {
             let NodeKind::Let { slot, value, .. } = binding.kind() else {
                 return Err(fault());
