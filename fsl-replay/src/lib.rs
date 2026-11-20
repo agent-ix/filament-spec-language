@@ -148,9 +148,6 @@ pub use call_site::{
     PopulationSite, ValueParitySite, call_site,
 };
 pub use certificate::closed_form::check::{
-    CertificateRefusal, ClaimTriple, ClosedFormResult, check_closed_form,
-};
-pub use certificate::closed_form::check::{
     check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
 };
 pub use certificate::closed_form::outcome::{
