@@ -536,10 +536,6 @@ pub struct ProviderRegistrationRefusal {
     pub cause: ProviderRegistrationCause,
 }
 
-/// Compatibility name for the previous, narrower registration refusal.
-#[deprecated(note = "use ProviderRegistrationRefusal")]
-pub type NotUnbounded = ProviderRegistrationRefusal;
-
 /// What the arm reports for one provider item.
 pub(crate) enum ProviderReport {
     /// The provider proved the claim.
