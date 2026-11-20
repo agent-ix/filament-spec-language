@@ -70,6 +70,17 @@ fn outcome_golden_validates_and_rejects_mutations() {
     malformed_pointer["diagnostics"][0]["locus"]["pointer"] = json!("selection");
     assert!(!validate.is_valid(&malformed_pointer));
 
+    let mut malformed_document_pointer = refused_value.clone();
+    malformed_document_pointer["diagnostics"][0]["locus"] = json!({
+        "kind": "document",
+        "document": null,
+        "path": null,
+        "pointer": "selection",
+        "object": null,
+        "member": null,
+    });
+    assert!(!validate.is_valid(&malformed_document_pointer));
+
     let mut mutations = Vec::new();
     let mut missing_code = refused_value.clone();
     missing_code["diagnostics"][0].as_object_mut().unwrap().remove("code");
