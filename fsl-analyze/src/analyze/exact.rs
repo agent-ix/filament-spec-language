@@ -12,39 +12,38 @@ mod candidate;
 mod long_run;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
-use fsl_replay::{
-    check_probability_certificate_document, claim_binding, probability_proof_document,
-    write_probability_certificate, write_probability_proof_document, ExactBinding,
-    ExactProbBuildIssue, ExactProbBuildRecord,
-    ExactProbabilityCertificate, ExactProbabilityCertificateCheck, ExactProbabilityGraphError,
-    ExactProbabilityValue, Extremum, ModelCheckLimit, ProbabilityBoundSide,
-    ProbabilityCertificateDocument, ProbabilityDocumentError, ProbabilityDocumentLimits,
-    ProbabilityObjective, ProbabilityProductKey, TerminalRecord, TimedProbabilityForm,
-    TimedProbabilityObjective, TimedProbabilityRoute,
-};
-use fsl_replay::{
-    replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
-    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
-    ReproducedProbabilityWitness,
-};
 use fsl_replay::{CertificateLocus, CertificateRule};
+use fsl_replay::{
+    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
+    ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
+    ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
+    ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
+    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
+    probability_proof_document, write_probability_certificate, write_probability_proof_document,
+};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
+use fsl_replay::{
+    ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    replay_probabilistic_witness,
+};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{BROKEN, NOT_YET, admission};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
-    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
-    FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective,
+    ExtRational, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
+    UnboundedObjective, build_retaining_monitor, decide_always, decide_bounded_event,
+    decide_expected_reward, decide_reachability, decide_until, manifest as en5,
+    settle_product_refusal,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -120,7 +119,7 @@ impl ExactReport {
                     .expect("the token's own claim matches"),
                     None,
                     Some((reproduced, *wire)),
-                )
+                );
             }
             Self::ReplayParity => (
                 TerminalRecord::inconclusive(
@@ -295,12 +294,11 @@ fn run_timed(
     } else {
         TimedProbabilityRoute::Digital
     };
-    let certificate_scale = match crate::exact_probabilistic::timed_certificate_scale(
-        &system, &timed, claim,
-    ) {
-        Ok(scale) => scale,
-        Err(refusal) => return build_refusal(refusal, subject),
-    };
+    let certificate_scale =
+        match crate::exact_probabilistic::timed_certificate_scale(&system, &timed, claim) {
+            Ok(scale) => scale,
+            Err(refusal) => return build_refusal(refusal, subject),
+        };
     let product_request = ProductRequest {
         subject: request.subject,
         claim,
@@ -321,7 +319,10 @@ fn run_timed(
         Ok(FhResult::Bounds { .. } | FhResult::PrecisionBudget { .. }) => return not_yet(),
         Err(_) => return broken(),
     };
-    let values = outcome.into_iter().map(ExtRational::Finite).collect::<Vec<_>>();
+    let values = outcome
+        .into_iter()
+        .map(ExtRational::Finite)
+        .collect::<Vec<_>>();
     let mut certificate = match certificate_of(
         &product,
         None,
@@ -346,11 +347,7 @@ fn run_timed(
         .decided
         .iter()
         .filter(|(_, verdict)| *verdict == crate::exact_probabilistic::MonitorVerdict::Accept)
-        .filter_map(|(state, _)| {
-            product.states[state.index()]
-                .certificate_state
-                .clone()
-        })
+        .filter_map(|(state, _)| product.states[state.index()].certificate_state.clone())
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
@@ -397,6 +394,95 @@ fn run_timed(
         ProbabilityObjective::Workload => None,
     };
     checked_report(checked, certificate, binding, extremum, subject)
+}
+
+fn mean_time_ranking(
+    product: &ProbProduct,
+    targets: &[bool],
+) -> Option<Vec<(ProbabilityProductKey, u64)>> {
+    if targets.len() != product.states.len() {
+        return None;
+    }
+    let mut ranks = vec![None; product.states.len()];
+    for (index, target) in targets.iter().enumerate() {
+        if *target {
+            ranks[index] = Some(0_u64);
+        }
+    }
+    while ranks.iter().any(Option::is_none) {
+        let mut changed = false;
+        for index in 0..ranks.len() {
+            if ranks[index].is_some() {
+                continue;
+            }
+            let outgoing = product.outgoing(crate::exact_probabilistic::ProbStateId(index));
+            let mut choices: Vec<(&crate::exact_probabilistic::ProductAction, Vec<u64>)> =
+                Vec::new();
+            for edge in outgoing {
+                let choice = match choices
+                    .iter_mut()
+                    .find(|(choice, _)| same_mean_time_choice(choice, &edge.choice))
+                {
+                    Some((_, choice)) => choice,
+                    None => {
+                        choices.push((&edge.choice, Vec::new()));
+                        &mut choices.last_mut()?.1
+                    }
+                };
+                if edge.probability > Rational::from_integer(0_i64) {
+                    if let Some(next_rank) = ranks.get(edge.to.index()).copied().flatten() {
+                        choice.push(next_rank);
+                    }
+                }
+            }
+            if choices.is_empty() || choices.iter().any(|(_, lower)| lower.is_empty()) {
+                continue;
+            }
+            let lower = choices
+                .iter()
+                .filter_map(|(_, ranks)| ranks.iter().copied().min())
+                .min()?;
+            ranks[index] = Some(lower.checked_add(1)?);
+            changed = true;
+        }
+        if !changed {
+            return None;
+        }
+    }
+    product
+        .states
+        .iter()
+        .zip(ranks)
+        .map(|(state, rank)| Some((state.certificate_state.clone()?, rank?)))
+        .collect()
+}
+
+fn same_mean_time_choice(
+    left: &crate::exact_probabilistic::ProductAction,
+    right: &crate::exact_probabilistic::ProductAction,
+) -> bool {
+    use crate::exact_probabilistic::ProductAction;
+    match (left, right) {
+        (ProductAction::Identity(left), ProductAction::Identity(right)) => left == right,
+        (ProductAction::PostState(_), ProductAction::PostState(_))
+        | (ProductAction::TerminalStutter, ProductAction::TerminalStutter)
+        | (ProductAction::UnitDelay, ProductAction::UnitDelay)
+        | (ProductAction::EnterIdleDelay, ProductAction::EnterIdleDelay)
+        | (ProductAction::IdleDelay, ProductAction::IdleDelay)
+        | (ProductAction::IdleObserve, ProductAction::IdleObserve) => true,
+        (
+            ProductAction::WorkloadResolve {
+                identity: left_identity,
+                delay: left_delay,
+            },
+            ProductAction::WorkloadResolve {
+                identity: right_identity,
+                delay: right_delay,
+            },
+        ) => left_identity == right_identity && left_delay == right_delay,
+        (ProductAction::FreeDelays(left), ProductAction::FreeDelays(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn run_timed_mean(
@@ -493,7 +579,7 @@ fn run_timed_mean(
                     value: limits.max_policy_iterations,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::MaxRationalBits) => {
             return settled(
@@ -502,7 +588,7 @@ fn run_timed_mean(
                     value: limits.max_rational_bits,
                 },
                 subject,
-            )
+            );
         }
         Err(_) => return broken(),
     };
@@ -549,12 +635,14 @@ fn run_timed_mean(
         .iter()
         .enumerate()
         .filter(|(_, labels)| labels.first().copied().unwrap_or(false))
-        .filter_map(|(index, _)| {
-            product.states[index].certificate_state.clone()
-        })
+        .filter_map(|(index, _)| product.states[index].certificate_state.clone())
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
+    let ranking = match mean_time_ranking(&product, &target) {
+        Some(ranking) => ranking,
+        None => return not_yet(),
+    };
     let optimization = match objective {
         UnboundedObjective::Min => ProbabilityObjective::Minimum,
         UnboundedObjective::Max => ProbabilityObjective::Maximum,
@@ -574,7 +662,7 @@ fn run_timed_mean(
             form: TimedProbabilityForm::ExpectedElapsed,
         }),
         values: certificate.values.clone(),
-        ranking: Vec::new(),
+        ranking,
     };
     let checked = (|| {
         let bytes = write_probability_certificate(&document, document_limits, cancel)?;
@@ -726,7 +814,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget, BudgetedProductError,
+            BudgetedProductError, build_retaining_monitor_with_budget,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -734,13 +822,13 @@ fn run(
             Ok(built) => built,
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
-                return document_failure(admission.refusal(error), subject)
+                return document_failure(admission.refusal(error), subject);
             }
             Err(BudgetedProductError::Undefined(cause)) => {
                 return document_failure(
                     ProbabilityDocumentError::UndefinedPredicate(cause),
                     subject,
-                )
+                );
             }
         }
     } else {
@@ -789,7 +877,7 @@ fn run(
                         upper: upper.rational(),
                     },
                     subject,
-                )
+                );
             }
             Err(_) => return broken(),
         }
@@ -824,7 +912,7 @@ fn run(
                         value: limits.max_policy_iterations,
                     },
                     subject,
-                )
+                );
             }
             Err(UnboundedError::MaxRationalBits) => {
                 return settled(
@@ -833,7 +921,7 @@ fn run(
                         value: limits.max_rational_bits,
                     },
                     subject,
-                )
+                );
             }
             Err(_) => return broken(),
         };
@@ -941,7 +1029,7 @@ fn run(
             ) {
                 Ok(monitor) => monitor,
                 Err(fsl_eval::automaton::QualifiedBoundedError::Translation(_)) => {
-                    return not_yet()
+                    return not_yet();
                 }
                 Err(_) => return broken(),
             };
@@ -1460,7 +1548,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
+        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
