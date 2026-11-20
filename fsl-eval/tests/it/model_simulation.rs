@@ -3084,8 +3084,8 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
         );
         assert_eq!(
             record.path,
-            vec![PathStep::Field(field.to_owned())],
-            "case {name} identifies the typed field path"
+            Vec::<PathStep>::new(),
+            "case {name} keeps the native-local path empty; the snapshot field path is asserted above"
         );
     }
     let duplicate = float_snapshot(
