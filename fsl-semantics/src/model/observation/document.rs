@@ -1079,6 +1079,9 @@ pub(super) fn raw_field<'a>(
 }
 
 fn field_kind_matches(raw: &SnapshotValue, value_type: &filament_exact::ValueType) -> bool {
+    if matches!(value_type, filament_exact::ValueType::Collection(_)) {
+        return true;
+    }
     matches!(
         (raw.form(), value_type),
         (RawForm::Boolean(_), filament_exact::ValueType::Boolean)
@@ -1121,6 +1124,11 @@ fn object_field_kind_matches(
     value_type: &filament_exact::ValueType,
     presence: filament_exact::Presence,
 ) -> bool {
+    if presence == filament_exact::Presence::Required
+        && matches!(value_type, filament_exact::ValueType::Collection(_))
+    {
+        return true;
+    }
     // A native payload object is judged by `admit_native`, whose order puts
     // its own envelope defects before declared-type fit.
     if matches!(raw, RawForm::Native(_)) {
@@ -1523,10 +1531,12 @@ pub(super) fn rational_payload(
     filament_exact::Rational::new(numerator, denominator).map_err(|_| invalid("denominator"))
 }
 
-/// A Decimal object's exact value: `invalid-value` naming a `coefficient`
+/// A Decimal object's retained representation: `invalid-value` naming a `coefficient`
 /// not in FR-038's integer spelling, or a `scale` that is not a
 /// nonnegative integer at most `4294967295`.
-fn decimal_payload(native: RawNative<'_>) -> Result<filament_exact::Rational, AdmissionRecord> {
+pub(super) fn decimal_representation(
+    native: RawNative<'_>,
+) -> Result<filament_exact::DecimalRepresentation, AdmissionRecord> {
     let invalid = |member: &'static str| {
         admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", member)
     };
@@ -1540,7 +1550,52 @@ fn decimal_payload(native: RawNative<'_>) -> Result<filament_exact::Rational, Ad
         .and_then(|scale| scale.to_u64())
         .and_then(|scale| u32::try_from(scale).ok())
         .ok_or_else(|| invalid("scale"))?;
-    Ok(filament_exact::DecimalRepresentation::new(coefficient, scale).to_rational())
+    Ok(filament_exact::DecimalRepresentation::new(
+        coefficient,
+        scale,
+    ))
+}
+/// FR-106's native counterpart of FR-144-AC-16, before any element is read.
+fn collection_envelope_refusal(form: RawForm<'_>, kind: CollectionKind) -> Option<AdmissionRecord> {
+    let refuse = |cause| admission_record(Code::InvalidRuntimeInput, cause);
+    let tag = collection_tag(kind);
+    match form {
+        RawForm::NonObject => Some(refuse("wrong-value-kind")),
+        RawForm::Collection(actual, _) => (actual != kind).then(|| refuse("wrong-value-kind")),
+        RawForm::ObjectMembers(names) => {
+            if !names.iter().any(|name| name == tag) {
+                if matches!(names, [name] if super::collection_kind_of_tag(name).is_some()) {
+                    return Some(refuse("wrong-value-kind"));
+                }
+                return Some(refuse("missing-member").with("member", tag));
+            }
+            if let Some(extra) = names.iter().find(|name| name.as_str() != tag) {
+                return Some(refuse("unknown-member").with("member", extra.clone()));
+            }
+            Some(refuse("wrong-value-kind").with("member", tag))
+        }
+        // A payload object (one with `kind`) holding the declared tag is
+        // judged as an envelope with an unknown member: the first member in
+        // document order other than the tag (FR-106-AC-68).
+        RawForm::Native(native) => {
+            if native.member_names().any(|name| name == tag) {
+                let extra = native
+                    .member_names()
+                    .find(|name| *name != tag)
+                    .unwrap_or("kind");
+                return Some(refuse("unknown-member").with("member", extra));
+            }
+            Some(refuse("missing-member").with("member", tag))
+        }
+        // These are JSON objects too, with no member of the declared kind.
+        RawForm::Boolean(_)
+        | RawForm::Integer(_)
+        | RawForm::Absent
+        | RawForm::Present(_)
+        | RawForm::Reference(_)
+        | RawForm::Record(_)
+        | RawForm::Variant(_) => Some(refuse("missing-member").with("member", tag)),
+    }
 }
 
 /// A Quantity's `magnitude` object read as its exact rational (FR-106 "A
@@ -1553,7 +1608,9 @@ pub(super) fn quantity_magnitude(
     let at = |record: AdmissionRecord| record.at(vec![PathStep::Field("magnitude".to_owned())]);
     match native_payload(magnitude).map_err(at)? {
         NativeKind::Rational => rational_payload(magnitude).map_err(at),
-        NativeKind::Decimal => decimal_payload(magnitude).map_err(at),
+        NativeKind::Decimal => decimal_representation(magnitude)
+            .map(|value| value.to_rational())
+            .map_err(at),
         NativeKind::String
         | NativeKind::Uuid
         | NativeKind::Timestamp
@@ -1661,18 +1718,37 @@ fn admit_native(
         {
             float_payload(native)
                 .map(Value::Float)
-                .ok_or_else(|| invalid_float_bits())
+                .ok_or_else(invalid_float_bits)
         }
         (NativeKind::Float64, filament_exact::ValueType::Float(declared))
             if declared.width() == filament_exact::IeeeWidth::Binary64 =>
         {
             float_payload(native)
                 .map(Value::Float)
-                .ok_or_else(|| invalid_float_bits())
+                .ok_or_else(invalid_float_bits)
         }
         (NativeKind::Rational, filament_exact::ValueType::Rational(domain)) => {
             let value = rational_payload(native)?;
             rational_in_domain(domain, value).map(Value::Rational)
+        }
+        (NativeKind::Decimal, filament_exact::ValueType::Decimal(domain)) => {
+            let value =
+                filament_exact::Decimal::from_representation(decimal_representation(native)?);
+            if !domain.contains(&value) {
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "invalid-value").with(
+                        "expected",
+                        format!(
+                            "Decimal[{}, {}; {}, {}]",
+                            domain.lower(),
+                            domain.upper(),
+                            domain.min_scale(),
+                            domain.max_scale()
+                        ),
+                    ),
+                );
+            }
+            Ok(Value::Decimal(value))
         }
         // FR-505-AC-5, the unit sentence: a Quantity of the carried unit whose
         // magnitude is a Rational admits as that quantity when the normalized
@@ -1927,6 +2003,7 @@ enum Admit<'w, 'v> {
         value_type: &'w filament_exact::ValueType,
         presence: filament_exact::Presence,
         field: bool,
+        canonical: bool,
     },
     /// Descend one step of the value path.
     Enter(PathStep),
@@ -1976,6 +2053,7 @@ fn admit_value<'a: 'w, 'w>(
         value_type,
         presence,
         field: false,
+        canonical: false,
     }];
     let mut done: Vec<FieldValue> = Vec::new();
     let mut path: Vec<PathStep> = Vec::new();
@@ -2045,7 +2123,16 @@ fn admit_value<'a: 'w, 'w>(
                 value_type,
                 presence,
                 field,
+                canonical,
             } => {
+                if presence == filament_exact::Presence::Required {
+                    if let filament_exact::ValueType::Collection(collection) = value_type {
+                        if let Some(refusal) = collection_envelope_refusal(form, collection.kind())
+                        {
+                            return Err(refusal.at(path.clone()));
+                        }
+                    }
+                }
                 if field && !object_field_kind_matches(form, value_type, presence) {
                     return Err(refuse_at("wrong-value-kind", &path));
                 }
@@ -2061,6 +2148,7 @@ fn admit_value<'a: 'w, 'w>(
                                 value_type,
                                 presence: filament_exact::Presence::Required,
                                 field: false,
+                                canonical,
                             });
                             work.push(Admit::Enter(PathStep::OptionValue));
                         }
@@ -2093,6 +2181,7 @@ fn admit_value<'a: 'w, 'w>(
                             value_type: payload,
                             presence: filament_exact::Presence::Required,
                             field: false,
+                            canonical,
                         });
                         work.push(Admit::Enter(PathStep::OptionValue));
                     }
@@ -2128,6 +2217,11 @@ fn admit_value<'a: 'w, 'w>(
                                 value_type: collection.element(),
                                 presence: filament_exact::Presence::Required,
                                 field: false,
+                                canonical: canonical
+                                    || matches!(
+                                        collection.kind(),
+                                        CollectionKind::Set | CollectionKind::Bag
+                                    ),
                             });
                             work.push(Admit::Enter(PathStep::Index(index)));
                         }
@@ -2186,12 +2280,13 @@ fn admit_value<'a: 'w, 'w>(
                                 value_type: field.value_type(),
                                 presence: field.presence(),
                                 field: true,
+                                canonical,
                             });
                             work.push(Admit::Enter(PathStep::Field(field.name().to_owned())));
                         }
                     }
                     (form, value_type) => {
-                        let value =
+                        let mut value =
                             admit_leaf(references, form, value_type, witness.as_deref_mut())
                                 .map_err(|record| {
                                     // A refusal inside a payload object (a
@@ -2201,6 +2296,14 @@ fn admit_value<'a: 'w, 'w>(
                                     full.extend(record.path.iter().cloned());
                                     record.at(full)
                                 })?;
+                        if canonical {
+                            if let Value::Decimal(decimal) = &value {
+                                value =
+                                    Value::Decimal(filament_exact::Decimal::from_representation(
+                                        decimal.normalized().clone(),
+                                    ));
+                            }
+                        }
                         done.push(FieldValue::Present(value));
                     }
                 }
@@ -2444,19 +2547,19 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
     let mut pending = vec![value_type];
     while let Some(next) = pending.pop() {
         match next {
-            filament_exact::ValueType::Rational(_) => return Some("Rational"),
-            filament_exact::ValueType::Decimal(_) => return Some("Decimal"),
-            filament_exact::ValueType::Quantity(_) => return Some("Quantity"),
             filament_exact::ValueType::BoundedQuantity(_) => return Some("BoundedQuantity"),
-            filament_exact::ValueType::CarriedQuantity(_) => return Some("CarriedQuantity"),
             filament_exact::ValueType::Map(_) => return Some("Map"),
             filament_exact::ValueType::Population(_) => return Some("Population"),
             filament_exact::ValueType::Option(payload) => pending.push(payload),
             filament_exact::ValueType::Collection(collection) => pending.push(collection.element()),
             filament_exact::ValueType::Boolean
+            | filament_exact::ValueType::Rational(_)
+            | filament_exact::ValueType::Decimal(_)
+            | filament_exact::ValueType::Float(_)
+            | filament_exact::ValueType::Quantity(_)
+            | filament_exact::ValueType::CarriedQuantity(_)
             | filament_exact::ValueType::Integer
             | filament_exact::ValueType::Int(_)
-            | filament_exact::ValueType::Float(_)
             | filament_exact::ValueType::Text(_)
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Uuid
@@ -2718,7 +2821,9 @@ fn collect_references(raw: &SnapshotValue, into: &mut Vec<(String, String)>) {
             RawForm::Record(record) => {
                 pending.extend(record.fields().rev().map(|(_, value)| value.form()));
             }
-            RawForm::Boolean(_)
+            RawForm::NonObject
+            | RawForm::ObjectMembers(_)
+            | RawForm::Boolean(_)
             | RawForm::Integer(_)
             | RawForm::Native(_)
             | RawForm::Absent
@@ -2949,6 +3054,86 @@ fn json_pointer_segment(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
 }
 
+/// The typed steps below a field value, each written the way the document
+/// spells it, so a pointer folded from them resolves to the failing member
+/// (FR-663; FR-106 nested path): a collection tag before an element index,
+/// `present` for an option's value, and `record` then `fields` before a
+/// record's field name. Steps below a leaf (a magnitude, a payload member)
+/// are already document members and stay as they are.
+fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep> {
+    let mut spelled = Vec::with_capacity(steps.len() * 2);
+    for step in steps {
+        match (form, step) {
+            (RawForm::Present(inner), PathStep::OptionValue) => {
+                spelled.push(PathStep::Field("present".to_owned()));
+                form = inner.form();
+            }
+            (RawForm::Collection(kind, items), PathStep::Index(index)) => {
+                spelled.push(PathStep::Field(collection_tag(kind).to_owned()));
+                spelled.push(PathStep::Index(*index));
+                form = items
+                    .iter()
+                    .nth(*index)
+                    .map_or(RawForm::NonObject, RawValue::form);
+            }
+            (RawForm::Record(record), PathStep::Field(name)) => {
+                spelled.push(PathStep::Field("record".to_owned()));
+                spelled.push(PathStep::Field("fields".to_owned()));
+                // A missing member keeps its name; FR-663 locates it at
+                // the `fields` object (the replay pointer drops it).
+                spelled.push(step.clone());
+                form = record
+                    .fields()
+                    .find(|(own, _)| own == name)
+                    .map_or(RawForm::NonObject, |(_, value)| value.form());
+            }
+            _ => {
+                spelled.push(step.clone());
+                form = RawForm::NonObject;
+            }
+        }
+    }
+    spelled
+}
+
+/// The steps below a snapshot field of a refusal raised inside its value, as
+/// the document spells them and ending at the failing member (FR-663). A
+/// missing member is absent from the document, so its pointer stays at the
+/// containing object.
+fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
+    let mut steps = document_spelling(form, &record.path);
+    let missing = record.catalog.cause() == "missing-member";
+    match record.fields.get("member") {
+        Some(member) => {
+            let named = PathStep::Field(member.clone());
+            if !missing && steps.last() != Some(&named) {
+                steps.push(named);
+            }
+        }
+        // A record's missing field is named by the last typed step.
+        None if missing => {
+            steps.pop();
+        }
+        None => {}
+    }
+    steps
+}
+
+/// The RFC 6901 pointer suffix of document-spelled steps.
+fn pointer_of(steps: &[PathStep]) -> String {
+    steps.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(name) => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(name));
+            }
+            PathStep::Index(index) => pointer.push_str(&format!("/{index}")),
+            PathStep::OptionValue => {}
+        }
+        pointer
+    })
+}
+
 /// The JSON pointer to an object's member in its source snapshot.
 fn snapshot_member_path(population: usize, object: usize, member: &str) -> String {
     format!(
@@ -2958,6 +3143,18 @@ fn snapshot_member_path(population: usize, object: usize, member: &str) -> Strin
 }
 
 /// The JSON pointer to an object's field value in its source snapshot.
+/// The typed document steps to an object's field value in its snapshot.
+fn snapshot_field_steps(population: usize, object: usize, field: &str) -> Vec<PathStep> {
+    vec![
+        PathStep::Field("populations".to_owned()),
+        PathStep::Index(population),
+        PathStep::Field("objects".to_owned()),
+        PathStep::Index(object),
+        PathStep::Field("fields".to_owned()),
+        PathStep::Field(field.to_owned()),
+    ]
+}
+
 fn snapshot_field_path(population: usize, object: usize, field: &str) -> String {
     format!(
         "/populations/{population}/objects/{object}/fields/{}",
@@ -3106,7 +3303,7 @@ pub(super) fn admit_population_values<'t>(
                             .with("field", name.to_owned())
                             .with(
                                 "path",
-                                snapshot_field_path(population_index, object_index, name),
+                                format!("/populations/{population_index}/objects/{object_index}"),
                             )
                             .at(vec![
                                 filament_semantic_value::admission::PathStep::Field(
@@ -3194,7 +3391,8 @@ pub(super) fn admit_population_values<'t>(
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            ),
+                            )
+                            .at(snapshot_field_steps(population_index, object_index, name)),
                     ));
                 }
                 let mut found = Vec::new();
@@ -3207,22 +3405,22 @@ pub(super) fn admit_population_values<'t>(
                         .map_err(|mut record| {
                             let field_path =
                                 snapshot_field_path(population_index, object_index, name);
-                            let mut path = vec![
-                                PathStep::Field("populations".to_owned()),
-                                PathStep::Index(population_index),
-                                PathStep::Field("objects".to_owned()),
-                                PathStep::Index(object_index),
-                                PathStep::Field("fields".to_owned()),
-                                PathStep::Field(name.to_owned()),
-                            ];
-                            let member = record.fields.get("member").cloned();
-                            let refusal_path = member.as_ref().map_or_else(
-                                || field_path.clone(),
-                                |member| {
-                                    path.push(PathStep::Field(member.clone()));
-                                    format!("{field_path}/{}", json_pointer_segment(member))
-                                },
+                            // The typed steps stay as the kernel gave them
+                            // (FR-106: no rendering of the shared path); the
+                            // document-spelled pointer is the `path` member.
+                            let refusal_path = format!(
+                                "{field_path}{}",
+                                pointer_of(&refusal_steps(raw.form(), &record))
                             );
+                            let mut path =
+                                snapshot_field_steps(population_index, object_index, name);
+                            path.extend(record.path.iter().cloned());
+                            if let Some(member) = record.fields.get("member") {
+                                let named = PathStep::Field(member.clone());
+                                if path.last() != Some(&named) {
+                                    path.push(named);
+                                }
+                            }
                             record.path = path;
                             refuse(
                                 record
@@ -3242,7 +3440,8 @@ pub(super) fn admit_population_values<'t>(
                                 .with(
                                     "path",
                                     snapshot_field_path(population_index, object_index, name),
-                                ),
+                                )
+                                .at(snapshot_field_steps(population_index, object_index, name)),
                         ));
                     }
                 }
@@ -4366,6 +4565,8 @@ mod tests {
     use filament_exact::ValueType;
     use ix_trace_rs::trace;
 
+    mod collection_elements;
+
     /// The value form `text` spells, read as the admission reads it.
     fn snapshot(text: &str) -> SnapshotValue {
         let document =
@@ -4646,11 +4847,42 @@ mod tests {
             r#"{"record":{"type":"ix://p/T","fields":{},"extra":1}}"#,
             r#"{"record":{"type":7,"fields":{}}}"#,
             r#"{"record":{"type":"ix://p/T","fields":[]}}"#,
-            r#"{"record":{"type":"ix://p/T","fields":{"a":{"nope":1}}}}"#,
             r#"{"record":"ix://p/T"}"#,
         ] {
             assert!(read(malformed).is_none(), "{malformed}");
         }
+        // FR-106-AC-66 requires retaining an unknown object envelope so a
+        // collection slot can name its missing declared tag. A record's
+        // field retains that defect for the same typed admission check.
+        let defective = snapshot(r#"{"record":{"type":"ix://p/T","fields":{"a":{"nope":1}}}}"#);
+        let RawForm::Record(record) = defective.form() else {
+            panic!("record envelope")
+        };
+        let (_, field) = record.fields().next().expect("field a");
+        let RawForm::ObjectMembers(names) = field.form() else {
+            panic!("defective field envelope")
+        };
+        assert_eq!(names, &["nope".to_owned()]);
+        assert_eq!(
+            admit_form(
+                &mut References {
+                    views: &[],
+                    types: &TypeEnvironment::default(),
+                    admitted: BTreeMap::new(),
+                    completeness: BTreeMap::new(),
+                    unresolved: Vec::new(),
+                    record_keys: None,
+                    variant_keys: None
+                },
+                field.form(),
+                &filament_exact::ValueType::Integer,
+                None
+            )
+            .unwrap_err()
+            .catalog
+            .cause(),
+            "wrong-value-kind"
+        );
     }
 
     /// FR-360 item 9: the `variant` tag keeps the members of its payload as

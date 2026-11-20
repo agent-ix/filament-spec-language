@@ -1883,20 +1883,29 @@ pub(crate) fn snapshot_admission_locus(
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
     use filament_semantic_value::admission::PathStep;
-    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
-        match step {
-            PathStep::Field(member) => {
-                pointer.push('/');
-                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+    // The snapshot refusal's `path` member is the RFC 6901 pointer to the
+    // failing member in the document's own spelling (FR-663); a refusal that
+    // names none is located by its typed steps.
+    let folded = || {
+        record.path.iter().fold(String::new(), |mut pointer, step| {
+            match step {
+                PathStep::Field(member) => {
+                    pointer.push('/');
+                    pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+                }
+                PathStep::Index(index) => {
+                    pointer.push('/');
+                    pointer.push_str(&index.to_string());
+                }
+                PathStep::OptionValue => {}
             }
-            PathStep::Index(index) => {
-                pointer.push('/');
-                pointer.push_str(&index.to_string());
-            }
-            PathStep::OptionValue => {}
-        }
-        pointer
-    });
+            pointer
+        })
+    };
+    let pointer = match record.fields.get("path") {
+        Some(path) if path.starts_with('/') => path.clone(),
+        _ => folded(),
+    };
     let identity = fsl_foundation::source::provenance::RawSourceRef::new(
         document.authority.clone(),
         document.identity.clone(),
@@ -4921,5 +4930,59 @@ mod tests {
             document["diagnostics"][0]["code"],
             "unimplemented_capability"
         );
+    }
+
+    /// FR-663 (TC-1746): the pointer of a snapshot refusal is its
+    /// document-spelled `path` member, which resolves in the document.
+    #[trace("FR-663-AC-3")]
+    #[test]
+    fn a_snapshot_locus_pointer_resolves_in_the_document() {
+        use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+        let document = json!({"populations": [{"objects": [{"fields": {
+            "reach": {"set": [{"n": 1}, {"n": 1}]},
+            "total": {"record": {"type": "T", "fields": {"a": 1}}},
+        }}]}]});
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "current".to_owned(),
+        };
+        let field = |name: &str| PathStep::Field(name.to_owned());
+        let prefix = || {
+            vec![
+                field("populations"),
+                PathStep::Index(0),
+                field("objects"),
+                PathStep::Index(0),
+                field("fields"),
+            ]
+        };
+        let pointer_of = |below: Vec<PathStep>, spelled: Option<&str>| {
+            let mut path = prefix();
+            path.extend(below);
+            let record = AdmissionRecord {
+                catalog: CatalogCode::new("invalid_runtime_input", "duplicate-member"),
+                fields: spelled
+                    .map(|spelled| BTreeMap::from([("path", spelled.to_owned())]))
+                    .unwrap_or_default(),
+                path,
+                kernel: None,
+            };
+            match snapshot_admission_locus(&record, &reference, None) {
+                Some(OutcomeLocus::Document { pointer, .. }) => pointer,
+                other => panic!("a document locus, not {other:?}"),
+            }
+        };
+        // The typed steps of a duplicate at element 1 of a set are `[1]`; the
+        // pointer is the document-spelled `path` member.
+        let duplicate = pointer_of(
+            vec![field("reach"), PathStep::Index(1)],
+            Some("/populations/0/objects/0/fields/reach/set/1"),
+        );
+        assert_eq!(duplicate, "/populations/0/objects/0/fields/reach/set/1");
+        assert_eq!(document.pointer(&duplicate), Some(&json!({"n": 1})));
+        // A refusal with no `path` member is located by its typed steps.
+        let typed = pointer_of(vec![field("total")], None);
+        assert_eq!(typed, "/populations/0/objects/0/fields/total");
+        assert!(document.pointer(&typed).is_some());
     }
 }
