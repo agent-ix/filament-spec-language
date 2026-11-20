@@ -349,7 +349,11 @@ fn publishing_provider(
         },
     )
     .expect("the descriptor advertises the external value arm")
-    .with_options(published.iter().map(|name| ((*name).to_owned(), "1".to_owned())));
+    .with_options(
+        published
+            .iter()
+            .map(|name| ((*name).to_owned(), "1".to_owned())),
+    );
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
@@ -670,6 +674,71 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
         1,
         "the unused clock refuses before provider settlement"
     );
+}
+
+/// FR-961-AC-6: a provider-backed run applies the caller's S1 node limit to
+/// compilation, so an incomplete compile settles no requirement items.
+#[trace("TC-2701", "FR-961-AC-6")]
+#[test]
+fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
+    use fsl_foundation::{Setting, SettingLimits};
+    use fsl_replay::Operation;
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = write(
+        directory.path(),
+        "Even",
+        json!([{"parameter": "n", "value": 4}]),
+        Some(json!({"backend": PROVIDER})),
+    );
+    let mut stage_limits = fsl_replay::spine::SpineLimits::default();
+    assert!(stage_limits.set_bound(Setting::S1Nodes, 1));
+    let overrides = command::RequestOverrides {
+        limits: Some(&stage_limits),
+        ..command::RequestOverrides::default()
+    };
+    let limits = command::RunLimits::default();
+
+    let plain_error = command::run_with_limits_and_overrides(&request, limits, &overrides, &Fr290)
+        .expect_err("the caller's S1 node limit prevents compilation");
+
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let negotiate = Counting {
+        negotiations: AtomicUsize::new(0),
+    };
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let cancel = filament_exact::Cancel::new();
+    let provider_error = command::run_with_providers_and_limits_and_overrides(
+        &request,
+        limits,
+        &overrides,
+        &negotiate,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &options,
+        &cancel,
+    )
+    .expect_err("the provider-backed run applies the caller's S1 node limit");
+
+    assert_eq!(
+        provider_error.cause.code(),
+        fsl_foundation::Code::ResourceExhausted
+    );
+    assert!(provider_error.cause.is_incomplete());
+    assert_eq!(provider_error.category().exit_code(), 22);
+    let outcome = serde_json::to_value(provider_error.outcome_document(Operation::Run)).unwrap();
+    let plain_outcome = serde_json::to_value(plain_error.outcome_document(Operation::Run)).unwrap();
+    assert_eq!(
+        outcome, plain_outcome,
+        "the typed limit outcome matches plain run"
+    );
+    assert_eq!(outcome["category"], "incomplete");
+    assert_eq!(outcome["diagnostics"][0]["code"], "resource_exhausted");
+    assert!(outcome["diagnostics"][0].to_string().contains("s1.nodes"));
+    assert_eq!(negotiate.negotiations.load(Ordering::SeqCst), 0);
+    assert_eq!(seen.lock().unwrap().settle_calls, 0);
 }
 
 /// FR-961-AC-4, FR-961-AC-5: negative cases of the run-side entry: a repeated
