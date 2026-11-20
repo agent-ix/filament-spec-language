@@ -976,6 +976,7 @@ fn read_object(
     let mut fields = Vec::new();
     let mut operations = Vec::new();
     let mut relationships = Vec::new();
+    let mut clauses = Vec::new();
     let mut relationship_targets = Vec::new();
     while tokens.get(index)?.text != "}" {
         let member_start = tokens.get(index)?.span.start;
@@ -1034,7 +1035,12 @@ fn read_object(
             "states" | "transition" | "step" => {
                 index = skip_statement(tokens, index)?;
             }
-            "invariant" => index = skip_statement(tokens, index)?,
+            "invariant" => {
+                let (clause, next) =
+                    read_clause_declaration(tokens, index, &name, package, parsed, true)?;
+                clauses.push(clause);
+                index = next;
+            }
             _ => {
                 let field_name = tokens.get(index)?.text.clone();
                 index += 1;
@@ -1127,6 +1133,7 @@ fn read_object(
         "constraints": [], "extensions": [], "unknownPolicy": "reject",
         "supertypes": [], "fields": fields, "operations": operations, "relationships": relationships,
         "identityFields": identity_fields.iter().map(|field| format!("ix://{package}/{name}/{field}")).collect::<Vec<_>>(),
+        "clauses": clauses,
     });
     Some((
         ObjectRead {
@@ -2162,11 +2169,12 @@ fn read_operation(
     let mut modifies_receiver = Vec::new();
     let mut creates = Vec::new();
     let mut deletes = Vec::new();
-    while tokens.get(index)?.text != ";" {
+    while tokens.get(index)?.text != ";" && tokens.get(index)?.text != "{" {
         match tokens.get(index)?.text.as_str() {
             "modifies" => {
                 index += 1;
                 while tokens.get(index)?.text != ";"
+                    && tokens.get(index)?.text != "{"
                     && tokens.get(index)?.text != "creates"
                     && tokens.get(index)?.text != "deletes"
                 {
@@ -2200,11 +2208,35 @@ fn read_operation(
             _ => index += 1,
         }
     }
-    let end = tokens.get(index)?.span.end;
-    index += 1;
+    let mut preconditions = Vec::new();
+    let mut postconditions = Vec::new();
+    if tokens.get(index)?.text == ";" {
+        index += 1;
+    } else {
+        if tokens.get(index)?.text != "{" {
+            return None;
+        }
+        index += 1;
+        while tokens.get(index)?.text != "}" {
+            let member = tokens.get(index)?.text.as_str();
+            if member != "pre" && member != "post" {
+                return None;
+            }
+            let (clause, next) =
+                read_clause_declaration(tokens, index, &name, package, parsed, false)?;
+            if member == "pre" {
+                preconditions.push(clause);
+            } else {
+                postconditions.push(clause);
+            }
+            index = next;
+        }
+        index += 1;
+    }
+    let end = tokens.get(index.saturating_sub(1))?.span.end;
     let mut operation = json!({
         "identity": format!("ix://{package}/{owner}/{name}"),
-        "name": name, "params": params, "pre": [], "post": [],
+        "name": name, "params": params, "pre": preconditions, "post": postconditions,
         "origin": source_origin(parsed, Span { start, end }),
         "frame": {"modifies": [], "modifies_receiver": modifies_receiver, "creates": creates, "deletes": deletes},
     });
@@ -2212,6 +2244,57 @@ fn read_operation(
         operation["returns"] = returns;
     }
     Some((operation, index))
+}
+
+fn read_clause_declaration(
+    tokens: &[Token],
+    mut index: usize,
+    owner: &str,
+    package: &str,
+    parsed: &ParsedSource,
+    include_identity: bool,
+) -> Option<(Value, usize)> {
+    let clause_kind = tokens.get(index)?.text.as_str();
+    if !matches!(clause_kind, "invariant" | "pre" | "post") {
+        return None;
+    }
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let clause_id = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "{" {
+        return None;
+    }
+    index += 1;
+    let text_start = tokens.get(index)?.span.start;
+    let mut depth = 1usize;
+    while depth > 0 {
+        match tokens.get(index)?.text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            _ => {}
+        }
+        if depth > 0 {
+            index += 1;
+        }
+    }
+    let text_end = tokens.get(index)?.span.start;
+    let end = tokens.get(index)?.span.end;
+    let text = parsed.source().text().get(text_start..text_end)?.to_owned();
+    index += 1;
+    if tokens.get(index).is_some_and(|token| token.text == ";") {
+        index += 1;
+    }
+    let mut clause = json!({
+        "language": "quire",
+        "text": text,
+        "origin": source_origin(parsed, Span { start, end }),
+    });
+    if include_identity {
+        clause["identity"] = json!(format!("ix://{package}/{owner}/{clause_id}"));
+        clause["clauseId"] = json!(clause_id);
+    }
+    Some((clause, index))
 }
 
 fn read_population(

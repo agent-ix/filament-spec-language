@@ -573,3 +573,39 @@ store Nodes persists Node { operation save(n: Reference<Node>); }
         )
     }));
 }
+
+#[trace("FR-710-AC-3", "TC-1942")]
+#[test]
+fn a_model_unit_compiles_and_admits_operation_contracts_and_invariants() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/contracts";
+object Node {
+  id: Integer;
+  operation bump(): Boolean modifies self.id {
+    pre Room { self.id < 9 };
+    post Grew { self.id > pre(self.id) };
+  }
+  invariant Bounded { self.id >= 0 };
+}
+"#;
+    let packages = package_input([source.as_bytes()]).expect("contract model compiles");
+    let (_, document) = admit(
+        "example/contracts",
+        &packages,
+        ModelNormalizationLimits::default().intake,
+    )
+    .expect("FR-154 admits the contracts and invariant");
+    let records = read_records("example/contracts", &document).expect("contract records are read");
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::OperationMember(_)
+        )
+    }));
+    assert!(records.iter().any(|record| {
+        matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Clause(_)
+        )
+    }));
+}
