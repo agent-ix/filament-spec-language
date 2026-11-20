@@ -68,7 +68,7 @@
 // file (`check.rs`, holding `Typer`/`Scope`/`bind_parameters` -- name
 // resolution and typing) -- the inception is the spec's own naming, not an
 // accidental collision this file introduced.
-use filament_checked::node::NodeKind;
+use filament_checked::node::{CheckedLiteral, NodeKind};
 mod abstraction;
 mod assemble;
 mod call_target;
@@ -3058,6 +3058,15 @@ impl PackageDeclarations {
         if !refusals.is_empty() {
             return Err(refusals);
         }
+        fn checked_body_has_ieee_literal(root: CheckedNode<'_>) -> bool {
+            root.descendants().into_iter().any(|node| {
+                matches!(
+                    node.kind(),
+                    NodeKind::Literal(CheckedLiteral(filament_exact::Value::Float(_)))
+                )
+            })
+        }
+
         let has_ieee_literal = self.functions.iter().any(|function| {
             function.body.contains_ieee_literal()
                 || function
@@ -3071,7 +3080,40 @@ impl PackageDeclarations {
             || self
                 .hyper_clauses
                 .iter()
-                .any(hyper_clause::declaration_has_ieee_literal);
+                .any(hyper_clause::declaration_has_ieee_literal)
+            || self.temporal_clauses.iter().any(|temporal| {
+                let formula = temporal.clause().formula();
+                let atom_has_ieee_literal = (0..formula.nodes().len()).any(|index| {
+                    let Some(atom) = formula.node_id(index) else {
+                        return false;
+                    };
+                    temporal
+                        .condition(atom)
+                        .is_some_and(|(root, _)| checked_body_has_ieee_literal(root))
+                        || temporal
+                            .aggregate_conditions(atom)
+                            .is_some_and(|aggregate| {
+                                [
+                                    aggregate.value,
+                                    aggregate.filter,
+                                    aggregate.predicate,
+                                    Some(aggregate.threshold),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .any(|(root, _)| checked_body_has_ieee_literal(root))
+                            })
+                });
+                atom_has_ieee_literal
+                    || temporal
+                        .guard()
+                        .is_some_and(|(root, _)| checked_body_has_ieee_literal(root))
+                    || (0..temporal.clause().captures().count()).any(|index| {
+                        temporal
+                            .capture(index)
+                            .is_some_and(|(root, _)| checked_body_has_ieee_literal(root))
+                    })
+            });
         scope
             .select_declared_ieee_profile(&signatures, has_ieee_literal)
             .map_err(|refusal| vec![refusal])?;
