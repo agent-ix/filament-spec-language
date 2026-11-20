@@ -7,11 +7,12 @@ use filament_exact::{LimitKind, Outcome};
 fn boolean_package() -> CheckedPackage {
     package_from_source(&unit().replace(
         "on each (opened: Boolean) when ((1 + 2 = 3) and opened)",
-        "on each (a: Boolean, b: Boolean, c: Boolean) when \
-         ((gate(a, b) and gate(b, c)) or (a and c))",
+        "on each (opened: Bits) when \
+         ((gate(opened.a, opened.b) and gate(opened.b, opened.c)) or (opened.a and opened.c))",
     ).replace(
         "protocol P using p",
-        "function gate using v(left: Boolean, right: Boolean): Boolean pure { left implies right }\n\
+        "record Bits { a: Boolean; b: Boolean; c: Boolean; }\n\
+         function gate using v(left: Boolean, right: Boolean): Boolean pure { left implies right }\n\
          protocol P using p",
     ))
 }
@@ -32,24 +33,36 @@ fn activation(package: &CheckedPackage) -> ProtocolSlot {
 
 fn booleans(package: &CheckedPackage, values: [bool; 3]) -> ProtocolSupply<'static> {
     let keys = package.graph().protocol_node_keys("P").expect("P exists");
+    let types = package.graph().scope().types();
+    let bits = types
+        .composites()
+        .find(|ty| ty.name() == "Bits")
+        .expect("the source declares Bits")
+        .key();
+    let record = types
+        .record(
+            bits,
+            ["a", "b", "c"]
+                .into_iter()
+                .zip(values)
+                .map(|(name, value)| {
+                    (
+                        name,
+                        filament_exact::FieldValue::Present(Value::Boolean(value)),
+                    )
+                })
+                .collect(),
+        )
+        .expect("each bit has its declared Boolean type");
+    let opened = keys
+        .binders
+        .iter()
+        .find(|binder| binder.name == "opened")
+        .expect("the single written event binder")
+        .node
+        .clone();
     ProtocolSupply {
-        binders: ["a", "b", "c"]
-            .into_iter()
-            .zip(values)
-            .map(|(name, value)| {
-                let key = keys
-                    .binders
-                    .iter()
-                    .find(|binder| binder.name == name)
-                    .expect("written activation source")
-                    .node
-                    .clone();
-                (
-                    key,
-                    protocol_value(SuppliedValue::Value(Value::Boolean(value))),
-                )
-            })
-            .collect(),
+        binders: vec![(opened, protocol_value(SuppliedValue::Value(record)))],
         observation: None,
     }
 }
@@ -98,14 +111,13 @@ fn activation_helper_calls_match_the_complete_boolean_truth_table() {
 
 #[trace("FR-390-AC-6", "FR-390-AC-11")]
 #[test]
-fn unread_boolean_branch_still_admits_every_supplied_values_shape_without_charging() {
+fn a_structured_activation_source_refuses_wrong_shape_before_helper_execution() {
     let package = boolean_package();
     let slot = activation(&package);
     let mut meter = Meter::new(UNLIMITED);
-    // Both implications hold through false antecedents, so c is never evaluated.
-    // Admission still checks c before starting the body.
+    // Admission checks the source record before any helper body executes.
     let mut supply = booleans(&package, [false, false, false]);
-    let (bad_binder, bad_value) = supply.binders.last_mut().expect("c is supplied");
+    let (bad_binder, bad_value) = supply.binders.last_mut().expect("opened is supplied");
     let bad_binder = bad_binder.clone();
     *bad_value = protocol_value(SuppliedValue::Value(Value::Integer(7_i64.into())));
     let before = meter.clone();
