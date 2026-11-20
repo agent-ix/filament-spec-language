@@ -2559,7 +2559,7 @@ fn float_world_with_body(body: &str, operations: Vec<Json>) -> World {
     ));
     let mut levels = wire_field("levels", "ix://filament/native/Float64", "required");
     levels["multiplicity"]["lower"] = json!(0);
-    levels["multiplicity"]["upper"] = json!(3);
+    levels["multiplicity"]["upper"] = json!(8);
     fields.push(levels);
     let mut taps = wire_field("taps", "ix://filament/native/Float32", "required");
     taps["multiplicity"]["lower"] = json!(0);
