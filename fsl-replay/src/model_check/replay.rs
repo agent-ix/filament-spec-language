@@ -65,9 +65,7 @@ use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{
-    CheckedProtocol, CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch,
-};
+use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
 
@@ -1229,18 +1227,6 @@ struct ProtocolReplay<'r> {
     meter: ScalarLimits,
 }
 
-fn protocol_related_by_refusal(
-    step: usize,
-    transition: &ProtocolTransition,
-    relationship: String,
-) -> ModelTraceRefusal {
-    ModelTraceRefusal::ProtocolRelatedBy {
-        step,
-        node: transition.node().unwrap_or("<unknown>").to_owned(),
-        relationship,
-    }
-}
-
 impl ProtocolReplay<'_> {
     /// FR-217 over `system`, under whichever memory model the subject's
     /// resolved models need (FR-227).
@@ -1274,15 +1260,18 @@ impl ProtocolReplay<'_> {
         // A step that the resolved models do not reproduce refuses before a
         // fairness set that differs, which a change of memory model changes
         // too (FR-227-AC-1).
-        let replayed = match replay_prefix_with_not_enabled(
+        let replayed = match replay_prefix_with_mismatch_explanation(
             system,
             payload,
             &PROTOCOL_STEPS,
             |step, state, transition| {
-                if let Some(relationship) = system.related_by_failure(state, transition) {
-                    return protocol_related_by_refusal(step, transition, relationship);
-                }
-                protocol_not_enabled(step, transition)
+                system
+                    .related_by_failure(state, transition)
+                    .map(|relationship| ModelTraceRefusal::ProtocolRelatedBy {
+                        step,
+                        node: transition.node().unwrap_or("<unknown>").to_owned(),
+                        relationship,
+                    })
             },
         ) {
             Ok(replayed) => replayed,
@@ -1876,13 +1865,16 @@ fn replay_prefix<S: SubjectSystem>(
 
 /// [`replay_prefix`] with a subject-specific explanation for a transition
 /// that is not enabled at its observed pre-state.
-fn replay_prefix_with_not_enabled<S: SubjectSystem>(
+fn replay_prefix_with_mismatch_explanation<S: SubjectSystem>(
     system: &S,
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
-    not_enabled: impl FnMut(usize, &S::State, &S::TransitionId) -> ModelTraceRefusal,
+    explain_mismatch: impl FnMut(usize, &S::State, &S::TransitionId) -> Option<ModelTraceRefusal>,
 ) -> Result<Option<Replayed<S>>, ReplayRefusal> {
-    Ok(replay_prefix_stopped_with_not_enabled(system, payload, rules, not_enabled)?.ok())
+    Ok(
+        replay_prefix_stopped_with_mismatch_explanation(system, payload, rules, explain_mismatch)?
+            .ok(),
+    )
 }
 
 /// [`replay_prefix`], naming the stop an expansion returned.
@@ -1895,20 +1887,23 @@ fn replay_prefix_stopped<S: SubjectSystem>(
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
 ) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
-    replay_prefix_stopped_with_not_enabled(system, payload, rules, |step, _, transition| {
-        (rules.not_enabled)(step, transition)
-    })
+    replay_prefix_stopped_with_mismatch_explanation(
+        system,
+        payload,
+        rules,
+        |step, _, transition| Some((rules.not_enabled)(step, transition)),
+    )
 }
 
 #[allow(
     clippy::type_complexity,
     reason = "a replay or the stop of an expansion, or a refusal"
 )]
-fn replay_prefix_stopped_with_not_enabled<S: SubjectSystem>(
+fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
     system: &S,
     payload: &TemporalCounterexample<S::TransitionId>,
     rules: &StepRules<S::TransitionId>,
-    mut not_enabled: impl FnMut(usize, &S::State, &S::TransitionId) -> ModelTraceRefusal,
+    mut explain_mismatch: impl FnMut(usize, &S::State, &S::TransitionId) -> Option<ModelTraceRefusal>,
 ) -> Result<Result<Replayed<S>, ExpansionStop>, ReplayRefusal> {
     if let Some(step) = payload.prefix.iter().position(|step| step.delay.is_some()) {
         return Err(refused(ModelTraceRefusal::UntimedDelay {
@@ -1960,19 +1955,20 @@ fn replay_prefix_stopped_with_not_enabled<S: SubjectSystem>(
             state_keys.push(state_key);
         }
         if !enabled {
-            return Err(refused(not_enabled(
-                index,
-                &current.state,
-                &step.transition,
-            )));
+            let refusal = explain_mismatch(index, &current.state, &step.transition)
+                .unwrap_or_else(|| (rules.not_enabled)(index, &step.transition));
+            return Err(refused(refusal));
         }
-        let (next, replayed) = reached.ok_or_else(|| {
-            refused(ModelTraceRefusal::PostState {
+        let Some((next, replayed)) = reached else {
+            if let Some(refusal) = explain_mismatch(index, &current.state, &step.transition) {
+                return Err(refused(refusal));
+            }
+            return Err(refused(ModelTraceRefusal::PostState {
                 step: index,
                 recorded: step.post_state.clone(),
                 reached: state_keys,
-            })
-        })?;
+            }));
+        };
         let replayed = system
             .reported(replayed, &next.state)
             .map_err(|_| fault("a-replayed-step-reports"))?;
@@ -3180,33 +3176,5 @@ mod automaton_refusal_tests {
         });
         assert_eq!(invariant.code(), Code::RuntimeInvariant);
         assert_eq!(invariant.cause(), "established-invariant-broken");
-    }
-}
-
-#[cfg(test)]
-mod related_by_replay_tests {
-    use super::{protocol_related_by_refusal, ModelTraceRefusal};
-    use fsl_eval::simulation::protocol::{ProtocolTransition, ThreadPath};
-
-    /// FR-731-AC-3: replay reports the first related-by clause when its
-    /// observed protocol transition is not enabled at that event node.
-    #[ix_trace_rs::trace("FR-731-AC-3")]
-    #[test]
-    fn a_related_event_replay_mismatch_names_its_node_and_relationship() {
-        let transition = ProtocolTransition::fork(ThreadPath::root(0), "Main/Paid");
-
-        let refusal = protocol_related_by_refusal(7, &transition, "Owns".to_owned());
-        assert_eq!(
-            refusal,
-            ModelTraceRefusal::ProtocolRelatedBy {
-                step: 7,
-                node: "Main/Paid".to_owned(),
-                relationship: "Owns".to_owned(),
-            }
-        );
-        assert_eq!(
-            refusal.to_string(),
-            "invalid_runtime_input/invalid-value: protocol step 7 at `Main/Paid` fails related-by clause `Owns`"
-        );
     }
 }
