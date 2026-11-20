@@ -268,7 +268,6 @@ fn a_driver_serializes_a_constructed_format_invariant_failure() {
 /// formatted text as its `result`, and formatting that text gives it back.
 #[trace("TC-2178", "FR-286-AC-16")]
 #[test]
-#[ignore = "QSL-2192: the format outcome's `formatted` result not implemented yet"]
 fn format_json_result_carries_text() {
     let source = parsed(FIXTURE);
     let limits = FormatLimits::default();
