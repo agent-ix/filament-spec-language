@@ -796,6 +796,7 @@ allocate Alloc from pump to pump;
         "ix://example/all/Gate/toggle"
     );
     let process = type_named("Flow");
+    assert_eq!(process["identityFields"][0], "ix://example/all/Flow/n");
     assert_eq!(process["steps"][0]["name"], "start");
     assert_eq!(process["steps"][0]["stepKind"], "command");
     assert_eq!(
@@ -817,6 +818,9 @@ allocate Alloc from pump to pump;
             ty["identity"].as_str() == Some(option_identity) && ty["kind"] == "option"
         })
     );
+    let connection = type_named("Pipe");
+    assert_eq!(connection["sourceEnd"]["type"], "ix://example/all/out_port");
+    assert_eq!(connection["targetEnd"]["type"], "ix://example/all/in_port");
     admit(
         "example/all",
         &packages,

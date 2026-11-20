@@ -1683,7 +1683,7 @@ fn read_systems_connection(
     index += 1;
     let name = tokens.get(index)?.text.clone();
     index += 1;
-    let source_part = tokens.get(index)?.text.clone();
+    let _source_part = tokens.get(index)?.text.clone();
     index += 1;
     if tokens.get(index)?.text != "." {
         return None;
@@ -1696,7 +1696,7 @@ fn read_systems_connection(
         return None;
     }
     index += 1;
-    let target_part = tokens.get(index)?.text.clone();
+    let _target_part = tokens.get(index)?.text.clone();
     index += 1;
     if tokens.get(index)?.text != "." {
         return None;
@@ -1711,11 +1711,11 @@ fn read_systems_connection(
     index += 1;
     let identity = format!("ix://{package}/{name}");
     let source_end = json!({
-        "type": format!("ix://{package}/{source_part}/{source_port}"),
+        "type": format!("ix://{package}/{source_port}"),
         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
     });
     let target_end = json!({
-        "type": format!("ix://{package}/{target_part}/{target_port}"),
+        "type": format!("ix://{package}/{target_port}"),
         "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
     });
     Some((
@@ -1934,7 +1934,14 @@ fn read_process(
         cursor += 1;
     }
     process.wire["kind"]["name"] = json!("process");
-    process.wire["identityFields"] = json!([]);
+    process.wire["identityFields"] = json!(
+        process.wire["fields"]
+            .as_array()?
+            .iter()
+            .filter_map(|field| field.get("identity").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    );
     process.wire["supertypes"] = json!([]);
     process.wire["steps"] = json!(steps);
     Some((process.wire, name, next))
