@@ -149,13 +149,16 @@ pub fn settle_statistical(
     match outcome {
         // FSpec FR-410 requires an `estimate` value of the verdict and of
         // every test row. A test that counted no sample, or a regenerative
-        // run with no cycle of positive weight, has none, so the run did
-        // not complete its method: it settles `incomplete`, naming
+        // run with no cycle of positive weight, has none (a test an
+        // undefined sample rejected is the one FR-409 row without an
+        // estimate), so the run did not complete its method: it settles `incomplete`, naming
         // `max_samples` and the samples it counted, and no verdict is
         // written.
         StatisticalOutcome::Completed(verdict)
-            if verdict.estimate.is_none()
-                || verdict.tests.iter().any(|test| test.estimate.is_none()) =>
+            if verdict
+                .tests
+                .iter()
+                .any(|test| test.estimate.is_none() && test.undefined.is_none()) =>
         {
             StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
