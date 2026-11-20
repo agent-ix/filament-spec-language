@@ -603,7 +603,7 @@ fn certificate_checks_independently() {
     let mut checker_request = proof_request(CLAIM);
     let certificate_text = serde_json::to_string(certificate).unwrap();
     assert_eq!(
-        serde_json::from_str::<Value>(&checker_request["certificate"].as_str().unwrap()).unwrap(),
+        serde_json::from_str::<Value>(checker_request["certificate"].as_str().unwrap()).unwrap(),
         *certificate,
         "the verb emits the source certificate checked by this process"
     );

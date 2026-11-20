@@ -1689,17 +1689,14 @@ fn a_reward_a_claim_names_is_one_the_model_declares() {
         fraction.weight.as_ref(),
         Some(Weighting::Reward(weight)) if weight.as_str() == "duration"
     ));
-    for unknown in ["nothing"] {
-        assert_eq!(
-            located(&weighted(unknown)),
-            [(
-                Code::MissingDeclaration,
-                Some("missing-name"),
-                unknown.to_owned()
-            )],
-            "{unknown}"
-        );
-    }
+    assert_eq!(
+        located(&weighted("nothing")),
+        [(
+            Code::MissingDeclaration,
+            Some("missing-name"),
+            "nothing".to_owned()
+        )]
+    );
     // FR-186: `delay` is the delay weighting, never a reward lookup; over the
     // untimed service it is ill typed at the `delay` word.
     assert_eq!(
