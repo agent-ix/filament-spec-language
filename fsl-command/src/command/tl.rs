@@ -6,7 +6,7 @@
 //! every activation position. This module holds ADR-011's only edges to the
 //! TL crates.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_replay::spine::{TemporalValuation, TlClosure, TlSupport, TlTarget, TlUnmatched};
 use fsl_semantics::check::{
@@ -323,10 +323,12 @@ pub fn record(
                 .ok_or_else(|| format!("unknown correspondence {identity}"))?,
         ),
     };
-    lowering_record(valuation, source, named, mapping, form).map_err(|failure| match failure {
-        Failure::Fault(message) => message,
-        Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
-    })
+    lowering_record(valuation, source, named, mapping, form, None).map_err(
+        |failure| match failure {
+            Failure::Fault(message) => message,
+            Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
+        },
+    )
 }
 
 /// Why a lowering produced no record.
@@ -392,6 +394,7 @@ fn lowering_record(
     named: Option<TlTarget>,
     mapping: &AtomMapping,
     form: TraceForm,
+    package_labels: Option<&BTreeMap<FormulaNodeId, String>>,
 ) -> std::result::Result<TlRecord, Failure> {
     let clause = &valuation.clause;
     let formula = clause.formula();
@@ -487,7 +490,10 @@ fn lowering_record(
             reason: TraceForm::reason(classified),
         });
     }
-    let labels = canonical::source_labels(valuation).map_err(Failure::Fault)?;
+    let labels = match package_labels {
+        Some(labels) => labels.clone(),
+        None => canonical::source_labels(valuation).map_err(Failure::Fault)?,
+    };
     let mut lowered = Lowered::default();
     let root = lowered.lower(formula, formula.root(), &labels)?;
     let tl = lowered.document(classified, root)?;
@@ -1216,6 +1222,33 @@ pub(super) fn lower(
         lowering.correspondence,
         &AtomMapping::default(),
         form,
+        None,
+    )
+    .map_err(|failure| match failure {
+        Failure::Fault(message) => RunCause::TlFault(message),
+        Failure::Form { member, reason } => invalid(member, reason),
+    })
+}
+
+/// Lower a package-backed temporal valuation with its atom labels already
+/// rendered from FR-940 clause-term projections by the shared canonical
+/// printer.
+pub(super) fn lower_with_package_labels(
+    valuation: &TemporalValuation,
+    lowering: &TlLowering,
+    labels: &BTreeMap<FormulaNodeId, String>,
+) -> Result<TlRecord> {
+    let form = lowering
+        .cross
+        .as_ref()
+        .map_or(TraceForm::Absent, TraceForm::of_request);
+    lowering_record(
+        valuation,
+        "",
+        lowering.correspondence,
+        &AtomMapping::default(),
+        form,
+        Some(labels),
     )
     .map_err(|failure| match failure {
         Failure::Fault(message) => RunCause::TlFault(message),
