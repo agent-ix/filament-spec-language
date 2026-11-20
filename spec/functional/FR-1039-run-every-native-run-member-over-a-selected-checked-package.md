@@ -21,6 +21,12 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-961
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-531
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-533
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-323
+    type: depends_on
 ---
 # FR-1039: Run every native-run member over a selected checked package without source
 
@@ -51,11 +57,15 @@ request member that would restate one of them (a `program`, `libraries`,
 
 ## Inputs
 
-- `package`: exactly one of `{"file": P}`, the path of a checked-package v2
-  file (FR-945), or `{"directory": D}`, the path of an FR-517 handoff
-  directory holding `checked-package.json`, `identities.json` and, when
-  present, `equality.json` (FR-850), resolved against the request file's
-  directory, each file read counted toward `dependent_bytes`. Beside `file`
+- `package`: exactly one of `{"file": P}` or `{"file": P, "equality": E}`,
+  `P` the path of a checked-package v2 file (FR-945) and `E` the path of
+  that package's equality witness file (an FR-531 equality file, the
+  `equality.json` an FR-517 handoff writes), or `{"directory": D}`, the
+  path of an FR-517 handoff directory holding `checked-package.json`,
+  `identities.json` and, when present, `equality.json` (FR-850), each path
+  resolved against the request file's directory, each file read counted
+  toward `dependent_bytes`. `equality` is optional, a string, and admitted
+  on the file form only. Beside `file`
   or `directory` the selection MAY carry `source_package`, the closed object
   `{"identity": I, "version": V}` with `I` and `V` non-empty strings: the
   source package reference the caller states for the package ("The source
@@ -106,6 +116,21 @@ request echo carrying `package` where a source request carries `program`.
   a `{file}` selection it SHALL refuse `invalid-request` at stage `request`
   with `details` `{"member": "<member>", "requires": "directory"}`, exit 20.
   A `call`, a value `synthesis` and an `export` run from either form.
+- A `{file, equality}` selection SHALL read the equality rows from the
+  `equality` file through `ReadEqualityRows::read(bytes, package)` against
+  the admitted package, the same admission, with the same checks that the
+  rows belong to that package, that a `{directory}` selection applies to its
+  `equality.json` (FR-850 "Admission", FR-531), and SHALL attach them to the
+  package. A `{file}` selection with no `equality` carries no equality rows.
+  The rows come only from the producer's witness file and are never derived
+  from the package bytes: FR-850, FR-531 and FR-533 are unchanged.
+- A `{file}` selection with no `equality`, over a package that holds an
+  equality application (its `checked_term_data.equality_decisions` is
+  non-empty, FSpec FR-322), SHALL refuse the whole request at stage
+  `request` with FR-850's code for the missing witness, `invalid_package`,
+  cause `missing-file`, naming `/request/package/equality`, exit 20, and
+  write no member outcome (the bytes-only `Equality(Missing)` refusal,
+  FR-533). A package with no equality application runs from `{file}` alone.
 
 ### A package that cannot run
 
@@ -115,6 +140,10 @@ none falls back to source:
 | Defect | Code / cause | Locus or `details` |
 | --- | --- | --- |
 | the selected file or directory is missing or unreadable | `invalid-request` | names `package` and the path |
+| the `equality` file is missing or unreadable | `invalid-request` | names `package.equality` and the path |
+| `equality` beside `directory`, or not a string | `invalid-request` | names `package.equality`; refused before any selected file is opened |
+| `ReadEqualityRows::read` refuses the `equality` file (`Malformed`, `Format` or `Unjoined`) | `invalid_package`, cause `refused-file`, retaining the `EqualityFileRefusal` variant and its first row (FR-850) | names `package.equality` and the path |
+| no `equality` on the file form over a package that holds an equality application | `invalid_package`, cause `missing-file` (FR-850) | `/request/package/equality` |
 | `contract_version` is not `filament.checked-package/v2` | `unknown_wire`/`unsupported-wire`, `actual` the version read, `expected` `filament.checked-package/v2` | `/request/package/contract_version` |
 | the strict reader refuses the bytes | `invalid_package` with the reader's cause | the reader's pointer, under `/request/package` |
 | the `lock` edition is not `1-draft` | `unknown_edition` (stage `profile`) | names the package and the edition |
@@ -229,11 +258,11 @@ reader refusal in the table.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-1039-AC-1 | A unit declaring `function half using v(): Integer pure { -7 div 2 }`, compiled with `integer_division` `floor` and selected as `package` `{file}` with the `call` `half`, completes with `-4`, the source route's value under the recorded law, with the source file removed before the run; the same request with `integer_division` refuses `invalid-request` naming `integer_division` before any selected file is opened; a request with neither `program` nor `package` refuses `invalid-request` naming `program`. | Test (TC-3019) |
-| FR-1039-AC-2 | The FR-517 handoff of FR-754-AC-3's `Pick` unit selected as `package` `{directory}`, and its package file selected as `{file}`, each run the `synthesis` member `{"declaration": "Pick"}` to the source route's `candidate` 7; a `clause` member over a `{file}` selection refuses `invalid-request` with `details` `{"member": "clause", "requires": "directory"}`, exit 20. | Test (TC-3019) |
+| FR-1039-AC-2 | The FR-517 handoff of FR-754-AC-3's `Pick` unit (whose objective `Pick * Pick = 49` is an equality application) selected as `package` `{directory}`, and its `checked-package.json` and `equality.json` selected as `{"file": "handoff/checked-package.json", "equality": "handoff/equality.json"}`, each run the `synthesis` member `{"declaration": "Pick"}` to the source route's `candidate` 7, exit 0; the same package selected as `{"file": "handoff/checked-package.json"}` alone refuses at stage `request` `invalid_package`/`missing-file` naming `/request/package/equality`, exit 20, and writes no synthesis outcome; `{file, equality}` naming the `equality.json` of the handoff of another unit with an equality application (non-empty rows, none of which `Pick`'s package joins) refuses `invalid_package`/`refused-file` with the `Unjoined` variant; `{"directory": "handoff", "equality": "handoff/equality.json"}` refuses `invalid-request` naming `package.equality` before any file is opened; a `clause` member over a `{file}` selection refuses `invalid-request` with `details` `{"member": "clause", "requires": "directory"}`, exit 20. | Test (TC-3019) |
 | FR-1039-AC-3 | Each defect of "A package that cannot run" refuses at stage `request`, exit 20, with the code and locus its row states: a missing file; a document whose `contract_version` is `filament.checked-package/v1` (`unknown_wire`/`unsupported-wire` with `actual` `filament.checked-package/v1` at `/request/package/contract_version`, never `invalid_package`); a package with an unknown top-level member (`invalid_package` at the reader's pointer); a spine-model package run with no `models` entry for its recorded selection (`missing_import`/`missing-selection` at `/request/models`); and the value package run with one `models` entry, the spine document (`invalid-request` at `/request/models/0`). | Test (TC-3019) |
-| FR-1039-AC-4 | FR-1015-AC-4's counter compiled to a package file and exported over `package` `{"file": P, "source_package": {"identity": "example/counter-unit", "version": "7"}}`, with the source file removed, writes `package.source_package` `{"identity": "example/counter-unit", "version": "7"}` and otherwise the source export's `records` and `target_text`; the same request without `source_package` refuses `invalid-request` with `invalid_runtime_input`/`missing-member` at `/request/package/source_package`, exit 20, before the package file is opened (a request naming a missing file gives this refusal, not the missing-file one); `"source_package": null` and `"source_package": "x"` each refuse `wrong-value-kind` at `/request/package/source_package`, `{"identity": "a"}` `missing-member` at `/request/package/source_package/version`, `{"identity": 7, "version": "1"}` `wrong-value-kind` at `/request/package/source_package/identity`, `{"identity": "", "version": "1"}` `invalid-value` there, and an extra member `digest` `unknown-member` at `/request/package/source_package/digest`, each exit 20; FR-1039-AC-1's `call` request over the package runs to `-4` with and without a well-formed `source_package`. | Test (TC-3019) |
-| FR-1039-AC-5 | FR-961-AC-2's `Even` request with `call.requirements` `{}` and no providers, and FR-062's RR-12 unit called as `f` with `n = 4` and `requirements` `{}`, each compiled to a package file and run over `package` `{"file": P}` with the source file removed, write `requirements` and `registry` members equal byte for byte to the source route's (the same request indices, claims, extents, path conditions, records and categories), and the `execute` outcome's `items` equal the source route's; RR-12's `g` called over the package writes `requirements` `[]`; an `items` entry naming a claim of `f` in a call of `g` refuses `UnknownRequirementClaim` before any item is negotiated, as on the source route; the package with the row of `f`'s `+` record removed refuses at stage `request`, exit 20, `invalid_package`/`invalid-value` at `/request/package/semantic_graph/nodes/{n}/body` (FSpec FR-825 rule 14), and settles no item; no request over the package refuses `call.requirements` as not implemented. | Test (TC-3019) |
-| FR-1039-AC-6 | FR-931-AC-1's `Low` unit compiled to a package file and selected as `package` `{"file": P}`, with the source file removed, runs `tl_lowering` `{"clause": "Low"}` and `{"clause": "Low", "correspondence": "mltl.online-prefix/v1"}` and returns the records the source route returns for the same members, byte-equal, exit 0; `{"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}` returns the source route's `unsupported` record, exit 21; `{"clause": "Nothing"}` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; `{"clause": "Low", "formula": 1}` refuses `invalid-request` at stage `request` naming `tl_lowering.formula`, exit 20; and `tl_lowering` beside `call` refuses `invalid-request` naming `tl_lowering`, exit 20. No response is the not-implemented refusal, and none is a `call` or `clause` outcome. | Test (TC-3019) |
+| FR-1039-AC-4 | FR-1015-AC-4's counter compiled to a package file and exported over `package` `{"file": P, "equality": E, "source_package": {"identity": "example/counter-unit", "version": "7"}}`, `E` the `equality.json` of the counter's FR-517 handoff (its `Inc` postcondition `self.value = pre(self.value) + 1` is an equality application),, with the source file removed, writes `package.source_package` `{"identity": "example/counter-unit", "version": "7"}` and otherwise the source export's `records` and `target_text`; the same request without `source_package` refuses `invalid-request` with `invalid_runtime_input`/`missing-member` at `/request/package/source_package`, exit 20, before the package file is opened (a request naming a missing file gives this refusal, not the missing-file one); `"source_package": null` and `"source_package": "x"` each refuse `wrong-value-kind` at `/request/package/source_package`, `{"identity": "a"}` `missing-member` at `/request/package/source_package/version`, `{"identity": 7, "version": "1"}` `wrong-value-kind` at `/request/package/source_package/identity`, `{"identity": "", "version": "1"}` `invalid-value` there, and an extra member `digest` `unknown-member` at `/request/package/source_package/digest`, each exit 20; FR-1039-AC-1's `call` request over the package runs to `-4` with and without a well-formed `source_package`. | Test (TC-3019) |
+| FR-1039-AC-5 | FR-961-AC-2's `Even` request with `call.requirements` `{}` and no providers, and FR-062's RR-12 unit called as `f` with `n = 4` and `requirements` `{}`, each compiled to a package file with an FR-517 handoff and run over `package` `{"file": P}` (RR-12, which holds no equality application) or `{"file": P, "equality": E}` (`Even`, whose `n * 2 - n = n` is one; `E` its handoff's `equality.json`) with the source file removed, write `requirements` and `registry` members equal byte for byte to the source route's (the same request indices, claims, extents, path conditions, records and categories), and the `execute` outcome's `items` equal the source route's; RR-12's `g` called over the package writes `requirements` `[]`; an `items` entry naming a claim of `f` in a call of `g` refuses `UnknownRequirementClaim` before any item is negotiated, as on the source route; the package with the row of `f`'s `+` record removed refuses at stage `request`, exit 20, `invalid_package`/`invalid-value` at `/request/package/semantic_graph/nodes/{n}/body` (FSpec FR-825 rule 14), and settles no item; no request over the package refuses `call.requirements` as not implemented; `Even` selected as `{"file": P}` alone refuses `invalid_package`/`missing-file` at `/request/package/equality`, exit 20. | Test (TC-3019) |
+| FR-1039-AC-6 | FR-931-AC-1's `Low` unit compiled to a package file with an FR-517 handoff and selected as `package` `{"file": P, "equality": E}`, `E` its handoff's `equality.json`, with the source file removed, runs `tl_lowering` `{"clause": "Low"}` and `{"clause": "Low", "correspondence": "mltl.online-prefix/v1"}` and returns the records the source route returns for the same members, byte-equal, exit 0; `{"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}` returns the source route's `unsupported` record, exit 21; `{"clause": "Nothing"}` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`, exit 20; `{"clause": "Low", "formula": 1}` refuses `invalid-request` at stage `request` naming `tl_lowering.formula`, exit 20; and `tl_lowering` beside `call` refuses `invalid-request` naming `tl_lowering`, exit 20. No response is the not-implemented refusal, and none is a `call` or `clause` outcome. | Test (TC-3019) |
 
 ## Dependencies
 

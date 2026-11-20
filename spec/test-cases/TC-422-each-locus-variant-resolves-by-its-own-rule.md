@@ -16,7 +16,7 @@ locus names no region; its pointer is an RFC 6901 JSON pointer. This
 catches an occurrence locus that bypasses the map and a pointer parser that
 admits a bare `~`.
 
-Scope: FR-095-AC-5, FR-095-AC-6.
+Scope: FR-095-AC-5 to FR-095-AC-7. An input locus names no region, keeps its operand as written and has one closed wire form.
 
 ## Test Procedure
 
@@ -25,6 +25,8 @@ Scope: FR-095-AC-5, FR-095-AC-6.
    an artifact locus.
 2. Parse `""`, `/`, `/source_map/0/regions`, `/a~1b/c~0d`, `source_map`,
    `/a~2b` and `/a~`.
+3. Resolve and write the two input loci of FR-095-AC-7, and write the
+   artifact locus over `{agent-ix, spine}` at `/lock`.
 
 Tag the tests `#[trace("TC-422", "FR-095-AC-n")]` with the AC each backs.
 
@@ -34,3 +36,6 @@ Tag the tests `#[trace("TC-422", "FR-095-AC-n")]` with the AC each backs.
   the artifact refusal.
 - Step 2: the first four parse and keep their text; `source_map` refuses for
   a missing leading `/`; the last two refuse for the `~` at byte 2.
+- Step 3: both input loci refuse as naming no region; the wire objects are
+  exactly FR-095-AC-7's, `operand` byte for byte as written; the artifact
+  locus carries its labels and no digest or path.

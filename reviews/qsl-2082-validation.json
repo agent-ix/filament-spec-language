@@ -1,0 +1,75 @@
+{
+  "ticket": "QSL-2082",
+  "command": "CARGO_TARGET_DIR=$PWD/target CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --locked -p fsl-analyze --test it MODULE:: -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "initial_gate": {
+    "ticket": "QSL-2082",
+    "tested_head": "c205cbec4168be4aaa3f3bdfb384259a25adda24",
+    "exit_code": 101,
+    "segments": [
+      {
+        "module": "exact_probabilistic_item",
+        "exit_code": 0,
+        "passed": 14,
+        "failed": 0,
+        "ignored": 2,
+        "log": "qsl-2082-final-exact_probabilistic_item.log"
+      },
+      {
+        "module": "hyper",
+        "exit_code": 0,
+        "passed": 30,
+        "failed": 0,
+        "ignored": 0,
+        "log": "qsl-2082-final-hyper.log"
+      },
+      {
+        "module": "hyper_settle",
+        "exit_code": 101,
+        "passed": 12,
+        "failed": 1,
+        "ignored": 0,
+        "log": "qsl-2082-final-hyper_settle.log"
+      },
+      {
+        "module": "reduction",
+        "exit_code": 0,
+        "passed": 24,
+        "failed": 0,
+        "ignored": 0,
+        "log": "qsl-2082-final-reduction.log"
+      },
+      {
+        "module": "reduction_differential",
+        "exit_code": 0,
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0,
+        "log": "qsl-2082-final-reduction_differential.log"
+      }
+    ],
+    "aggregate": {
+      "passed": 83,
+      "failed": 1,
+      "ignored": 2
+    },
+    "ignored_is_coverage": false
+  },
+  "confined_correction": {
+    "tested_head": "5cae698add0ff5512848e2b220bef96fa719946c",
+    "filter": "hyper_settle::an_undefined_tuple_refutes_and_an_undetermined_match_is_inconclusive",
+    "exit_code": 0,
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "log": "qsl-2082-final-fixture-corrected.log",
+    "change": "Reuse the existing Kernel-checked remainder function from the Linked match, retaining runtime Undefined and both incomplete-match controls."
+  },
+  "final_affected_scope": {
+    "passed": 84,
+    "failed": 0,
+    "ignored": 2
+  },
+  "accounting": "Initial gate had 83 passes, one setup failure and two ignored cases. Only that corrected test was rerun and passed. The other module segments and the 12 passing hyper_settle tests were not repeated. This is not a claim of a second whole gate.",
+  "ignored_tests_count_as_coverage": false,
+  "remaining": "QSL-998, QSL-1056, QSL-2695 and the combined-record/C09 acceptance remain pending."
+}

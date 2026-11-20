@@ -72,17 +72,20 @@ always present and is exactly one of:
   "object": {"population", "key"} | null, "member": "<member name>" | null}`,
   where `object` names the snapshot object whose member failed and `member`
   the failing member's name;
-- `null` when the refusal has no position, such as an unreadable file,
-  whose path stays in the cause.
+- an input locus (FR-095 `Locus::Input`) for a refusal located in a
+  caller-named input that is not an FR-001 artifact or a JSON input
+  document, such as a member file of a handoff directory (FR-665);
+- `null` when the refusal has no position, such as an unreadable request or
+  input document file, whose path stays in the cause.
 
 A snapshot or invocation admission refusal (FR-106 checks 1 to 11) SHALL
 carry the document locus of the first failing member: the snapshot's
 labels, the pointer to the member (to the object for a missing member),
 the object's population and key, and the member name.
 
-Every non-null locus is one of the five tagged forms of FR-267's
+Every non-null locus is one of the six tagged forms of FR-267's
 **Refusal locus wire** (`region`, `located`, `occurrence`, `artifact`,
-`document`), with the members that table lists, in an outcome document and
+`document`, `input`), with the members that table lists, in an outcome document and
 in a `native-run-result/2` document alike, so the strict reader of either
 document reads every locus its producer writes.
 

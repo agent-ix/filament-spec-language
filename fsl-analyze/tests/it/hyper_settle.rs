@@ -41,7 +41,7 @@ use ix_trace_rs::trace;
 
 use crate::hyper::refuted;
 use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
-use crate::hyper_witness::ExhaustedExistential;
+use crate::hyper_witness::{ExhaustedExistential, KERNEL_MOD_FUNCTION};
 use crate::hyper_world::{non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
 /// `outcome` settled with `world`'s own replay under the default limits.
@@ -213,8 +213,9 @@ fn a_refutation_that_does_not_replay_settles_with_no_counterexample() {
     assert_eq!(failed.counterexample, None);
 }
 
-/// The outcome of an HP-3 clause whose existential `match` divides by zero
-/// (FR-177-AC-5) settles `refuted`, `decisive-counterexample`, with the
+/// The outcome of an HP-3 clause whose Linked existential `match` calls a
+/// Kernel-checked function that divides by zero (FR-177-AC-5) settles
+/// `refuted`, `decisive-counterexample`, with the
 /// `Undefined` counterexample that names `a` and `b` and the division-by-zero
 /// cause, after its replay reproduces it; the outcomes of a `match` whose
 /// reading is incomplete (FR-177-AC-6, FR-178-AC-6) settle `inconclusive`,
@@ -222,9 +223,15 @@ fn a_refutation_that_does_not_replay_settles_with_no_counterexample() {
 #[trace("TC-607", "FR-182-AC-8")]
 #[test]
 fn an_undefined_tuple_refutes_and_an_undetermined_match_is_inconclusive() {
-    let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
+    let divided = " and (if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) \
                    else 0) = 0";
-    let world = World::new(Vault::Secure, false, &STARTS, &opaque(divided));
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &opaque(divided),
+        KERNEL_MOD_FUNCTION,
+    );
     let record = settle(&world, &run(&world, ModelCheckLimits::default()));
     assert_eq!(record.value, TerminalValue::Refuted);
     assert_eq!(
@@ -589,7 +596,7 @@ fn a_reduction_outcome_settles_by_its_cause_and_a_reduced_hold_waits_for_the_che
 /// form settles nothing there. The call is made directly; that negotiation
 /// calls it for every item is tracked by QSL-1046, "Wire settle_hyper_form
 /// into negotiation (CG) and fsl-route".
-#[trace("TC-598")]
+#[trace("TC-598", "FR-173-AC-2")]
 #[test]
 fn an_other_clause_settles_unsupported_at_negotiation_with_no_run() {
     let safe = "holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b)";
@@ -655,7 +662,7 @@ fn an_other_clause_settles_unsupported_at_negotiation_with_no_run() {
 /// unsupported cause removes the registered EN-1 candidate. Negotiation then
 /// calls `settle_hyper_form` and analyze writes unsupported-requested-capability
 /// without running an engine.
-#[trace("FSpec-TC-342", "FSpec-FR-396-AC-2")]
+#[trace("FSpec-TC-342", "FSpec-FR-396-AC-2", "FR-173-AC-2")]
 #[test]
 fn routed_hp4_hyper_item_settles_unsupported_requested_capability() {
     let reason = HyperUnsupported::ExistentialBeforeUniversal;
