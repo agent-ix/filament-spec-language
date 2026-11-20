@@ -6,7 +6,7 @@
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::plan::{PlanDecision, PlanResult, PlanStatus};
 use fsl_eval::simulation::model::{ModelBasedTestEvidence, ModelBasedTestRecord};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// The decision of a `measured` step (FSpec FR-409).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -276,10 +276,7 @@ fn result_value(result: &PlanResult) -> Result<Value, serde_json::Error> {
                     fsl_replay::statistical::Decision::Rejected => "rejected",
                     fsl_replay::statistical::Decision::Undecided(_) => "undecided",
                 };
-                members.insert(
-                    "verdict".to_owned(),
-                    json!({"decision": {"type": name}}),
-                );
+                members.insert("verdict".to_owned(), json!({"decision": {"type": name}}));
             }
             entry
         }
@@ -360,7 +357,12 @@ mod tests {
     /// A settled node; the `requires` gate that decides which nodes run is
     /// the coordinator's (`fsl_analyze::plan`), so each case states the
     /// dispositions the coordinator hands the writer.
-    fn step(name: &str, status: StepStatus, evidence: Option<&str>, result: Value) -> StepDisposition {
+    fn step(
+        name: &str,
+        status: StepStatus,
+        evidence: Option<&str>,
+        result: Value,
+    ) -> StepDisposition {
         StepDisposition {
             name: name.to_owned(),
             status,
@@ -495,7 +497,10 @@ mod tests {
                 22,
             ),
         ] {
-            assert_eq!(StepStatus::Measured(decision).satisfies_requires(), dependent_runs);
+            assert_eq!(
+                StepStatus::Measured(decision).satisfies_requires(),
+                dependent_runs
+            );
             let measured = step(
                 "s",
                 StepStatus::Measured(decision),

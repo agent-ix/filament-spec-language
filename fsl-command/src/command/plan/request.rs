@@ -335,7 +335,9 @@ mod tests {
             Route::Source,
         )
         .unwrap();
-        assert!(request.close_by_plan(&consumed(true, true, false, false)).is_ok());
+        assert!(request
+            .close_by_plan(&consumed(true, true, false, false))
+            .is_ok());
         for (initial, seed, pointer) in [
             (true, false, "/request/verification_plan/seed"),
             (false, true, "/request/verification_plan/initial"),
@@ -362,7 +364,9 @@ mod tests {
         .unwrap();
         assert_eq!(request.max_trace_length, Some(8));
         assert_eq!(request.max_value_bits, Some(64));
-        assert!(request.close_by_plan(&consumed(true, true, true, true)).is_ok());
+        assert!(request
+            .close_by_plan(&consumed(true, true, true, true))
+            .is_ok());
         for (member, pointer) in [
             (
                 "max_trace_length",
@@ -421,27 +425,32 @@ mod tests {
     #[trace("FSpec-TC-2046", "FSpec-FR-824-AC-7")]
     fn an_absent_consumed_bound_refuses_missing_member_in_table_order() {
         let both = consumed(false, false, true, true);
-        let refused = |member: Value| {
-            match read(&member, Route::Source)
-                .unwrap()
-                .close_by_plan(&both)
-            {
+        let refused =
+            |member: Value| match read(&member, Route::Source).unwrap().close_by_plan(&both) {
                 Err(RunCause::PlanRequest {
-                    path, cause, reason, ..
+                    path,
+                    cause,
+                    reason,
+                    ..
                 }) => (path, cause, reason),
                 other => panic!("expected a refusal, got {other:?}"),
-            }
-        };
+            };
         let (path, cause, reason) = refused(json!({"plan": "Sized"}));
         assert_eq!(
             (path.as_str(), cause),
-            ("/request/verification_plan/max_trace_length", "missing-member")
+            (
+                "/request/verification_plan/max_trace_length",
+                "missing-member"
+            )
         );
         assert!(reason.contains("`s`"), "{reason}");
         let (path, cause, _) = refused(json!({"plan": "Sized", "max_trace_length": 8}));
         assert_eq!(
             (path.as_str(), cause),
-            ("/request/verification_plan/max_value_bits", "missing-member")
+            (
+                "/request/verification_plan/max_value_bits",
+                "missing-member"
+            )
         );
         let emit_only = read(&json!({"emit": true, "execute": false}), Route::Source).unwrap();
         assert!(emit_only.close_by_plan(&both).is_ok());

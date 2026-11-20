@@ -12,19 +12,19 @@ use std::path::Path;
 
 use fsl_analyze::analyze::document::SubjectSelection;
 use fsl_analyze::analyze::{AnalyzeLimits, SourceProvision};
-use fsl_analyze::plan::{PlanInputs, PlanRefusal, execute_plan, plan_consumers};
-use fsl_foundation::Code;
+use fsl_analyze::plan::{execute_plan, plan_consumers, PlanInputs, PlanRefusal};
 use fsl_foundation::diagnostic::StageFailure;
+use fsl_foundation::Code;
 use fsl_package::verification_plan::{
-    VerificationPlan, VerificationPlanRefusal, emit_verification_plans,
+    emit_verification_plans, VerificationPlan, VerificationPlanRefusal,
 };
 use fsl_semantics::model::observation::DocumentProvision;
 use serde_json::Value;
 
 use super::settle::Settle;
 use super::{
-    FileCounts, NativeResult, Result, RunCause, RunLimits, RunResult, check_sources,
-    intake_with_bytes, request_integer_division, require_native_header, wire,
+    check_sources, intake_with_bytes, request_integer_division, require_native_header, wire,
+    FileCounts, NativeResult, Result, RunCause, RunLimits, RunResult,
 };
 
 /// Read the `verification_plan` member of the `native-run/1` request in
@@ -166,6 +166,7 @@ pub(super) fn run_bytes(
             let plans = emit_verification_plans(package);
             let plan = select(&plans, plan_request.plan.as_deref())?;
             let mut documents = DocumentProvision::default();
+            let mut initial = Vec::new();
             if let Some(file) = &plan_request.initial {
                 let bytes = intake.file(file, intake.remaining)?;
                 let read = fsl_replay::spine::SuppliedObservation::from_document(
@@ -180,9 +181,14 @@ pub(super) fn run_bytes(
                         error.reason,
                     )
                 })?;
+                initial.push(read.reference.clone());
                 documents.insert(read.reference, read.bytes);
             }
-            let binding = SubjectSelection::default_over(&documents).binding(&packages, &documents);
+            // FSpec FR-824: `initial` is the state each consuming step starts
+            // from, and its complete populations are the subject's universes.
+            let mut binding =
+                SubjectSelection::default_over(&documents).binding(&packages, &documents);
+            binding.initial = initial;
             let mut provision = SourceProvision::default();
             for unit in std::iter::once(&source).chain(units) {
                 provision.insert(
@@ -294,7 +300,10 @@ fn select<'p>(plans: &'p [VerificationPlan], name: Option<&str>) -> Result<&'p V
             if path.len() == 1 {
                 qualified.last().map(String::as_str) == Some(name)
             } else {
-                qualified.iter().map(String::as_str).eq(path.iter().copied())
+                qualified
+                    .iter()
+                    .map(String::as_str)
+                    .eq(path.iter().copied())
             }
         })
         .collect();
@@ -336,12 +345,16 @@ fn plan_refusal(failure: StageFailure<PlanRefusal>) -> RunCause {
             "missing-member",
             format!("the step `{step}` consumes `{member}`"),
         ),
-        PlanRefusal::Initial(failure) => refuse(
-            Code::InvalidRuntimeInput,
-            "/initial",
-            "invalid-value",
-            format!("no consuming step's model admits `initial`: {failure:?}"),
-        ),
+        refusal @ PlanRefusal::Initial(_) => {
+            // FSpec FR-824: the snapshot admission's own refusal, at `/initial`.
+            let catalog = filament_semantic_value::catalog::CatalogCoded::catalog_code(&refusal);
+            refuse(
+                Code::from_code(catalog.code()).unwrap_or(Code::InvalidRuntimeInput),
+                "/initial",
+                catalog.cause(),
+                format!("no consuming step's model admits `initial`: {refusal}"),
+            )
+        }
         PlanRefusal::Reader(VerificationPlanRefusal::PackageIdentityMismatch {
             expected,
             actual,

@@ -336,7 +336,10 @@ fn absent_initial_still_requires_the_first_state_trace_consumer() {
 fn proved_prerequisite_runs_its_dependent_and_transitive_blocking_skips_descendants() {
     let world = World::new(
         crate::model_world::counter(),
-        crate::counter::CONTRACT,
+        &format!(
+            "{}invariant AtMostThree using v on M::Counter at current {{ self.value <= 3 }}\n",
+            crate::counter::CONTRACT
+        ),
         crate::model_world::INFINITE,
         &[crate::model_world::Clause {
             activation: "on each (q: M::Counter)",
@@ -935,12 +938,16 @@ fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() 
     }
 }
 
-/// A counter world whose clause holds in every reachable state: `inc` stops
-/// at 3 (`CanInc`), so `value <= 3` is never violated.
+/// A counter world whose clauses hold in every reachable state: `inc` stops
+/// at 3 (`CanInc`), so `value <= 3` is never violated. `AtMostThree` is the
+/// state invariant a `model_based_test` step checks.
 fn holding_world() -> World {
     World::new(
         crate::model_world::counter(),
-        crate::counter::CONTRACT,
+        &format!(
+            "{}invariant AtMostThree using v on M::Counter at current {{ self.value <= 3 }}\n",
+            crate::counter::CONTRACT
+        ),
         crate::model_world::INFINITE,
         &[crate::model_world::Clause {
             activation: "on each (q: M::Counter)",
@@ -971,6 +978,7 @@ fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_o
     plan.nodes[0].bound = Some("20".into());
     plan.nodes[1].bound = Some("500".into());
     plan.nodes[2].bound = None;
+    select_invariant(&world, &mut plan.nodes[1]);
     let mut inputs = inputs(&world, &plan);
     inputs.max_trace_length = Some(8);
     let negotiate = Recording::default();
@@ -991,7 +999,10 @@ fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_o
     else {
         panic!("one disposition per node: {:?}", outcome.dispositions);
     };
-    assert_eq!((safe.as_str(), safe_step.status), ("safe", PlanStatus::Unsupported));
+    assert_eq!(
+        (safe.as_str(), safe_step.status),
+        ("safe", PlanStatus::Unsupported)
+    );
     let Some(PlanResult::Analysis(record)) = &safe_step.result else {
         panic!("safe's terminal record");
     };
@@ -1000,16 +1011,27 @@ fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_o
         Some(NegotiationOutcome::UnsupportedRequestedCapability.code())
     );
     assert_eq!(tested, "tested");
-    assert_eq!(tested_step.status, PlanStatus::Tested);
-    assert_eq!(tested_step.evidence.as_deref(), Some("tested"));
     let Some(PlanResult::ModelBasedTest(record)) = &tested_step.result else {
         panic!("tested's FR-190 record: {tested_step:?}");
     };
+    assert_eq!(
+        tested_step.status,
+        PlanStatus::Tested,
+        "{:?} {:?} {:?}",
+        record.cause,
+        record.counts,
+        record.discarded_by
+    );
+    assert_eq!(tested_step.evidence.as_deref(), Some("tested"));
     assert_eq!(record.max_cases, 500);
     assert_eq!(record.seed, 7);
     assert_eq!(record.max_trace_length, 8);
     assert_eq!(
-        (timely.as_str(), timely_step.status, timely_step.blocked_by.as_deref()),
+        (
+            timely.as_str(),
+            timely_step.status,
+            timely_step.blocked_by.as_deref()
+        ),
         ("timely", PlanStatus::Blocked, Some("safe"))
     );
     assert!(timely_step.result.is_none());
@@ -1045,4 +1067,24 @@ fn an_unbounded_model_based_test_step_runs_no_case() {
             ..
         })
     ));
+}
+
+/// Point `node` at the world's `AtMostThree` state invariant.
+fn select_invariant(
+    world: &World,
+    node: &mut fsl_package::verification_plan::VerificationPlanNode,
+) {
+    let clause = world
+        .package
+        .graph()
+        .state_clause("AtMostThree")
+        .expect("the invariant");
+    node.claim.node = serde_json::from_value(
+        serde_json::to_value(fsl_semantics::check::wire_id::structural_id(
+            &clause.identity(),
+        ))
+        .expect("structural identity"),
+    )
+    .expect("plan identity");
+    node.claim.occurrence.ordinal = clause.claim().ordinal();
 }

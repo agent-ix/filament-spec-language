@@ -491,8 +491,8 @@ fn model_based_test(
     cancel: &Cancel,
 ) -> Result<PlanDisposition, StageFailure<PlanRefusal>> {
     use fsl_eval::simulation::model::{
-        run_model_based_test, ModelBasedTestEvidence, ModelBasedTestRequest,
-        ModelBasedTestSubject, NativeAdmission,
+        run_model_based_test, ModelBasedTestEvidence, ModelBasedTestRequest, ModelBasedTestSubject,
+        NativeAdmission,
     };
     let not_run = |code, cause, member| PlanDisposition {
         status: PlanStatus::Unsupported,
@@ -546,9 +546,7 @@ fn model_based_test(
         profile,
         seed: inputs.seed.unwrap_or(0),
         max_cases,
-        max_trace_length: state_subject
-            .then_some(inputs.max_trace_length)
-            .flatten(),
+        max_trace_length: state_subject.then_some(inputs.max_trace_length).flatten(),
         max_value_bits: if consumes(&consumers.max_value_bits) {
             inputs.max_value_bits
         } else {
@@ -1071,7 +1069,11 @@ mod tests {
     fn a_step_requiring_a_later_step_waits_for_it_and_is_blocked_when_it_fails() {
         let plan = plan(&[("early", &["late"]), ("late", &[])]);
         let (dispositions, handed) = gate(&plan, |_| PlanStatus::Refuted);
-        assert_eq!(handed, ["late"], "early is not handed on before late settles");
+        assert_eq!(
+            handed,
+            ["late"],
+            "early is not handed on before late settles"
+        );
         assert_eq!(dispositions[0].0, "early");
         assert_eq!(dispositions[0].1.status, PlanStatus::Blocked);
         assert_eq!(dispositions[0].1.blocked_by.as_deref(), Some("late"));
@@ -1105,7 +1107,11 @@ mod tests {
                 "s" => PlanStatus::Measured(decision),
                 _ => PlanStatus::Proved,
             });
-            assert_eq!(handed.contains(&"t".to_owned()), dependent_runs, "{decision:?}");
+            assert_eq!(
+                handed.contains(&"t".to_owned()),
+                dependent_runs,
+                "{decision:?}"
+            );
             assert_eq!(
                 dispositions[1].1.status,
                 if dependent_runs {

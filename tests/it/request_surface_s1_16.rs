@@ -376,7 +376,7 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
         true,
         (
             "verification_plan",
-            json!({"plan": "Release", "emit": true}),
+            json!({"plan": "Release", "emit": true, "execute": false}),
         ),
     );
     let document = &value["verification_plan"]["document"];
@@ -403,14 +403,29 @@ fn a_plan_leaves_the_package_identity_unchanged_and_emits_its_document() {
 #[trace("TC-3018", "FR-1038-AC-1")]
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-1")]
 fn executing_a_plan_blocks_only_descendants_of_a_failed_step() {
-    let (exit, value) = run(
-        &format!("{MODEL_HEADER}{RELEASE_PLAN}"),
-        true,
-        (
-            "verification_plan",
-            json!({"plan": "Release", "execute": true,
-            "initial": "spine-snapshot.json", "seed": 7, "max_trace_length": 8}),
-        ),
+    // FSpec FR-824: `initial` is the state each consuming step starts from,
+    // so it is a snapshot anchored at an initialization (FR-120).
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{MODEL_HEADER}{RELEASE_PLAN}"),
+    )
+    .unwrap();
+    let initial = snapshot_of(directory.path(), &["c1"], true);
+    std::fs::write(
+        directory.path().join("initial.json"),
+        serde_json::to_vec(&initial).unwrap(),
+    )
+    .unwrap();
+    let (exit, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "verification_plan": {"plan": "Release", "execute": true,
+                "initial": "initial.json", "seed": 7, "max_trace_length": 8}}}),
     );
     let nodes = &value["verification_plan"]["dispositions"];
     assert_eq!(nodes["safe"]["status"], "refuted", "{value}");
