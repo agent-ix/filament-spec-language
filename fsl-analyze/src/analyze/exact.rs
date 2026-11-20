@@ -449,12 +449,14 @@ fn mean_time_ranking(
             return None;
         }
     }
-    product
+    let mut entries = product
         .states
         .iter()
         .zip(ranks)
         .map(|(state, rank)| Some((state.certificate_state.clone()?, rank?)))
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Some(entries)
 }
 
 fn same_mean_time_choice(
