@@ -28,6 +28,8 @@ Abstract types cannot have direct instances. A missing snapshot is incomplete
 evidence; a supplied snapshot with the wrong observation role is refused.
 Recorded creation and deletion lists must match the complete pre/post
 observations, and the operation's frame must separately authorize each change.
+A reference into a complete population must name a present object. An
+incomplete population cannot establish that an absent target is dangling.
 
 Extracted Markdown belongs to a clause run. Select one authored clause binding,
 keep the source package and extraction modes separate, and correct the semantic
@@ -49,6 +51,10 @@ admission retains its model or observation cause. A catalogue mapping alone
 does not establish that an input can reach a producer. Internal-fault codes
 describe a broken established invariant, rather than a supported way to refuse
 user input; an ordinary malformed document must retain its input-defect code.
+For example, observation admission reports an internal fault if the host loses
+the model package that its checked graph already selected. Restore the
+checked graph's exact model inputs; changing the observation cannot repair
+that host inconsistency.
 
 FR-010 exposes one native `Diagnostic` envelope with phase, code, exact caller
 source labels, display path, original span and explanatory message. `Display`

@@ -1355,3 +1355,173 @@ fn an_admitted_complete_population_distinguishes_dangling_protocol_seeds() {
     }
     assert!(DOCUMENTATION.contains("| dangling_reference |"));
 }
+
+#[test]
+fn selected_model_protocol_seeds_require_complete_present_targets() {
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::observation::{
+        admit_protocol_reference_seeds, admit_value_invariants_snapshot,
+        declared_type_universe_for, AdmissionFailure, DocumentRef, ObservationLimits,
+    };
+    use std::collections::BTreeMap;
+    // FR-106-AC-65. The existing package constructor is authoritative in
+    // this repository; this test supplies its own checked declaration and
+    // original observation documents through the public admission seam.
+    let checked = population_fixture::checked(
+        false,
+        "function postage_marker using v(): Integer pure { 19 }",
+    );
+    let graph = &checked.graph;
+    let (effective, universe) = declared_type_universe_for(
+        graph.model_inputs(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &population_fixture::key("Other"),
+    )
+    .expect("selected model admits")
+    .expect("declared member type");
+    let selected = DocumentRef {
+        authority: "producer-tests".into(),
+        identity: "original:depot-state".into(),
+    };
+    for complete in [true, false] {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "format":"filament.state.snapshot/v1",
+            "identity":{"authority":selected.authority,"identity":selected.identity},
+            "observation":"current", "model":{"identity":population_fixture::PACKAGE},
+            "populations":[{"population":population_fixture::ident("others"),"complete":complete,
+                "objects":[{"key":"parcel-present","type":population_fixture::ident("Other"),"fields":{}}]}]
+        })).expect("original state encodes");
+        let provision = BTreeMap::from([(selected.clone(), bytes)]);
+        let (observation, _) = admit_value_invariants_snapshot(
+            graph.model_inputs(),
+            graph.scope().types(),
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+            &provision,
+            &selected,
+            ObservationLimits::default(),
+        )
+        .expect("well-formed state admits independently of seed reachability");
+        let node = observation
+            .environment
+            .population_node(&population_fixture::ident("others"))
+            .expect("admitted population provenance");
+        for object in ["parcel-present", "parcel-missing"] {
+            let reference = filament_exact::ObjectReference::new(
+                universe.clone(),
+                effective.clone(),
+                filament_exact::ObjectId::new(object).expect("original object key"),
+            );
+            let result = admit_protocol_reference_seeds(
+                graph.scope().types(),
+                &observation,
+                &[(reference, node.clone(), Vec::new())],
+            );
+            match (complete, object, result) {
+                (true, "parcel-present", Ok(())) => {}
+                (true, "parcel-missing", Err(AdmissionFailure::Refused(record))) => {
+                    assert_eq!(
+                        record.catalog.code(),
+                        CompleteCode::DanglingReference.as_str()
+                    );
+                    assert_eq!(
+                        record.catalog.cause(),
+                        "absent-target-in-complete-population"
+                    );
+                }
+                (false, _, Err(AdmissionFailure::Incomplete(record))) => {
+                    assert_eq!(
+                        record.catalog.code(),
+                        CompleteCode::IncompletePopulation.as_str()
+                    );
+                    assert_eq!(record.catalog.cause(), "incomplete-scope");
+                }
+                (_, _, result) => panic!("complete={complete}, object={object}: {result:?}"),
+            }
+        }
+    }
+    assert!(DOCUMENTATION.contains("| dangling_reference |"));
+}
+
+#[test]
+fn a_host_that_loses_the_checked_model_input_reaches_a_real_internal_fault() {
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::observation::{
+        admit_current_snapshot, AdmissionFailure, DocumentRef, ObservationLimits,
+    };
+    use std::collections::BTreeMap;
+    // FR-106's public host seam re-admits the package used at compile time.
+    // Its AdmissionFailure::Fault contract distinguishes a host that loses
+    // that established authority from a malformed observation document.
+    let checked = population_fixture::checked(
+        false,
+        "function postage_marker using v(): Integer pure { 23 }",
+    );
+    assert!(
+        !checked.packages.is_empty(),
+        "the source selected a real package"
+    );
+    let selected = DocumentRef {
+        authority: "producer-tests".into(),
+        identity: "original:lost-host-state".into(),
+    };
+    let result = admit_current_snapshot(
+        checked.graph.model_inputs(),
+        checked.graph.scope().types(),
+        &BTreeMap::new(),
+        ModelNormalizationLimits::default(),
+        &BTreeMap::new(),
+        &selected,
+        ObservationLimits::default(),
+    );
+    let AdmissionFailure::Fault(fault) =
+        result.expect_err("the host omitted its checked model package")
+    else {
+        panic!("loss of established model authority must not become a user-input refusal")
+    };
+    assert_eq!(fault.stage(), "observation-admission");
+    assert_eq!(fault.invariant(), "model-reconsistent-admission");
+    assert_eq!(
+        fault.catalog_code().code(),
+        CompleteCode::RuntimeInvariant.as_str()
+    );
+    assert_eq!(fault.catalog_code().cause(), "established-invariant-broken");
+    assert_eq!(fault.category().exit_code(), 30);
+    assert!(DOCUMENTATION.contains("| runtime_invariant |"));
+}
+
+#[test]
+#[ignore = "QSL-2693: command erases unknown capability classification"]
+fn an_unknown_request_capability_keeps_the_required_feature_classification() {
+    // FR-111 Behavior/capability inventory: a capability outside the closed
+    // inventory is unknown_required_feature/unknown-feature, not a malformed
+    // definition's invalid_package classification.
+    let directory = tempfile::tempdir().expect("owned capability request");
+    std::fs::write(
+        directory.path().join("producer.fsl"),
+        source("function postage_marker using p(): Integer pure { 29 }"),
+    )
+    .expect("original source");
+    std::fs::write(directory.path().join("definition.json"), "{}")
+        .expect("exact definition document bytes");
+    let request = serde_json::json!({"format":"native-compile/1","request":{
+        "models":[],
+        "program":{"source":{"file":"producer.fsl","authority":"producer-tests","identity":"original:diagnostics","document":"Producer","formal_revision":1}},
+        "extensions":[{"authority":"producer-tests","identity":"original:postal-extension","file":"definition.json","capabilities":["original:unknown-capability"]}]
+    }});
+    let path = directory.path().join("request.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&request).expect("original request encodes"),
+    )
+    .expect("own input");
+    let refusal =
+        fsl_command::command::compile(&path).expect_err("unknown closed-inventory capability");
+    assert_eq!(
+        refusal.cause.code(),
+        CompleteCode::UnknownRequiredFeature,
+        "{refusal:?}"
+    );
+    assert!(DOCUMENTATION.contains("| unknown_required_feature |"));
+}
