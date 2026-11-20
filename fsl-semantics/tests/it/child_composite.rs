@@ -642,18 +642,17 @@ fn refusal_of(result: Result<(), AdmissionFailure>) -> Refusal {
 type Refusal = (String, String, String, Vec<PathStep>);
 
 /// A refusal at the snapshot field `field`: the path is the document path of
-/// the failing member (FR-663, FR-106 nested path), the field's own path
-/// `populations/0/objects/0/fields/<field>` followed by `below`, each step
-/// spelled as the document spells it; a number is an element index.
-fn refusal(cause: &str, field: &str, below: &[&str]) -> Refusal {
-    let path: Vec<PathStep> = ["populations", "0", "objects", "0", "fields", field]
+/// the field (`populations/0/objects/0/fields/<field>`) followed by the typed
+/// steps `below` it (FR-106 nested path).
+fn refusal(cause: &str, field: &str, below: Vec<PathStep>) -> Refusal {
+    let mut path: Vec<PathStep> = ["populations", "0", "objects", "0", "fields", field]
         .iter()
-        .chain(below)
         .map(|step| match step.parse::<usize>() {
             Ok(index) => PathStep::Index(index),
             Err(_) => field_step(step),
         })
         .collect();
+    path.extend(below);
     (cause.to_owned(), "o1".to_owned(), field.to_owned(), path)
 }
 
@@ -696,27 +695,27 @@ fn a_snapshot_refuses_a_record_that_does_not_conform_to_its_slot() {
     ancestor_at_child.insert("taxed".to_owned(), json!({"present": money("1")}));
     assert_eq!(
         refusal_of(admit_order(ancestor_at_child)),
-        refusal("wrong-value-kind", "taxed", &["present"])
+        refusal("wrong-value-kind", "taxed", vec![PathStep::OptionValue])
     );
     assert_eq!(
         refusal_of(admit_order(order_fields(
             record_value("Fee", &[("fee_minor", "1")]),
             vec![]
         ))),
-        refusal("wrong-value-kind", "total", &[])
+        refusal("wrong-value-kind", "total", vec![])
     );
     for ty in [fixture::id("Order"), fixture::id("NoSuchRecord")] {
         let value = json!({"record": {"type": ty, "fields": {}}});
         assert_eq!(
             refusal_of(admit_order(order_fields(value, vec![]))),
-            refusal("wrong-value-kind", "total", &[]),
+            refusal("wrong-value-kind", "total", vec![]),
             "{ty}"
         );
     }
     let reference = json!({"reference": {"population": fixture::id("orders"), "key": "o1"}});
     assert_eq!(
         refusal_of(admit_order(order_fields(reference, vec![]))),
-        refusal("wrong-value-kind", "total", &[])
+        refusal("wrong-value-kind", "total", vec![])
     );
 }
 
@@ -733,11 +732,7 @@ fn a_snapshot_record_is_checked_for_its_own_effective_fields() {
     );
     assert_eq!(
         refusal_of(admit_order(order_fields(without_tax.clone(), vec![]))),
-        refusal(
-            "missing-member",
-            "total",
-            &["record", "fields", "tax_minor"]
-        )
+        refusal("missing-member", "total", vec![field_step("tax_minor")])
     );
     assert_eq!(
         refusal_of(admit_order(order_fields(
@@ -747,7 +742,7 @@ fn a_snapshot_record_is_checked_for_its_own_effective_fields() {
         refusal(
             "missing-member",
             "items",
-            &["sequence", "1", "record", "fields", "tax_minor"]
+            vec![PathStep::Index(1), field_step("tax_minor")]
         )
     );
     let extra = record_value(
@@ -760,11 +755,7 @@ fn a_snapshot_record_is_checked_for_its_own_effective_fields() {
     );
     assert_eq!(
         refusal_of(admit_order(order_fields(extra, vec![]))),
-        refusal(
-            "unknown-member",
-            "total",
-            &["record", "fields", "tax_minor"]
-        )
+        refusal("unknown-member", "total", vec![field_step("tax_minor")])
     );
     let bad_integer = record_value(
         "Money",
@@ -772,11 +763,7 @@ fn a_snapshot_record_is_checked_for_its_own_effective_fields() {
     );
     assert_eq!(
         refusal_of(admit_order(order_fields(bad_integer, vec![]))),
-        refusal(
-            "invalid-value",
-            "total",
-            &["record", "fields", "amount_minor"]
-        )
+        refusal("invalid-value", "total", vec![field_step("amount_minor")])
     );
 }
 
@@ -793,11 +780,7 @@ fn a_snapshot_refusal_names_the_first_path_in_field_order() {
     }}});
     assert_eq!(
         refusal_of(admit_order(order_fields(two_bad.clone(), vec![]))),
-        refusal(
-            "invalid-value",
-            "total",
-            &["record", "fields", "amount_minor"]
-        )
+        refusal("invalid-value", "total", vec![field_step("amount_minor")])
     );
     // `total` is declared before `items`, so its defect is the first reached
     // even though `items` also holds one.
@@ -806,11 +789,7 @@ fn a_snapshot_refusal_names_the_first_path_in_field_order() {
             two_bad,
             vec![record_value("Fee", &[("fee_minor", "1")])]
         ))),
-        refusal(
-            "invalid-value",
-            "total",
-            &["record", "fields", "amount_minor"]
-        )
+        refusal("invalid-value", "total", vec![field_step("amount_minor")])
     );
     // Within a sequence the first defective element is reached first.
     let fee = || record_value("Fee", &[("fee_minor", "1")]);
@@ -819,7 +798,7 @@ fn a_snapshot_refusal_names_the_first_path_in_field_order() {
             money("1"),
             vec![money("1"), fee(), fee()]
         ))),
-        refusal("wrong-value-kind", "items", &["sequence", "1"])
+        refusal("wrong-value-kind", "items", vec![PathStep::Index(1)])
     );
 }
 
@@ -937,7 +916,12 @@ fn a_deep_chain_is_bounded_by_the_value_limit_and_names_its_path() {
         refusal(
             "wrong-value-kind",
             "chain",
-            &["present", "record", "fields", "next", "present", "record", "fields", "level"]
+            vec![
+                PathStep::OptionValue,
+                field_step("next"),
+                PathStep::OptionValue,
+                field_step("level")
+            ]
         )
     );
 }
@@ -960,7 +944,7 @@ fn a_nested_path_carries_option_value_and_index_steps() {
         refusal(
             "missing-member",
             "discount",
-            &["present", "record", "fields", "tax_minor"]
+            vec![PathStep::OptionValue, field_step("tax_minor")]
         )
     );
     let bundle = |amounts: Value, tagged: Value| {
@@ -985,7 +969,11 @@ fn a_nested_path_carries_option_value_and_index_steps() {
         refusal(
             "invalid-value",
             "bundle",
-            &["present", "record", "fields", "amounts", "sequence", "1"]
+            vec![
+                PathStep::OptionValue,
+                field_step("amounts"),
+                PathStep::Index(1)
+            ]
         )
     );
     // A defect in the second element's field: the exact steps are the
@@ -998,7 +986,12 @@ fn a_nested_path_carries_option_value_and_index_steps() {
         refusal(
             "invalid-value",
             "bundle",
-            &["present", "record", "fields", "tagged", "sequence", "1", "record", "fields", "tag"]
+            vec![
+                PathStep::OptionValue,
+                field_step("tagged"),
+                PathStep::Index(1),
+                field_step("tag")
+            ]
         )
     );
     assert_eq!(
@@ -1009,7 +1002,12 @@ fn a_nested_path_carries_option_value_and_index_steps() {
         refusal(
             "missing-member",
             "bundle",
-            &["present", "record", "fields", "tagged", "sequence", "0", "record", "fields", "tag"]
+            vec![
+                PathStep::OptionValue,
+                field_step("tagged"),
+                PathStep::Index(0),
+                field_step("tag")
+            ]
         )
     );
 }

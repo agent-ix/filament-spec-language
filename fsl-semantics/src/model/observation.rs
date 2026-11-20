@@ -895,6 +895,9 @@ pub enum RawNativeKind {
 struct NativeObject {
     kind: RawNativeKind,
     members: Vec<(String, Option<String>)>,
+    /// The position of the `kind` member among all the members, in document
+    /// order.
+    kind_at: usize,
     /// Each member that is itself a payload object (a Quantity's
     /// `magnitude`), by name; it is also in `members`, with no text.
     objects: Vec<(String, NativeObject)>,
@@ -905,6 +908,7 @@ struct NativeObject {
 pub struct RawNative<'v> {
     kind: RawNativeKind,
     members: &'v [(String, Option<String>)],
+    kind_at: usize,
     objects: &'v [(String, NativeObject)],
 }
 
@@ -923,6 +927,16 @@ impl<'v> RawNative<'v> {
             .map(|(name, text)| (name.as_str(), text.as_deref()))
     }
 
+    /// Every member name, `kind` included, in document order.
+    pub fn member_names(self) -> impl Iterator<Item = &'v str> {
+        let before = self.members.iter().take(self.kind_at);
+        let after = self.members.iter().skip(self.kind_at);
+        before
+            .map(|(name, _)| name.as_str())
+            .chain(std::iter::once("kind"))
+            .chain(after.map(|(name, _)| name.as_str()))
+    }
+
     /// The member `name` when it is itself a payload object.
     #[must_use]
     #[ix_trace_rs::string_edge]
@@ -939,6 +953,7 @@ impl NativeObject {
         RawNative {
             kind: self.kind,
             members: &self.members,
+            kind_at: self.kind_at,
             objects: &self.objects,
         }
     }
@@ -1034,6 +1049,7 @@ impl SnapshotValue {
         Self::single(RawNode::Native(NativeObject {
             kind,
             members,
+            kind_at: 0,
             objects: Vec::new(),
         }))
     }
@@ -1044,6 +1060,7 @@ impl SnapshotValue {
     pub fn quantity(unit: String, magnitude: &filament_exact::Rational) -> Self {
         let rational = NativeObject {
             kind: RawNativeKind::Known(NativeKind::Rational),
+            kind_at: 0,
             members: vec![
                 (
                     "numerator".to_owned(),
@@ -1058,6 +1075,7 @@ impl SnapshotValue {
         };
         Self::single(RawNode::Native(NativeObject {
             kind: RawNativeKind::Known(NativeKind::Quantity),
+            kind_at: 0,
             members: vec![
                 ("unit".to_owned(), Some(unit)),
                 ("magnitude".to_owned(), None),

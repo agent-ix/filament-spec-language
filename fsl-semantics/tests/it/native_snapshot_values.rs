@@ -728,9 +728,6 @@ fn writes(change: &FrameChange, field: &str) -> bool {
 }
 
 /// The refusal an admitted document gives where `field` holds `value`.
-/// The steps are those below the field: the path itself is checked to start at
-/// `populations/<i>/objects/<j>/fields/<field>` (FR-663), and the steps below
-/// it are as the document spells them.
 fn refused_field(replay: &Replay, field: &str, value: Value) -> Refusal {
     at_field(
         refusal_of(replay.admit(
@@ -741,28 +738,20 @@ fn refused_field(replay: &Replay, field: &str, value: Value) -> Refusal {
     )
 }
 
-/// A snapshot field refusal with its document path reduced to the steps below
-/// the field.
+/// A snapshot field refusal with its document path reduced to the typed steps
+/// below the field: the path is checked to start at
+/// `populations/<i>/objects/<j>/fields/<field>` and, when it names a member,
+/// to end at it.
 fn at_field(mut refusal: Refusal, field: &str) -> Refusal {
     refusal.path = below_field(&refusal.path, field).to_vec();
-    // The pointer ends at the named member unless it is missing, when it
-    // stays at the containing object (FR-663); the rest is compared as is.
-    if let Some(member) = refusal
-        .member
-        .as_deref()
-        .filter(|_| refusal.cause != "missing-member")
-    {
+    if let Some(member) = refusal.member.clone() {
         assert_eq!(
             refusal.path.pop(),
-            Some(spelled(member)),
-            "the pointer ends at the member"
+            Some(PathStep::Field(member)),
+            "the path ends at the member"
         );
     }
     refusal
-}
-
-fn spelled(step: &str) -> PathStep {
-    PathStep::Field(step.to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -1134,17 +1123,17 @@ fn a_native_object_in_a_slot_of_another_type_refuses_wrong_value_kind() {
         (
             "parent",
             json!({"present": uuid(UUID_TEXT)}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "prior",
             json!({"present": timestamp("0")}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "seen",
             json!({"sequence": [timestamp("0"), uuid(UUID_TEXT)]}),
-            vec![spelled("sequence"), PathStep::Index(1)],
+            vec![PathStep::Index(1)],
         ),
         ("token", timestamp("01"), vec![]),
         ("stamp", uuid("X"), vec![]),
@@ -1232,10 +1221,7 @@ fn a_witness_post_snapshot_still_refuses_a_noncanonical_payload() {
     ] {
         let post = with(base_fields(), field, value);
         assert_eq!(
-            at_field(
-                refusal_of(replay.invoke_with_post("touch", &post, witness)),
-                field
-            ),
+            at_field(refusal_of(replay.invoke_with_post("touch", &post, witness)), field),
             expect("invalid-value", field, &[], Some(member), kernel),
             "{field}"
         );
@@ -1498,17 +1484,17 @@ fn a_string_object_in_another_slot_refuses_wrong_value_kind() {
         (
             "parent",
             json!({"present": any.clone()}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "prior",
             json!({"present": any.clone()}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "seen",
             json!({"sequence": [timestamp("0"), any.clone()]}),
-            vec![spelled("sequence"), PathStep::Index(1)],
+            vec![PathStep::Index(1)],
         ),
         ("label", uuid(UUID_TEXT), vec![]),
         ("label", timestamp("0"), vec![]),
@@ -1733,17 +1719,17 @@ fn a_text_object_is_a_known_kind_refused_outside_a_text_slot() {
         (
             "parent",
             json!({"present": text.clone()}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "note",
             json!({"present": text.clone()}),
-            vec![spelled("present")],
+            vec![PathStep::OptionValue],
         ),
         (
             "tags",
             json!({"sequence": [string("a"), text.clone()]}),
-            vec![spelled("sequence"), PathStep::Index(1)],
+            vec![PathStep::Index(1)],
         ),
         ("token", json!({"kind": "text", "text": UUID_TEXT}), vec![]),
     ] {
@@ -2527,25 +2513,11 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
             defect.value
         );
         if place == "field" {
-            // The document spells the element below the collection's tag.
-            let tag = defect
-                .value
-                .as_object()
-                .and_then(|object| object.keys().next());
-            let expected: Vec<PathStep> = match (&defect.path[..], tag) {
-                ([PathStep::Index(index)], Some(tag)) => {
-                    vec![spelled(tag), PathStep::Index(*index)]
-                }
-                _ => defect.path.clone(),
-            };
-            // A named member is the last step of the pointer unless missing.
-            let mut expected = expected;
-            if let Some(member) = record
-                .fields
-                .get("member")
-                .filter(|_| defect.cause != "missing-member")
-            {
-                expected.push(spelled(member));
+            // The document path of the field, the typed steps, then the
+            // named member.
+            let mut expected = defect.path.clone();
+            if let Some(member) = record.fields.get("member") {
+                expected.push(PathStep::Field(member.clone()));
             }
             assert_eq!(
                 below_field(&record.path, defect.name),
@@ -2607,9 +2579,8 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
             Code::InvalidRuntimeInput.as_str(),
             "invalid-value",
             vec![
-                spelled("ordered-set"),
                 PathStep::Index(0),
-                spelled("nanoseconds")
+                PathStep::Field("nanoseconds".to_owned())
             ]
         )
     );
@@ -2830,10 +2801,7 @@ fn native_collection_quantity_spellings_share_a_member() {
         if unique {
             let record = record_of(result);
             assert_eq!(record.catalog.cause(), "duplicate-member");
-            assert_eq!(
-                below_field(&record.path, "reach"),
-                [spelled(tag), PathStep::Index(1)]
-            );
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
         } else {
             let closure = result.unwrap();
             let elements = elements_of(&replay.value(&closure, "reach"));
@@ -2925,10 +2893,7 @@ fn native_collection_document_members_follow_the_declared_kind() {
             );
             if snapshot {
                 // A snapshot field's document path ends at the named member.
-                // A missing member is absent from the document: its pointer
-                // stays at the object (FR-663).
                 let named: Vec<PathStep> = member
-                    .filter(|_| cause != "missing-member")
                     .map(|member| PathStep::Field(member.to_owned()))
                     .into_iter()
                     .collect();
@@ -2962,10 +2927,7 @@ fn native_collection_document_members_follow_the_declared_kind() {
         ObservationLimits::default(),
     ));
     assert_eq!(invalid.catalog.cause(), "wrong-value-kind");
-    assert_eq!(
-        below_field(&invalid.path, "counts"),
-        [spelled("bag"), PathStep::Index(1)]
-    );
+    assert_eq!(below_field(&invalid.path, "counts"), [PathStep::Index(1)]);
 }
 
 /// A native Duration is the quantity over the compiling unit's seconds.
@@ -3030,10 +2992,7 @@ fn native_collection_duration_uses_the_declared_second() {
         if unique {
             let record = record_of(result);
             assert_eq!(record.catalog.cause(), "duplicate-member");
-            assert_eq!(
-                below_field(&record.path, "reach"),
-                [spelled(tag), PathStep::Index(1)]
-            );
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
         } else {
             let closure = result.unwrap();
             assert_eq!(elements_of(&replay.value(&closure, "reach")).len(), 2);
@@ -3149,7 +3108,10 @@ fn a_defective_magnitude_refuses_at_the_path_magnitude() {
         );
         assert_eq!(
             below_field(&record.path, "reach"),
-            [spelled("magnitude"), spelled(member)],
+            [
+                PathStep::Field("magnitude".to_owned()),
+                PathStep::Field(member.to_owned())
+            ],
             "{magnitude}"
         );
     }
@@ -3466,6 +3428,93 @@ fn a_collection_tag_beside_kind_is_an_unknown_payload_member() {
             ),
             expect("unknown-member", "label", &[], Some(tag), None),
             "{tag}"
+        );
+    }
+}
+
+/// FR-106-AC-68: in a collection slot, a payload-shaped object holding the
+/// declared tag refuses `unknown-member` naming the first other member in
+/// document order, not `missing-member` naming the tag.
+#[trace("TC-1171", "FR-106-AC-68")]
+#[test]
+fn a_payload_object_holding_the_declared_tag_is_an_unknown_member_in_a_collection_slot() {
+    let replay = collection_replay();
+    for (field, tag, value, extra) in [
+        (
+            "ids",
+            "set",
+            json!({"kind": "string", "text": "a", "set": []}),
+            "kind",
+        ),
+        (
+            "ids",
+            "set",
+            json!({"a": 1, "kind": "string", "set": []}),
+            "a",
+        ),
+        (
+            "counts",
+            "bag",
+            json!({"bag": [], "kind": "string", "counts": 1}),
+            "counts",
+        ),
+        (
+            "order",
+            "ordered-set",
+            json!({"ordered-set": [], "kind": "string"}),
+            "kind",
+        ),
+    ] {
+        let record = record_of(replay.admit(
+            &with(collection_fields(), field, value.clone()),
+            ObservationLimits::default(),
+        ));
+        assert_eq!(record.catalog.cause(), "unknown-member", "{tag}: {value}");
+        assert_eq!(
+            record.fields.get("member").map(String::as_str),
+            Some(extra),
+            "{tag}: {value}"
+        );
+    }
+}
+
+/// FR-106-AC-15, AC-21: the typed nested steps of a refusal are the same
+/// under a snapshot field, below the field's own document path, and under a
+/// parameter, below the parameter's root.
+#[trace("FR-106-AC-15", "FR-106-AC-21", "TC-1171")]
+#[test]
+fn typed_nested_steps_are_identical_under_a_field_and_a_parameter() {
+    let replay = collection_replay();
+    for (name, value) in [
+        ("ids", json!({"set": [integer("1")]})),
+        ("order", json!({"ordered-set": integers(&["1", "1"])})),
+        ("counts", json!({"bag": [integer("1"), integer("x")]})),
+    ] {
+        let field = record_of(replay.admit(
+            &with(collection_fields(), name, value.clone()),
+            ObservationLimits::default(),
+        ));
+        let mut parameters = retag_parameters();
+        parameters[name] = value.clone();
+        let parameter = record_of(replay.invoke(
+            "retag",
+            Selected::Postcondition,
+            parameters,
+            json!({"set": []}),
+            ObservationLimits::default(),
+        ));
+        assert!(!parameter.path.is_empty(), "{name}");
+        assert_eq!(
+            below_field(&field.path, name),
+            parameter.path,
+            "{name}: {value}"
+        );
+        assert!(
+            field.path.iter().all(|step| !matches!(
+                step,
+                PathStep::Field(tag) if matches!(tag.as_str(), "set" | "bag" | "sequence" | "ordered-set" | "present" | "record")
+            )),
+            "{name}: the steps are typed, not document-spelled"
         );
     }
 }

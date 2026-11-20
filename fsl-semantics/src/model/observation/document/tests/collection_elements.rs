@@ -526,26 +526,13 @@ fn native_collection_envelopes_keep_document_order_and_nested_paths() {
     }
 }
 
-/// The RFC 6901 pointer a refusal's steps below a field value fold to, the
-/// way the FR-663 refusal locus folds them.
-fn pointer_of(steps: &[PathStep]) -> String {
-    steps.iter().fold(String::new(), |mut pointer, step| {
-        match step {
-            PathStep::Field(name) => pointer.push_str(&format!("/{}", json_pointer_segment(name))),
-            PathStep::Index(index) => pointer.push_str(&format!("/{index}")),
-            PathStep::OptionValue => panic!("an option step is spelled `present`"),
-        }
-        pointer
-    })
-}
-
 /// The refusal of `object` at `slot`, and the document value its emitted
 /// pointer resolves to.
 fn located(object: serde_json::Value, slot: ValueType) -> (AdmissionRecord, serde_json::Value) {
     let record = admitted(object.clone(), slot.clone()).unwrap_err();
     let raw = snapshot(&object.to_string());
-    let steps = refusal_steps(raw.form(), &record);
-    let pointer = pointer_of(&steps);
+    // The pointer a snapshot field refusal carries in its `path` member.
+    let pointer = pointer_of(&refusal_steps(raw.form(), &record));
     let resolved = object
         .pointer(&pointer)
         .unwrap_or_else(|| panic!("{pointer} resolves in {object}"))

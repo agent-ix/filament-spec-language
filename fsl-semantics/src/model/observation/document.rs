@@ -1574,10 +1574,22 @@ fn collection_envelope_refusal(form: RawForm<'_>, kind: CollectionKind) -> Optio
             }
             Some(refuse("wrong-value-kind").with("member", tag))
         }
+        // A payload object (one with `kind`) holding the declared tag is
+        // judged as an envelope with an unknown member: the first member in
+        // document order other than the tag (FR-106-AC-68).
+        RawForm::Native(native) => {
+            if native.member_names().any(|name| name == tag) {
+                let extra = native
+                    .member_names()
+                    .find(|name| *name != tag)
+                    .unwrap_or("kind");
+                return Some(refuse("unknown-member").with("member", extra));
+            }
+            Some(refuse("missing-member").with("member", tag))
+        }
         // These are JSON objects too, with no member of the declared kind.
         RawForm::Boolean(_)
         | RawForm::Integer(_)
-        | RawForm::Native(_)
         | RawForm::Absent
         | RawForm::Present(_)
         | RawForm::Reference(_)
@@ -3085,18 +3097,41 @@ fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep>
 }
 
 /// The steps below a snapshot field of a refusal raised inside its value, as
-/// the document spells them and ending at the named member: a missing member
-/// is absent from the document, so its pointer stays at the containing
-/// object (FR-663).
+/// the document spells them and ending at the failing member (FR-663). A
+/// missing member is absent from the document, so its pointer stays at the
+/// containing object.
 fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
     let mut steps = document_spelling(form, &record.path);
-    if let Some(member) = record.fields.get("member") {
-        let named = PathStep::Field(member.clone());
-        if record.catalog.cause() != "missing-member" && steps.last() != Some(&named) {
-            steps.push(named);
+    let missing = record.catalog.cause() == "missing-member";
+    match record.fields.get("member") {
+        Some(member) => {
+            let named = PathStep::Field(member.clone());
+            if !missing && steps.last() != Some(&named) {
+                steps.push(named);
+            }
         }
+        // A record's missing field is named by the last typed step.
+        None if missing => {
+            steps.pop();
+        }
+        None => {}
     }
     steps
+}
+
+/// The RFC 6901 pointer suffix of document-spelled steps.
+fn pointer_of(steps: &[PathStep]) -> String {
+    steps.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(name) => {
+                pointer.push('/');
+                pointer.push_str(&json_pointer_segment(name));
+            }
+            PathStep::Index(index) => pointer.push_str(&format!("/{index}")),
+            PathStep::OptionValue => {}
+        }
+        pointer
+    })
 }
 
 /// The JSON pointer to an object's member in its source snapshot.
@@ -3268,7 +3303,7 @@ pub(super) fn admit_population_values<'t>(
                             .with("field", name.to_owned())
                             .with(
                                 "path",
-                                snapshot_field_path(population_index, object_index, name),
+                                format!("/populations/{population_index}/objects/{object_index}"),
                             )
                             .at(vec![
                                 filament_semantic_value::admission::PathStep::Field(
@@ -3370,13 +3405,22 @@ pub(super) fn admit_population_values<'t>(
                         .map_err(|mut record| {
                             let field_path =
                                 snapshot_field_path(population_index, object_index, name);
+                            // The typed steps stay as the kernel gave them
+                            // (FR-106: no rendering of the shared path); the
+                            // document-spelled pointer is the `path` member.
+                            let refusal_path = format!(
+                                "{field_path}{}",
+                                pointer_of(&refusal_steps(raw.form(), &record))
+                            );
                             let mut path =
                                 snapshot_field_steps(population_index, object_index, name);
-                            path.extend(refusal_steps(raw.form(), &record));
-                            let refusal_path = record.fields.get("member").map_or_else(
-                                || field_path.clone(),
-                                |member| format!("{field_path}/{}", json_pointer_segment(member)),
-                            );
+                            path.extend(record.path.iter().cloned());
+                            if let Some(member) = record.fields.get("member") {
+                                let named = PathStep::Field(member.clone());
+                                if path.last() != Some(&named) {
+                                    path.push(named);
+                                }
+                            }
                             record.path = path;
                             refuse(
                                 record

@@ -435,9 +435,14 @@ fn native_object(object: Object<'_>, nested: bool) -> NativeObject {
             })
             .collect()
     };
+    let kind_at = object
+        .iter()
+        .position(|(name, _)| name == "kind")
+        .unwrap_or(0);
     NativeObject {
         kind,
         members,
+        kind_at,
         objects,
     }
 }

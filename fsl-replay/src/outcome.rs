@@ -1883,14 +1883,11 @@ pub(crate) fn snapshot_admission_locus(
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
     use filament_semantic_value::admission::PathStep;
-    // A nested missing member is named by the last step but absent from the
-    // document, so FR-663 locates it at the containing object.
-    let absent =
-        record.catalog.cause() == "missing-member" && !record.fields.contains_key("member");
-    let kept = record.path.len() - usize::from(absent && !record.path.is_empty());
-    let pointer = record.path[..kept]
-        .iter()
-        .fold(String::new(), |mut pointer, step| {
+    // The snapshot refusal's `path` member is the RFC 6901 pointer to the
+    // failing member in the document's own spelling (FR-663); a refusal that
+    // names none is located by its typed steps.
+    let folded = || {
+        record.path.iter().fold(String::new(), |mut pointer, step| {
             match step {
                 PathStep::Field(member) => {
                     pointer.push('/');
@@ -1903,7 +1900,12 @@ pub(crate) fn snapshot_admission_locus(
                 PathStep::OptionValue => {}
             }
             pointer
-        });
+        })
+    };
+    let pointer = match record.fields.get("path") {
+        Some(path) if path.starts_with('/') => path.clone(),
+        _ => folded(),
+    };
     let identity = fsl_foundation::source::provenance::RawSourceRef::new(
         document.authority.clone(),
         document.identity.clone(),
@@ -4906,8 +4908,8 @@ mod tests {
         );
     }
 
-    /// FR-663 (TC-1746): the pointer of a snapshot refusal folds the typed
-    /// steps; a nested missing member is located at its containing object.
+    /// FR-663 (TC-1746): the pointer of a snapshot refusal is its
+    /// document-spelled `path` member, which resolves in the document.
     #[trace("FR-663-AC-3")]
     #[test]
     fn a_snapshot_locus_pointer_resolves_in_the_document() {
@@ -4930,12 +4932,14 @@ mod tests {
                 field("fields"),
             ]
         };
-        let pointer_of = |cause: &'static str, below: Vec<PathStep>| {
+        let pointer_of = |below: Vec<PathStep>, spelled: Option<&str>| {
             let mut path = prefix();
             path.extend(below);
             let record = AdmissionRecord {
-                catalog: CatalogCode::new("invalid_runtime_input", cause),
-                fields: BTreeMap::new(),
+                catalog: CatalogCode::new("invalid_runtime_input", "duplicate-member"),
+                fields: spelled
+                    .map(|spelled| BTreeMap::from([("path", spelled.to_owned())]))
+                    .unwrap_or_default(),
                 path,
                 kernel: None,
             };
@@ -4944,20 +4948,17 @@ mod tests {
                 other => panic!("a document locus, not {other:?}"),
             }
         };
+        // The typed steps of a duplicate at element 1 of a set are `[1]`; the
+        // pointer is the document-spelled `path` member.
         let duplicate = pointer_of(
-            "duplicate-member",
-            vec![field("reach"), field("set"), PathStep::Index(1)],
+            vec![field("reach"), PathStep::Index(1)],
+            Some("/populations/0/objects/0/fields/reach/set/1"),
         );
         assert_eq!(duplicate, "/populations/0/objects/0/fields/reach/set/1");
         assert_eq!(document.pointer(&duplicate), Some(&json!({"n": 1})));
-        let missing = pointer_of(
-            "missing-member",
-            vec![field("total"), field("record"), field("fields"), field("b")],
-        );
-        assert_eq!(
-            missing,
-            "/populations/0/objects/0/fields/total/record/fields"
-        );
-        assert!(document.pointer(&missing).is_some());
+        // A refusal with no `path` member is located by its typed steps.
+        let typed = pointer_of(vec![field("total")], None);
+        assert_eq!(typed, "/populations/0/objects/0/fields/total");
+        assert!(document.pointer(&typed).is_some());
     }
 }
