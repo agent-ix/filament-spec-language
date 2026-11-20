@@ -854,10 +854,9 @@ fn a_timestamped_trace_is_authenticated_and_reads_indeterminate() {
     assert_eq!(only(&pending).report().disposition.exit_code(), 0);
 }
 
-/// FR-283/FR-642: timed samples authenticate against the selected `timed`
-/// clock row, preserve exact stamps, and use `through` to close a bounded
-/// future window.
-#[trace("TC-765", "FR-283-AC-15")]
+/// FR-642-AC-2, AC-6 (TC-1664): timed samples use the selected `timed` clock
+/// row and `through` closes a bounded future window.
+#[trace("TC-1664", "FR-642-AC-2", "FR-642-AC-6")]
 #[test]
 fn timed_trace_uses_its_authenticated_clock_and_through_boundary() {
     let world = world();
