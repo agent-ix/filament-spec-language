@@ -180,46 +180,93 @@ fn float_expected(text: &str) -> Expected {
 fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let operands = pairs(vector.inputs);
     let result = match vector.id {
-        "D01" => vec![function(
-            "Boolean",
-            &format!("convert<Decimal[-1000,1000;0,2;exact]>({}) = convert<Decimal[-1000,1000;0,2;exact]>({})", decimal(&operands[0]), decimal(&operands[1])),
-            Expected::Boolean(vector.expected.starts_with("equal ")),
-        )],
+        "D01" => vec![SourceCase {
+            declarations: format!(
+                "function left using v(): Decimal[-1000,1000;0,2;exact] pure {{ {} }}\n\
+                 function right using v(): Decimal[-1000,1000;0,2;exact] pure {{ {} }}\n\
+                 function f using v(): Boolean pure {{ left() = right() }}",
+                decimal(&operands[0]),
+                decimal(&operands[1])
+            ),
+            expected: Expected::Boolean(vector.expected.starts_with("equal ")),
+        }],
         "D02" | "D04" => {
             let (operator, result_type) = if vector.id == "D02" {
                 ("+", "Decimal[-1000,1000;0,2;exact]")
             } else {
                 ("/", "Decimal[-1000,1000;0,3;exact]")
             };
-            vec![function(result_type, &format!("{} {operator} {}", decimal(&operands[0]), decimal(&operands[1])), decimal_expected(vector.expected))]
+            vec![function(
+                result_type,
+                &format!(
+                    "{} {operator} {}",
+                    decimal(&operands[0]),
+                    decimal(&operands[1])
+                ),
+                decimal_expected(vector.expected),
+            )]
         }
         "D05" => {
-            let (exact, rounded) = vector.expected.split_once("; `nearest-even`:").expect("both modes");
-            ["exact", "nearest-even"].into_iter().map(|mode| function(
-                &format!("Decimal[-1000,1000;0,2;{mode}]"),
-                &format!("{} / {}", decimal(&operands[0]), decimal(&operands[1])),
-                if mode == "exact" { refusal_expected(exact) } else { decimal_expected(rounded) },
-            )).collect()
+            let (exact, rounded) = vector
+                .expected
+                .split_once("; `nearest-even`:")
+                .expect("both modes");
+            ["exact", "nearest-even"]
+                .into_iter()
+                .map(|mode| {
+                    function(
+                        &format!("Decimal[-1000,1000;0,2;{mode}]"),
+                        &format!("{} / {}", decimal(&operands[0]), decimal(&operands[1])),
+                        if mode == "exact" {
+                            refusal_expected(exact)
+                        } else {
+                            decimal_expected(rounded)
+                        },
+                    )
+                })
+                .collect()
         }
-        "D10" => quoted(vector.inputs).into_iter().map(|ty| SourceCase {
-            declarations: format!("type P = {ty};"),
-            expected: if ty == "Decimal[2,2;1,1;exact]" || ty == "Decimal[0,9;0,4294967295;exact]" {
-                Expected::Admitted
-            } else { refusal_expected(vector.expected) },
-        }).collect(),
+        "D10" => quoted(vector.inputs)
+            .into_iter()
+            .map(|ty| SourceCase {
+                declarations: format!(
+                    "type P = {ty}; function f using v(): Boolean pure {{ true }}"
+                ),
+                expected: if ty == "Decimal[2,2;1,1;exact]"
+                    || ty == "Decimal[0,9;0,4294967295;exact]"
+                {
+                    Expected::Admitted
+                } else {
+                    refusal_expected(vector.expected)
+                },
+            })
+            .collect(),
         "D26" | "D27" => {
             // These rows explicitly supply source-admitted counterparts to
             // evaluator-boundary operands in D13 and D18.
             let expression = quoted(vector.inputs)[0];
             let first_result = if vector.id == "D26" {
-                vector.expected.split_once(";").expect("result before accounting variants").0
+                vector
+                    .expected
+                    .split_once(";")
+                    .expect("result before accounting variants")
+                    .0
             } else {
-                vector.expected.split_once("result ").expect("rounded result").1
+                vector
+                    .expected
+                    .split_once("result ")
+                    .expect("rounded result")
+                    .1
             };
             let types = if vector.id == "D26" {
                 vec!["Decimal[-9,9;0,0;toward-zero]", "Decimal[-9,9;0,0;exact]"]
-            } else { vec!["Decimal[-1000,1000;0,1;nearest-even]"] };
-            types.into_iter().map(|ty| function(ty, expression, decimal_expected(first_result))).collect()
+            } else {
+                vec!["Decimal[-1000,1000;0,1;nearest-even]"]
+            };
+            types
+                .into_iter()
+                .map(|ty| function(ty, expression, decimal_expected(first_result)))
+                .collect()
         }
         _ => return None,
     };
@@ -349,7 +396,7 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             (width, format!("float{width}(bits: {:#x}) + float{width}(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected))
         }
         "F11" => (32, format!("filament::value::ieee::fma(float32(bits: {:#x}), float32(bits: {:#x}), float32(bits: {:#x}))", operands[0], operands[1], operands[2]), float_expected(vector.expected)),
-        "F15" | "F16" => (32, format!("float32(bits: {:#x}) * float32(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected)),
+        "F15" | "F16" => (32, format!("float32(bits: {:#010x}) * float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
         _ => return None,
     };
     Some(vec![function(
@@ -422,8 +469,31 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             cause: Some(fields[1].to_owned()),
         }
     };
+    // The standard's mathematical unit scale is rendered with the native
+    // grammar's exact-rational literal; dimension terms are left intact.
+    let source: String = source
+        .split(';')
+        .filter(|declaration| !declaration.trim().is_empty())
+        .map(|declaration| {
+            let declaration = declaration.trim();
+            if declaration.starts_with("unit ") {
+                let (prefix, expression) = declaration.split_once('=').expect("unit definition");
+                let (amount, target) = expression
+                    .trim()
+                    .split_once(" * ")
+                    .map_or((expression.trim(), None), |(amount, target)| {
+                        (amount, Some(target))
+                    });
+                let (numerator, denominator) = amount.split_once('/').unwrap_or((amount, "1"));
+                let target = target.map_or(String::new(), |target| format!(" * {target}"));
+                format!("{prefix}= rational({numerator}, {denominator}){target};\n")
+            } else {
+                format!("{declaration};\n")
+            }
+        })
+        .collect();
     Some(vec![SourceCase {
-        declarations: source,
+        declarations: format!("{source}function f using v(): Boolean pure {{ true }}"),
         expected,
     }])
 }
