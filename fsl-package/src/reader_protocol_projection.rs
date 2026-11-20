@@ -105,6 +105,7 @@ impl ReaderProtocolProjection {
         let function = self.functions.get(index)?;
         Some(ReaderProtocolFunction {
             name: &function.name,
+            node: &function.node,
             body: function.body,
             slots: function.slots,
             parameters: &function.parameters,
@@ -235,6 +236,8 @@ impl ReaderProtocolProjection {
 pub struct ReaderProtocolFunction<'a> {
     /// Function name used by evaluator diagnostics.
     pub name: &'a str,
+    /// Structural identity of the admitted function declaration.
+    pub node: &'a NodeKey,
     /// Function body node index.
     pub body: usize,
     /// Number of checked parameter slots.
@@ -1591,6 +1594,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             self.function_indexes.insert(node.clone(), index);
             self.functions.push(ReaderFunction {
                 name: name.clone(),
+                node: self.index.key(node)?,
                 body: usize::MAX,
                 slots: parameter_ids.len(),
                 parameters: parameters
@@ -3756,6 +3760,7 @@ impl ReaderProjectedNode {
 
 struct ReaderFunction {
     name: String,
+    node: NodeKey,
     body: usize,
     slots: usize,
     parameters: Vec<ReaderProtocolParameter>,
