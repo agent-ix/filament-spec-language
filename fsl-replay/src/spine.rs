@@ -976,9 +976,6 @@ fn forms_message(refusal: &FormsRefusal) -> String {
             ..
         } => {
             let message = match construct {
-                fsl_forms::ConstructKind::HyperCondition => {
-                    "a hyper expression is not supported as a temporal condition yet".to_owned()
-                }
                 fsl_forms::ConstructKind::Declaration => {
                     format!("`{text}` declarations are not supported yet")
                 }

@@ -437,8 +437,6 @@ pub enum LeadingTokenKind {
 /// The closed source vocabulary for a construct that S2 does not build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConstructKind {
-    /// A hyper expression in a temporal condition.
-    HyperCondition,
     /// A declaration with no dispatch entry.
     Declaration,
 }
@@ -447,7 +445,6 @@ impl ConstructKind {
     /// The stable source and wire spelling.
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::HyperCondition => "hyper-condition",
             Self::Declaration => "declaration",
         }
     }

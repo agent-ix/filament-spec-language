@@ -39,20 +39,6 @@ fn parsed(declaration: &str) -> (String, Value, u8) {
     (text, value, exit)
 }
 
-/// The one diagnostic of a unit S2 refuses, checked for the FR-763 code and
-/// cause.
-fn construct_diagnostic(declaration: &str) -> (String, Value) {
-    let (text, value, exit) = parsed(declaration);
-    assert_eq!(exit, 21, "{value}");
-    assert_eq!(value["category"], "unsupported");
-    let diagnostics = value["diagnostics"].as_array().expect("diagnostics");
-    assert_eq!(diagnostics.len(), 1, "{declaration}: {diagnostics:?}");
-    let diagnostic = diagnostics[0].clone();
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{declaration}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{declaration}");
-    (text, diagnostic)
-}
-
 fn function(body: &str) -> String {
     format!("function f using v(xs: Sequence<Integer>[0, 4]): Integer pure {{ {body} }}")
 }
@@ -108,38 +94,6 @@ fn a_qualified_reaches_edge_builds_without_a_forms_refusal() {
     ));
     assert_eq!(exit, 0, "{document}");
     assert_eq!(document["diagnostics"], serde_json::json!([]));
-}
-
-#[trace("TC-2159", "FR-763-AC-5")]
-#[trace("TC-396")]
-#[test]
-fn every_construct_message_begins_with_the_construct() {
-    let long = format!("{} @ a = x @ b", "x".repeat(188));
-    assert_eq!(long.len(), 200);
-    for condition in ["x @ a = x @ b", long.as_str()] {
-        let declaration = format!(
-            "temporal T using v over (x: M::Order) clock \"steps\" on origin {{ always holds({condition}) }}"
-        );
-        let (source, diagnostic) = construct_diagnostic(&declaration);
-        let message = diagnostic["message"].as_str().expect("a message");
-        assert!(
-            message.starts_with("a hyper expression is not supported as a temporal condition yet"),
-            "{message}"
-        );
-        assert_eq!(diagnostic["construct"], "hyper-condition");
-        assert_eq!(diagnostic["declaration"], "T");
-        assert_eq!(diagnostic["profile"], PROFILE);
-        assert_eq!(
-            locus_start(&diagnostic),
-            Some(source.find(condition).expect("condition") as u64)
-        );
-        let text = diagnostic["text"].as_str().expect("text");
-        if condition.len() <= 120 {
-            assert_eq!(text, condition);
-        } else {
-            assert_eq!(text, format!("{}...", &condition[..120]));
-        }
-    }
 }
 
 #[trace("TC-2160", "FR-763-AC-6")]

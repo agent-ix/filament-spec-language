@@ -172,9 +172,9 @@ fn a_state_graph_claim_refuses_the_protocol_profile() {
     .unwrap_or_else(|refusals| panic!("`using tc` checks: {refusals:?}"));
 }
 
-/// The refusal of the fixture unit with `body` before a checked clause
-/// exists, at S2 or S3: its code and the text it names.
-fn forms_refusal(body: &str) -> (Code, String) {
+/// The refusal of the fixture unit with `body`: S2 builds its forms, so the
+/// refusal is S3's. Its code, cause and the text it names.
+fn forms_refusal(body: &str) -> (Code, Option<&'static str>, String) {
     let document = document();
     let (unit, _) = config_unit_with_profiles(&document, PROFILES, body);
     let parsed = fsl_cst::parse(
@@ -190,15 +190,10 @@ fn forms_refusal(body: &str) -> (Code, String) {
         parsed.diagnostics()
     );
     if let Err(refusal) = fsl_forms::build_unit(&parsed) {
-        let span = refusal.span.expect("a located refusal");
-        return (
-            refusal.catalog_code(),
-            unit[span.start..span.end].to_owned(),
-        );
+        panic!("{body}: S2 refuses a form it should keep: {refusal:?}");
     }
-    // S2 built the forms, so the refusal is S3's, before any checked clause.
-    let (code, _, named) = sole_refusal(body);
-    (code, named.unwrap_or_default())
+    let (code, cause, named) = sole_refusal(body);
+    (code, cause, named.unwrap_or_default())
 }
 
 /// FR-612-AC-1, FR-612-AC-2: an indexed read or a step label in a non-hyper
@@ -215,6 +210,11 @@ fn hyper_only_forms_refuse_in_a_single_trace_clause() {
         ),
         (
             "temporal R using inf over (v: Config::ConfigVersion) clock \"model-steps\" \
+             on origin { always holds(v.versionNumber @ a = v.versionNumber @ b) }",
+            "v.versionNumber @ a = v.versionNumber @ b",
+        ),
+        (
+            "temporal R using inf over (v: Config::ConfigVersion) clock \"model-steps\" \
              on origin { always holds(a.step.attemptUpdate) }",
             "a.step.attemptUpdate",
         ),
@@ -227,7 +227,11 @@ fn hyper_only_forms_refuse_in_a_single_trace_clause() {
     ] {
         assert_eq!(
             forms_refusal(body),
-            (Code::UnsupportedConstruct, at.to_owned()),
+            (
+                Code::UnsupportedConstruct,
+                Some("expression-form"),
+                at.to_owned()
+            ),
             "{body}"
         );
     }

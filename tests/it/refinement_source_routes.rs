@@ -158,7 +158,6 @@ fn a_missing_population_row_names_its_population() {
 
 #[test]
 #[trace("FR-612-AC-1")]
-#[ignore = "QSL-2595: an indexed read outside hyper must use expression-form"]
 fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
     let error =
         command::compile_outcome(&corpus().join("pending/hyper-plain-temporal-at.request.json"))

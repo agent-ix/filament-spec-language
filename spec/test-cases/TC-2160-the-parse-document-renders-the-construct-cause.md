@@ -20,7 +20,6 @@ Parse, select and check a function whose body is `null`, with no model
 imports, and serialize its check outcome. Test:
 `tests/it/forms_refusal_cause.rs`
 `a_null_expression_is_refused_at_check_with_its_locus`.
-The S2 unsupported payload remains covered by TC-2159's hyper condition.
 
 Tag the tests `#[trace("TC-2160", "FR-763-AC-6")]`.
 
