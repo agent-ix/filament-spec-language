@@ -6241,10 +6241,8 @@ fn reaches_leaf<'a>(
             ValueType::Option(payload) => pending.push(payload),
             ValueType::Collection(collection) => pending.push(collection.element()),
             ValueType::Map(map) => pending.push(map.values()),
-            ValueType::Composite(declaration) => {
-                if seen.insert(declaration.clone()) {
-                    pending.extend(members(declaration));
-                }
+            ValueType::Composite(declaration) if seen.insert(declaration.clone()) => {
+                pending.extend(members(declaration));
             }
             _ => {}
         }
