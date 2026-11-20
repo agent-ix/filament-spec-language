@@ -3069,6 +3069,10 @@ impl PackageDeclarations {
             .iter()
             .any(|clause| clause.body.contains_ieee_literal())
             || self
+                .temporal_clauses
+                .iter()
+                .any(temporal_clause::TemporalDeclaration::has_ieee_literal)
+            || self
                 .hyper_clauses
                 .iter()
                 .any(hyper_clause::declaration_has_ieee_literal);

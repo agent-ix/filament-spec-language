@@ -31,11 +31,19 @@ pub struct PreparedPackageRun {
     budget: filament_contract_model::NativeJoinBudget,
     packages: fsl_semantics::model::intake::PackageInput,
     model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
-    call: fsl_replay::spine::Call,
+    work: Work,
     /// The request's `package` selection, echoed by the result.
     selection: serde_json::Value,
     /// The domain package sources the request supplied.
     models: Vec<fsl_foundation::Source>,
+}
+
+/// What a package run does once the package is admitted.
+enum Work {
+    /// FR-945: call a function the package names.
+    Call(Box<fsl_replay::spine::Call>),
+    /// FR-1039: lower a temporal clause the package names (FR-931).
+    Lowering(super::tl::TlLowering),
 }
 
 /// The package bytes and handoff rows admitted for a selected package. The
@@ -136,7 +144,6 @@ pub(super) fn prepare(
     for (present, member) in [
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),
-        (request.tl_lowering.is_some(), "tl_lowering"),
     ] {
         if present {
             return Err(invalid(
@@ -144,6 +151,9 @@ pub(super) fn prepare(
                 "running this member over a selected checked package is not implemented yet",
             ));
         }
+    }
+    if let Some(member) = &request.tl_lowering {
+        return prepare_lowering(directory, request, package, member, dependent_bytes);
     }
     let Some(call) = &request.call else {
         return Err(invalid("call", "a package run names its call"));
@@ -180,7 +190,50 @@ pub(super) fn prepare(
         budget: admitted.budget,
         packages: admitted.packages,
         model_limits: admitted.model_limits,
-        call: spine_call,
+        work: Work::Call(Box::new(spine_call)),
+        selection: admitted.selection,
+        models: admitted.models,
+    })
+}
+
+/// FR-1039: prepare a `tl_lowering` request over a selected package. Its
+/// member decodes as the source route decodes it; a `cross_evaluate` builds
+/// states over the package's model world, so it needs the handoff's rows
+/// and a `{file}` selection refuses it before any file is opened.
+fn prepare_lowering(
+    directory: &Path,
+    request: &wire::Request,
+    package: &wire::RunPackageSelection,
+    member: &serde_json::Value,
+    dependent_bytes: usize,
+) -> Result<PreparedPackageRun> {
+    if request.call.is_some() {
+        return Err(invalid(
+            "tl_lowering",
+            "tl_lowering, call and clause are mutually exclusive",
+        ));
+    }
+    let lowering = super::tl::decode(member)?;
+    if lowering.cross.is_some() {
+        if package.file.is_some() {
+            return Err(RunCause::RequiresDirectory {
+                member: "tl_lowering.cross_evaluate".to_owned(),
+            });
+        }
+        return Err(invalid(
+            "tl_lowering.cross_evaluate",
+            "cross-evaluating over a handoff directory is not implemented yet",
+        ));
+    }
+    let admitted = admit(directory, request, package, dependent_bytes, None)?;
+    Ok(PreparedPackageRun {
+        package: admitted.package,
+        identities: admitted.identities,
+        equality: admitted.equality,
+        budget: admitted.budget,
+        packages: admitted.packages,
+        model_limits: admitted.model_limits,
+        work: Work::Lowering(lowering),
         selection: admitted.selection,
         models: admitted.models,
     })
@@ -420,7 +473,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         mut budget,
         packages,
         model_limits,
-        call,
+        work,
         selection,
         models,
     } = prepared;
@@ -455,6 +508,19 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
                 message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
             }
         })?;
+    let call = match work {
+        Work::Call(call) => *call,
+        Work::Lowering(lowering) => {
+            let record = super::tl::lower_over_package(&bare, &lowering)?;
+            return Ok(RunResult {
+                exit_code: record.exit_code,
+                value: super::NativeResult::lowering_document(super::tl::document(record.record)),
+                outcome: None,
+                requirements: None,
+                sources: crate::Sources::from_sources(models),
+            });
+        }
+    };
     let objects = if let Some(snapshot) = &call.snapshot {
         let provision = std::collections::BTreeMap::from([(
             snapshot.observation.reference.clone(),

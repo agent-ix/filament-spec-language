@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_replay::spine::{TemporalValuation, TlClosure, TlSupport, TlTarget, TlUnmatched};
 use fsl_semantics::check::{
-    BinaryTemporal, CheckedFormula, CheckedInterval, FormulaNode, FormulaNodeId, UnaryTemporal,
+    BinaryTemporal, CheckedInterval, FormulaNode, FormulaNodeId, TemporalProfile, UnaryTemporal,
 };
 use serde_json::{json, Map, Value};
 use tl_syntax::{
@@ -323,12 +323,45 @@ pub fn record(
                 .ok_or_else(|| format!("unknown correspondence {identity}"))?,
         ),
     };
-    lowering_record(valuation, source, named, mapping, form, None).map_err(
+    lowering_record(&Subject::of_valuation(valuation), source, named, mapping, form).map_err(
         |failure| match failure {
             Failure::Fault(message) => message,
             Failure::Form { member, reason } => format!("tl_lowering.{member}: {reason}"),
         },
     )
+}
+
+/// The four pieces FR-931 "The lowering input" says a lowering reads, and the
+/// atom labels it prints: built from a checked clause on the source route and
+/// from a selected checked package on the package route.
+pub(super) struct Subject<'a> {
+    /// The clause's declared name.
+    pub(super) name: &'a str,
+    /// The clause's temporal profile.
+    pub(super) profile: TemporalProfile,
+    /// The formula's nodes in arena order.
+    pub(super) nodes: &'a [FormulaNode],
+    /// The formula's root.
+    pub(super) root: FormulaNodeId,
+    /// The text of each `holds` leaf; the source route's are derived from
+    /// the valuation.
+    pub(super) labels: Option<&'a BTreeMap<FormulaNodeId, String>>,
+    /// The native valuation a cross-evaluation compares against.
+    pub(super) valuation: Option<&'a TemporalValuation>,
+}
+
+impl<'a> Subject<'a> {
+    fn of_valuation(valuation: &'a TemporalValuation) -> Self {
+        let clause = &valuation.clause;
+        Self {
+            name: clause.name(),
+            profile: clause.profile(),
+            nodes: clause.formula().nodes(),
+            root: clause.formula().root(),
+            labels: None,
+            valuation: Some(valuation),
+        }
+    }
 }
 
 /// Why a lowering produced no record.
@@ -389,17 +422,15 @@ fn is_closed(interval: Option<&CheckedInterval>) -> bool {
 }
 
 fn lowering_record(
-    valuation: &TemporalValuation,
+    subject: &Subject<'_>,
     _source: &str,
     named: Option<TlTarget>,
     mapping: &AtomMapping,
     form: TraceForm,
-    package_labels: Option<&BTreeMap<FormulaNodeId, String>>,
 ) -> std::result::Result<TlRecord, Failure> {
-    let clause = &valuation.clause;
-    let formula = clause.formula();
+    let nodes = subject.nodes;
     let (mut future, mut past, mut unclosed) = (false, false, false);
-    for node in formula.nodes() {
+    for node in nodes {
         let interval = match node {
             FormulaNode::Unary {
                 operator: UnaryTemporal::Eventually | UnaryTemporal::Always,
@@ -444,9 +475,9 @@ fn lowering_record(
         | None => TlClosure::Complete,
     };
     let support =
-        fsl_replay::spine::tl_support_of(clause.profile(), future, past, unclosed, surrounding);
+        fsl_replay::spine::tl_support_of(subject.profile, future, past, unclosed, surrounding);
     let mut record = Map::new();
-    record.insert("clause".to_owned(), json!(clause.name()));
+    record.insert("clause".to_owned(), json!(subject.name));
     let classified = match support {
         TlSupport::Unsupported { dimensions } => {
             record.insert("disposition".to_owned(), json!("unsupported"));
@@ -490,12 +521,13 @@ fn lowering_record(
             reason: TraceForm::reason(classified),
         });
     }
-    let labels = match package_labels {
-        Some(labels) => labels.clone(),
-        None => canonical::source_labels(valuation).map_err(Failure::Fault)?,
+    let labels = match (subject.labels, subject.valuation) {
+        (Some(labels), _) => labels.clone(),
+        (None, Some(valuation)) => canonical::source_labels(valuation).map_err(Failure::Fault)?,
+        (None, None) => return Err(Failure::Fault("a lowering has atom labels".to_owned())),
     };
     let mut lowered = Lowered::default();
-    let root = lowered.lower(formula, formula.root(), &labels)?;
+    let root = lowered.lower(nodes, subject.root, &labels)?;
     let tl = lowered.document(classified, root)?;
     record.insert("disposition".to_owned(), json!("supported"));
     record.insert("correspondence".to_owned(), json!(classified.identity()));
@@ -527,22 +559,22 @@ fn lowering_record(
     } else {
         record.insert(
             "classification_fault".to_owned(),
-            json!({"kind": "classification-loss", "clause": clause.name(),
+            json!({"kind": "classification-loss", "clause": subject.name,
                 "native": native, "lowered": lowered_class}),
         );
         exit_code = 30;
     }
     let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> =
-        match (&valuation.positions, &valuation.behaviours) {
-            (Some(positions), _) => Some((vec![positions], true)),
-            (None, Some(behaviours)) => Some((
+        match subject.valuation.map(|valuation| (&valuation.positions, &valuation.behaviours)) {
+            Some((Some(positions), _)) => Some((vec![positions], true)),
+            Some((None, Some(behaviours))) => Some((
                 behaviours.traces.iter().collect(),
                 matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
             )),
-            (None, None) => None,
+            Some((None, None)) | None => None,
         };
     if let Some((traces, complete)) = traces {
-        let cross = cross_evaluate(clause.name(), &tl, &lowered, &traces, mapping, classified)?;
+        let cross = cross_evaluate(subject.name, &tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
             exit_code = 30;
         } else if !complete && exit_code == 0 {
@@ -669,12 +701,11 @@ impl Lowered {
     /// named by its canonical checked-expression label.
     fn lower(
         &mut self,
-        formula: &CheckedFormula,
+        nodes: &[FormulaNode],
         id: FormulaNodeId,
         labels: &std::collections::BTreeMap<FormulaNodeId, String>,
     ) -> std::result::Result<NodeId, String> {
-        let node = formula
-            .nodes()
+        let node = nodes
             .get(id.index())
             .ok_or_else(|| "formula node in range".to_owned())?;
         let kind = match node {
@@ -701,19 +732,19 @@ impl Lowered {
                 return Err("a window aggregate atom has no TL atom".to_owned());
             }
             FormulaNode::Not(operand) => NodeKind::Not {
-                operand: self.lower(formula, *operand, labels)?,
+                operand: self.lower(nodes, *operand, labels)?,
             },
             FormulaNode::And(left, right) => NodeKind::And {
-                left: self.lower(formula, *left, labels)?,
-                right: self.lower(formula, *right, labels)?,
+                left: self.lower(nodes, *left, labels)?,
+                right: self.lower(nodes, *right, labels)?,
             },
             FormulaNode::Or(left, right) => NodeKind::Or {
-                left: self.lower(formula, *left, labels)?,
-                right: self.lower(formula, *right, labels)?,
+                left: self.lower(nodes, *left, labels)?,
+                right: self.lower(nodes, *right, labels)?,
             },
             FormulaNode::Implies(left, right) => NodeKind::Implies {
-                left: self.lower(formula, *left, labels)?,
-                right: self.lower(formula, *right, labels)?,
+                left: self.lower(nodes, *left, labels)?,
+                right: self.lower(nodes, *right, labels)?,
             },
             FormulaNode::Unary {
                 operator,
@@ -721,7 +752,7 @@ impl Lowered {
                 operand,
             } => {
                 let interval = Self::interval(interval.as_ref())?;
-                let operand = self.lower(formula, *operand, labels)?;
+                let operand = self.lower(nodes, *operand, labels)?;
                 match operator {
                     UnaryTemporal::Eventually => NodeKind::Future { interval, operand },
                     UnaryTemporal::Always => NodeKind::Globally { interval, operand },
@@ -736,8 +767,8 @@ impl Lowered {
                 right,
             } => {
                 let interval = Self::interval(interval.as_ref())?;
-                let left = self.lower(formula, *left, labels)?;
-                let right = self.lower(formula, *right, labels)?;
+                let left = self.lower(nodes, *left, labels)?;
+                let right = self.lower(nodes, *right, labels)?;
                 match operator {
                     BinaryTemporal::Until => NodeKind::Until {
                         interval,
@@ -1217,12 +1248,11 @@ pub(super) fn lower(
         .as_ref()
         .map_or(TraceForm::Absent, TraceForm::of_request);
     lowering_record(
-        valuation,
+        &Subject::of_valuation(valuation),
         source,
         lowering.correspondence,
         &AtomMapping::default(),
         form,
-        None,
     )
     .map_err(|failure| match failure {
         Failure::Fault(message) => RunCause::TlFault(message),
@@ -1230,28 +1260,201 @@ pub(super) fn lower(
     })
 }
 
-/// Lower a package-backed temporal valuation with its atom labels already
-/// rendered from FR-940 clause-term projections by the shared canonical
-/// printer.
-pub(super) fn lower_with_package_labels(
-    valuation: &TemporalValuation,
-    lowering: &TlLowering,
-    labels: &BTreeMap<FormulaNodeId, String>,
-) -> Result<TlRecord> {
+/// The record of a lowering input a selected checked package gave (FR-931
+/// "The lowering input"): the same lowering the source route runs.
+pub(super) fn lower_package(subject: &Subject<'_>, lowering: &TlLowering) -> Result<TlRecord> {
     let form = lowering
         .cross
         .as_ref()
         .map_or(TraceForm::Absent, TraceForm::of_request);
     lowering_record(
-        valuation,
+        subject,
         "",
         lowering.correspondence,
         &AtomMapping::default(),
         form,
-        Some(labels),
     )
     .map_err(|failure| match failure {
         Failure::Fault(message) => RunCause::TlFault(message),
         Failure::Form { member, reason } => invalid(member, reason),
     })
+}
+
+/// The record of the clause a selected checked package names (FR-931 "The
+/// lowering input"): the declared name from the `temporal_clause_names` row,
+/// the profile from the clause node's `temporal_profile` law, the formula
+/// graph from FR-515's temporal subject view, and each atom text printed by
+/// the one canonical printer over the leaf's reader projection.
+pub(super) fn lower_over_package(
+    bare: &fsl_package::BarePackage<'_>,
+    lowering: &TlLowering,
+) -> Result<TlRecord> {
+    use fsl_package::checked_views::{temporal_subject, FormulaOperation};
+
+    let fault = |message: &str| RunCause::TlFault(message.to_owned());
+    let package = bare.package();
+    let row = package
+        .temporal_clause_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| *row.name == *lowering.clause)
+        .ok_or_else(|| RunCause::TlClause {
+            name: lowering.clause.clone(),
+        })?;
+    let view = temporal_subject(package, &row.declaration)
+        .map_err(|_| fault("a named clause reads as a temporal clause"))?;
+    let profile = TemporalProfile::from_identity(&view.profile().definition.identity)
+        .ok_or_else(|| fault("an admitted clause selects a temporal profile"))?;
+    let graph = view.formula_graph();
+    // Equal terms share one node (FR-337), so a node is one arena entry at
+    // its first use in pre-order, as the source arena numbers them.
+    let mut arena_of = Vec::with_capacity(graph.len());
+    let mut first_uses = Vec::new();
+    let mut seen = BTreeMap::new();
+    for (position, entry) in graph.iter().enumerate() {
+        let next = first_uses.len();
+        let arena = *seen.entry(entry.node).or_insert(next);
+        if arena == next {
+            first_uses.push(position);
+        }
+        arena_of.push(arena);
+    }
+    let mut nodes = Vec::with_capacity(first_uses.len());
+    for position in &first_uses {
+        let entry = graph
+            .get(*position)
+            .ok_or_else(|| fault("a formula position is in range"))?;
+        let operand = |index: usize| {
+            entry
+                .operands
+                .get(index)
+                .and_then(|operand| arena_of.get(*operand))
+                .map(|arena| FormulaNodeId::from_arena_index(*arena))
+                .ok_or_else(|| fault("a formula operand is in range"))
+        };
+        let interval = package_interval(entry.interval.as_ref())?;
+        let span = fsl_foundation::Span { start: 0, end: 0 };
+        let unary = |operator, interval| -> Result<FormulaNode> {
+            Ok(FormulaNode::Unary {
+                operator,
+                interval,
+                operand: operand(0)?,
+            })
+        };
+        let binary = |operator, interval| -> Result<FormulaNode> {
+            Ok(FormulaNode::Binary {
+                operator,
+                interval,
+                left: operand(0)?,
+                right: operand(1)?,
+            })
+        };
+        let kind = entry
+            .kind()
+            .ok_or_else(|| fault("a formula entry is a temporal operation"))?;
+        nodes.push(match kind {
+            FormulaOperation::True => FormulaNode::Constant(true),
+            FormulaOperation::False => FormulaNode::Constant(false),
+            FormulaOperation::Holds => FormulaNode::Holds { span },
+            FormulaOperation::Aggregate => FormulaNode::Aggregate { span },
+            FormulaOperation::Not => FormulaNode::Not(operand(0)?),
+            FormulaOperation::And => FormulaNode::And(operand(0)?, operand(1)?),
+            FormulaOperation::Or => FormulaNode::Or(operand(0)?, operand(1)?),
+            FormulaOperation::Implies => FormulaNode::Implies(operand(0)?, operand(1)?),
+            FormulaOperation::Eventually => unary(UnaryTemporal::Eventually, interval)?,
+            FormulaOperation::Always => unary(UnaryTemporal::Always, interval)?,
+            FormulaOperation::Once => unary(UnaryTemporal::Once, interval)?,
+            FormulaOperation::Historically => unary(UnaryTemporal::Historically, interval)?,
+            FormulaOperation::Until => binary(BinaryTemporal::Until, interval)?,
+            FormulaOperation::Release => binary(BinaryTemporal::Release, interval)?,
+            FormulaOperation::Since => binary(BinaryTemporal::Since, interval)?,
+            FormulaOperation::Triggered => binary(BinaryTemporal::Triggered, interval)?,
+        });
+    }
+    let key = view
+        .declaration_key()
+        .ok_or_else(|| fault("an admitted clause node has a structural key"))?;
+    let world = bare
+        .world()
+        .map_err(|failure| {
+            RunCause::TlFault(format!("the package world is unavailable: {failure:?}"))
+        })?;
+    let mut labels = BTreeMap::new();
+    for (arena, position) in first_uses.iter().enumerate() {
+        if !matches!(nodes.get(arena), Some(FormulaNode::Holds { .. })) {
+            continue;
+        }
+        let term = bare.project_holds(&key, *position).map_err(|failure| {
+            RunCause::TlFault(format!("an atom has no reader projection: {failure:?}"))
+        })?;
+        let rows = canonical::CanonicalRows::from_projection(term.projection(), world.types())
+            .map_err(RunCause::TlFault)?;
+        let label = canonical::package_label(&term, &rows).map_err(RunCause::TlFault)?;
+        labels.insert(FormulaNodeId::from_arena_index(arena), label);
+    }
+    lower_package(
+        &Subject {
+            name: &lowering.clause,
+            profile,
+            nodes: &nodes,
+            root: FormulaNodeId::from_arena_index(0),
+            labels: Some(&labels),
+            valuation: None,
+        },
+        lowering,
+    )
+}
+
+/// The checked interval a package operator carries.
+fn package_interval(
+    interval: Option<&fsl_package::CheckedOperationInterval>,
+) -> Result<Option<CheckedInterval>> {
+    use fsl_foundation::bound::{TemporalInterval, TemporalUpper, TimedInterval};
+    use fsl_package::{CheckedIntervalEnd, CheckedOperationInterval};
+
+    let fault = |message: &str| RunCause::TlFault(message.to_owned());
+    let Some(interval) = interval else {
+        return Ok(None);
+    };
+    Ok(Some(match interval {
+        CheckedOperationInterval::Integer { lower, upper } => {
+            let lower = lower
+                .to_u64()
+                .ok_or_else(|| fault("an interval bound fits 64 bits"))?;
+            let upper = match upper {
+                None => TemporalUpper::Open,
+                Some(upper) => TemporalUpper::Finite(
+                    upper
+                        .to_u64()
+                        .ok_or_else(|| fault("an interval bound fits 64 bits"))?,
+                ),
+            };
+            CheckedInterval::Steps(
+                TemporalInterval::new(lower, upper)
+                    .map_err(|_| fault("an admitted interval is not inverted"))?,
+            )
+        }
+        CheckedOperationInterval::Timed {
+            lower,
+            upper,
+            lower_end,
+            upper_end,
+        } => {
+            let rational = |bound: &fsl_package::CheckedOperationRational| {
+                filament_exact::Rational::new(bound.numerator.clone(), bound.denominator.clone())
+                    .map_err(|_| fault("an admitted time bound is a rational"))
+            };
+            let lower_closed = *lower_end == CheckedIntervalEnd::Closed;
+            let timed = match upper {
+                None => TimedInterval::unbounded(rational(lower)?, lower_closed),
+                Some(upper) => TimedInterval::new(
+                    rational(lower)?,
+                    lower_closed,
+                    rational(upper)?,
+                    *upper_end == CheckedIntervalEnd::Closed,
+                ),
+            };
+            CheckedInterval::Timed(timed.map_err(|_| fault("an admitted timed interval is valid"))?)
+        }
+    }))
 }

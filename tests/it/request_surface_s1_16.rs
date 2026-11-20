@@ -1083,7 +1083,8 @@ fn source_only(leaf: &str) -> String {
 
 /// A leaf over `shape_low` lowered on the
 /// source route and, after compiling `shape_low(leaf)` to a checked package
-/// and removing the source, on the package route (FR-1039). Returns each
+/// and removing the source, on the package route (FR-1039) over the
+/// handoff directory, whose identity rows carry the unit's source union. Returns each
 /// leaf's source and package `atoms` entry of `p0`.
 fn both_routes(leaf: &str) -> (String, String) {
     let unit = shape_low(leaf);
@@ -1105,7 +1106,9 @@ fn both_routes(leaf: &str) -> (String, String) {
         &compile,
         serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
             "models": models, "program": {"source": source("unit.native")},
-            "output": {"package": "package.json"}}}))
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
         .unwrap(),
     )
     .unwrap();
@@ -1114,7 +1117,7 @@ fn both_routes(leaf: &str) -> (String, String) {
     let (code, value) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"file": "package.json"}, "tl_lowering": lower}}),
+            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
     );
     assert_eq!(code, 0, "{value}");
     let from_package = value["tl_lowering"]["atoms"]["p0"]
@@ -1122,6 +1125,75 @@ fn both_routes(leaf: &str) -> (String, String) {
         .unwrap()
         .to_owned();
     (from_source, from_package)
+}
+
+/// FR-931-AC-18, FR-1039-AC-6 (TC-2601, TC-3019): a unit's checked package
+/// selected as its handoff `package` `{"directory": D}` with the source
+/// removed returns the record the source route returns, byte-equal, for each
+/// correspondence, and a name that is no temporal clause refuses
+/// `missing_declaration` as on the source route. Over a `{file}` selection
+/// that name refuses the same way and a `cross_evaluate` refuses
+/// `invalid-request` with `requires: directory`.
+#[test]
+#[trace("TC-2601", "FR-931-AC-18")]
+#[trace("TC-3019", "FR-1039-AC-6")]
+fn a_tl_lowering_over_a_package_returns_the_source_record() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), &unit).unwrap();
+    let models =
+        json!([{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}]);
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": models, "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    for lowering in [
+        json!({"clause": "Low"}),
+        json!({"clause": "Low", "correspondence": "mltl.online-prefix/v1"}),
+        json!({"clause": "Low", "correspondence": "mltl.origin-complete-history/v1"}),
+        json!({"clause": "Nothing"}),
+    ] {
+        let (source_code, from_source) = run(&unit, true, ("tl_lowering", lowering.clone()));
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": models,
+                "package": {"directory": "handoff"}, "tl_lowering": lowering}}),
+        );
+        assert_eq!(code, source_code, "{lowering}: {from_package}");
+        assert_eq!(from_package, from_source, "{lowering}");
+    }
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"}, "tl_lowering": {"clause": "Nothing"}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["code"], "missing_declaration", "{value}");
+    assert_eq!(value["cause"], "missing-name", "{value}");
+    let (code, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {"models": models,
+            "package": {"file": "package.json"},
+            "tl_lowering": {"clause": "Low", "cross_evaluate": {"trace": {"finite": []}}}}}),
+    );
+    assert_eq!(code, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"member": "tl_lowering.cross_evaluate", "requires": "directory"}),
+        "{value}"
+    );
 }
 
 /// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
@@ -1132,7 +1204,6 @@ fn both_routes(leaf: &str) -> (String, String) {
 #[test]
 #[trace("TC-3039", "FR-400-AC-13")]
 #[trace("TC-3039", "FR-931-AC-13")]
-#[ignore = "QSL-2627: tl_lowering over a selected checked package is not implemented yet"]
 fn case_binders_match_across_the_source_and_package_routes() {
     for leaf in [
         "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })",
@@ -1155,7 +1226,6 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// `ieee_operand_0` around a comparison prints as written. Both routes agree.
 #[test]
 #[trace("TC-3039", "FR-931-AC-14")]
-#[ignore = "QSL-2628: a float literal in a temporal clause refuses invalid_package at compile; canonical.rs unit tests cover the printer shape"]
 fn the_checker_ieee_operand_binder_never_prints() {
     const A: &str = "float64(bits: 0x3ff0000000000000)";
     const Z: &str = "float64(bits: 0x0000000000000000)";
@@ -1181,6 +1251,16 @@ fn the_checker_ieee_operand_binder_never_prints() {
     let (from_source, from_package) = both_routes(&written);
     assert_eq!(from_source, written);
     assert_eq!(from_package, written);
+}
+
+/// FR-931-AC-14 (source route): a float literal that only a temporal clause
+/// writes selects the IEEE profile, so the unit compiles with no float
+/// declared and the lowering prints the ordering as written.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+fn a_float_literal_only_a_temporal_clause_writes_selects_the_ieee_profile() {
+    let leaf = "holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000))";
+    assert_eq!(source_only(leaf), leaf);
 }
 
 /// FR-397-AC-29: the checker names each IEEE ordering operand binder

@@ -1414,6 +1414,7 @@ impl AdmittedPackageRead<'_> {
                     root,
                     origin: origin.to_owned(),
                     binders,
+                    level_offset: 0,
                 });
             }
         }

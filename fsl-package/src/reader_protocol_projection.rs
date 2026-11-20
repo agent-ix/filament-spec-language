@@ -106,7 +106,7 @@ impl ReaderProtocolProjection {
         let function = self.functions.get(index)?;
         Some(ReaderProtocolFunction {
             name: &function.name,
-            node: &function.node,
+            node: &function.key,
             body: function.body,
             slots: function.slots,
             parameters: &function.parameters,
@@ -596,6 +596,11 @@ pub(crate) struct SlotRequest {
     pub(crate) root: NodeKey,
     pub(crate) origin: String,
     pub(crate) binders: Vec<NodeKey>,
+    /// The checker binders in scope that no local slot holds: a term that reads
+    /// only some of its clause's binders is given slots for those alone, while
+    /// the checker numbers an introduced binder's level after every binder of
+    /// the clause.
+    pub(crate) level_offset: usize,
 }
 
 /// Project every slot of `admitted`, over the selected `identities` the view
@@ -950,6 +955,7 @@ impl<'wire> WireIndex<'wire> {
             function_indexes: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: request.binders.len(),
+            level_offset: request.level_offset,
             active: None,
             suspended: Vec::new(),
             ordinal: 0,
@@ -985,6 +991,7 @@ impl<'wire> WireIndex<'wire> {
             function_indexes: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: 0,
+            level_offset: 0,
             active: None,
             suspended: Vec::new(),
             ordinal: 0,
@@ -1380,6 +1387,7 @@ impl<'wire> BareWalker<'wire> {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
+            level_offset: 0,
         };
         let projection = self.slot(&request)?;
         let mut visits: BTreeMap<CheckedNodeId, usize> = BTreeMap::new();
@@ -1407,6 +1415,7 @@ impl<'wire> BareWalker<'wire> {
             root: root.clone(),
             origin: origin.unwrap_or_default().to_owned(),
             binders: binders.to_vec(),
+            level_offset: 0,
         };
         let mut projection = self.slot(&request)?;
         let rows = OriginRows::new(self.index.admitted);
@@ -1433,10 +1442,23 @@ impl<'wire> BareWalker<'wire> {
         binders: &[NodeKey],
         owner: Origin,
     ) -> Result<ReaderProtocolProjection, WalkFailure> {
+        self.project_term_at(root, binders, 0, owner)
+    }
+
+    /// [`Self::project_term`] for a term whose scope holds `level_offset`
+    /// checker binders beyond `binders`.
+    pub(crate) fn project_term_at(
+        &self,
+        root: &NodeKey,
+        binders: &[NodeKey],
+        level_offset: usize,
+        owner: Origin,
+    ) -> Result<ReaderProtocolProjection, WalkFailure> {
         let mut projection = self.slot(&SlotRequest {
             root: root.clone(),
             origin: String::new(),
             binders: binders.to_vec(),
+            level_offset,
         })?;
         projection.locate_under(owner);
         projection.locate_function_bodies(self.index.admitted);
@@ -1502,6 +1524,8 @@ struct ReaderBuilder<'index, 'wire> {
     /// projected again does not look up again.
     binders: BTreeMap<CheckedNodeId, Option<CheckedNodeId>>,
     root_slots: usize,
+    /// [`SlotRequest::level_offset`].
+    level_offset: usize,
     /// The node [`Self::project_tree`] is projecting now.
     active: Option<Frame>,
     /// The children the active node's projection asked for and did not
@@ -1621,7 +1645,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             self.functions.push(ReaderFunction {
                 node: node.clone(),
                 name: name.clone(),
-                node: self.index.key(node)?,
+                key: self.index.key(node)?,
                 body: usize::MAX,
                 slots: parameter_ids.len(),
                 parameters: parameters
@@ -2851,19 +2875,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .ok_or_else(|| fault("reader-union-case-binder-has-name"))?;
                 arm_names.push(declared.to_owned());
                 arm_slots.push(next_slot);
-                arm_names.push(
-                    target
-                        .path
-                        .iter()
-                        .rev()
-                        .find_map(|segment| match segment {
-                            filament_contract_model::CheckedNodePathSegment::Name(name) => {
-                                Some(name.to_string())
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| format!("slot_{next_slot}")),
-                );
                 arm_locals.insert(target.clone(), next_slot);
                 next_slot = next_slot
                     .checked_add(1)
@@ -2961,7 +2972,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             if found.is_empty() {
                 return Ok(None);
             }
-            let slot = u64::try_from(slot).map_err(|_| fault("reader-let-slot-is-in-range"))?;
+            let slot = u64::try_from(slot.saturating_add(self.level_offset))
+                .map_err(|_| fault("reader-let-slot-is-in-range"))?;
             return found
                 .into_iter()
                 .find(|node| {
@@ -3012,6 +3024,14 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         if let Some(filament_contract_model::SelectedExactIdentity::Object(owner)) = selected {
             // A model attribute reads the reference under its `model.deref`.
             let operand = self.node(operand_id)?;
+            let explicit_deref = matches!(
+                read_form,
+                Some(filament_contract_model::CheckedFieldReadForm::ExplicitDeref)
+            ) && matches!(
+                &operand.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.model.deref")
+            );
             let reference = match &operand.body {
                 CheckedTerm::Application {
                     operation,
@@ -3035,6 +3055,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 Some(filament_contract_model::CheckedMemberType::Option(_))
             );
             let child = self.project_argument(id, &reference, context, locals)?;
+            // The explicit `deref` stays a position of the slot's walk (FR-383)
+            // with its own row, held by the reference it reads.
+            if explicit_deref && context == Context::Root {
+                if let Some(node) = self.nodes.get_mut(child) {
+                    node.absorbed = Some(operand_id.clone());
+                }
+            }
             return Ok((
                 NodeKind::Attribute {
                     reference: child,
@@ -3326,6 +3353,7 @@ fn arithmetic_operator(identity: &str) -> Option<ArithmeticOperator> {
 
 /// The selected exact type of admitted node `id`, joining declared and
 /// structural identities where IR's projection leaves the join to FSL.
+#[ix_trace_rs::string_edge]
 pub(crate) fn node_value_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,
@@ -3751,6 +3779,8 @@ fn literal_value(
                 _ => return None,
             }
         }
+        Literal::Float32Bits(bits) => Value::Float(filament_exact::IeeeValue::binary32(bits)),
+        Literal::Float64Bits(bits) => Value::Float(filament_exact::IeeeValue::binary64(bits)),
         Literal::String(value) => Value::String(value.into()),
         Literal::Text(value) => {
             let checked_type = index.node(type_id)?;
@@ -3865,7 +3895,7 @@ impl ReaderProjectedNode {
 struct ReaderFunction {
     node: CheckedNodeId,
     name: String,
-    node: NodeKey,
+    key: NodeKey,
     body: usize,
     slots: usize,
     parameters: Vec<ReaderProtocolParameter>,

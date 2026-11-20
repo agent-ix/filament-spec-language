@@ -191,7 +191,11 @@ impl CheckedExpression {
                     .value_type(*index)
                     .ok_or_else(|| "reader projection type is retained".to_owned())?
                     .clone();
-                Ok(ExpressionNode { kind, value_type })
+                Ok(ExpressionNode {
+                    kind,
+                    value_type,
+                    type_argument: None,
+                })
             })
             .collect::<Result<Vec<_>, String>>()?;
         let root = *indices
@@ -651,6 +655,16 @@ impl Printer<'_> {
         let printed = match &node.kind {
             NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
             NodeKind::Coerce(operand, _) => (child(*operand)?, child_prec(*operand)?),
+            // A bounded integer widened to `Integer` is the same value, so the
+            // conversion the checker inserts prints as its operand.
+            NodeKind::ConvertScalar(target, operand)
+                if matches!(
+                    (target.target(), &self.expression.nodes[*operand].value_type),
+                    (Some(ValueType::Integer), ValueType::Int(_))
+                ) =>
+            {
+                (child(*operand)?, child_prec(*operand)?)
+            }
             NodeKind::Local(slot) => {
                 let scope = self
                     .lookup(env, *slot)
@@ -1144,39 +1158,12 @@ pub(super) fn source_labels(
 /// rows used by the shared printer.
 pub(super) fn package_label(
     term: &fsl_package::BareClauseTerm,
-    over: &str,
-    trigger: Option<&str>,
-    captures: &[String],
     rows: &CanonicalRows,
 ) -> Result<String, String> {
-    use fsl_package::ClauseBinder;
-
-    let mut names = Vec::with_capacity(1 + usize::from(trigger.is_some()) + captures.len());
-    names.push(over.to_owned());
-    if let Some(trigger) = trigger {
-        names.push(trigger.to_owned());
-    }
-    names.extend(captures.iter().cloned());
     let slots = term
-        .binders()
-        .iter()
-        .map(|(slot, binder)| {
-            let ordinal = match binder {
-                ClauseBinder::Over => 0,
-                ClauseBinder::Trigger => {
-                    if trigger.is_none() {
-                        return Err("reader projection trigger binder is retained".to_owned());
-                    }
-                    1
-                }
-                ClauseBinder::Capture(index) => 1 + usize::from(trigger.is_some()) + index,
-            };
-            let name = names
-                .get(ordinal)
-                .ok_or_else(|| "reader projection clause binder is retained".to_owned())?;
-            Ok((*slot, name.clone()))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+        .named_binders()
+        .map(|(slot, name)| (slot, name.to_owned()))
+        .collect::<Vec<_>>();
     CheckedExpression::from_projection(term.projection())?
         .render_with_slots(&slots, rows)
         .map(|label| format!("holds({label})"))
