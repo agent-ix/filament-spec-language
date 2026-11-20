@@ -149,10 +149,14 @@ fn a_package_run_selects_its_form_by_the_member() {
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "package.json"},
-            "clause": {"selection": {"clause": "Pick"}, "observations": {}}}),
+            "clause": {"selection": {"clause": {"name": "Pick", "observation": "current"}},
+                "observations": {}}}),
     );
     assert_eq!(exit, 20, "{value}");
-    names(&value, "\"requires\":\"directory\"");
+    names(
+        &value,
+        "running this member over a selected checked package is not implemented yet",
+    );
 }
 
 /// FR-1039-AC-3: a missing file, a non-v2 document, a package the reader
