@@ -2429,6 +2429,8 @@ mod tests {
             rejected(ProbabilityCertificateRule::ThresholdMissed, key(0))
         );
 
+        // A closed self-loop is an end component, which a workload claim has no
+        // exit-value rule for.
         let mut cyclic = graph;
         let state = cyclic.states.get_mut(&key(2)).unwrap();
         state.terminal = None;
@@ -2441,7 +2443,7 @@ mod tests {
                 &Bound::AtLeast(rational(0)),
                 &Cancel::new(),
             ),
-            Err(ExactProbabilityGraphError::Cycle)
+            Err(ExactProbabilityGraphError::UnsupportedClaimForm)
         );
     }
 

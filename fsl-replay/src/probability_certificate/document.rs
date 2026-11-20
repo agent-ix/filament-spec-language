@@ -337,7 +337,7 @@ struct WireObjective {
     unit: Option<Box<serde_json::value::RawValue>>,
     optimization: String,
     fairness: Vec<Box<serde_json::value::RawValue>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     timed: Option<WireTimedObjective>,
 }
 
