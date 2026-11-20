@@ -3,12 +3,32 @@
 
 use super::*;
 
+fn checked_recipe(condition: &str, declarations: &str) -> Recipe {
+    let holder = tempfile::tempdir().unwrap();
+    let mut request = request("event_position", Corpus::None);
+    let text = std::fs::read_to_string(&request.emit.source).unwrap();
+    let attempt = "as (attempted: M::Notice) { attempted.ready };";
+    assert_eq!(text.matches(attempt).count(), 1);
+    let text = text
+        .replace(attempt, "as (attempted: Boolean) { attempted };")
+        .replace(FULL_RECOVER, condition)
+        .replace(
+            "model M = \"agent-ix/checked-handoff\";",
+            &format!("model M = \"agent-ix/checked-handoff\";\n{declarations}"),
+        );
+    let unit = holder.path().join("unit.native");
+    std::fs::write(&unit, text).unwrap();
+    request.emit.source = unit;
+    read_recipe(holder, &request)
+}
+
 #[test]
 #[trace("FR-531", "FR-520-AC-1")]
 fn bytes_only_recovery_combines_modulo_multiplicity_sum_and_branch_selection() {
-    let recipe = recipe_with(Some(
+    let recipe = checked_recipe(
         "let n = size(recoveredFull.receipts) in if activatedFull then n mod 3 = 0 else sum<M::Total>(r in recoveredFull.receipts: r) = targetFull and n mod 3 = 1",
-    ));
+        "",
+    );
     for (receipts, target, activated, expected) in [
         (&[3, 3, 3, 3][..], 12, false, true),
         (&[4, 4, 4][..], 12, false, false),
@@ -28,9 +48,10 @@ fn bytes_only_recovery_combines_modulo_multiplicity_sum_and_branch_selection() {
 #[test]
 #[trace("FR-531", "FR-520-AC-1")]
 fn bytes_only_recovery_calls_the_emitted_function_with_the_query_result() {
-    let recipe = recipe_with_declarations(Some(
+    let recipe = checked_recipe(
         "residue(size(recoveredFull.receipts)) = 2 and sum<M::Total>(r in recoveredFull.receipts: r) = targetFull and not activatedFull",
-    ), "function residue using v(n: Integer): Integer pure { (n + 4) mod 5 }");
+        "function residue using v(n: Integer): Integer pure { (n + 4) mod 5 }",
+    );
     for (receipts, target, activated, expected) in [
         (&[2, 2, 5][..], 9, false, true),
         (&[4, 5][..], 9, false, false),
@@ -51,9 +72,10 @@ fn bytes_only_recovery_reports_the_unavailable_target_only_on_the_branch_that_re
     use filament_semantic_value::catalog::CatalogCode;
     use fsl_eval::value::ProtocolSlotEvaluation;
 
-    let recipe = recipe_with(Some(
+    let recipe = checked_recipe(
         "if activatedFull then size(recoveredFull.receipts) mod 3 = 0 else sum<M::Total>(r in recoveredFull.receipts: r) = targetFull",
-    ));
+        "",
+    );
     let bare = recipe.bare();
     let node = recipe.compensation("Full");
     let slot = ProtocolSlot {
