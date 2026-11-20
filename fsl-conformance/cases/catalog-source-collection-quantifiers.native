@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function everyNonNegative using v(s: Sequence<Integer>[0,3]): Boolean pure { forall(x in s: x >= 0) }
+function hasThree using v(s: Sequence<Integer>[0,3]): Boolean pure { exists(y in s: y = 3) }

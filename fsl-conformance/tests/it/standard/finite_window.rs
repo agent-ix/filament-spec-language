@@ -15,10 +15,10 @@ use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
 use fsl_replay::spine::{
     self, ClauseDisposition, ClauseRunReport, DependencyInput, PackageAuthentication,
-    PackageTemporalRequest, ParseRequest, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, SpineLimits, StateClauseExecutionPoints, TemporalIndeterminateReason,
-    TemporalTraceRefusal, TemporalVerdict, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    PackageTemporalRequest, ParseRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness,
+    SpineLimits, StateClauseExecutionPoints, TemporalIndeterminateReason, TemporalTraceRefusal,
+    TemporalVerdict, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
@@ -45,6 +45,11 @@ const ACCOUNTING: ScalarLimits = ScalarLimits {
     result_units: 1 << 30,
 };
 
+/// since/triggered evaluate over a same-stamp tie that has no usable order
+/// where the standard refuses at the tie.
+const SINCE_ORDER: &str =
+    "fsl-eval temporal order admission: past operators (since, triggered) evaluate a same-stamp tie without a usable order key instead of refusing at the tie (until and release refuse)";
+
 /// Cases that do not currently conform, asserted exactly.
 const KNOWN_GAPS: &[KnownGap] = &[
     gap(
@@ -62,6 +67,14 @@ const KNOWN_GAPS: &[KnownGap] = &[
     gap(
         "FWV-69",
         "QSL-2048 harness: the canonical observation order is not exposed by the run report",
+    ),
+    gap("FWV-33", SINCE_ORDER),
+    gap("FWV-34", SINCE_ORDER),
+    gap("FWV-62", SINCE_ORDER),
+    gap("FWV-63", SINCE_ORDER),
+    gap(
+        "FWV-57",
+        "fsl-replay clause admission: an empty trace is refused at Admit (invalid_runtime_input), not as the temporal EmptyTrace refusal; whether that satisfies the standard's \"refuse\" is a spec question",
     ),
 ];
 
@@ -600,9 +613,7 @@ fn disposition(report: &ClauseRunReport) -> String {
         ClauseDisposition::TemporalRefusal(TemporalTraceRefusal::SameStampOrderUnavailable {
             position,
         }) => format!("refuse at {position}"),
-        ClauseDisposition::TemporalRefusal(TemporalTraceRefusal::EmptyTrace) => {
-            "refuse".to_owned()
-        }
+        ClauseDisposition::TemporalRefusal(TemporalTraceRefusal::EmptyTrace) => "refuse".to_owned(),
         other => format!("{other:?}"),
     }
 }
@@ -781,7 +792,10 @@ fn conformance_fspec_finite_window_source_windows() {
 fn the_referenced_tick_cover_vectors_are_published() {
     let fixtures = standard();
     let reference = &fixtures.tick_cover_vectors;
-    assert_eq!(reference.file, "../checked-package-v2/tick-cover-vectors.json");
+    assert_eq!(
+        reference.file,
+        "../checked-package-v2/tick-cover-vectors.json"
+    );
     let _row = reference.row;
     let document: Value = serde_json::from_slice(
         filament_specification::published_file(TICK_COVER).expect("tick-cover vectors"),

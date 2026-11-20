@@ -30,12 +30,110 @@ const ROOT: &str = "proposals/state-core/fixtures";
 const UNBOUND: &str =
     "FSpec state-core: model binding unavailable, no domain package published for the fixture's model";
 /// The owner of every case that mutates a review wire no FSL input reads.
-const REVIEW_WIRE: &str =
-    "FSpec state-core: agent-a review wire is not an FSL compiler input";
+const REVIEW_WIRE: &str = "FSpec state-core: agent-a review wire is not an FSL compiler input";
+/// The fixture mutates a wire, snapshot or evaluator request that no public
+/// FSL compile entry reads.
+const WIRE_INPUT: &str =
+    "FSpec state-core: the mutated artifact is a subject, model-expectation or future runtime wire that no FSL public entry reads";
+/// The published native source is refused by the current grammar.
+const SYNTAX: &str =
+    "FSL parser vs FSpec state-core: the published source (edition \"0-draft\", `profile \"state-finite/0-draft\";`) is refused invalid_syntax by the native 1-draft grammar";
 
 /// Cases that do not currently conform, asserted exactly.
 const KNOWN_GAPS: &[KnownGap] = &[
     gap("typing/absent-parent-implication", UNBOUND),
+    gap("boundary/ambiguous-export", WIRE_INPUT),
+    gap("boundary/bad-byte-span", WIRE_INPUT),
+    gap("boundary/deleted-object", WIRE_INPUT),
+    gap("boundary/exhausted-evaluation", WIRE_INPUT),
+    gap("boundary/foreign-import", WIRE_INPUT),
+    gap("boundary/line-byte-mismatch", WIRE_INPUT),
+    gap("boundary/missing-model", SYNTAX),
+    gap("boundary/split-unicode", WIRE_INPUT),
+    gap("boundary/unavailable-observation", WIRE_INPUT),
+    gap("boundary/unbounded-integer", WIRE_INPUT),
+    gap("boundary/undefined-option", SYNTAX),
+    gap("boundary/unknown-feature", WIRE_INPUT),
+    gap("boundary/unknown-language-profile", WIRE_INPUT),
+    gap("boundary/unknown-wire", WIRE_INPUT),
+    gap("boundary/unsupported-collect", SYNTAX),
+    gap("boundary/wrong-invocation", WIRE_INPUT),
+    gap("invocation/deleted-self-post-context", SYNTAX),
+    gap("invocation/forbidden-frame-change", SYNTAX),
+    gap("invocation/healthy-unchanged-version", SYNTAX),
+    gap("invocation/incorrect-creation-inventory", SYNTAX),
+    gap("invocation/missing-pre-observation", SYNTAX),
+    gap("invocation/violating-changed-version", SYNTAX),
+    gap("invocation/wrong-invocation", SYNTAX),
+    gap("reference/changed-language-edition", REVIEW_WIRE),
+    gap("reference/duplicate-required-feature", REVIEW_WIRE),
+    gap("reference/feature-set-reordered", REVIEW_WIRE),
+    gap("reference/foreign-authority", REVIEW_WIRE),
+    gap("reference/same-exact-reference", REVIEW_WIRE),
+    gap("reference/unknown-reference-version", REVIEW_WIRE),
+    gap("reference/unknown-required-feature", REVIEW_WIRE),
+    gap("reference/unknown-semantic-profile", REVIEW_WIRE),
+    gap("reference/unknown-wire-version", REVIEW_WIRE),
+    gap("reference/wrong-artifact-kind", REVIEW_WIRE),
+    gap("state/absent-parent-guard", SYNTAX),
+    gap("state/cycle-reachability", SYNTAX),
+    gap("state/dangling-parent", SYNTAX),
+    gap("state/duplicate-object", SYNTAX),
+    gap("state/equal-valued-distinct-identities", SYNTAX),
+    gap("state/healthy-parent-order", SYNTAX),
+    gap("state/incomplete-population", SYNTAX),
+    gap("state/self-loop", SYNTAX),
+    gap("state/violating-parent-order", SYNTAX),
+    gap("typing/alternative-join-does-not-union-facts", UNBOUND),
+    gap("typing/ambiguous-literals", UNBOUND),
+    gap("typing/boolean-operation-result", UNBOUND),
+    gap("typing/branch-type-mismatch", UNBOUND),
+    gap("typing/cancelled-expression", UNBOUND),
+    gap("typing/captured-post-value-not-retagged", UNBOUND),
+    gap("typing/collect-duplicate-output-refused", SYNTAX),
+    gap("typing/conditional-guard", UNBOUND),
+    gap("typing/deleted-post-self", UNBOUND),
+    gap("typing/empty-exists", UNBOUND),
+    gap("typing/empty-forall", UNBOUND),
+    gap("typing/equal-fields-distinct-objects", UNBOUND),
+    gap("typing/exists-ordered-short-circuit", UNBOUND),
+    gap("typing/graph-budget-is-not-depth-bound", UNBOUND),
+    gap("typing/guarded-addition", UNBOUND),
+    gap("typing/immutable-option-alias", UNBOUND),
+    gap("typing/incomplete-universe", UNBOUND),
+    gap("typing/let-exhausted-before-second-read", UNBOUND),
+    gap("typing/let-initializer-once", UNBOUND),
+    gap("typing/minimum-divided-by-minus-one", UNBOUND),
+    gap("typing/mismatched-units", UNBOUND),
+    gap("typing/missing-pre-observation", UNBOUND),
+    gap("typing/missing-sequence", UNBOUND),
+    gap("typing/negative-division", UNBOUND),
+    gap("typing/negative-remainder", UNBOUND),
+    gap("typing/nested-shadowing", UNBOUND),
+    gap("typing/nonzero-guard", UNBOUND),
+    gap("typing/nullable-is-not-absence", UNBOUND),
+    gap("typing/one-edge-self-cycle", UNBOUND),
+    gap("typing/or-false-facts", UNBOUND),
+    gap("typing/possible-zero-divisor", UNBOUND),
+    gap("typing/pre-guard-cannot-protect-post", UNBOUND),
+    gap("typing/pre-outside-post", UNBOUND),
+    gap("typing/pre-preserves-captured-alias", UNBOUND),
+    gap("typing/present-parent-violation", UNBOUND),
+    gap("typing/result-outside-post", UNBOUND),
+    gap("typing/right-guard-cannot-protect-left", UNBOUND),
+    gap("typing/same-pre-value-guard", UNBOUND),
+    gap("typing/size-needs-context", UNBOUND),
+    gap("typing/size-preserves-duplicates", UNBOUND),
+    gap("typing/skipped-dangling-reference", UNBOUND),
+    gap("typing/two-edge-cycle", UNBOUND),
+    gap("typing/unguarded-unwrap", UNBOUND),
+    gap("typing/unit-division-not-admitted", UNBOUND),
+    gap("typing/unproved-overflow", UNBOUND),
+    gap("typing/unreachable-unknown-name", UNBOUND),
+    gap("typing/unreachable-unwrap", UNBOUND),
+    gap("typing/wrong-invocation", UNBOUND),
+    gap("typing/zero-edge-is-not-reachability", UNBOUND),
+    gap("typing/zero-expression-budget", UNBOUND),
 ];
 
 #[derive(Debug, Deserialize)]
@@ -212,7 +310,8 @@ fn typing_outcome(case: &TypingCase, alias: &str, model: &str) -> Result<(), Dif
             .value
             .map_or(String::new(), |value| format!(" {value}"))
     );
-    let source = typing_source(case, alias, model).map_err(|error| Difference::new(&wanted, error))?;
+    let source =
+        typing_source(case, alias, model).map_err(|error| Difference::new(&wanted, error))?;
     match compile(&case.id, source.as_bytes()) {
         // The expression is not in the source language: the judgment is not
         // typed or evaluated, which is exactly what `unsupported` states.
@@ -277,7 +376,10 @@ fn boundary_source(case: &BoundaryCase) -> Result<Option<Vec<u8>>, String> {
             1,
         ),
         ("parent-order.native", other) => {
-            return Err(format!("no mutation adapter for {other}: {}", case.mutation))
+            return Err(format!(
+                "no mutation adapter for {other}: {}",
+                case.mutation
+            ))
         }
         _ => return Ok(None),
     };
@@ -286,8 +388,7 @@ fn boundary_source(case: &BoundaryCase) -> Result<Option<Vec<u8>>, String> {
 
 fn boundary_outcome(case: &BoundaryCase) -> Result<(), Difference> {
     let expected = &case.expected_diagnostic;
-    let Some(bytes) =
-        boundary_source(case).map_err(|error| Difference::new(expected, error))?
+    let Some(bytes) = boundary_source(case).map_err(|error| Difference::new(expected, error))?
     else {
         return Err(Difference::new(
             expected,
@@ -326,10 +427,14 @@ fn run_corpus() -> Result<Corpus, String> {
     let invocation: Vec<ExecutionCase> = cases("invocation-cases.json")?;
     let boundary: Vec<BoundaryCase> = cases("boundary-cases.json")?;
     let reference: Vec<ReferenceCase> = cases("reference-cases.json")?;
-    let published = typing.len() + state.len() + invocation.len() + boundary.len() + reference.len();
+    let published =
+        typing.len() + state.len() + invocation.len() + boundary.len() + reference.len();
     let mut corpus = Corpus::new("state-core", published);
     for case in &typing {
-        corpus.record(format!("typing/{}", case.id), typing_outcome(case, alias, model));
+        corpus.record(
+            format!("typing/{}", case.id),
+            typing_outcome(case, alias, model),
+        );
     }
     for case in &state {
         corpus.record(

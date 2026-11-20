@@ -20,8 +20,178 @@ use ix_trace_rs::trace;
 
 use super::{gap, Corpus, Difference, KnownGap};
 
+/// The row has no authored source rendering.
+const Q_NONE: &str = "QSL-2052: no source rendering of the row is authored";
+/// The rendering samples only part of the row.
+const Q_PARTIAL: &str =
+    "QSL-2052: the sampled part matched; the rest of the row has no source rendering";
+const Q_BOUNDARY: &str =
+    "FSpec TC-185: the row's evaluator-boundary operands explicitly have no source form";
+const Q_UTF8: &str = "FSpec TC-186: invalid UTF-8 reader-boundary input is not a source value";
+const Q_WIRE: &str =
+    "FSpec TC-192: mutates an already checked wire definition closure, not FSL source";
+const Q_BACKEND: &str = "FSpec TC-192: backend negotiation, not source evaluation";
+
 /// Rows that do not currently conform, asserted exactly.
-const KNOWN_GAPS: &[KnownGap] = &[gap("TC-185:D03", "placeholder")];
+const KNOWN_GAPS: &[KnownGap] = &[
+    gap("TC-185:D01", Q_PARTIAL),
+    gap("TC-185:D03", Q_NONE),
+    gap("TC-185:D06", Q_NONE),
+    gap("TC-185:D07", Q_NONE),
+    gap("TC-185:D08", Q_NONE),
+    gap("TC-185:D09", Q_NONE),
+    gap("TC-185:D11", Q_NONE),
+    gap("TC-185:D12", Q_NONE),
+    gap("TC-185:D13", Q_BOUNDARY),
+    gap("TC-185:D14", Q_NONE),
+    gap("TC-185:D15", Q_NONE),
+    gap("TC-185:D16", Q_NONE),
+    gap("TC-185:D17", Q_NONE),
+    gap("TC-185:D18", Q_BOUNDARY),
+    gap("TC-185:D19", Q_NONE),
+    gap("TC-185:D20", Q_NONE),
+    gap("TC-185:D21", Q_NONE),
+    gap("TC-185:D22", Q_NONE),
+    gap("TC-185:D23", Q_NONE),
+    gap("TC-185:D24", Q_NONE),
+    gap("TC-185:D25", Q_NONE),
+    gap("TC-185:D26", Q_PARTIAL),
+    gap("TC-185:D27", Q_PARTIAL),
+    gap("TC-185:D28", Q_NONE),
+    gap("TC-185:D29", Q_NONE),
+    gap("TC-186:T02", Q_PARTIAL),
+    gap("TC-186:T04", Q_NONE),
+    gap("TC-186:T05", Q_NONE),
+    gap("TC-186:T06", Q_UTF8),
+    gap("TC-186:T06b", Q_PARTIAL),
+    gap("TC-186:T07", Q_NONE),
+    gap("TC-186:T08", Q_NONE),
+    gap("TC-186:T09", Q_NONE),
+    gap("TC-186:T10", Q_NONE),
+    gap("TC-186:T11", Q_NONE),
+    gap("TC-186:T13", Q_NONE),
+    gap("TC-186:T14", Q_NONE),
+    gap("TC-186:T15", Q_NONE),
+    gap("TC-186:T16", Q_NONE),
+    gap("TC-187:U01", Q_NONE),
+    gap("TC-187:U02", Q_NONE),
+    gap("TC-187:U03", Q_NONE),
+    gap("TC-187:U04", Q_NONE),
+    gap("TC-187:U05", Q_NONE),
+    gap("TC-187:U06", Q_NONE),
+    gap("TC-187:U07", Q_NONE),
+    gap("TC-187:U08", Q_NONE),
+    gap("TC-187:U09", Q_NONE),
+    gap("TC-187:U09b", Q_NONE),
+    gap("TC-187:U10", Q_NONE),
+    gap("TC-187:U11a", Q_PARTIAL),
+    gap("TC-187:U11b", Q_PARTIAL),
+    gap("TC-187:U11c", Q_PARTIAL),
+    gap("TC-187:U11d", Q_NONE),
+    gap("TC-187:U11e", Q_NONE),
+    gap("TC-187:U11f", Q_PARTIAL),
+    gap("TC-187:U11g1", Q_PARTIAL),
+    gap("TC-187:U11g2", Q_PARTIAL),
+    gap("TC-187:U11g3", Q_PARTIAL),
+    gap("TC-187:U11g4", Q_PARTIAL),
+    gap("TC-187:U11h", Q_PARTIAL),
+    gap("TC-187:U11i", Q_NONE),
+    gap("TC-187:U11j", Q_NONE),
+    gap("TC-187:U11k", Q_NONE),
+    gap("TC-187:U11l", Q_NONE),
+    gap("TC-187:U11m", Q_NONE),
+    gap("TC-187:U11n", Q_PARTIAL),
+    gap("TC-187:U11o", Q_PARTIAL),
+    gap("TC-187:U11p", Q_NONE),
+    gap("TC-187:U11q", Q_NONE),
+    gap("TC-187:U11r", Q_NONE),
+    gap("TC-187:U11s", Q_NONE),
+    gap("TC-187:U11t", Q_NONE),
+    gap("TC-187:U11u", Q_NONE),
+    gap("TC-187:U11w", Q_PARTIAL),
+    gap("TC-187:U11x", Q_NONE),
+    gap("TC-187:U11y", Q_NONE),
+    gap("TC-187:U11z1", Q_NONE),
+    gap("TC-187:U11z2", Q_NONE),
+    gap("TC-187:U11z3", Q_NONE),
+    gap("TC-187:U12", Q_NONE),
+    gap("TC-187:U13", Q_NONE),
+    gap("TC-187:U14", Q_NONE),
+    gap("TC-187:U15", Q_NONE),
+    gap("TC-187:U16", Q_NONE),
+    gap("TC-187:U17", Q_NONE),
+    gap("TC-187:U18", Q_NONE),
+    gap("TC-187:U19", Q_NONE),
+    gap("TC-187:U20", Q_NONE),
+    gap("TC-187:U21", Q_NONE),
+    gap("TC-187:U22", Q_NONE),
+    gap("TC-187:U23", Q_NONE),
+    gap("TC-187:U24", Q_NONE),
+    gap("TC-187:U25", Q_NONE),
+    gap("TC-187:U26", Q_NONE),
+    gap("TC-187:U27", Q_NONE),
+    gap("TC-187:U28", Q_NONE),
+    gap("TC-187:U29", Q_NONE),
+    gap("TC-187:U30", Q_NONE),
+    gap("TC-187:U31", Q_NONE),
+    gap("TC-187:U32", Q_NONE),
+    gap("TC-187:U33", Q_NONE),
+    gap("TC-187:U34", Q_NONE),
+    gap("TC-187:U35", Q_NONE),
+    gap("TC-187:U36", Q_NONE),
+    gap("TC-187:U37", Q_NONE),
+    gap("TC-187:U38", Q_NONE),
+    gap("TC-187:U39", Q_NONE),
+    gap("TC-187:U40", Q_NONE),
+    gap("TC-192:DIV-01", Q_NONE),
+    gap("TC-192:DIV-03", Q_WIRE),
+    gap("TC-192:DIV-05", Q_NONE),
+    gap("TC-192:DIV-06", Q_NONE),
+    gap("TC-192:DIV-07", Q_BACKEND),
+    gap("TC-192:DIV-08", Q_NONE),
+    gap("TC-192:DIV-09", Q_WIRE),
+    gap("TC-192:DIV-10", Q_NONE),
+    gap("TC-192:DIV-11", Q_NONE),
+    gap("TC-192:DIV-12", Q_NONE),
+    gap("TC-192:DIV-13", Q_NONE),
+    gap("TC-192:DIV-14", Q_BACKEND),
+    gap("TC-192:DIV-15", Q_NONE),
+    gap("TC-192:DIV-16", Q_NONE),
+    gap("TC-192:DIV-17", Q_NONE),
+    gap("TC-192:DIV-18", Q_NONE),
+    gap("TC-193:F01", Q_NONE),
+    gap("TC-193:F02", Q_NONE),
+    gap("TC-193:F02b", Q_NONE),
+    gap("TC-193:F04b", Q_NONE),
+    gap("TC-193:F05", Q_NONE),
+    gap("TC-193:F06", Q_NONE),
+    gap("TC-193:F07", Q_PARTIAL),
+    gap("TC-193:F08", Q_PARTIAL),
+    gap("TC-193:F09", Q_NONE),
+    gap("TC-193:F10", Q_PARTIAL),
+    gap("TC-193:F11", Q_PARTIAL),
+    gap("TC-193:F12", Q_NONE),
+    gap("TC-193:F13", Q_NONE),
+    gap("TC-193:F14", Q_NONE),
+    gap("TC-193:F17", Q_NONE),
+    gap("TC-193:F18", Q_NONE),
+    gap("TC-193:F19", Q_NONE),
+    gap("TC-193:F20", Q_NONE),
+    gap("TC-193:F21", Q_NONE),
+    gap("TC-193:F22", Q_NONE),
+    gap("TC-193:F23", Q_NONE),
+    gap("TC-193:F24", Q_NONE),
+    gap("TC-193:F25", Q_NONE),
+    gap("TC-193:F26", Q_NONE),
+    gap("TC-193:F27", Q_NONE),
+    gap("TC-193:F28", Q_NONE),
+    gap("TC-193:F29", Q_NONE),
+    gap("TC-193:F30", Q_NONE),
+    gap("TC-193:F31", Q_NONE),
+    gap("TC-193:F32", Q_NONE),
+    gap("TC-193:F33", Q_NONE),
+    gap("TC-193:F34", Q_NONE),
+];
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
@@ -702,11 +872,10 @@ fn an_altered_standard_expectation_reports_the_vector_identity() {
     assert!(mismatch.contains("999"), "{mismatch}");
 }
 
-
 /// Rows whose source rendering covers only part of the authored row.
 const PARTIAL: &[&str] = &[
-    "D01", "D26", "D27", "T02", "T06b", "F07", "F08", "F10", "F11", "U11a", "U11b", "U11c",
-    "U11f", "U11h", "U11g1", "U11g2", "U11g3", "U11g4", "U11n", "U11o", "U11w",
+    "D01", "D26", "D27", "T02", "T06b", "F07", "F08", "F10", "F11", "U11a", "U11b", "U11c", "U11f",
+    "U11h", "U11g1", "U11g2", "U11g3", "U11g4", "U11n", "U11o", "U11w",
 ];
 
 /// Why a row has no source rendering.
@@ -754,7 +923,13 @@ fn run_corpus(vectors: &[QualificationVector]) -> Corpus {
 
 /// Provenance: QSL-2052. Every published vector is evaluated from source or
 /// is an exactly listed known gap.
-#[trace("FSpec-TC-185", "FSpec-TC-186", "FSpec-TC-187", "FSpec-TC-192", "FSpec-TC-193")]
+#[trace(
+    "FSpec-TC-185",
+    "FSpec-TC-186",
+    "FSpec-TC-187",
+    "FSpec-TC-192",
+    "FSpec-TC-193"
+)]
 #[test]
 fn conformance_qualification_vectors_from_source() {
     let summary = run_corpus(QUALIFICATION_VECTORS).assert_settled(KNOWN_GAPS);
@@ -797,5 +972,8 @@ fn an_altered_vector_in_a_table_copy_is_reported_by_identity() {
         .settle(KNOWN_GAPS)
         .expect_err("the altered row mismatches");
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].starts_with("qualification: TC-185:D02: "), "{errors:?}");
+    assert!(
+        errors[0].starts_with("qualification: TC-185:D02: "),
+        "{errors:?}"
+    );
 }

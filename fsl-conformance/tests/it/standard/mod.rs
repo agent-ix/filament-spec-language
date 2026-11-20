@@ -39,11 +39,7 @@ impl Difference {
 
 impl fmt::Display for Difference {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "expected {}, observed {}",
-            self.expected, self.observed
-        )
+        write!(f, "expected {}, observed {}", self.expected, self.observed)
     }
 }
 
@@ -173,7 +169,10 @@ impl Corpus {
             .unwrap_or_else(|errors| panic!("{}", errors.join("\n")));
         for gap in gaps {
             if let Some(Err(difference)) = self.outcome(gap.id) {
-                println!("known gap: {}: {}: {difference} [{}]", self.name, gap.id, gap.owner);
+                println!(
+                    "known gap: {}: {}: {difference} [{}]",
+                    self.name, gap.id, gap.owner
+                );
             }
         }
         println!(
