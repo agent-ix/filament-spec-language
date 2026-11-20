@@ -144,6 +144,22 @@ impl CheckedExpression {
     }
 }
 
+impl CanonicalRows {
+    fn type_argument(&self, value_type: &ValueType) -> String {
+        let mut spellings = fsl_semantics::model::spelling::SourceSpellings::default();
+        for (key, declaration) in &self.declarations {
+            spellings.name_node(key.clone(), declaration.clone());
+        }
+        fsl_semantics::model::spelling::fsl_spelling(
+            &fsl_semantics::model::domain_package::ValueTypeRef::Resolved(Box::new(
+                value_type.clone(),
+            )),
+            &spellings,
+            None,
+        )
+    }
+}
+
 /// One scope: the binding site's slot and what a read of it prints as.
 struct Scope {
     parent: Env,
@@ -499,21 +515,110 @@ impl Printer<'_> {
                     )
                 }
             }
-            NodeKind::Query { visit, name, .. } => {
+            NodeKind::Query {
+                visit,
+                name,
+                source: source_index,
+                ..
+            } => {
                 let keyword = match visit {
                     Visit::Map => "map",
                     Visit::Filter => "filter",
                     Visit::Forall => "forall",
                     Visit::Exists => "exists",
-                    Visit::Count | Visit::Sum | Visit::Only => {
-                        return Err(
-                            "checked expression has no canonical printer for this form".to_owned()
-                        );
+                    Visit::Count => "count",
+                    Visit::Sum => "sum",
+                    Visit::Only => "only",
+                };
+                let type_argument = matches!(visit, Visit::Count | Visit::Sum | Visit::Only)
+                    .then(|| rows.type_argument(&node.value_type));
+                let (source, body, population_where, is_population) = match self
+                    .expression
+                    .nodes
+                    .get(*source_index)
+                    .map(|source| &source.kind)
+                {
+                    Some(NodeKind::Query {
+                        visit: Visit::Filter,
+                        ..
+                    }) if matches!(visit, Visit::Count | Visit::Sum | Visit::Only) => {
+                        let filter_plan =
+                            self.plans.get(&(*source_index, env)).ok_or_else(|| {
+                                "population filter is planned before printing".to_owned()
+                            })?;
+                        let (population, _) = self.text_of(filter_plan[0])?;
+                        let (condition, _) = self.text_of(filter_plan[1])?;
+                        let (_, body) = planned(1)?;
+                        (population, body, Some(condition), true)
+                    }
+                    _ => {
+                        let (source, _) = planned(0)?;
+                        let (body, _) = planned(1)?;
+                        let is_population =
+                            self.expression
+                                .nodes
+                                .get(*source_index)
+                                .is_some_and(|source| {
+                                    matches!(
+                                        &source.kind,
+                                        NodeKind::AllInstances { .. }
+                                            | NodeKind::PopulationObjects { .. }
+                                            | NodeKind::NamedPopulation { .. }
+                                    )
+                                });
+                        let population_where =
+                            (is_population && matches!(visit, Visit::Count)).then(|| body.clone());
+                        (source, body, population_where, is_population)
                     }
                 };
+                let prefix = type_argument
+                    .map(|argument| format!("{keyword}<{argument}>"))
+                    .unwrap_or_else(|| keyword.to_owned());
+                let text = if matches!(visit, Visit::Count) && is_population {
+                    match population_where {
+                        Some(condition) => {
+                            format!("{prefix}({name} in {source} where {condition})")
+                        }
+                        None => format!("{prefix}({name} in {source})"),
+                    }
+                } else if matches!(visit, Visit::Only | Visit::Sum) {
+                    match population_where {
+                        Some(condition) => {
+                            format!("{prefix}({name} in {source} where {condition}: {body})")
+                        }
+                        None => format!("{prefix}({name} in {source}: {body})"),
+                    }
+                } else {
+                    format!("{prefix}({name} in {source}: {body})")
+                };
+                (text, 10)
+            }
+            NodeKind::Fold {
+                accumulator_name,
+                binder_name,
+                identity,
+                ..
+            } => {
                 let (source, _) = planned(0)?;
-                let (body, _) = planned(1)?;
-                (format!("{keyword}({name} in {source}: {body})"), 10)
+                let (step, _) = planned(if identity.is_some() { 2 } else { 1 })?;
+                let type_argument = rows.type_argument(&node.value_type);
+                match identity {
+                    Some(_) => {
+                        let (identity, _) = planned(1)?;
+                        (
+                            format!(
+                                "fold<{type_argument}>({accumulator_name}, {binder_name} in {source}: {step}, identity: {identity})"
+                            ),
+                            10,
+                        )
+                    }
+                    None => (
+                        format!(
+                            "reduce<{type_argument}>({accumulator_name}, {binder_name} in {source}: {step})"
+                        ),
+                        10,
+                    ),
+                }
             }
             NodeKind::Seq { name, .. } => {
                 let (low, _) = planned(0)?;
@@ -935,7 +1040,7 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
 mod tests {
     use super::*;
     use filament_checked::node::ConnectiveOrigin;
-    use filament_exact::IeeeValue;
+    use filament_exact::{IeeeValue, Integer, IntegerInterval};
     use ix_trace_rs::trace;
 
     fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
@@ -943,6 +1048,15 @@ mod tests {
             kind,
             value_type: ValueType::Boolean,
         });
+        nodes.len() - 1
+    }
+
+    fn typed(
+        nodes: &mut Vec<ExpressionNode>,
+        kind: NodeKind<usize, CheckedLiteral>,
+        value_type: ValueType,
+    ) -> usize {
+        nodes.push(ExpressionNode { kind, value_type });
         nodes.len() - 1
     }
 
@@ -1231,6 +1345,188 @@ mod tests {
         assert_eq!(
             render(nodes, root).unwrap(),
             format!("let ieee_operand_0 = {A_TEXT} in ieee_operand_0")
+        );
+    }
+
+    /// FR-931-AC-16: query forms print the result type retained by the
+    /// checked node, including a structural bounded integer.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn count_sum_and_only_print_the_checked_result_type() {
+        let bounded = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
+        );
+        for (visit, integer_body, result_type, expected) in [
+            (
+                Visit::Count,
+                false,
+                bounded.clone(),
+                "count<Int[0, 4]>(x in xs: true)",
+            ),
+            (
+                Visit::Sum,
+                true,
+                ValueType::Integer,
+                "sum<Integer>(x in xs: 0)",
+            ),
+            (
+                Visit::Only,
+                true,
+                bounded.clone(),
+                "only<Int[0, 4]>(x in xs: 0)",
+            ),
+        ] {
+            let mut nodes = Vec::new();
+            let source = ordinary(&mut nodes, NodeKind::Local(0));
+            let body = if integer_body {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+                    ValueType::Integer,
+                )
+            } else {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+                    ValueType::Boolean,
+                )
+            };
+            let root = typed(
+                &mut nodes,
+                NodeKind::Query {
+                    visit,
+                    slot: 1,
+                    name: "x".to_owned(),
+                    source,
+                    body,
+                },
+                result_type,
+            );
+            let expression = CheckedExpression { nodes, root };
+            assert_eq!(
+                expression
+                    .render(&["xs".to_owned()], &CanonicalRows::default())
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// FR-931-AC-16: fold and reduce take their printed type from the checked
+    /// result node and distinguish themselves by the retained identity.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn fold_and_reduce_print_the_checked_result_type() {
+        for (identity, expected) in [
+            (Some(0), "fold<Integer>(acc, x in xs: acc, identity: 0)"),
+            (None, "reduce<Integer>(acc, x in xs: acc)"),
+        ] {
+            let mut nodes = Vec::new();
+            let source = ordinary(&mut nodes, NodeKind::Local(0));
+            let identity_node = identity.map(|_| {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+                    ValueType::Integer,
+                )
+            });
+            let step = ordinary(&mut nodes, NodeKind::Local(1));
+            let root = typed(
+                &mut nodes,
+                NodeKind::Fold {
+                    accumulator: 1,
+                    binder: 2,
+                    accumulator_name: "acc".to_owned(),
+                    binder_name: "x".to_owned(),
+                    source,
+                    step,
+                    identity: identity_node,
+                },
+                ValueType::Integer,
+            );
+            let expression = CheckedExpression { nodes, root };
+            assert_eq!(
+                expression
+                    .render(&["xs".to_owned()], &CanonicalRows::default())
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// FR-931-AC-17: population `where` clauses print in their source form;
+    /// population counts omit the expression colon.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-17")]
+    fn population_query_forms_print_where_without_a_filter_call() {
+        let population = filament_checked::key::DeclarationKey {
+            package: "p".to_owned(),
+            node: "P".to_owned(),
+        };
+        let mut nodes = Vec::new();
+        let population_node = ordinary(
+            &mut nodes,
+            NodeKind::NamedPopulation {
+                population: population.clone(),
+                members: Vec::new(),
+            },
+        );
+        let condition = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let filtered_population = ordinary(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Filter,
+                slot: 1,
+                name: "x".to_owned(),
+                source: population_node,
+                body: condition,
+            },
+        );
+        let result = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+            ValueType::Integer,
+        );
+        let only = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Only,
+                slot: 1,
+                name: "x".to_owned(),
+                source: filtered_population,
+                body: result,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression {
+                nodes: nodes.clone(),
+                root: only,
+            }
+            .render(&[], &CanonicalRows::default())
+            .unwrap(),
+            "only<Integer>(x in ix://p/P where true: 0)"
+        );
+
+        let count = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source: population_node,
+                body: condition,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression { nodes, root: count }
+                .render(&[], &CanonicalRows::default())
+                .unwrap(),
+            "count<Integer>(x in ix://p/P where true)"
         );
     }
 }
