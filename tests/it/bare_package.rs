@@ -2053,3 +2053,83 @@ fn opaque_caller_budgets_preserve_original_bounds_after_prior_joins() {
         }
     }
 }
+
+/// FR-531-AC-19, FR-940: the `when` guard of an `on each` clause with a
+/// capture is typed over `over` and the trigger only, while a `holds`
+/// condition is typed over those and the capture, so each projects its IEEE
+/// ordering's operand binder at the level the checker wrote.
+#[trace("TC-1331", "FR-531-AC-19")]
+#[test]
+fn a_guard_and_a_holds_term_project_their_ieee_operand_binders_at_the_checkers_levels() {
+    let holder = tempfile::tempdir().unwrap();
+    let source = holder.path().join("unit.native");
+    let ordering = "-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000)";
+    std::fs::write(
+        &source,
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             profile t = \"filament.temporal.infinite-trace/v1\";\n\
+             record Reading {{ level: Int[0, 9]; stopped: Boolean; }}\n\
+             temporal Guarded using t over (r: Reading) clock \"steps\" \
+             on each (q: Reading) when (r.level >= 0 and q.level >= 0 and {ordering}) \
+             {{ capture start: Int[0, 9] = q.level; \
+             eventually holds({ordering} and r.level >= start) }}\n"
+        ),
+    )
+    .unwrap();
+    let asked = fsl_command::checked_handoff::CheckedHandoffRequest {
+        emit: fsl_command::emit_checked_v2::Request {
+            source,
+            package_name: "guard-handoff".into(),
+            models: Vec::new(),
+            libraries: Vec::new(),
+            execution_points: None,
+            temporal_selections: Vec::new(),
+            out: None,
+        },
+        corpus: Corpus::None,
+        native_join: fsl_package::V2ReadLimits::fixture().native_join_limits(),
+    };
+    let out = holder.path().join("handoff");
+    write(&asked, &out).expect("the unit compiles and its handoff writes");
+    let files = tree(&out);
+    let package = admitted(&files["checked-package.json"], &evidence(&asked).unwrap());
+    let rows = ReadIdentityRows::read(
+        &files["identities.json"],
+        &package,
+        &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+    )
+    .unwrap();
+    let bare = BarePackage::new(&package)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("the fixture budget admits the supply");
+    let row = package
+        .temporal_clause_names()
+        .and_then(|rows| rows.first())
+        .expect("one named clause");
+    let view = fsl_package::checked_views::temporal_subject(&package, &row.declaration).unwrap();
+    let key = view.declaration_key().expect("a keyed clause");
+    let guard = bare
+        .project_guard(&key)
+        .unwrap_or_else(|failure| panic!("the guard projects: {failure:?}"))
+        .expect("the clause writes a guard");
+    assert!(
+        guard.named_binders().any(|(_, name)| name == "r")
+            && guard.named_binders().any(|(_, name)| name == "q"),
+        "the guard reads `over` and the trigger"
+    );
+    let position = view
+        .formula_graph()
+        .iter()
+        .position(|entry| entry.kind() == Some(fsl_package::checked_views::FormulaOperation::Holds))
+        .expect("a holds atom");
+    bare.project_holds(&key, position)
+        .unwrap_or_else(|failure| panic!("the holds term projects: {failure:?}"));
+}

@@ -1087,6 +1087,11 @@ fn source_only(leaf: &str) -> String {
 /// handoff directory, whose identity rows carry the unit's source union. Returns each
 /// leaf's source and package `atoms` entry of `p0`.
 fn both_routes(leaf: &str) -> (String, String) {
+    both_routes_over(leaf, json!({"directory": "handoff"}))
+}
+
+/// [`both_routes`] with the package leg selecting `package`.
+fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
     let unit = shape_low(leaf);
     let lower = json!({"clause": "Low"});
     let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
@@ -1117,7 +1122,7 @@ fn both_routes(leaf: &str) -> (String, String) {
     let (code, value) = write_request(
         directory.path(),
         &json!({"format": "native-run/1", "request": {"models": models,
-            "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+            "package": package, "tl_lowering": lower}}),
     );
     assert_eq!(code, 0, "{value}");
     let from_package = value["tl_lowering"]["atoms"]["p0"]
@@ -1194,6 +1199,28 @@ fn a_tl_lowering_over_a_package_returns_the_source_record() {
         json!({"member": "tl_lowering.cross_evaluate", "requires": "directory"}),
         "{value}"
     );
+    for (request, member) in [
+        (
+            json!({"models": models, "package": {"directory": "handoff"},
+                "tl_lowering": {"clause": "Low", "formula": 1}}),
+            "tl_lowering.formula",
+        ),
+        (
+            json!({"models": models, "package": {"directory": "handoff"},
+                "call": {"function": "f", "arguments": []},
+                "tl_lowering": {"clause": "Low"}}),
+            "tl_lowering",
+        ),
+    ] {
+        let (code, value) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": request}),
+        );
+        assert_eq!(code, 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(value["stage"], "request", "{value}");
+        assert!(value["message"].as_str().unwrap().contains(member), "{value}");
+    }
 }
 
 /// FR-400-AC-13 and FR-931-AC-13 (package route): the reader-backed read
@@ -1217,6 +1244,72 @@ fn case_binders_match_across_the_source_and_package_routes() {
     ] {
         let (from_source, from_package) = both_routes(leaf);
         assert_eq!(from_source, from_package, "{leaf}");
+    }
+}
+
+/// FR-931-AC-18 and FR-1039 (`{file}` form): the atom text of a clause that
+/// reads a model object is built from the package alone, so the `{file}`
+/// selection returns the source route's atom.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-6")]
+#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object or source union"]
+fn the_file_form_prints_the_source_routes_atoms() {
+    let leaf = "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })";
+    let (from_source, from_package) = both_routes_over(leaf, json!({"file": "package.json"}));
+    assert_eq!(from_source, from_package);
+}
+
+/// The unit of `a_reading_clause_with_a_capture_lowers_alike_on_both_routes`:
+/// an `on each` clause with one capture, an IEEE ordering over a non-local
+/// operand written in a `holds` condition and in a pure function it calls.
+const READING_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     profile t = \"filament.temporal.infinite-trace/v1\";\n\
+     record Reading { level: Int[0, 9]; stopped: Boolean; }\n\
+     function below using v(x: Reading): Boolean pure \
+     { -float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000) }\n\
+     temporal Direct using t over (r: Reading) clock \"steps\" \
+     on each (q: Reading) when (r.level >= 0 and q.level >= 0) \
+     { capture start: Int[0, 9] = q.level; \
+     once [1, 1] holds(-float64(bits: 0x3ff0000000000000) < float64(bits: 0x0000000000000000) \
+     and r.level >= start) }\n\
+     temporal Called using t over (r: Reading) clock \"steps\" \
+     on each (q: Reading) { capture start: Int[0, 9] = q.level; \
+     once [1, 1] holds(below(r) and r.level >= start) }\n";
+
+/// FR-931-AC-14, FR-397-AC-29: the checker numbers an IEEE operand binder
+/// after every binder its term is typed over, so a `holds` condition of an
+/// `on each` clause with a capture, and a function body it calls (numbered
+/// from its own parameters), lower to the same record on both routes.
+#[test]
+#[trace("TC-3039", "FR-931-AC-14")]
+fn a_reading_clause_with_a_capture_lowers_alike_on_both_routes() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("unit.native"), READING_UNIT).unwrap();
+    let compile = directory.path().join("compile.json");
+    std::fs::write(
+        &compile,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": [], "program": {"source": source("unit.native")},
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:s1-16:unit.native",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    fsl_command::command::compile(&compile).expect("the unit compiles");
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    for clause in ["Direct", "Called"] {
+        let lower = json!({"clause": clause, "correspondence": "mltl.infinite-trace/v1"});
+        let (source_code, from_source) = run(READING_UNIT, false, ("tl_lowering", lower.clone()));
+        let (code, from_package) = write_request(
+            directory.path(),
+            &json!({"format": "native-run/1", "request": {"models": [],
+                "package": {"directory": "handoff"}, "tl_lowering": lower}}),
+        );
+        assert_eq!(source_code, 0, "{clause}: {from_source}");
+        assert_eq!(code, 0, "{clause}: {from_package}");
+        assert_eq!(from_package, from_source, "{clause}");
     }
 }
 

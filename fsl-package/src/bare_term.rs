@@ -158,6 +158,7 @@ impl<'p> BarePackage<'p> {
         };
         let clause_index =
             declaration_index(package, clause_id, "temporal_clause").ok_or_else(malformed)?;
+        let guard_term = matches!(term, ClauseTerm::Guard);
         let (root, site) = match term {
             ClauseTerm::Holds(position) => {
                 let graph_uses = subject.formula_graph();
@@ -250,9 +251,14 @@ impl<'p> BarePackage<'p> {
             .key(root)
             .map_err(|_| fault("bare-package-has-structural-keys"))?;
         // The checker numbers a binder an expression introduces after every
-        // binder of the clause (`over`, the trigger and each capture), read or
-        // not; the slots given are those the term reads.
-        let clause_binders = 1 + usize::from(trigger.is_some()) + subject.capture_names().len();
+        // binder the term is typed over, read or not: `over` and the trigger
+        // for the guard, and also each capture for a `holds` condition. The
+        // slots given are those the term reads.
+        let clause_binders = if guard_term {
+            1 + usize::from(trigger.is_some())
+        } else {
+            1 + usize::from(trigger.is_some()) + subject.capture_names().len()
+        };
         let projection = walker
             .project_term_at(
                 &root_key,

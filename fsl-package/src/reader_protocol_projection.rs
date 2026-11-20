@@ -2148,7 +2148,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-let-binder-has-name").into());
                 };
                 let slot = self.next_slot(context, locals);
-                let binder = self.binder_of(id, name.as_ref(), body, slot)?;
+                let binder = self.binder_of(id, name.as_ref(), body, slot, context)?;
                 let value = self.project_argument(id, value, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
@@ -2435,7 +2435,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-collection-query-binder-has-name").into());
                 };
                 let slot = self.next_slot(context, locals);
-                let binder = self.binder_of(id, name.as_ref(), value, slot)?;
+                let binder = self.binder_of(id, name.as_ref(), value, slot, context)?;
                 let source = self.project_argument(id, source_term, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
@@ -2941,11 +2941,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         name: &str,
         scope: &CheckedTerm,
         slot: usize,
+        context: Context,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         if let Some(binder) = self.binders.get(id) {
             return Ok(binder.clone());
         }
-        let binder = self.binder_node(name, scope, slot)?;
+        let binder = self.binder_node(name, scope, slot, context)?;
         self.binders.insert(id.clone(), binder.clone());
         Ok(binder)
     }
@@ -2956,6 +2957,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         name: &str,
         scope: &CheckedTerm,
         slot: usize,
+        context: Context,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         let mut found = BTreeSet::new();
         let lookup = |id: &CheckedNodeId| self.index.node(id);
@@ -2972,7 +2974,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             if found.is_empty() {
                 return Ok(None);
             }
-            let slot = u64::try_from(slot.saturating_add(self.level_offset))
+            // A function body numbers its levels from its own parameters.
+            let offset = if context == Context::Root {
+                self.level_offset
+            } else {
+                0
+            };
+            let slot = u64::try_from(slot.saturating_add(offset))
                 .map_err(|_| fault("reader-let-slot-is-in-range"))?;
             return found
                 .into_iter()
