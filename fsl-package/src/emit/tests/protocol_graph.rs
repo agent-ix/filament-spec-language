@@ -774,39 +774,6 @@ fn a_channel_carries_every_type_the_reader_admits() {
     }
 }
 
-/// A quantity FIFO key remains refused until its separate key-stability work
-/// lands (QSL-1142).
-#[test]
-#[ignore = "blocked: pinned reader has not adopted FR-726 FIFO-key-stable types"]
-fn a_quantity_key_refuses_typed() {
-    let cases = [(
-        ProtocolConstruct::ChannelKeyNotEqualityStable,
-        carrying_flow("Quantity<m>", "fifo by (m: Quantity<m>) { m }"),
-    )];
-    for (construct, text) in cases {
-        let refusals = checked(&text, false).expect_err(&text);
-        assert_eq!(
-            refusals
-                .iter()
-                .map(|refusal| &refusal.cause)
-                .collect::<Vec<_>>(),
-            [&not_emitted(construct)],
-            "{text}"
-        );
-        let open = checked(&text, true).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-        let clauses = open
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
-            .count();
-        assert_eq!(clauses, 0, "{text}");
-    }
-    assert_eq!(
-        ProtocolConstruct::ChannelKeyNotEqualityStable.tracking(),
-        "QSL-1142"
-    );
-}
-
 /// Declarations the FIFO key cases use: a record per field family.
 const KEYED: &str = "record Plain { x: Integer; }\n\
     record WithQuantity { q: Quantity<m>; }\n\
@@ -852,12 +819,12 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
     }
 }
 
-/// Former reader-rule mismatch cases, superseded by FR-881. Bounded and
-/// quantity forms are now FIFO-key-stable; the pinned reader still rejects
-/// them, so this legacy refusal test stays ignored until the reader catches up.
+/// FR-881 admits FIFO-stable bounded and quantity keys, including their
+/// composite forms; their emitted packages must also read back.
 #[test]
-#[ignore = "superseded by FR-881; reader 90b90fc7 still rejects FIFO-key-stable bounded and quantity forms"]
-fn a_fifo_key_the_reader_cannot_compare_refuses_typed() {
+#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
+#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
+fn a_fifo_key_of_a_bounded_or_quantity_type_is_written() {
     let cases = [
         ("Quantity<m>", "m"),
         ("Option<Int[0, 5]>", "m"),
@@ -877,16 +844,22 @@ fn a_fifo_key_the_reader_cannot_compare_refuses_typed() {
     ];
     for (carries, key) in cases {
         let text = keyed_flow(carries, key);
-        assert_keyed_refusal(checked(&text, false), checked(&text, true), &text);
+        let lowered = lower_with(model(), PROFILES, &text);
+        assert!(
+            lowered.ir.is_ok(),
+            "{carries} {key}: {:?}",
+            lowered.ir.err()
+        );
+        assert!(lowered.verified, "{carries} {key}");
     }
 }
 
-/// Former model-owned-key refusal cases over the FR-360 variant document.
-/// FR-881 now admits equality-stable model-owned keys; the pinned reader has
-/// not adopted those forms yet.
+/// FR-881 admits FIFO-stable model-owned variant and record keys over the
+/// FR-360 document. Their packages and unordered carried counterparts read back.
 #[test]
-#[ignore = "superseded by FR-881; reader 90b90fc7 still rejects model-owned FIFO-key-stable forms"]
-fn a_model_owned_fifo_key_refuses_typed_and_a_variant_is_carried() {
+#[trace("FR-881-AC-2", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
+#[ignore = "QSL-1142: checker/IR FIFO-key parity for model-owned stable keys is pending"]
+fn a_model_owned_fifo_key_is_written_and_a_variant_is_carried() {
     use super::variant_types::fixture;
     let document = || {
         crate::emit::tests::wire_bytes(&fixture::with_types(vec![fixture::variant_type(
@@ -918,11 +891,13 @@ fn a_model_owned_fifo_key_refuses_typed_and_a_variant_is_carried() {
         ("Sequence<M::Tier>", "m"),
     ] {
         let text = flow(carries, &format!("fifo by (m: {carries}) {{ {key} }}"));
-        assert_keyed_refusal(
-            checked_package(document(), package, &text, false),
-            checked_package(document(), package, &text, true),
-            &text,
+        let lowered = lower_package(document(), package, PROFILES, &text);
+        assert!(
+            lowered.ir.is_ok(),
+            "{carries} {key}: {:?}",
+            lowered.ir.err()
         );
+        assert!(lowered.verified, "{carries} {key}");
     }
     for carries in ["M::Tier", "M::Odd", "M::Settings"] {
         let text = flow(carries, "unordered");
@@ -930,31 +905,6 @@ fn a_model_owned_fifo_key_refuses_typed_and_a_variant_is_carried() {
         assert!(lowered.ir.is_ok(), "{carries}: {:?}", lowered.ir.err());
         assert!(lowered.verified, "{carries}");
     }
-}
-
-/// `closed` refuses with exactly the typed key refusal, and `open` writes no
-/// clause node.
-fn assert_keyed_refusal(
-    closed: Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>>,
-    open: Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>>,
-    text: &str,
-) {
-    let refusals = closed.err().unwrap_or_else(|| panic!("admitted: {text}"));
-    assert_eq!(
-        refusals
-            .iter()
-            .map(|refusal| &refusal.cause)
-            .collect::<Vec<_>>(),
-        [&not_emitted(ProtocolConstruct::ChannelKeyNotEqualityStable)],
-        "{text}"
-    );
-    let open = open.unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-    let clauses = open
-        .semantic_graph()
-        .nodes()
-        .filter(|node| node.semantic_form() == "protocol_clause")
-        .count();
-    assert_eq!(clauses, 0, "{text}");
 }
 
 /// `Flow` over [`model`] whose `run` holds the `parallel` control `Par`.
@@ -1920,7 +1870,7 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
 /// (a bounded domain, a quantity, a composite of them) is written.
 #[test]
 #[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "blocked: locked filament-contract-ir reader 90b90fc7 has not adopted FR-726 FIFO-key-stable types"]
+#[ignore = "QSL-1142: checker/IR FIFO-key parity for bounded, quantity and composite keys is pending"]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
         ("Int[0, 99]", "m"),
