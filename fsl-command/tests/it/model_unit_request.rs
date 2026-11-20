@@ -231,9 +231,11 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
     assert_eq!(ghost["code"], "missing_declaration", "{ghost}");
     assert_eq!(ghost_outcome["diagnostics"][0]["cause"], "missing-name");
     assert_eq!(ghost_outcome["last_stage"], "I1");
-    assert_eq!(
-        ghost_outcome["diagnostics"][0]["locus"]["file"],
-        "ghost.fsl"
+    assert!(
+        ghost_outcome["diagnostics"][0]["locus"]["source"]["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.ends_with("ghost.fsl")),
+        "{ghost_outcome}"
     );
 
     let program_entry = json!([{"format": "native-model-unit/1", "source": source("program.fsl")}]);
@@ -333,9 +335,9 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
     );
     assert_eq!(refused["last_stage"], "I1", "{refused}");
     assert!(
-        refused["diagnostics"][0]["locus"]["file"]
+        refused["diagnostics"][0]["locus"]["source"]["identity"]
             .as_str()
-            .is_some_and(|file| file.ends_with("ghost.fsl")),
+            .is_some_and(|identity| identity.ends_with("ghost.fsl")),
         "{refused}"
     );
 }
