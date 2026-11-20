@@ -1287,8 +1287,7 @@ fn assembly_error_message(cause: &AssemblyCause) -> String {
         AssemblyCause::VerificationPlanNotChecked { name } => {
             format!("verification plan `{name}` builds but is not checked yet")
         }
-    };
-    with_more(message, refusal.errors.len())
+    }
 }
 
 /// Render a proved interval for a checker diagnostic.
