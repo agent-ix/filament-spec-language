@@ -768,13 +768,47 @@ fn validate_observed_population_members(
     Ok(())
 }
 
+/// The replicated roles that own a node beneath the control `node`.
+fn fanout_roles_under<'p>(protocol: &'p CheckedProtocol, node: &str) -> BTreeSet<&'p str> {
+    protocol
+        .owners
+        .iter()
+        .filter_map(|owner| {
+            let role = protocol.roles.get(owner.role)?;
+            if !role.replicated
+                || !protocol_node_name(protocol, owner.node.0).starts_with(&format!("{node}::"))
+            {
+                return None;
+            }
+            Some(role.name.as_str())
+        })
+        .collect()
+}
+
+/// Whether a `case` or `branch` control of `protocol` fans out over a
+/// replicated role.
+fn has_fanout_scope(protocol: &CheckedProtocol) -> bool {
+    protocol.controls.controls.iter().any(|control| {
+        matches!(
+            control.kind,
+            fsl_forms::ProtocolNodeKind::Case | fsl_forms::ProtocolNodeKind::Branch
+        ) && !fanout_roles_under(
+            protocol,
+            &format!("{}::{}", protocol.name, control.path.join("::")),
+        )
+        .is_empty()
+    })
+}
+
 fn validate_closure_premises(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<bool, RecordingRefusal> {
     if document.closure.state != "closed" {
-        return Ok(false);
+        // FR-990-AC-9: an unstated population leaves the scope incomplete
+        // whatever the closure state.
+        return Ok(!(population.is_none() && has_fanout_scope(protocol)));
     }
     let on_each = matches!(
         protocol.obligations.activation,
@@ -828,20 +862,7 @@ fn validate_closure_premises(
                 continue;
             }
             let node = format!("{}::{}", protocol.name, control.path.join("::"));
-            let fanout_roles = protocol
-                .owners
-                .iter()
-                .filter_map(|owner| {
-                    let role = protocol.roles.get(owner.role)?;
-                    if !role.replicated
-                        || !protocol_node_name(protocol, owner.node.0)
-                            .starts_with(&format!("{node}::"))
-                    {
-                        return None;
-                    }
-                    Some(role.name.as_str())
-                })
-                .collect::<BTreeSet<_>>();
+            let fanout_roles = fanout_roles_under(protocol, &node);
             let members = document
                 .observations
                 .iter()
