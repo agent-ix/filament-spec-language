@@ -289,7 +289,7 @@ population nodes: Node;
     );
     assert_eq!(document["populations"][0]["extent"], "closed");
     let packages = package_input([source.as_bytes()]).expect("model unit becomes package input");
-    let (_, document) = admit(
+    admit(
         "example/graph",
         &packages,
         ModelNormalizationLimits::default().intake,
@@ -311,8 +311,11 @@ object Node { relationship next: Ghost [0, 1]; }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
         .expect_err("an undeclared relationship target is refused");
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("one located refusal: {diagnostics:?}");
+    };
     assert_eq!(diagnostic.code, fsl_cst::CompleteCode::MissingDeclaration);
     assert_eq!(diagnostic.cause.as_str(), "missing-name");
     let region = diagnostic.region.as_ref().expect("located refusal");
@@ -339,8 +342,11 @@ object Node { }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
         .expect_err("duplicate object identities are refused");
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("one located refusal: {diagnostics:?}");
+    };
     assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
     assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
     let span = parsed
@@ -366,8 +372,11 @@ record Row { value: Integer; operation update(); }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
         .expect_err("FSpec does not admit operations on record value types");
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("one located refusal: {diagnostics:?}");
+    };
     assert_eq!(diagnostic.code, fsl_cst::CompleteCode::UnsupportedConstruct);
     assert_eq!(diagnostic.cause.as_str(), "declaration-form");
     let span = parsed
@@ -392,8 +401,11 @@ domain "filament/native/x";
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
         .expect_err("the native domain namespace is reserved");
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("one located refusal: {diagnostics:?}");
+    };
     assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
     assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
     let span = parsed
@@ -535,7 +547,7 @@ unit m: Length = 1;
         serde_json::from_slice(&packages["example/units"]).expect("compiled model unit is JSON");
     assert_eq!(compiled["dimensions"][0]["name"], "Length");
     assert_eq!(compiled["units"][0]["name"], "m");
-    let (_, document) = admit(
+    admit(
         "example/units",
         &packages,
         ModelNormalizationLimits::default().intake,
