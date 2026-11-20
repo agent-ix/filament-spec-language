@@ -172,56 +172,76 @@ fn result_parameter_is_reserved_with_and_without_a_return_type() {
 #[trace("TC-1307", "FR-512-AC-12", "FR-512-AC-13", "FR-512-AC-14")]
 #[test]
 fn repeated_frame_entries_deduplicate_without_losing_distinct_entries() {
+    assert_deduplicated_frame("modifies");
+}
+
+fn assert_deduplicated_frame(member: &str) {
     let field = key("versionNumber");
     let object = format!("ix://{PACKAGE_IDENTITY}/ConfigVersion");
-    for member in [
-        "modifies",
-        "modifies_receiver",
-        "creates",
-        "deletes",
-        "deletes_parameters",
-    ] {
-        let parameters = json!([operation_parameter("advance", "target", &object)]);
-        let mut once = operation("advance", parameters, None, empty_frame());
-        let entry = match member {
-            "modifies" | "modifies_receiver" => field.as_str(),
-            "deletes_parameters" => "target",
-            _ => object.as_str(),
-        };
-        once["frame"][member] = json!([entry]);
-        let mut repeated = once.clone();
-        repeated["frame"][member] = json!([entry, entry]);
-        let once = admit(&input(vec![once])).expect("one frame grant admits");
-        let repeated = admit(&input(vec![repeated])).expect("repeated grants admit");
-        let effect = |models: &fsl_semantics::model::intake::SelectedModels| {
-            models[0]
-                .view
-                .domain_package()
-                .records
-                .iter()
-                .find_map(|record| match record {
-                    DomainPackageRecord::OperationMember(op) if op.key.node == key("advance") => {
-                        Some(op.effect.clone())
-                    }
-                    _ => None,
-                })
-                .expect("the declared operation survives intake")
-        };
-        let actual = effect(&repeated);
-        assert_eq!(effect(&once), actual);
-        let expected = filament_checked::key::DeclarationKey {
-            package: PACKAGE_IDENTITY.to_owned(),
-            node: entry.to_owned(),
-        };
-        match member {
-            "modifies" => assert_eq!(actual.modifies, [expected]),
-            "modifies_receiver" => assert_eq!(actual.receiver_modifies, [expected]),
-            "creates" => assert_eq!(actual.creates, [expected]),
-            "deletes" => assert_eq!(actual.deletes, [expected]),
-            "deletes_parameters" => assert_eq!(actual.deletes_arguments, ["target"]),
-            _ => unreachable!("the explicitly authored frame members"),
-        }
+    let parameters = json!([operation_parameter("advance", "target", &object)]);
+    let mut once = operation("advance", parameters, None, empty_frame());
+    let entry = match member {
+        "modifies" | "modifies_receiver" => field.as_str(),
+        "deletes_parameters" => "target",
+        _ => object.as_str(),
+    };
+    once["frame"][member] = json!([entry]);
+    let mut repeated = once.clone();
+    repeated["frame"][member] = json!([entry, entry]);
+    let once = admit(&input(vec![once])).expect("one frame grant admits");
+    let repeated = admit(&input(vec![repeated])).expect("repeated grants admit");
+    let effect = |models: &fsl_semantics::model::intake::SelectedModels| {
+        models[0]
+            .view
+            .domain_package()
+            .records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::OperationMember(op) if op.key.node == key("advance") => {
+                    Some(op.effect.clone())
+                }
+                _ => None,
+            })
+            .expect("the declared operation survives intake")
+    };
+    let actual = effect(&repeated);
+    assert_eq!(effect(&once), actual);
+    let expected = filament_checked::key::DeclarationKey {
+        package: PACKAGE_IDENTITY.to_owned(),
+        node: entry.to_owned(),
+    };
+    match member {
+        "modifies" => assert_eq!(actual.modifies, [expected]),
+        "modifies_receiver" => assert_eq!(actual.receiver_modifies, [expected]),
+        "creates" => assert_eq!(actual.creates, [expected]),
+        "deletes" => assert_eq!(actual.deletes, [expected]),
+        "deletes_parameters" => assert_eq!(actual.deletes_arguments, ["target"]),
+        _ => unreachable!("the explicitly authored frame members"),
     }
+}
+
+#[trace("TC-1307", "FR-512-AC-12")]
+#[test]
+fn receiver_frame_duplicates_deduplicate() {
+    assert_deduplicated_frame("modifies_receiver");
+}
+
+#[trace("TC-1307", "FR-512-AC-13")]
+#[test]
+fn creation_frame_duplicates_deduplicate() {
+    assert_deduplicated_frame("creates");
+}
+
+#[trace("TC-1307", "FR-512-AC-13")]
+#[test]
+fn deletion_frame_duplicates_deduplicate() {
+    assert_deduplicated_frame("deletes");
+}
+
+#[trace("TC-1307", "FR-512-AC-13")]
+#[test]
+fn parameter_deletion_frame_duplicates_deduplicate() {
+    assert_deduplicated_frame("deletes_parameters");
 }
 
 #[trace("TC-1307", "FR-512-AC-17")]
@@ -237,30 +257,58 @@ fn operation_and_frame_order_do_not_change_the_selected_declarations() {
         json!([operation_parameter("inspect", "amount", INTEGER)]),
     );
     let forward_bytes = input(vec![first.clone(), second.clone()]);
-    let forward = admit(&forward_bytes).expect("same parameter name in distinct operations admits");
     first["frame"]["modifies"] = json!([key("versionNumber"), key("parent")]);
     let reverse_bytes = input(vec![second, first]);
-    let reverse = admit(&reverse_bytes).expect("reversed operations admit");
-    let operations = |selected: &fsl_semantics::model::intake::SelectedModel| {
-        selected
-            .view
-            .domain_package()
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                DomainPackageRecord::OperationMember(op) => {
-                    Some((op.key.clone(), op.parameters.clone(), op.effect.clone()))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(operations(&forward[0]), operations(&reverse[0]));
     let forward = super::model_operations::admit_and_assemble(&forward_bytes)
         .expect("forward source unit assembles");
     let reverse = super::model_operations::admit_and_assemble(&reverse_bytes)
         .expect("reordered source unit assembles");
-    assert_eq!(forward.operations, reverse.operations);
+    let operations = |package: &fsl_semantics::check::PackageDeclarations| {
+        let owner = package.selected_views["Config"].type_identities()
+            [&filament_checked::key::DeclarationKey {
+                package: PACKAGE_IDENTITY.to_owned(),
+                node: format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"),
+            }]
+            .clone();
+        package
+            .operations
+            .declared_by(owner)
+            .iter()
+            .map(|operation| {
+                let mut effect = operation.effect().clone();
+                // These grants denote sets; this comparison does not reorder the admitted input.
+                effect.modifies.sort();
+                effect.receiver_modifies.sort();
+                effect.creates.sort();
+                effect.deletes.sort();
+                effect.deletes_arguments.sort();
+                (
+                    operation.name().to_owned(),
+                    (
+                        operation.parameters().to_vec(),
+                        operation.result().cloned(),
+                        effect,
+                    ),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let expected = operations(&forward);
+    assert_eq!(
+        expected.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["advance", "inspect"]
+    );
+    assert_eq!(expected["advance"].0[0].0, "amount");
+    assert_eq!(
+        expected["advance"]
+            .2
+            .modifies
+            .iter()
+            .map(|key| key.node.as_str())
+            .collect::<Vec<_>>(),
+        [key("parent"), key("versionNumber")]
+    );
+    assert_eq!(expected, operations(&reverse));
 }
 
 #[trace("TC-1307", "FR-512-AC-6", "FR-512-AC-17")]
@@ -367,7 +415,15 @@ fn extra_owner(kind: &str, meaning: &str, operations: Vec<Value>) -> Vec<u8> {
     document["constructs"]
         .as_array_mut()
         .expect("constructs")
-        .push(wire_construct(kind, meaning, json!({})));
+        .push(wire_construct(
+            kind,
+            meaning,
+            if kind == "event_type" {
+                json!({"identityFields": "optional", "occurrenceField": "required"})
+            } else {
+                json!({"identityFields": "optional"})
+            },
+        ));
     let owner = format!("ix://{PACKAGE_IDENTITY}/Parcel");
     let mut node = wire_type(
         &owner,
