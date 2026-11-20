@@ -1001,6 +1001,45 @@ impl<'a> Program<'a> {
             );
         }
 
+        // Package protocol views keep the labelled branch body as the
+        // parallel's record target. The execution tree also needs the
+        // source checker’s structural branch control between the parallel
+        // and its body, so settle and parent walks see the same shape.
+        let mut next_synthetic_id = controls
+            .keys()
+            .map(|node| node.0)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        for parallel in package.controls.values().filter(|control| {
+            control.operation == fsl_package::protocol_view::ControlOperation::Parallel
+        }) {
+            let mut branch_ids = Vec::with_capacity(parallel.branches.len());
+            for (label, body) in &parallel.branches {
+                let branch = ProtocolNodeId(next_synthetic_id);
+                next_synthetic_id = next_synthetic_id.saturating_add(1);
+                let body_control = controls
+                    .get_mut(body)
+                    .ok_or_else(|| ProtocolRefusal::fault("a-package-branch-has-a-body"))?;
+                body_control.parent = Some(branch);
+                controls.insert(
+                    branch,
+                    Control {
+                        step: ControlStep::Branch,
+                        name: label.clone(),
+                        text: format!("{}/{}", parallel.path.join("/"), label),
+                        parent: Some(parallel.id),
+                        children: vec![*body],
+                    },
+                );
+                branch_ids.push(branch);
+            }
+            let parallel_control = controls
+                .get_mut(&parallel.id)
+                .ok_or_else(|| ProtocolRefusal::fault("a-package-parallel-is-a-control"))?;
+            parallel_control.children = branch_ids;
+        }
+
         let mut attempts = BTreeMap::new();
         let mut slots = vec![None];
         let mut package_binders = vec![Some(package.over.clone())];
@@ -1436,11 +1475,6 @@ impl<'a> Program<'a> {
                         | ControlStep::Finish
                         | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
-                            eprintln!(
-                                "bad parent node={node:?} parent={parent:?} holder_step={:?} holder_children={:?}",
-                                holder.step,
-                                holder.children
-                            );
                             return Err(ProtocolRefusal::fault("a-parent-holds-controls"));
                         }
                     }
