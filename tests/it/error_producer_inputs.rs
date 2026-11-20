@@ -449,7 +449,7 @@ fn exact_definition_inputs_reach_bundle_refusal_producers() {
 }
 
 #[test]
-#[trace("FR-010-AC-7")]
+/// Provenance: QSL-2079; actual public request I/O, JSON and envelope dispatch.
 fn public_compile_intake_inputs_reach_io_json_and_wire_codes() {
     use fsl_command::command;
     let directory = tempfile::tempdir().expect("owned temporary input directory");
@@ -490,7 +490,7 @@ fn compile_text(text: &str) -> Result<Vec<u8>, Box<fsl_command::command::RunErro
 }
 
 #[test]
-#[trace("FR-286-AC-2")]
+/// Provenance: QSL-2079; actual S3 refusal classes, not a frontend JSON claim.
 fn public_compile_semantic_inputs_keep_missing_typing_and_definedness_codes() {
     for (body, code) in [
         (
@@ -1099,7 +1099,7 @@ fn a_source_clock_without_time_reaches_the_timed_model_producer() {
 }
 
 #[test]
-#[trace("FR-185-AC-2")]
+/// Provenance: QSL-2079; public probability diagnostic-code producer.
 fn an_original_zero_weight_reaches_the_probabilistic_model_producer() {
     let text = format!("{HEADER}profile q = \"filament.model.complete/v1\";\nobject ParcelSorter {{ population sorters; operation route(left: Boolean); }}\nrandom ParcelSorter::route(left) ~ {{ true: 0, false: 1 }};\n");
     let refusal = compile_text(&text).expect_err("each authored random weight must be positive");
@@ -1524,4 +1524,270 @@ fn an_unknown_request_capability_keeps_the_required_feature_classification() {
         "{refusal:?}"
     );
     assert!(DOCUMENTATION.contains("| unknown_required_feature |"));
+}
+
+#[test]
+#[trace("FR-122-AC-3")]
+fn an_original_replay_rejects_a_stale_clause_before_missing_observation_admission() {
+    use fsl_foundation::source::provenance::OccurrenceKey;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::observation::{
+        AnchorKind, ClauseSelectionInput, DocumentRef, SelectedAnchor, SelectedObject,
+    };
+    use std::collections::BTreeMap;
+    let text = source("profile m = \"filament.model.complete/v1\"; model Depot = \"test/counter\"; invariant First using m on Depot::Other at current { true } invariant Second using m on Depot::Other at current { false }");
+    let document = population_fixture::document(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("real selected domain");
+    let cancel = Cancel::new();
+    let source_identity = identity();
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &source_identity,
+            path: "producer.native",
+            bytes: text.as_bytes(),
+        },
+        Limits::default(),
+        &cancel,
+    )
+    .expect("original replay source parses")
+    .into_value();
+    let models = fsl_replay::spine::select(
+        &parsed,
+        &packages,
+        ModelNormalizationLimits::default(),
+        &cancel,
+    )
+    .expect("real model selection")
+    .into_value();
+    let checked = fsl_replay::spine::check(
+        &parsed,
+        "original:diagnostics".into(),
+        &models,
+        &fsl_replay::spine::DependencyInput::default(),
+        fsl_replay::spine::SpineLimits::default(),
+        &cancel,
+    )
+    .expect("both original invariant declarations check")
+    .into_value();
+    let graph = checked.package().graph();
+    let first = graph
+        .state_clause("First")
+        .expect("first actual checked clause");
+    let second = graph
+        .state_clause("Second")
+        .expect("second actual checked clause");
+    let stale_node = first.identity();
+    let current_node = second.identity();
+    assert_ne!(
+        stale_node, current_node,
+        "different Boolean bodies have distinct identities"
+    );
+    let occurrence = OccurrenceKey::new(stale_node.clone(), first.claim().clone());
+    let emitted = fsl_replay::spine::package(
+        &checked,
+        fsl_replay::spine::PackageLimits::default(),
+        &cancel,
+    )
+    .expect("real v2 package emission")
+    .into_value();
+    let target = fsl_replay::ReplayTarget::state_clause(
+        fsl_replay::QualifiedName::new(vec![
+            filament_exact::Identifier::new("Second").expect("original clause name")
+        ])
+        .expect("qualified clause"),
+    );
+    // This is the canonical-input arm, not a claimed backend proof. FR-122
+    // does not read the envelope's obligation member; the stale clause and
+    // occurrence come from the other real checked declaration above.
+    let obligation = fsl_package::ObligationIdentity::new(current_node.clone(), None, 0);
+    let accounting = fsl_replay::spine::default_accounting(100_000);
+    let wire = fsl_replay::ReplayRequestWire {
+        package: fsl_replay::ReplayPackage::read(
+            emitted.package().bytes(),
+            fsl_replay::ReplayLimits::default().input_bytes,
+        )
+        .expect("own emitted package bytes"),
+        profile_selections: Vec::new(),
+        dependencies: Vec::new(),
+        replay_target: target.clone().into(),
+        source: fsl_replay::ReplaySource::Input(Vec::new()),
+        obligation_identity: obligation.clone(),
+        backend: "original:canonical-input".into(),
+        state_environment: fsl_replay::StateEnvironment::new(Vec::new()),
+        accounting_limits: accounting,
+        stage_limits: BTreeMap::new(),
+        supplied_limits: None,
+        object_environment: None,
+        declared_domains: Vec::new(),
+        byte_provision: vec![(
+            source_identity.authority.clone(),
+            source_identity.identity.clone(),
+            text.as_bytes().to_vec(),
+        )],
+        documents: vec![document],
+    };
+    let payload = fsl_replay::StateClauseCounterexample {
+        observation: ClauseSelectionInput::Current {
+            snapshot: DocumentRef {
+                authority: "producer-tests".into(),
+                identity: "original:intentionally-unprovided-state".into(),
+            },
+            anchor: SelectedAnchor {
+                kind: AnchorKind::Initialization,
+                name: "Start".into(),
+            },
+            self_object: Some(SelectedObject {
+                population: population_fixture::ident("others"),
+                key: "parcel-present".into(),
+            }),
+        },
+        witness: None,
+    };
+    let envelope = fsl_replay::WitnessEnvelope::reconstruct(
+        fsl_replay::WitnessPacket {
+            obligation_identity: Some(obligation),
+            occurrence_key: Some(occurrence),
+            clause_node: Some(stale_node.clone()),
+            replay_target: target.into(),
+            profile_selections: Some(Vec::new()),
+            run_limits: Some(accounting),
+            declared_domains: Some(Vec::new()),
+            backend: Some("original:canonical-input".into()),
+            trace_position: Some(None),
+            source: Some(fsl_replay::EnvelopeSource::Input(Vec::new())),
+            family_payload: Some(payload),
+        },
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect("complete original input envelope");
+    let refusal =
+        fsl_replay::replay_state_clause(wire, &envelope, fsl_replay::ReplayLimits::default())
+            .expect_err("stale identity settles before reading the absent snapshot");
+    assert_eq!(refusal.code(), CompleteCode::StaleDependency, "{refusal:?}");
+    assert_eq!(refusal.cause(), Some("content-mismatch"));
+    let fsl_replay::ReplayRefusal::ClauseIdentity(mismatch) = refusal else {
+        panic!("the real clause identity must be retained")
+    };
+    assert_eq!(
+        *mismatch,
+        fsl_replay::ClauseIdentityMismatch::Node {
+            envelope: stale_node,
+            recompiled: current_node
+        }
+    );
+    assert!(DOCUMENTATION.contains("| stale_dependency |"));
+}
+
+#[test]
+fn an_original_definition_closure_reaches_missing_required_capability() {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::bundle::{
+        link_bundle, CapabilityId, DefinitionCatalog, ExtensionDefinitionSource, PackageError,
+        PackageLimits, ResolutionCause,
+    };
+    use std::collections::BTreeSet;
+    let root = DefinitionRef::new("producer-tests", "original:partial-postal-closure")
+        .expect("original definition identity");
+    let catalog = DefinitionCatalog::read_extensions(vec![ExtensionDefinitionSource {
+        authority: root.authority().into(),
+        identity: root.identity().into(),
+        exact_bytes: b"{}".to_vec(),
+        dependencies: BTreeSet::new(),
+        capabilities: BTreeSet::new(),
+    }])
+    .expect("real exact object document and closed capability input");
+    // FR-111 Bundle: the caller's closure does not supply the complete-V1
+    // inventory. Linking must retain the missing capability, not call it a
+    // malformed native program or falsely return a complete bundle.
+    let refusal = link_bundle(&[root], &catalog, PackageLimits::default())
+        .expect_err("the closure supplies no required capability");
+    assert_eq!(
+        refusal.code,
+        CompleteCode::UnknownRequiredFeature,
+        "{refusal:?}"
+    );
+    assert_eq!(refusal.cause_tag, ResolutionCause::UnsupportedFeature);
+    let PackageError::MissingCapability(missing) = refusal.cause else {
+        panic!("retain the actual absent inventory member")
+    };
+    assert!(
+        CapabilityId::complete(missing.as_str()).is_ok(),
+        "the missing capability belongs to the admitted inventory"
+    );
+    assert_eq!(refusal.code.category().exit_code(), 21);
+    let unknown = CapabilityId::complete("original:unknown-postal-capability")
+        .expect_err("closed capability inventory");
+    assert_eq!(
+        unknown,
+        PackageError::UnknownCapability("original:unknown-postal-capability".into())
+    );
+    assert!(DOCUMENTATION.contains("| unknown_required_feature |"));
+}
+
+#[test]
+fn real_protocol_refusals_require_the_result_preserving_projection_entry() {
+    use fsl_semantics::check::PackageDeclarations;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    let text = source("profile q = \"filament.protocol.finite-global/v1\"; profile s = \"filament.state.graph/v1\"; profile m = \"filament.model.complete/v1\"; model Depot = \"test/counter\"; record Stamp { ok: Boolean; } function marker using p(): Integer pure { 31 } protocol ParcelFlow using q over (e: Stamp) on origin { role Clerk on Depot::Other; run check Inspect using s { missing_postage }; finish End as (last: Stamp) { last.ok }; }");
+    let parsed = parsed(&text);
+    assert!(
+        parsed.is_admissible(),
+        "original protocol syntax: {:?}",
+        parsed.diagnostics()
+    );
+    let built = fsl_forms::build_unit(&parsed).expect("real source forms");
+    let document = population_fixture::document(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("actual domain input");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("actual selected model");
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "original:diagnostics".into(),
+        built,
+        models,
+        Vec::new(),
+    )
+    .expect("original declarations assemble");
+    let graph = declarations
+        .check_with_protocol_results(
+            filament_semantic_value::checking::CheckMode::Linked,
+            filament_semantic_value::checking::CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect("the public partial-result entry retains protocol-local refusal");
+    assert!(
+        !graph.protocol_refusals().is_empty(),
+        "the original missing name must really refuse"
+    );
+    let package = fsl_package::CheckedPackage::link(graph);
+    // The ordinary emission entry cannot discard a real per-protocol
+    // refusal. Its declared guard names the required result-preserving API.
+    let refusal = fsl_package::emit_checked(&package, fsl_package::EmitLimits::new(1_048_576))
+        .expect_err("per-protocol results are required");
+    assert!(matches!(
+        refusal,
+        fsl_package::EmitRefusal::ProtocolResultsRequired
+    ));
+    assert_eq!(refusal.code(), CompleteCode::UnsupportedProjection);
+    assert_eq!(refusal.code().category().exit_code(), 21);
+    // FR-383/FR-503 and FR-105 all-or-nothing: the proper entry retains the
+    // actual source defect while admitting no unit package.
+    let result = fsl_package::emit_checked_with_protocol_results(
+        &package,
+        fsl_package::EmitLimits::new(1_048_576),
+    )
+    .expect("the result-preserving entry supports refused siblings");
+    assert!(result.emission().is_none());
+    let fsl_package::ProtocolEmissionAggregate::Refused { primary } = result.aggregate() else {
+        panic!("the unit aggregate must retain the refused protocol")
+    };
+    assert_eq!(primary.cause.code(), CompleteCode::MissingDeclaration);
+    assert!(result.results().iter().any(|result| matches!(result, fsl_package::ProtocolEmissionResult::Refused { declaration, refusal, .. } if declaration == "ParcelFlow" && refusal.cause.code() == CompleteCode::MissingDeclaration)));
+    assert!(DOCUMENTATION.contains("| unsupported_projection |"));
 }

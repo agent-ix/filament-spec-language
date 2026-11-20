@@ -45,6 +45,16 @@ body for every concrete subtype reached by a dispatched call. For an execution
 backend the caller has not supplied, supply that backend or explicitly choose
 an available one.
 
+Replay a counterexample against the clause and occurrence it names. A stale
+identity refuses before observation admission; replacing a missing snapshot
+cannot repair it. Regenerate the counterexample from the intended checked
+package. A definition closure must supply every required capability, even when
+each individual capability name is valid.
+
+Use the result-preserving emission entry when a graph retains protocol-local
+refusals. It retains those source errors and admits no unit package; the
+shorthand emission entry cannot discard them to produce a package.
+
 The producer tests use each stage's own typed cause: source tooling returns
 `CompleteCause`, bundle resolution returns `ResolutionCause`, and model
 admission retains its model or observation cause. A catalogue mapping alone
@@ -72,7 +82,7 @@ reused; prose may change without changing classification.
 | invalid-request | A closed command request has invalid JSON or fields. |
 | invalid-identifier | A selected command identifier fails its constructor. |
 | output-failure | A typed command result could not be serialized. |
-| unsupported_projection | A real, admitted capability this build does not implement yet: a checked-package/v2 emission path not yet built. |
+| unsupported_projection | The selected producer entry cannot supply a required checked-package/v2 projection, including the shorthand emitter when protocol-local refusals require result-preserving emission. |
 | invalid_projection_correspondence | Checked native correspondence could not be retained by the projection. |
 | extraction-requires-run | The source-only compile command does not admit extracted programs. |
 | extraction-package-conflict | Selected package bytes and extracted compilation were both requested. |
