@@ -139,6 +139,50 @@ pub struct TemporalDeclaration {
     pub span: Span,
 }
 
+impl TemporalDeclaration {
+    /// Whether any condition, capture or guard the clause writes holds an
+    /// IEEE literal, which selects the IEEE profile like a function body's.
+    pub(super) fn has_ieee_literal(&self) -> bool {
+        let form = &self.form;
+        let guard = match &form.activation {
+            fsl_forms::ActivationForm::Origin => false,
+            fsl_forms::ActivationForm::Each { when, .. } => when
+                .as_ref()
+                .is_some_and(|guard| guard.expression.contains_ieee_literal()),
+        };
+        guard
+            || form
+                .captures
+                .iter()
+                .any(|capture| capture.value.expression.contains_ieee_literal())
+            || nodes_have_ieee_literal(form.formula.nodes())
+    }
+}
+
+/// Whether any atom of a temporal formula's nodes holds an IEEE literal.
+pub(super) fn nodes_have_ieee_literal(nodes: &[fsl_forms::TemporalNodeForm]) -> bool {
+    nodes.iter().any(|node| match node {
+        fsl_forms::TemporalNodeForm::Holds { condition, .. } => {
+            condition.expression.contains_ieee_literal()
+        }
+        fsl_forms::TemporalNodeForm::AggregateAtom(atom) => {
+            atom.term
+                .value
+                .as_ref()
+                .is_some_and(|value| value.expression.contains_ieee_literal())
+                || atom
+                    .term
+                    .filter
+                    .as_ref()
+                    .is_some_and(|filter| filter.expression.contains_ieee_literal())
+                || atom.threshold.expression.contains_ieee_literal()
+        }
+        fsl_forms::TemporalNodeForm::Constant { .. } | fsl_forms::TemporalNodeForm::Operator(_) => {
+            false
+        }
+    })
+}
+
 /// What [`TemporalTraceFamily::check`] reads of its unit (ADR-012 §2
 /// `Declarations`): the type scope, the unit's temporal profile selections
 /// and the source its regions resolve in.

@@ -540,6 +540,7 @@ fn wire_location(location: &Location) -> Option<(String, CheckedProtocolLocation
 }
 
 /// Whether `key` is the key of a `deref` application node.
+#[ix_trace_rs::string_edge]
 fn is_deref_application(key: &NodeKey) -> bool {
     matches!(
         key.path().as_slice(),

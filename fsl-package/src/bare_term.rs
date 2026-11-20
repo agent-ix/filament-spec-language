@@ -44,6 +44,7 @@ pub enum ClauseBinder {
 pub struct BareClauseTerm {
     projection: ReaderProtocolProjection,
     binders: Vec<(usize, ClauseBinder)>,
+    names: Vec<String>,
 }
 
 impl BareClauseTerm {
@@ -55,6 +56,15 @@ impl BareClauseTerm {
     /// Each local slot the term reads with the clause binder bound there.
     pub fn binders(&self) -> &[(usize, ClauseBinder)] {
         &self.binders
+    }
+
+    /// Each local slot the term reads with the declared name of the clause
+    /// binder bound there, in the order of [`Self::binders`].
+    pub fn named_binders(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.binders
+            .iter()
+            .zip(&self.names)
+            .map(|((slot, _), name)| (*slot, name.as_str()))
     }
 }
 
@@ -148,6 +158,7 @@ impl<'p> BarePackage<'p> {
         };
         let clause_index =
             declaration_index(package, clause_id, "temporal_clause").ok_or_else(malformed)?;
+        let guard_term = matches!(term, ClauseTerm::Guard);
         let (root, site) = match term {
             ClauseTerm::Holds(position) => {
                 let graph_uses = subject.formula_graph();
@@ -200,19 +211,21 @@ impl<'p> BarePackage<'p> {
         );
         let mut keys = Vec::with_capacity(found.len());
         let mut classes = Vec::with_capacity(found.len());
+        let mut names = Vec::with_capacity(found.len());
         for id in found {
+            let binder = nodes
+                .get(id)
+                .copied()
+                .ok_or_else(|| fault("bare-binder-is-held"))?;
+            let name = group_member(&binder.body, "name")
+                .and_then(text)
+                .ok_or_else(|| fault("bare-binder-has-a-name"))?;
+            names.push(name.to_owned());
             let class = if id == subject.over() {
                 ClauseBinder::Over
             } else if Some(id) == trigger {
                 ClauseBinder::Trigger
             } else {
-                let binder = nodes
-                    .get(id)
-                    .copied()
-                    .ok_or_else(|| fault("bare-binder-is-held"))?;
-                let name = group_member(&binder.body, "name")
-                    .and_then(text)
-                    .ok_or_else(|| fault("bare-binder-has-a-name"))?;
                 let index = subject
                     .capture_names()
                     .iter()
@@ -237,10 +250,20 @@ impl<'p> BarePackage<'p> {
         let root_key = graph
             .key(root)
             .map_err(|_| fault("bare-package-has-structural-keys"))?;
+        // The checker numbers a binder an expression introduces after every
+        // binder the term is typed over, read or not: `over` and the trigger
+        // for the guard, and also each capture for a `holds` condition. The
+        // slots given are those the term reads.
+        let clause_binders = if guard_term {
+            1 + usize::from(trigger.is_some())
+        } else {
+            1 + usize::from(trigger.is_some()) + subject.capture_names().len()
+        };
         let projection = walker
-            .project_term(
+            .project_term_at(
                 &root_key,
                 &keys,
+                clause_binders.saturating_sub(keys.len()),
                 filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name: site },
             )
             .map_err(walk_failure)?;
@@ -263,6 +286,7 @@ impl<'p> BarePackage<'p> {
         Ok(Some(BareClauseTerm {
             projection,
             binders,
+            names,
         }))
     }
 }
