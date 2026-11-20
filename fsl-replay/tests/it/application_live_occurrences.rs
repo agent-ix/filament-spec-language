@@ -81,8 +81,13 @@ fn source(c_has_three_arguments: bool) -> String {
     } else {
         "a, b, 0"
     };
+    let p_arguments = if c_has_three_arguments {
+        "a, b, 0"
+    } else {
+        "a, b"
+    };
     format!(
-        "{HEADER}function n using v(a: Integer, b: Integer, x: Integer): Integer pure {{ 0 }}\nfunction c using v({c_parameters}): Integer pure {{ n({c_arguments}) }}\nfunction p using v(a: Integer, b: Integer): Integer pure {{ c({c_arguments}) }}\n"
+        "{HEADER}function n using v(a: Integer, b: Integer, x: Integer): Integer pure {{ 0 }}\nfunction c using v({c_parameters}): Integer pure {{ n({c_arguments}) }}\nfunction p using v(a: Integer, b: Integer): Integer pure {{ c({p_arguments}) }}\n"
     )
 }
 
