@@ -392,17 +392,6 @@ impl UndefinedCause {
 /// A claim form exact replay does not decide.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ExactGap {
-    /// An `on each` claim under `model-time` whose obligations read the
-    /// activation position's state, where a claim atom has no value over an
-    /// open cell of activation instants at an instant that moves with the
-    /// activation instant along a curve other than `x = tau + c` (`c`
-    /// rational): the infimum of the instant over the cell is a limit of a
-    /// root curve. It is the only remaining trigger. An instant with no value
-    /// that is the same for every activation instant of the cell, rational or
-    /// not, and one that moves along `x = tau + c` (rational or irrational
-    /// cell start), are decided. Remaining work: QSL-2706.
-    #[error("the decisive activation instant of an `on each` claim is not isolated")]
-    ActivationInfimum,
     /// A fairness constraint reads the enabledness of a transition whose
     /// reset leaves two or more variables free that the target mode's
     /// invariant couples in one condition. Remaining work: QSL-2639.
@@ -465,7 +454,7 @@ impl HybridReplayMeter {
     }
 
     /// The words of operand a step works on that one work unit pays for.
-    const WORDS_PER_UNIT: u64 = 16;
+    const WORDS_PER_UNIT: u64 = 200;
 
     /// The number of admitted work units.
     pub const fn consumed(&self) -> u64 {
@@ -476,8 +465,8 @@ impl HybridReplayMeter {
         self.charge_by(1)
     }
 
-    /// Charge one step that works on `weight` words of operand (one per
-    /// coefficient and per 64 bits of the largest), before it is taken: a
+    /// Charge one step that works on `weight` words of operand (the square
+    /// of the words of each coefficient, summed), before it is taken: a
     /// unit per [`Self::WORDS_PER_UNIT`] words, at least one.
     fn charge_by(&mut self, weight: u64) -> Result<(), HybridReplayRefusal> {
         let units = weight.div_ceil(Self::WORDS_PER_UNIT).max(1);
@@ -533,14 +522,12 @@ pub fn exact_replay(
         // replay returns `NotExact` for it, as for a trace that is not a
         // point trace or that dwells in a mode without a polynomial flow.
         //
-        // TEMPORARY (QSL-2706 for `ActivationInfimum`, QSL-2639 for
-        // `CoupledReset`): both are gaps FR-750 deletes, because exact
-        // replay decides those claims (the infimum of a curved instant with
-        // no value; quantifier elimination over several coupled free
-        // variables). Until then they also settle `NotExact`, the only
-        // honest answer short of a verdict.
+        // TEMPORARY (QSL-2639 for `CoupledReset`): a gap FR-750 deletes,
+        // because exact replay decides those claims (quantifier elimination
+        // over several coupled free variables). Until then it also settles
+        // `NotExact`, the only honest answer short of a verdict.
         Err(HybridReplayRefusal::Exact(
-            ExactGap::RecursiveCall | ExactGap::ActivationInfimum | ExactGap::CoupledReset { .. },
+            ExactGap::RecursiveCall | ExactGap::CoupledReset { .. },
         )) => Ok(ExactReplay::NotExact),
         other => other,
     }

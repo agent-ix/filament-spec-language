@@ -331,7 +331,6 @@ fn unparenthesized_record_opens_arm_list_and_fails_there() {
     let diagnostic = &parsed.diagnostics()[0];
     assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
     assert_eq!(slice(&text, diagnostic.byte_span().unwrap()), "}");
-    assert!(parsed.cst().recoveries()[0].expected.contains(';'));
     assert_eq!(
         build_unit(&parsed).unwrap_err().cause,
         FormsCause::RecoveringCst

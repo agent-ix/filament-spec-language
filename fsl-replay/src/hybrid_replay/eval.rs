@@ -342,6 +342,13 @@ pub(super) fn ceiling_bound(x: &ExactReal) -> Rational {
 /// instant and every polynomial whose sign the evaluation read.
 pub(crate) trait Evaluate {
     fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal>;
+
+    /// Charge `work` words of operand to the meter the evaluator works
+    /// under, if it has one, before a step on them is taken.
+    fn charge(&mut self, work: u64) -> Result<(), HybridReplayRefusal> {
+        let _ = work;
+        Ok(())
+    }
 }
 
 /// The expressions `exps` evaluated directly in `env`.
@@ -412,7 +419,11 @@ pub(crate) fn cells_of(
         let (values, decisions) = evaluator.at(&sample)?;
         let mut splits: Vec<ExactReal> = Vec::new();
         for decision in &decisions {
-            for root in decision.roots_in(&floor_bound(&a), &ceiling_bound(&b)) {
+            let found =
+                decision.roots_in_by(&floor_bound(&a), &ceiling_bound(&b), &mut |work| {
+                    evaluator.charge(work)
+                })?;
+            for root in found {
                 if root > a && root < b {
                     splits.push(root);
                 }

@@ -144,6 +144,114 @@ impl Poly2 {
         )
     }
 
+    /// The derivative in `t`.
+    pub(crate) fn derivative_t(&self) -> Self {
+        Self::new(self.0.iter().map(Poly::derivative).collect())
+    }
+
+    /// `self` with the factor in `t` every coefficient shares removed.
+    pub(crate) fn primitive_t(&self) -> Self {
+        let content = self.0.iter().fold(Poly::zero(), |common, c| common.gcd(c));
+        if content.degree().is_none_or(|degree| degree == 0) {
+            return self.clone();
+        }
+        Self::new(self.0.iter().map(|c| c.exact_div(&content)).collect())
+    }
+
+    /// `self` with `x` and `t` exchanged.
+    fn transposed(&self) -> Self {
+        let width = self.parameter_degree() + 1;
+        Self::new(
+            (0..width)
+                .map(|power| {
+                    Poly::new(
+                        self.0
+                            .iter()
+                            .map(|c| c.coefficients().get(power).cloned().unwrap_or_else(zero))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// `self` with the factor in `x` alone that every power of `t` shares
+    /// removed: the curves `x = c` that do not move with `t`.
+    pub(crate) fn without_vertical_factors(&self) -> Self {
+        let across = self.transposed();
+        let common = across
+            .0
+            .iter()
+            .fold(Poly::zero(), |common, c| common.gcd(c));
+        if common.degree().is_none_or(|degree| degree == 0) {
+            return self.clone();
+        }
+        Self::new(across.0.iter().map(|c| c.exact_div(&common)).collect()).transposed()
+    }
+
+    /// The pseudo-remainder of `self` by a nonzero `divisor` in `x`, with the
+    /// factor in `t` its steps share removed.
+    fn pseudo_remainder(&self, divisor: &Self) -> Self {
+        let (Some(degree), Some(lead)) = (divisor.degree(), divisor.0.last()) else {
+            return self.clone();
+        };
+        let mut remainder = self.clone();
+        while let Some(top) = remainder.degree().filter(|top| *top >= degree) {
+            let factor = remainder.0[top].clone();
+            let mut shifted = vec![Poly::zero(); top - degree];
+            shifted.extend(divisor.0.iter().cloned());
+            let subtrahend = Self::new(shifted).scale(&factor);
+            remainder = remainder.scale(lead).sub(&subtrahend).primitive_t();
+        }
+        remainder
+    }
+
+    /// The greatest common divisor in `x` over the rational functions in `t`,
+    /// primitive.
+    fn gcd_x(&self, other: &Self) -> Self {
+        let (mut a, mut b) = (self.primitive_t(), other.primitive_t());
+        while !b.is_zero() {
+            let remainder = a.pseudo_remainder(&b);
+            a = b;
+            b = remainder;
+        }
+        a.primitive_t()
+    }
+
+    /// The quotient by a `divisor` that divides `self` exactly in `x` (so, by
+    /// Gauss's lemma, with coefficients that are polynomials in `t`).
+    fn exact_div_x(&self, divisor: &Self) -> Self {
+        let (Some(degree), Some(lead)) = (divisor.degree(), divisor.0.last()) else {
+            return self.clone();
+        };
+        let mut remainder = self.clone();
+        let mut quotient = vec![Poly::zero(); self.0.len().saturating_sub(degree)];
+        while let Some(top) = remainder.degree().filter(|top| *top >= degree) {
+            let factor = remainder.0[top].exact_div(lead);
+            quotient[top - degree] = factor.clone();
+            let mut shifted = vec![Poly::zero(); top - degree];
+            shifted.extend(divisor.0.iter().cloned());
+            let before = remainder.degree();
+            remainder = remainder.sub(&Self::new(shifted).scale(&factor));
+            if remainder.degree() >= before {
+                // Not an exact quotient: the leading term did not cancel.
+                break;
+            }
+        }
+        Self::new(quotient)
+    }
+
+    /// `self` with every repeated factor in `x` taken once: the polynomial
+    /// whose real roots in `x` are `self`'s, each simple.
+    pub(crate) fn squarefree_x(&self) -> Self {
+        let primitive = self.primitive_t();
+        let shared = primitive.gcd_x(&primitive.derivative());
+        if shared.degree().is_none_or(|degree| degree == 0) {
+            return primitive;
+        }
+        primitive.exact_div_x(&shared).primitive_t()
+    }
+
     /// The largest degree in `t` of a coefficient.
     fn parameter_degree(&self) -> usize {
         self.0.iter().filter_map(Poly::degree).max().unwrap_or(0)
@@ -370,6 +478,30 @@ pub(crate) fn eliminate(
         values.push(determinant(rows));
     }
     Ok(interpolate(&values))
+}
+
+/// The values of `t` at which a root curve of `p` has a horizontal tangent
+/// or `p` has a vertical one: the resultant in `x` of `p` and its derivative
+/// in `t` (zero when they share a factor). Between two of its roots every
+/// simple root of `p` is a monotone function of `t`. `p` is squarefree in
+/// `x` and free of vertical factors.
+pub(crate) fn stationary(
+    p: &Poly2,
+    charge: &mut dyn FnMut(u64) -> Result<(), HybridReplayRefusal>,
+) -> Result<Poly, HybridReplayRefusal> {
+    let along = p.derivative_t();
+    match (p.degree(), along.degree()) {
+        (Some(m), Some(n)) if m > 0 && n > 0 => principal_subresultant(p, &along, 0, charge),
+        (Some(m), Some(0)) => {
+            let value = along.0[0].clone();
+            let mut power = Poly::constant(one());
+            for _ in 0..m {
+                power = power.mul(&value);
+            }
+            Ok(power)
+        }
+        _ => Ok(Poly::zero()),
+    }
 }
 
 /// The nonconstant polynomials in `t` whose roots bound every cell over

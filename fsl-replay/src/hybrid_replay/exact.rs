@@ -1309,6 +1309,10 @@ impl Enabled<'_> {
 }
 
 impl Evaluate for Enabled<'_> {
+    fn charge(&mut self, work: u64) -> Result<(), HybridReplayRefusal> {
+        self.meter.charge_by(work)
+    }
+
     fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
         let mut decisions = Vec::new();
         let mut values = Vec::with_capacity(self.enablements.len());
