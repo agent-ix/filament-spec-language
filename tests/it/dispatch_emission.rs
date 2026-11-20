@@ -41,6 +41,26 @@ fn operation(owner: &str, name: &str, redefines: Option<&str>) -> Value {
     result
 }
 
+fn optional_note_operation() -> Value {
+    let mut note = operation("ConfigVersion", "note", None);
+    let identity = format!("ix://{PACKAGE}/ConfigVersion/note/secondApprover");
+    note["params"] = json!([{
+        "identity": identity,
+        "name": "secondApprover",
+        "typeRef": format!("ix://{PACKAGE}/ConfigVersion"),
+        "presence": "optional",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"generated": {
+            "generatorIdentity": identity,
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [identity],
+        }},
+    }]);
+    note
+}
+
 fn model() -> Vec<u8> {
     let mut envelope: Value = serde_json::from_str(EXAMPLE).expect("example model parses");
     let types = envelope["types"].as_array_mut().expect("types");
@@ -103,7 +123,10 @@ struct CapturedDecision {
 }
 
 fn compile(declarations: &str) -> CheckedUnit {
-    let document = model();
+    compile_with_model(model(), declarations)
+}
+
+fn compile_with_model(document: Vec<u8>, declarations: &str) -> CheckedUnit {
     let packages =
         fsl_semantics::model::intake::package_input([document.as_slice()]).expect("model intake");
     let source_text = format!(
@@ -143,6 +166,25 @@ fn compile(declarations: &str) -> CheckedUnit {
     .map_err(failure)
     .expect("source checks")
     .into_value()
+}
+
+fn optional_parameter_model() -> Vec<u8> {
+    let mut envelope: Value = serde_json::from_str(EXAMPLE).expect("example model parses");
+    let config_version = envelope["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|node| node["identity"] == format!("ix://{PACKAGE}/ConfigVersion"))
+        .expect("ConfigVersion");
+    config_version["operations"] = json!([optional_note_operation()]);
+    serde_json::to_vec(&envelope).expect("optional parameter model JSON")
+}
+
+fn optional_note_source(argument: &str) -> String {
+    format!(
+        "body noteA using v on Config::ConfigVersion::note(secondApprover) {{ 1 }}\n\
+         invariant Calls using v on Config::ConfigVersion at current {{ self.note({argument}) = 1 }}\n"
+    )
 }
 
 fn capture_dispatch_decisions(checked: &CheckedUnit) -> Vec<CapturedDecision> {
@@ -454,6 +496,57 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
         .any(|(candidate, expected)| {
             candidate.effective_precondition.is_some() && expected.effective_precondition.is_some()
         }));
+}
+
+/// FR-103-AC-12: omitting an optional operation argument lowers exactly as
+/// passing `absent`; the call carries the normalized `none` argument.
+#[trace("FR-103-AC-12")]
+#[test]
+fn an_omitted_optional_parameter_matches_an_explicit_absent_call() {
+    let document = optional_parameter_model();
+    let omitted = emit_checked(&compile_with_model(
+        document.clone(),
+        &optional_note_source(""),
+    ));
+    let explicit_absent = emit_checked(&compile_with_model(
+        document,
+        &optional_note_source("absent"),
+    ));
+    let omitted_wire: Value = serde_json::from_slice(&omitted).expect("omitted package JSON");
+    let explicit_wire: Value =
+        serde_json::from_slice(&explicit_absent).expect("explicit absent package JSON");
+
+    assert_eq!(
+        omitted_wire["semantic_graph"]["nodes"], explicit_wire["semantic_graph"]["nodes"],
+        "both calls lower to the same semantic graph"
+    );
+    assert_eq!(
+        omitted_wire["checked_term_data"], explicit_wire["checked_term_data"],
+        "both calls produce the same checked term data"
+    );
+    let dispatch_calls: Vec<_> = omitted_wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .filter(|node| node["semantic_form"] == "call")
+        .collect();
+    assert_eq!(dispatch_calls.len(), 1, "one dispatch call is emitted");
+    let arguments = dispatch_calls[0]["body"]["arguments"]
+        .as_array()
+        .expect("dispatch call arguments");
+    assert_eq!(arguments.len(), 2, "receiver and optional argument");
+    let normalized_absent_target = &arguments[1]["target"];
+    let normalized_absent_path = normalized_absent_target["path"]
+        .as_array()
+        .expect("normalized absent target path");
+    assert!(
+        arguments[1]["term"] == "reference"
+            && normalized_absent_path.iter().any(|part| part == "value")
+            && normalized_absent_path.iter().any(|part| part == "literal")
+            && normalized_absent_path.iter().any(|part| part == "none"),
+        "second dispatch argument is the normalized none literal: {:#}",
+        arguments[1]
+    );
 }
 
 #[trace("TC-1283", "FR-494-AC-2", "FR-494-AC-4")]

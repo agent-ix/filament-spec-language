@@ -564,7 +564,7 @@ pub(crate) fn unaliased<'r>(
     Some((value_type, sequences))
 }
 
-/// One operation parameter: `{key, value_type, multiplicity}`.
+/// One operation parameter: `{key, value_type, multiplicity, presence}`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationParameterRecord {
     /// This parameter's own original declaration key.
@@ -573,6 +573,8 @@ pub struct OperationParameterRecord {
     pub value_type: ValueTypeRef,
     /// The declared parameter multiplicity.
     pub multiplicity: Multiplicity,
+    /// Whether the parameter may be absent at a call site.
+    pub presence: Presence,
 }
 
 /// An operation's declared result: `{value_type, multiplicity}`; absent

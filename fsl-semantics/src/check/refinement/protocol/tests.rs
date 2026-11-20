@@ -116,6 +116,7 @@ fn abstract_model() -> SelectedModel {
             ordered: false,
             unique: true,
         },
+        presence: filament_exact::Presence::Required,
     };
     let records: Vec<DomainPackageRecord> = records
         .into_iter()

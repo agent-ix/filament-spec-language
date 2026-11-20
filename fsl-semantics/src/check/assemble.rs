@@ -52,20 +52,20 @@ use super::check::{
 };
 use super::check::{UntypedKind, UntypedMember};
 use super::layer::LayerAdmission;
-use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
+use super::lowering::{AdmittedModel, model_declaration_key, strongly_connected};
 use super::model_gate::{self, ModelGateRefusal};
-use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
+use super::model_spelling::{ModelName, ModelSpellings, PackageNames, Spelled, package_names};
 use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
 use super::operation_body::OperationBodyDeclaration;
 use super::operation_clause::OperationClauseDeclaration;
 use super::refusal::{AliasKind, TimedConstruct};
 use super::state_clause::{
-    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
+    AttemptDeclaration, ClauseOperation, StateClauseDeclaration, population_of,
 };
 use super::state_graph_claim::StateGraphDeclaration;
 use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
 use super::type_form::{
-    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
+    TypeFormError, TypeFormFault, TypeNames, native_scalar_named, parse_rounding_mode, resolve_form,
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
@@ -81,15 +81,15 @@ pub use equivalence::{
     DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
 };
 
-use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use super::CheckedGraph;
+use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use crate::model::domain_package::{
-    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
-    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
-    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
+    AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord, MapTypeRecord,
+    Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord, RelationshipEnd,
+    ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
 };
 use crate::model::intake::{
-    member_identity_name, type_identity_segment, SelectedModel, SelectedModels,
+    SelectedModel, SelectedModels, member_identity_name, type_identity_segment,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -97,7 +97,7 @@ use crate::value::enumeration::{
 };
 use crate::value::environment_stage::stage_limit;
 use crate::value::layer::{HeaderLayer, LayerForm};
-use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
+use crate::value::semantic_node::{NominalRefusal, OwnerSelection, identity_limit};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
@@ -2627,7 +2627,7 @@ fn model_value_type(
     let element = match value_type {
         ValueTypeRef::Clock => return Err(Unmapped::Unsupported),
         ValueTypeRef::Resolved(value_type) => {
-            return with_multiplicity((**value_type).clone(), multiplicity)
+            return with_multiplicity((**value_type).clone(), multiplicity);
         }
         ValueTypeRef::Native(native) => match native {
             NativeValueType::Boolean => ValueType::Boolean,
@@ -2650,7 +2650,7 @@ fn model_value_type(
             // Bare, these have no checked type: the member is admitted and
             // refused where used (FR-056-AC-43).
             NativeValueType::Rational | NativeValueType::Decimal | NativeValueType::Text => {
-                return Err(Unmapped::Untyped(String::new()))
+                return Err(Unmapped::Untyped(String::new()));
             }
         },
         ValueTypeRef::Unit(name) => ValueType::Quantity(
@@ -2694,7 +2694,7 @@ fn model_value_type(
                 // FR-505-AC-6: a Rational value type with no constraints
                 // has no checked type, as a bare native Rational has none.
                 ScalarValueDomain::Rational { domain: None, .. } => {
-                    return Err(Unmapped::Untyped(String::new()))
+                    return Err(Unmapped::Untyped(String::new()));
                 }
                 ScalarValueDomain::Native(NativeValueType::Uuid) => ValueType::Uuid,
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
@@ -2944,6 +2944,7 @@ fn model_operation(
             )
     };
     let mut parameters = Vec::with_capacity(operation.parameters.len());
+    let mut optional_parameters = Vec::with_capacity(operation.parameters.len());
     let mut clock_parameters = Vec::new();
     for (index, parameter) in operation.parameters.iter().enumerate() {
         let parameter_name = member_identity_name(&operation.key.node, &parameter.key.node)
@@ -2984,6 +2985,12 @@ fn model_operation(
             }
             Err(error) => return Err(error),
         };
+        let value_type = if parameter.presence == filament_exact::Presence::Optional {
+            ValueType::Option(Arc::new(value_type))
+        } else {
+            value_type
+        };
+        optional_parameters.push(parameter.presence == filament_exact::Presence::Optional);
         parameters.push((parameter_name.to_owned(), value_type));
     }
     let clock_result = operation
@@ -3030,6 +3037,7 @@ fn model_operation(
     };
     Ok((
         OperationDeclaration::new(name, parameters, result, operation.effect.clone())
+            .with_optional_parameters(&optional_parameters)
             .with_clocks(clock_parameters, clock_result),
         untyped_locus.map(|locus| (locus, untyped_parameters)),
     ))
@@ -5876,7 +5884,7 @@ impl PackageDeclarations {
         // condition's expression tree.
         let mut declared_site_spans = BTreeMap::new();
         for (index, clause) in unit.temporal_clauses.iter().enumerate() {
-            use super::lowering::{temporal_site, TemporalSite};
+            use super::lowering::{TemporalSite, temporal_site};
             let form = &clause.form;
             let temporal_owner = package.source_owners.get(&form.name.name).cloned();
             let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
@@ -5980,7 +5988,7 @@ impl PackageDeclarations {
             let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
                 continue;
             };
-            use super::hyper_clause::lowering::{hyper_site, Site};
+            use super::hyper_clause::lowering::{Site, hyper_site};
             declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
             declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
             for (id, node) in form.body.iter() {
@@ -6018,7 +6026,7 @@ impl PackageDeclarations {
         // each mode's clause and each transition's clause; a hybrid claim's
         // nodes at its declared name and its `over` parameter's name.
         for (model, declaration) in package.hybrids.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
             for (mode, written) in form.modes.iter().enumerate() {
@@ -6033,7 +6041,7 @@ impl PackageDeclarations {
             }
         }
         for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
             declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
@@ -6043,7 +6051,7 @@ impl PackageDeclarations {
         // tree; the constant `true` an omitted `from` stands for is located
         // at the claim.
         for (index, declaration) in package.state_graph_claims.iter().enumerate() {
-            use super::state_graph_claim::{state_graph_site, Site};
+            use super::state_graph_claim::{Site, state_graph_site};
             let form = &declaration.form;
             declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
             if let Some(over) = &form.over {

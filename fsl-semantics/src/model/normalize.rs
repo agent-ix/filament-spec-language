@@ -109,11 +109,11 @@ use crate::model::domain_package::{
 };
 use crate::model::index::{ModelIndex, RecordIndex, Redefiner};
 use crate::model::key::{
-    EffectiveDeclarationPreimage, EffectiveId, Fact, RuleRef, RULE_INHERIT, RULE_QUALIFY,
-    RULE_REDEFINE, RULE_SUBSET,
+    EffectiveDeclarationPreimage, EffectiveId, Fact, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE,
+    RULE_SUBSET, RuleRef,
 };
 use filament_checked::key::DeclarationKey;
-use filament_exact::{length_amount, Cancel, Presence};
+use filament_exact::{Cancel, Presence, length_amount};
 use fsl_foundation::diagnostic::{Code, JsonPointer};
 
 /// Re-exported from [`crate::model::refusal`] (#141 finding 4): that module
@@ -1672,6 +1672,42 @@ fn validate_option_types(domain_package: &DomainPackage) -> Vec<ModelRefusal> {
                     });
                 }
             }
+            DomainPackageRecord::OperationMember(operation) => {
+                for (index, parameter) in operation.parameters.iter().enumerate() {
+                    if parameter.presence != Presence::Optional
+                        || parameter.multiplicity.lower != 1
+                        || parameter.multiplicity.upper != Some(1)
+                    {
+                        continue;
+                    }
+                    let is_option = crate::model::domain_package::unaliased(
+                        &parameter.value_type,
+                        |key| records.get(key).copied(),
+                    )
+                    .is_some_and(|(value_type, sequences)| {
+                        sequences == 0
+                            && matches!(value_type, ValueTypeRef::Package(key)
+                                if matches!(records.get(key), Some(DomainPackageRecord::OptionType(_))))
+                    });
+                    if is_option {
+                        refusals.push(ModelRefusal {
+                            code: Code::InvalidModelBinding,
+                            cause: malformed_at(
+                                domain_package,
+                                &parameter.key,
+                                MemberPath::new(MemberRoot::Operation)
+                                    .name("params")
+                                    .index(index)
+                                    .name("presence"),
+                            ),
+                            detail: format!(
+                                "{}: Operation.params[].presence: an Option<T> parameter cannot also be optional at multiplicity [1,1]",
+                                parameter.key.node
+                            ),
+                        });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1796,7 +1832,9 @@ fn validate_process_meanings(domain_package: &DomainPackage) -> Vec<ModelRefusal
                 ),
                 Some(record) => format!(
                     "{}: TypeDefinition.supertypes[{position}]: {} resolves to {:?}, a process may generalize only a process",
-                    process.key.node, supertype.node, record.key()
+                    process.key.node,
+                    supertype.node,
+                    record.key()
                 ),
                 None => format!(
                     "{}: TypeDefinition.supertypes[{position}]: {} names no type of this domain package",
@@ -4470,7 +4508,8 @@ mod tests {
 
     use crate::model::domain_package::{
         AliasTypeRecord, ClauseRecord, FieldMemberRecord, Multiplicity, NamespaceRecord,
-        NativeValueType, OptionTypeRecord, ValueTypeRef,
+        NativeValueType, OperationEffect, OperationMemberRecord, OperationParameterRecord,
+        OptionTypeRecord, ValueTypeRef,
     };
 
     use super::*;
@@ -4485,6 +4524,8 @@ mod tests {
         let self_key = DeclarationKey::fixture("model.OptSelf");
         let clock_key = DeclarationKey::fixture("model.OptClock");
         let field_key = DeclarationKey::fixture("model.Holder/value");
+        let operation_key = DeclarationKey::fixture("model.Holder/check");
+        let parameter_key = DeclarationKey::fixture("model.Holder/check/value");
         let records = vec![
             DomainPackageRecord::OptionType(OptionTypeRecord {
                 key: option_key.clone(),
@@ -4513,7 +4554,7 @@ mod tests {
             DomainPackageRecord::FieldMember(FieldMemberRecord {
                 key: field_key.clone(),
                 owner: DeclarationKey::fixture("model.Holder"),
-                value_type: ValueTypeRef::Package(option_key),
+                value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: Multiplicity {
                     lower: 1,
                     upper: Some(1),
@@ -4525,10 +4566,31 @@ mod tests {
                 redefines: None,
                 position: 0,
             }),
+            DomainPackageRecord::OperationMember(OperationMemberRecord {
+                key: operation_key,
+                owner: DeclarationKey::fixture("model.Holder"),
+                parameters: vec![OperationParameterRecord {
+                    key: parameter_key.clone(),
+                    value_type: ValueTypeRef::Package(option_key),
+                    multiplicity: Multiplicity {
+                        lower: 1,
+                        upper: Some(1),
+                        ordered: false,
+                        unique: true,
+                    },
+                    presence: Presence::Optional,
+                }],
+                result: None,
+                effect: OperationEffect::default(),
+                requires: Vec::new(),
+                ensures: Vec::new(),
+                has_body: false,
+                redefines: None,
+            }),
         ];
         let package = DomainPackage::new(DomainPackageRef::fixture("model"), records);
         let refusals = validate_option_types(&package);
-        assert_eq!(refusals.len(), 5);
+        assert_eq!(refusals.len(), 6);
         assert!(refusals.iter().any(|refusal| matches!(
             &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
@@ -4548,6 +4610,15 @@ mod tests {
             ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                 if node == &field_key.node
                     && *member == MemberPath::new(MemberRoot::Field).name("presence")
+        )));
+        assert!(refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                if node == &parameter_key.node
+                    && *member == MemberPath::new(MemberRoot::Operation)
+                        .name("params")
+                        .index(0)
+                        .name("presence")
         )));
     }
 
@@ -4959,11 +5030,12 @@ mod tests {
         else {
             panic!("the declared operation may own its contract clause");
         };
-        assert!(view
-            .domain_package()
-            .records
-            .iter()
-            .any(|record| record.key() == &clause_key));
+        assert!(
+            view.domain_package()
+                .records
+                .iter()
+                .any(|record| record.key() == &clause_key)
+        );
     }
 
     /// Quire container clauses refuse even when constructed after intake.
@@ -5073,6 +5145,7 @@ mod tests {
                         key: parameter_key.clone(),
                         value_type: value_type.clone(),
                         multiplicity,
+                        presence: Presence::Required,
                     }],
                     result: Some(OperationResult {
                         value_type: value_type.clone(),
@@ -5164,11 +5237,12 @@ mod tests {
                 let NormalizeOutcome::Completed(view) = outcome else {
                     panic!("a foreign-language clause is retained: {outcome:?}");
                 };
-                assert!(view
-                    .domain_package()
-                    .records
-                    .iter()
-                    .any(|record| record.key() == &clause_key));
+                assert!(
+                    view.domain_package()
+                        .records
+                        .iter()
+                        .any(|record| record.key() == &clause_key)
+                );
             }
         }
 

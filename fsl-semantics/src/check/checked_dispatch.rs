@@ -108,8 +108,8 @@ use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::{AdmittedModel, ModelClause};
 use crate::model::accounting::Meter;
 use crate::model::dispatch::{
-    link_dispatch_counted, DispatchLinkOutcome, FamilySteps, GeneralizationClosure,
-    LinkCheckOutcome,
+    DispatchLinkOutcome, FamilySteps, GeneralizationClosure, LinkCheckOutcome,
+    link_dispatch_counted,
 };
 use crate::model::domain_package::{DomainPackage, DomainPackageRecord, OperationMemberRecord};
 use crate::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
@@ -141,6 +141,9 @@ pub struct OperationClauses {
     /// call site's own argument types) is everything after that receiver
     /// element; this bridge strips it when building the call site.
     pub parameters: BTreeMap<DeclarationKey, Vec<(String, ValueType)>>,
+    /// Required data-argument count for each declared operation; any
+    /// remaining arguments in the signature are optional.
+    pub required_arity: BTreeMap<DeclarationKey, usize>,
     /// The declared result type.
     pub result: BTreeMap<DeclarationKey, ValueType>,
     /// This operation's own precondition clause, when it declares one.
@@ -1256,6 +1259,11 @@ pub(crate) fn checked_dispatch_core(
         .iter()
         .map(|(_, value_type)| value_type.clone())
         .collect();
+    let required_arity = clauses
+        .required_arity
+        .get(&root.key)
+        .copied()
+        .unwrap_or(call_arguments.len());
     // One `DispatchOperation` entry per exposing static type (#176), all
     // sharing this same `member`/`parameters`/`result` signature and
     // pointing at the identical `table: 0` -- the receiver's *runtime* type
@@ -1269,6 +1277,7 @@ pub(crate) fn checked_dispatch_core(
             receiver_type,
             member: member.clone(),
             parameters: call_arguments.clone(),
+            required_arity,
             result: result.clone(),
             selected_operation_owner: selected_operation_owner.clone(),
             selected_operation: selected_operation.clone(),
@@ -1336,8 +1345,8 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{
-        ancestor_closure, effective_terms, rekey_object_types, rename_parameters, substitute_names,
-        DispatchBridgeRefusal, OperationClauses,
+        DispatchBridgeRefusal, OperationClauses, ancestor_closure, effective_terms,
+        rekey_object_types, rename_parameters, substitute_names,
     };
     use crate::model::dispatch::FamilySteps;
     use crate::model::domain_package::{
@@ -1996,7 +2005,9 @@ mod tests {
     }
 
     fn case_source(body: &str) -> Expression {
-        let text = format!("language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\"; function f using v(x: U): Integer pure {{ {body} }}");
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\"; function f using v(x: U): Integer pure {{ {body} }}"
+        );
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("test", "case"),
             "case.native",
