@@ -7,7 +7,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit, admit_unit, compile_model_unit, package_input, package_input_from_sources, read_records,
+    PackageInput, admit, admit_unit, compile_model_unit, package_input, package_input_from_sources,
+    read_records,
 };
 use ix_trace_rs::trace;
 
@@ -34,7 +35,10 @@ fn unit(identity: &str) -> String {
 }
 
 /// The unit's selections admitted against an input holding the model unit.
-fn admit(identity: &str) -> Result<PackageDeclarations, String> {
+fn selected_unit_declarations(
+    identity: &str,
+    packages: &PackageInput,
+) -> Result<PackageDeclarations, String> {
     let text = unit(identity);
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "model-unit-input"),
@@ -45,7 +49,6 @@ fn admit(identity: &str) -> Result<PackageDeclarations, String> {
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let built = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let packages = package_input([SHOP.as_bytes()]).expect("a package input admits a model unit");
     let models = admit_unit(
         &built.selections().models,
         &packages,
@@ -65,7 +68,9 @@ fn admit(identity: &str) -> Result<PackageDeclarations, String> {
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
 fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
-    let mut declarations = admit("example/shop").expect("the model unit is admitted");
+    let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let mut declarations =
+        selected_unit_declarations("example/shop", &packages).expect("the model unit is admitted");
     declarations
         .link_dispatch(ModelNormalizationLimits::default())
         .expect("dispatch links");
@@ -81,7 +86,9 @@ fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
 fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
-    let refusal = admit("example/other").expect_err("the identities differ");
+    let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let refusal =
+        selected_unit_declarations("example/other", &packages).expect_err("the identities differ");
     assert!(refusal.contains("WrongModelSelection"), "{refusal}");
 }
 
@@ -89,6 +96,13 @@ fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
 #[trace("FR-710-AC-1", "TC-1942")]
 #[test]
 fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
+    let source = fsl_cst::diagnostic::read_source(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("source metadata admitted");
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
@@ -110,7 +124,19 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
         "ix://agent-ix/test:shop-model"
     );
-    let operation = &document["types"][0]["operations"][0];
+    assert_eq!(document["types"].as_array().unwrap().len(), 1);
+    let order = &document["types"][0];
+    assert_eq!(order["identity"], "ix://example/shop/Order");
+    assert_eq!(order["fields"].as_array().unwrap().len(), 2);
+    for (index, name) in ["id", "total"].into_iter().enumerate() {
+        let field = &order["fields"][index];
+        assert_eq!(field["identity"], format!("ix://example/shop/Order/{name}"));
+        assert_eq!(field["multiplicity"]["lower"], 1);
+        assert_eq!(field["multiplicity"]["upper"], 1);
+        assert!(field["origin"].is_object());
+    }
+    assert_eq!(order["operations"].as_array().unwrap().len(), 1);
+    let operation = &order["operations"][0];
     assert_eq!(operation["identity"], "ix://example/shop/Order/pay");
     assert_eq!(
         operation["returns"]["typeRef"],
@@ -120,12 +146,51 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         operation["frame"]["modifies_receiver"][0],
         "ix://example/shop/Order/total"
     );
+    assert_eq!(operation["pre"], serde_json::json!([]));
+    assert_eq!(operation["post"], serde_json::json!([]));
+    assert!(operation["origin"].is_object());
+    assert_eq!(order["clauses"].as_array().unwrap().len(), 1);
+    assert_eq!(order["clauses"][0]["clauseId"], "Nonnegative");
+    let populations = document["populations"].as_array().unwrap();
+    assert_eq!(populations.len(), 1);
     assert_eq!(
-        document["types"][0]["clauses"][0]["clauseId"],
-        "Nonnegative"
+        populations[0]["identity"],
+        "ix://example/shop/population/orders"
+    );
+    assert_eq!(populations[0]["extent"], "closed");
+    let constructs = document["constructs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|construct| {
+            (
+                construct["kind"]["name"].as_str().unwrap(),
+                construct["construct"]["meaning"].as_str().unwrap(),
+            )
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        constructs,
+        std::collections::BTreeSet::from([
+            ("object_type", "filament.meaning.model.object-type/v1"),
+            ("population", "filament.meaning.model.population/v1"),
+        ])
     );
     let admitted = package_input([SHOP.as_bytes()]).expect("model unit compiles to package input");
-    admit("example/shop").expect("the AC-1 model with its invariant is admitted");
+    let source_packages =
+        package_input_from_sources([&source]).expect("source-labelled model compiles");
+    let mut declarations = selected_unit_declarations("example/shop", &source_packages)
+        .expect("the source-supplied AC-1 model with its invariant is admitted");
+    declarations
+        .link_dispatch(ModelNormalizationLimits::default())
+        .expect("dispatch links");
+    declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("the invariant over the source-supplied model checks");
     let admitted_document: serde_json::Value =
         serde_json::from_slice(&admitted["example/shop"]).expect("admitted document is JSON");
     assert_eq!(
