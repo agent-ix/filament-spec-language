@@ -35,6 +35,24 @@ fn a_loop_proof_contributes_invariant_and_termination_item_kinds() {
     }
 }
 
+/// FR-730-AC-4: two proof-carrying repeats contribute two items each; a
+/// bounded repeat contributes none, and duplicate requests over one subject
+/// do not duplicate the four derived items.
+#[trace("TC-2022", "FR-730-AC-4")]
+#[test]
+fn two_loop_proofs_derive_four_items_once_and_bounded_repeat_derives_none() {
+    let body = multiple_repeat_unit();
+    assert_eq!(
+        loop_items_for_request_count(&body, 2),
+        [
+            "loop-invariant",
+            "loop-termination",
+            "loop-invariant",
+            "loop-termination",
+        ]
+    );
+}
+
 /// A repeat without a loop proof derives no loop-proof obligation.
 #[trace("TC-2022", "FR-730-AC-1")]
 #[test]
@@ -65,6 +83,12 @@ fn loop_unit(invariant: &str, variant: &str, guard: &str) -> String {
 /// The derived items `loop-invariant` and `loop-termination` of `P` in
 /// `body`, through the request writer that derives every protocol item.
 fn loop_items(body: &str) -> Vec<&'static str> {
+    loop_items_for_request_count(body, 1)
+}
+
+/// The loop-proof item kinds written for `request_count` caller requests of
+/// the same protocol subject.
+fn loop_items_for_request_count(body: &str, request_count: usize) -> Vec<&'static str> {
     use crate::derived_request::protocol_request;
     use crate::model_settle::protocol_anchor;
     use fsl_route::deadlock::ProtocolTemporalItem;
@@ -72,13 +96,14 @@ fn loop_items(body: &str) -> Vec<&'static str> {
     let checked = crate::fill::package_with(crate::fill::PROTOCOL_PROFILE, body);
     let protocol = checked.graph().protocol("P").expect("P");
     let occurrence = protocol_anchor(&checked, "P").1;
-    let items = [ProtocolTemporalItem {
+    let item = ProtocolTemporalItem {
         occurrence: &occurrence,
         subject: &"P",
         protocol,
         models: &[],
         non_atomic_access: false,
-    }];
+    };
+    let items = vec![item; request_count];
     let written = protocol_request(&items);
     written
         .items()
@@ -87,6 +112,28 @@ fn loop_items(body: &str) -> Vec<&'static str> {
         .map(ItemKind::to_wire)
         .filter(|kind| kind.starts_with("loop-"))
         .collect()
+}
+
+/// Two unbounded proof-carrying repeats and one bounded repeat share a
+/// protocol subject.
+fn multiple_repeat_unit() -> String {
+    let body = crate::fill::contracts("self.v = 0")
+        + "pre DecPre using v on M::Cell::dec { self.v >= 1 }\n\
+           post DecPost using v on M::Cell::dec { pre(self.v) - self.v = 1 }\n";
+    let attempt = |node: &str| crate::fill::attempt(node, "dec", "DecPre, DecPost", "t", "true");
+    let run = format!(
+        "sequence Main {{ \
+         repeat First by w visible () invariant {{ true }} variant {{ 1 }} while {{ false }} \
+           sequence FirstBody {{ {} }} \
+         repeat Second by w visible () invariant {{ true }} variant {{ 1 }} while {{ false }} \
+           sequence SecondBody {{ {} }} \
+         repeat Bounded by w visible () max 1 while {{ false }} \
+           sequence BoundedBody {{ {} }} }}",
+        attempt("FirstStep"),
+        attempt("SecondStep"),
+        attempt("BoundedStep"),
+    );
+    body + &crate::fill::protocol("P", "", &run, "d")
 }
 
 /// The EN-1 protocol obligations over `body`, through the public request
