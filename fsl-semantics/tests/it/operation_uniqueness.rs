@@ -26,13 +26,20 @@ fn key(name: &str) -> String {
     format!("ix://{PACKAGE_IDENTITY}/ConfigVersion/{name}")
 }
 
-fn refusal(document: &[u8], code: &str, cause: &str, node: &str, member: &str) {
+fn refusal(
+    document: &[u8],
+    code: &str,
+    cause: &str,
+    node: &str,
+    member: &str,
+) -> fsl_semantics::model::normalize::ModelRefusal {
     let refused = admit(document).expect_err("invalid operation model must not be selected");
     let UnitIntakeCause::Refused(found) = refused.cause else {
         panic!("a located intake refusal: {refused:?}");
     };
     assert_eq!(found.len(), 1, "{found:?}");
     assert_refusal(&found[0], code, cause, node, member);
+    found[0].clone()
 }
 
 fn assert_refusal(
@@ -105,12 +112,16 @@ fn duplicate_parameter_identity_preempts_an_unresolved_frame() {
     let parameter = operation_parameter("advance", "amount", INTEGER);
     let mut op = query("advance", json!([parameter.clone(), parameter]));
     op["frame"]["modifies"] = json!([key("missingField")]);
-    refusal(
+    let found = refusal(
         &input(vec![op]),
         "invalid_model_binding",
         "conflicting-binding",
         &key("advance/amount"),
         "TypeDefinition.operations[0].params[1]",
+    );
+    assert!(
+        found.detail.contains("DUPLICATE_PARAM"),
+        "the original reader diagnostic is retained: {found:?}"
     );
 }
 
@@ -446,6 +457,9 @@ fn extra_owner(kind: &str, meaning: &str, operations: Vec<Value>) -> Vec<u8> {
         kind,
         json!({"fields": [], "operations": operations, "supertypes": [], "identityFields": []}),
     );
+    node.as_object_mut()
+        .expect("type node")
+        .remove("identityFields");
     if kind == "event_type" {
         let occurred = format!("{owner}/occurred");
         node["fields"] = json!([wire_field(
@@ -464,50 +478,55 @@ fn extra_owner(kind: &str, meaning: &str, operations: Vec<Value>) -> Vec<u8> {
     serde_json::to_vec(&document).expect("model JSON")
 }
 
-#[trace("TC-1307", "FR-512-AC-2", "FR-512-AC-3", "FR-512-AC-16")]
+#[trace("TC-1307", "FR-512-AC-2", "FR-512-AC-16")]
 #[test]
-fn event_and_record_owners_refuse_before_operation_name_collisions() {
+fn event_owner_refuses_before_operation_name_collisions() {
     use fsl_semantics::model::intake::meaning;
-    for (kind, meaning, code, cause) in [
-        (
-            "event_type",
-            meaning::EVENT_TYPE,
-            "invalid_model_binding",
-            "malformed-declaration",
-        ),
-        (
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-            "unsupported_construct",
-            "declaration-form",
-        ),
-    ] {
-        admit(&extra_owner(kind, meaning, vec![]))
-            .expect("the original non-operation owner admits");
-        let mut first = query("advance", json!([]));
-        first["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"));
-        let mut second = query("other", json!([]));
-        second["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/other"));
-        second["name"] = json!("advance");
-        let refused = admit(&extra_owner(kind, meaning, vec![first, second]))
-            .expect_err("each operation must fail its owner rule before name validation");
-        let UnitIntakeCause::Refused(found) = refused.cause else {
-            panic!("{refused:?}");
-        };
-        assert_eq!(
-            found.len(),
-            2,
-            "one owner refusal per operation, no operation-name refusal: {found:?}"
+    assert_owner_precedence(
+        "event_type",
+        meaning::EVENT_TYPE,
+        "invalid_model_binding",
+        "malformed-declaration",
+    );
+}
+
+#[trace("TC-1307", "FR-512-AC-3", "FR-512-AC-16")]
+#[test]
+fn record_owner_refuses_before_operation_name_collisions() {
+    use fsl_semantics::model::intake::meaning;
+    assert_owner_precedence(
+        "record_value_type",
+        meaning::RECORD_VALUE_TYPE,
+        "unsupported_construct",
+        "declaration-form",
+    );
+}
+
+fn assert_owner_precedence(kind: &str, meaning: &str, code: &str, cause: &str) {
+    admit(&extra_owner(kind, meaning, vec![])).expect("the original non-operation owner admits");
+    let mut first = query("advance", json!([]));
+    first["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/advance"));
+    let mut second = query("other", json!([]));
+    second["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Parcel/other"));
+    second["name"] = json!("advance");
+    let refused = admit(&extra_owner(kind, meaning, vec![first, second]))
+        .expect_err("each operation must fail its owner rule before name validation");
+    let UnitIntakeCause::Refused(found) = refused.cause else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(
+        found.len(),
+        2,
+        "one owner refusal per operation, no operation-name refusal: {found:?}"
+    );
+    for (index, name) in ["advance", "other"].iter().enumerate() {
+        assert_refusal(
+            &found[index],
+            code,
+            cause,
+            &format!("ix://{PACKAGE_IDENTITY}/Parcel/{name}"),
+            &format!("TypeDefinition.operations[{index}]"),
         );
-        for (index, name) in ["advance", "other"].iter().enumerate() {
-            assert_refusal(
-                &found[index],
-                code,
-                cause,
-                &format!("ix://{PACKAGE_IDENTITY}/Parcel/{name}"),
-                &format!("TypeDefinition.operations[{index}]"),
-            );
-        }
     }
 }
 
@@ -588,4 +607,32 @@ fn two_distinct_modifies_grants_keep_their_declared_order() {
             .collect::<Vec<_>>(),
         [key("versionNumber"), key("parent")]
     );
+}
+
+#[trace("TC-1307", "FR-512-AC-4", "FR-512-AC-17")]
+#[test]
+fn unrelated_record_order_does_not_retarget_a_duplicate_operation_identity() {
+    let op = query("advance", json!([]));
+    let mut document: Value =
+        serde_json::from_slice(&input(vec![op.clone(), op])).expect("original input");
+    document["types"].as_array_mut().expect("types").insert(
+        0,
+        super::model_operations::wire_type(
+            &format!("ix://{PACKAGE_IDENTITY}/Gauge"),
+            "object_type",
+            json!({"fields": [], "operations": [], "supertypes": []}),
+        ),
+    );
+    let forward = serde_json::to_vec(&document).expect("model bytes");
+    document["types"].as_array_mut().expect("types").reverse();
+    let reverse = serde_json::to_vec(&document).expect("reordered model bytes");
+    for bytes in [&forward, &reverse] {
+        refusal(
+            bytes,
+            "invalid_model_binding",
+            "conflicting-binding",
+            &key("advance"),
+            "TypeDefinition.operations[1]",
+        );
+    }
 }
