@@ -541,6 +541,75 @@ fn protocol_deadlock_proves_and_refutes() {
     }
 }
 
+/// FR-636: a plain request/reply protocol reaches the global protocol
+/// checker. The safe exchange has real transitions; refusing its first
+/// receive creates a genuine deadlock whose blocked-thread evidence replays.
+#[trace("TC-1596", "FR-636-AC-1")]
+#[test]
+fn a_plain_request_reply_protocol_proves_and_replays_a_deadlock_control() {
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "Handshake",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"Caller": binding, "Worker": binding}}});
+    let unit = |block_request| {
+        let receive_guard = if block_request { "false" } else { "true" };
+        format!(
+            "record Message {{ ok: Boolean; }}\n\
+             protocol Handshake using pp over (k: M::Core) on origin {{\n\
+             role Caller on M::Cell;\nrole Worker on M::Cell;\n\
+             channel Requests from Caller to Worker carries Message ordering unordered delivery exactly-once-premise capacity 1 overflow block;\n\
+             channel Replies from Worker to Caller carries Message ordering unordered delivery exactly-once-premise capacity 1 overflow block;\n\
+             run sequence Exchange {{\n\
+               send RequestSent via Requests as (request: Message) {{ true }};\n\
+               receive RequestReceived via Requests of RequestSent as (received: Message) {{ {receive_guard} }};\n\
+               send ReplySent via Replies as (reply: Message) {{ true }};\n\
+               receive ReplyReceived via Replies of ReplySent as (answer: Message) {{ true }};\n\
+             }}\n\
+             finish Complete as (closed: Boolean) {{ true }};\n\
+             }}\n"
+        )
+    };
+    for (name, block_request, max_states, expected) in [
+        ("safe", false, None, "proved"),
+        ("bounded", false, Some(1), "incomplete"),
+        ("blocked", true, None, "refuted"),
+    ] {
+        let ws = Workspace::new(&format!("cli-request-reply-{name}"));
+        let mut temporal = json!({"item_kind": "deadlock-freedom", "subject": subject});
+        if let Some(max_states) = max_states {
+            temporal["limits"] = json!({"max_states": max_states});
+        }
+        let run = analyze(&litmus_request(
+            &ws,
+            &unit(block_request),
+            json!({"items": [{"claim": "Handshake", "kind": "temporal-satisfaction",
+                "temporal": temporal}]}),
+        ));
+        let item = run.item(0);
+        assert_eq!(label(&item), expected, "{}", run.document());
+        if !matches!(name, "bounded") {
+            let transitions = item["exploration"]["transitions"]
+                .as_str()
+                .and_then(|value| value.parse::<u64>().ok());
+            assert!(transitions.is_some_and(|count| count > 0), "{item}");
+        }
+        if block_request {
+            assert!(
+                item["counterexample"]["blocked"]
+                    .as_array()
+                    .is_some_and(|blocked| !blocked.is_empty()),
+                "{item}"
+            );
+            assert_eq!(item["replay"]["reproduced"], true, "{item}");
+            assert_eq!(run.exit, 10);
+        } else if name == "bounded" {
+            assert_eq!(run.exit, 22, "{}", run.document());
+        } else {
+            assert_eq!(run.exit, 0, "{}", run.document());
+        }
+    }
+}
+
 /// FR-624-AC-4 and FR-636: a request naming no protocol refuses with that
 /// protocol name as its locus.
 #[trace("TC-1584", "FR-624-AC-4")]

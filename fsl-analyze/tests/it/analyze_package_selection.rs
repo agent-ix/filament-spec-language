@@ -621,6 +621,101 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
+/// FR-940: package `claim_names` resolves named operation clauses to their
+/// claim occurrence, and FR-489 sends those operation-contract items through
+/// `contract-checker` instead of settling an unknown claim.
+#[trace("TC-2702", "FR-489-AC-2")]
+#[test]
+fn named_operation_clauses_resolve_over_a_package() {
+    for (name, clause) in [
+        (
+            "Keeps",
+            "post Keeps using v on M::Counter::setTo { self.value = n }\n",
+        ),
+        (
+            "CanSet",
+            "pre CanSet using v on M::Counter::setTo { true }\n",
+        ),
+    ] {
+        let items = json!([{"claim": name}]);
+        let ws = Workspace::new(&format!("package-operation-clause-{name}"));
+        let request = crate::analyze_cli_support::request_over(
+            &ws,
+            &crate::counter::unit_text(&format!("{}{clause}", crate::counter::CONTRACT)),
+            &crate::counter::document_with_ranged_parameter(),
+            &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+            json!({"items": items.clone()}),
+        );
+        let source = analyze(&request);
+        let (members, _) = package_selection(&ws, &request_of(&request));
+        let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
+        let item = run.item(0);
+        assert!(!item.to_string().contains("unknown-claim"), "{item}");
+        assert_eq!(
+            item["request"]["candidates"]["backends"],
+            json!(["contract-checker"]),
+            "{item}"
+        );
+        assert_eq!(
+            item["request"]["candidates"],
+            source.item(0)["request"]["candidates"],
+            "source: {}; package: {}",
+            source.item(0),
+            item
+        );
+    }
+}
+
+/// FR-940: package operation-contract claims with one shared structural node
+/// retain their distinct claim occurrence ordinals when names resolve. The
+/// later name must not fall back to the first state clause on that node.
+#[trace("TC-2967", "FR-940-AC-7")]
+#[test]
+fn shared_operation_contract_node_keeps_each_named_occurrence() {
+    let body = concat!(
+        "post First using v on M::Counter::setTo { self.value = n }\n",
+        "post Second using v on M::Counter::setTo { self.value = n }\n",
+    );
+    let items = json!([{"claim": "First"}, {"claim": "Second"}]);
+    let ws = Workspace::new("package-shared-operation-contract-node");
+    let request = crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&format!("{}{body}", crate::counter::CONTRACT)),
+        &crate::counter::document_with_ranged_parameter(),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+        json!({"items": items.clone()}),
+    );
+    let source = analyze(&request);
+    let (members, package_bytes) = package_selection(&ws, &request_of(&request));
+    let package: Value = serde_json::from_slice(&package_bytes).expect("checked package JSON");
+    let rows = package["claim_names"].as_array().expect("claim_names rows");
+    let first = rows
+        .iter()
+        .find(|row| row["name"] == "First")
+        .expect("First claim-name row");
+    let second = rows
+        .iter()
+        .find(|row| row["name"] == "Second")
+        .expect("Second claim-name row");
+    assert_eq!(first["declaration"], second["declaration"]);
+    assert_eq!(first["occurrence"]["ordinal"], 0);
+    assert_eq!(second["occurrence"]["ordinal"], 1);
+
+    let run = analyze_members(&ws, "analyze-shared-operation-contract.json", &members);
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    for (index, expected_ordinal) in [0, 1].into_iter().enumerate() {
+        for (route, result) in [("source", &source), ("package", &run)] {
+            let item = result.item(index);
+            assert_eq!(item["claim_name"], items[index]["claim"], "{route}: {item}");
+            assert_eq!(
+                claim_ordinal(&item),
+                json!(expected_ordinal),
+                "{route}: {item}"
+            );
+        }
+    }
+}
+
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
 /// handoff with no `checked-package.json`, refuse the request
 /// `invalid_package`/`missing-file` at the request stage, exit 20.

@@ -1160,6 +1160,38 @@ fn work<'a>(
             )
             .unwrap_or_else(absent)
         }
+        None if item.kind == Capability::OperationContract
+            && negotiated.disposition.target().is_some_and(|backend| {
+                engines
+                    .get(backend.id())
+                    .is_some_and(|engine| engine.provider().is_some())
+            }) =>
+        {
+            let backend = negotiated
+                .disposition
+                .target()
+                .expect("the provider target");
+            let routed = crate::provider::routed_contract_item(
+                package,
+                engines.registrations(),
+                item.request_index,
+                &item.claim,
+                item.backend.as_ref(),
+            )
+            .map(|routed| routed.with_options(item.options.backend_options.clone()));
+            let selection = fsl_replay::contract_check::select_contract(package, &item.claim);
+            crate::provider::contract_provider_item_over(
+                item.request_index,
+                backend.id(),
+                package,
+                binding.packages,
+                routed,
+                limits.emit,
+                selection,
+                shared,
+                &item.claim,
+            )
+        }
         None if item.kind == Capability::OperationContract => {
             let selection =
                 fsl_replay::contract_check::select_contract(package, &item.claim).map(|claim| {

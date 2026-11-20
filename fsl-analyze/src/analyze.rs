@@ -1639,12 +1639,13 @@ impl<'a> AnalyzeItem<'a> {
     pub(crate) fn new_with_provider(
         index: RequestIndex,
         family: Option<DeclarationFamily>,
+        kind: Capability,
         backend: &str,
         work: crate::provider::ProviderWork<'a>,
     ) -> Self {
         Self {
             index,
-            kind: Capability::ValueValidity,
+            kind,
             family,
             mode: Mode::Unbounded,
             disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),

@@ -6,9 +6,9 @@
 use std::sync::Mutex;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{counter_request, label, Fr290, Workspace};
+use crate::analyze_cli_support::{Fr290, Workspace, counter_request, label};
 
 const AT_MOST_THREE: &str =
     "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n";
@@ -298,6 +298,15 @@ fn set_to_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBu
 struct Answering {
     verdict: fsl_analyze::provider::ProviderVerdict,
     sent: std::sync::Arc<Mutex<Vec<Value>>>,
+    targets: std::sync::Arc<
+        Mutex<
+            Vec<(
+                fsl_replay::contract_check::ContractForm,
+                fsl_foundation::source::provenance::OccurrenceKey,
+                fsl_replay::contract_check::ContractSubject,
+            )>,
+        >,
+    >,
 }
 
 impl fsl_analyze::provider::ExternalProvider for Answering {
@@ -308,6 +317,16 @@ impl fsl_analyze::provider::ExternalProvider for Answering {
     ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
         let wire = serde_json::to_value(request).expect("the request serializes");
         self.sent.lock().expect("the record lock").push(wire);
+        for (item, target) in request.items().iter().zip(request.targets()) {
+            if let fsl_analyze::provider::ProviderTarget::Contract(claim) = target {
+                assert_eq!(claim.claim(), item.occurrence());
+                self.targets.lock().expect("the target lock").push((
+                    claim.form(),
+                    claim.claim().clone(),
+                    claim.subject().clone(),
+                ));
+            }
+        }
         request
             .items()
             .iter()
@@ -321,9 +340,19 @@ fn contract_provider(
 ) -> (
     fsl_analyze::analyze::Engine,
     std::sync::Arc<Mutex<Vec<Value>>>,
+    std::sync::Arc<
+        Mutex<
+            Vec<(
+                fsl_replay::contract_check::ContractForm,
+                fsl_foundation::source::provenance::OccurrenceKey,
+                fsl_replay::contract_check::ContractSubject,
+            )>,
+        >,
+    >,
 ) {
     use fsl_semantics::check::Capability::OperationContract;
     let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let targets = std::sync::Arc::new(Mutex::new(Vec::new()));
     let engine = fsl_analyze::analyze::Engine::external(
         advertising(
             "fsl.test-contract",
@@ -333,10 +362,11 @@ fn contract_provider(
         Box::new(Answering {
             verdict,
             sent: std::sync::Arc::clone(&sent),
+            targets: std::sync::Arc::clone(&targets),
         }),
     )
     .expect("an operation-contract provider registers (FR-968)");
-    (engine, sent)
+    (engine, sent, targets)
 }
 
 /// FR-968-AC-2: with the provider registered, an unnamed `post` item matches
@@ -345,11 +375,10 @@ fn contract_provider(
 /// `operation-contract` request item.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[test]
-#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim"]
 fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     use fsl_analyze::provider::ProviderVerdict;
     let ws = Workspace::new("post-item-with-provider");
-    let (provider, sent) = contract_provider(ProviderVerdict::Unknown);
+    let (provider, sent, _) = contract_provider(ProviderVerdict::Unknown);
     let request = set_to_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
     let (document, seen) = analyze_recording(&request, vec![provider]);
     assert_eq!(
@@ -369,7 +398,7 @@ fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     assert!(sent.lock().expect("the record lock").is_empty());
 
     let ws = Workspace::new("post-item-named-provider");
-    let (provider, sent) = contract_provider(ProviderVerdict::Unknown);
+    let (provider, sent, targets) = contract_provider(ProviderVerdict::Unknown);
     let request = set_to_request(
         &ws,
         KEEPS,
@@ -381,6 +410,28 @@ fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     let items = sent[0]["items"].as_array().expect("request items");
     assert_eq!(items.len(), 1, "{document}");
     assert_eq!(items[0]["kind"], "operation-contract", "{}", sent[0]);
+    let targets = targets.lock().expect("the target lock");
+    assert_eq!(targets.len(), 1, "{document}");
+    let (form, claim, subject) = &targets[0];
+    assert_eq!(*form, fsl_replay::contract_check::ContractForm::Clause);
+    assert_eq!(claim.origin().role().as_str(), "claim");
+    assert_eq!(
+        claim.origin().ordinal(),
+        items[0]["claim"]["occurrence"]["ordinal"]
+            .as_u64()
+            .expect("the request occurrence ordinal")
+    );
+    let fsl_replay::contract_check::ContractSubject::Postcondition {
+        clause,
+        context,
+        operation: (owner, operation),
+    } = subject
+    else {
+        panic!("the provider can inspect the selected postcondition subject: {subject:?}");
+    };
+    assert_eq!(clause, claim.node());
+    assert_eq!(context, owner);
+    assert_eq!(operation, "setTo");
 }
 /// The FR-968-AC-3 contract counterexamples of `Wrong`.
 #[derive(Clone, Copy, Debug)]
@@ -423,7 +474,7 @@ fn a_provider_contract_verdict_settles_after_replay() {
     use fsl_analyze::provider::ProviderVerdict;
     let settle = |name: &str, verdict: ProviderVerdict| {
         let ws = Workspace::new(name);
-        let (provider, _) = contract_provider(verdict);
+        let (provider, _, _) = contract_provider(verdict);
         let request = counter_request(
             &ws,
             WRONG,
@@ -492,13 +543,41 @@ fn a_provider_contract_verdict_settles_after_replay() {
     inconclusive(&assignments, "replay-parity");
 }
 
+/// FR-968-AC-3: an assignments counterexample returned for a contract target
+/// cannot be replayed as a contract counterexample, so it settles as
+/// `replay-parity` without publishing a counterexample.
+#[trace("TC-2725", "FR-968-AC-3")]
+#[test]
+fn a_provider_contract_assignments_counterexample_settles_replay_parity() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let ws = Workspace::new("contract-provider-assignments-replay-parity");
+    let (provider, _, _) = contract_provider(ProviderVerdict::Refuted {
+        counterexample: vec![filament_exact::Value::Integer(0_i64.into())],
+    });
+    let request = set_to_request(
+        &ws,
+        KEEPS,
+        json!([{"claim": "Keeps", "backend": "fsl.test-contract"}]),
+    );
+    let document = analyze_recording(&request, vec![provider]).0;
+    let item = &document["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert!(item["record"].to_string().contains("replay-parity"), "{item}");
+    assert!(
+        document["counterexamples"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{document}"
+    );
+}
+
 /// FR-962-AC-1 (`post` half): an unnamed `operation-contract` item for an
 /// operation's `post` contract reaches the negotiator with exactly
 /// `[contract-checker]`, names no backend, and never settles
 /// `ambiguous-backend`.
 #[trace("TC-2702", "FR-962-AC-1")]
 #[test]
-#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim, so the post item never reaches negotiation"]
 fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
     let ws = Workspace::new("post-item-one-candidate");
     let request = set_to_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
@@ -517,6 +596,33 @@ fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
     );
     assert!(
         !document.to_string().contains("ambiguous-backend"),
+        "{document}"
+    );
+}
+
+/// FR-489 and FR-940: a named `pre` clause resolves to its operation-contract
+/// occurrence and reaches the contract checker through the source route.
+#[trace("TC-2702", "FR-489-AC-2")]
+#[test]
+fn an_operation_pre_item_reaches_negotiation_with_contract_checker() {
+    let ws = Workspace::new("pre-item-one-candidate");
+    let body = "pre CanSet using v on M::Counter::setTo { true }\n";
+    let request = set_to_request(&ws, body, json!([{"claim": "CanSet"}]));
+    let (document, seen) = analyze_recording(&request, Vec::new());
+    assert_eq!(
+        seen,
+        vec![vec!["contract-checker".to_owned()]],
+        "{document}"
+    );
+    let item = &document["items"][0];
+    assert!(item["request"].get("backend").is_none(), "{item}");
+    assert_eq!(
+        item["request"]["candidates"],
+        json!({"type": "set", "backends": ["contract-checker"]}),
+        "{item}"
+    );
+    assert!(
+        !document.to_string().contains("unknown-claim"),
         "{document}"
     );
 }

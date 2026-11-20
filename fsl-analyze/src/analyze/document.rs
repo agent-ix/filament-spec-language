@@ -1097,12 +1097,13 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|site| (site.name.clone(), site.identity.clone())),
     );
-    // FR-625: an `invariant` state clause is a claim by its declared name.
+    // FR-625, FR-489: every state clause is a claim by its declared name,
+    // including the pre/post clauses selected as operation-contract items.
     names.extend(
         graph
             .state_clauses()
             .iter()
-            .filter(|clause| clause.is_invariant())
+            .filter(|clause| clause.is_invariant() || clause.operation().is_some())
             .map(|clause| (clause.name().to_owned(), clause.identity())),
     );
     names.extend(
@@ -1162,11 +1163,26 @@ fn claim_occurrence(
     package: &CheckedPackage,
     records: &[fsl_route::request::RequirementItem],
     node: &filament_exact::NodeKey,
+    name: Option<&str>,
 ) -> Option<OccurrenceKey> {
+    let graph = package.graph();
+    if let Some(clause) = graph
+        .state_clauses()
+        .iter()
+        .find(|clause| {
+            clause.identity() == *node
+                && clause.operation().is_some()
+                && name.is_none_or(|name| clause.name() == name)
+        })
+    {
+        return Some(OccurrenceKey::new(
+            clause.identity(),
+            clause.claim().clone(),
+        ));
+    }
     if let Some(record) = records.iter().find(|record| record.node() == node) {
         return Some(record.occurrence().clone());
     }
-    let graph = package.graph();
     if let Some(clause) = graph
         .temporal_clauses()
         .iter()
@@ -1187,11 +1203,9 @@ fn claim_occurrence(
             site.claim.clone(),
         ));
     }
-    if let Some(clause) = graph
-        .state_clauses()
-        .iter()
-        .find(|clause| clause.is_invariant() && clause.identity() == *node)
-    {
+    if let Some(clause) = graph.state_clauses().iter().find(|clause| {
+        clause.identity() == *node && (clause.is_invariant() || clause.operation().is_some())
+    }) {
         return Some(OccurrenceKey::new(
             clause.identity(),
             clause.claim().clone(),
@@ -1500,7 +1514,7 @@ fn resolve_one(
         .iter()
         .find(|clause| clause.clause().name() == name)
         .map(|clause| OccurrenceKey::new(clause.identity(), clause.claim().clone()))
-        .or_else(|| claim_occurrence(package, &records, &node))
+        .or_else(|| claim_occurrence(package, &records, &node, Some(name)))
     else {
         return unknown_claim(index, name);
     };
@@ -1584,6 +1598,9 @@ fn resolve_one(
     });
     let protocol_deadlock = protocol_claim
         && kind == Capability::GlobalConformance
+        && item_kind == ItemKind::DeadlockFreedom;
+    let protocol_temporal_deadlock = protocol_claim
+        && kind == Capability::TemporalSatisfaction
         && item_kind == ItemKind::DeadlockFreedom;
     let applies = protocol_deadlock
         || crate::claim_family::claim_family(package, item_kind, &claim)
@@ -1710,7 +1727,7 @@ fn resolve_one(
         .subject
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
-    let protocol = if protocol_deadlock || protocol_analysis_kind {
+    let protocol = if protocol_deadlock || protocol_temporal_deadlock || protocol_analysis_kind {
         let owner = package.graph().protocols().iter().find(|protocol| {
             package
                 .graph()
@@ -2376,7 +2393,7 @@ fn default_items(
         }
     }
     let position = |node: &filament_exact::NodeKey| -> (usize, u64) {
-        let region = claim_occurrence(package, &records, node)
+        let region = claim_occurrence(package, &records, node, None)
             .and_then(|occurrence| {
                 graph.occurrence_region(occurrence.node().clone(), occurrence.origin())
             })
@@ -3012,7 +3029,7 @@ pub fn settle_run(
             Err(super::simulation_item::SimulationFault::Binding(failure)) => {
                 return Err(AnalyzeDocumentError::Refused(
                     super::AnalyzeRefusal::Binding(failure),
-                ))
+                ));
             }
             Err(super::simulation_item::SimulationFault::Fault) => {
                 return Err(AnalyzeDocumentError::Fault)

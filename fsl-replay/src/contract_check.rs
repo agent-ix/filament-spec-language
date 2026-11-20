@@ -132,24 +132,31 @@ pub enum ContractSelection {
     Fault(InternalFault),
 }
 
-/// What a claim selected: the form's target in the package.
+/// The subject selected for one operation-contract claim (FSpec FR-485).
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Target {
+pub enum ContractSubject {
     /// An invariant clause.
     Invariant {
+        /// The selected invariant clause node.
         clause: NodeKey,
+        /// The object type whose state the clause observes.
         context: EffectiveId,
     },
     /// A precondition: its definedness under premises 1 to 3.
     Precondition {
+        /// The selected precondition clause node.
         clause: NodeKey,
+        /// The object type whose operation the clause constrains.
         context: EffectiveId,
     },
     /// A postcondition: its definedness under the pre-state and frame
     /// premises.
     Postcondition {
+        /// The selected postcondition clause node.
         clause: NodeKey,
+        /// The object type whose operation the clause constrains.
         context: EffectiveId,
+        /// The operation's declaring type and name.
         operation: (EffectiveId, String),
     },
     /// An operation's frame.
@@ -162,10 +169,14 @@ enum Target {
     StepRelation,
     /// A refinement's initial-state rule (ordinal 0) or step row `source`.
     Simulation {
+        /// The selected refinement index within the checked package.
         refinement: usize,
+        /// The selected step row, or `None` for the initial-state rule.
         row: Option<usize>,
     },
 }
+
+type Target = ContractSubject;
 
 /// A claim's form and target over one checked package (FSpec FR-485
 /// "Forms").
@@ -187,6 +198,12 @@ impl ContractClaim {
     /// The claim's form.
     pub fn form(&self) -> ContractForm {
         self.form
+    }
+
+    /// The subject selected for this claim's form: its clause and context,
+    /// operation, frame, step relation, or simulation row.
+    pub fn subject(&self) -> &ContractSubject {
+        &self.target
     }
 
     /// Whether the item's operation has an FR-353 implementation binding.
