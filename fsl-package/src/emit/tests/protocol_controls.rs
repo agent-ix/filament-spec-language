@@ -744,7 +744,11 @@ fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
         Vec::new(),
     )
     .expect("I1 admits the model")
-    .check(CheckMode::Linked, CheckingLimits::default())
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
     let wire = wire(&emission);
