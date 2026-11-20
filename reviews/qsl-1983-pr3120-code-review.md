@@ -40,3 +40,22 @@ The new assembler wraps an optional parameter's value type in `Option<X>`, and t
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | still-open | New tests now cover `present`, guarded and unguarded `value`, and `deref` mismatch for an optional integer. They do not cover successful `deref(value(p))` for an optional reference parameter or assert that an omitted call and explicit `absent` call have equal checked nodes and term data. |
+| FND-001 | fixed | The updated tests cover option presence and value rules, successful `deref(value(p))` under a presence guard, and omitted-versus-explicit-absent package equivalence. |
+
+After excerpt for FND-001:
+
+```rust
+fn deref_value_of_an_optional_reference_parameter_checks() {
+    check_optional_parameter_clause_with_type(
+        "present(amount) implies deref(value(amount)).versionNumber >= 0",
+        &format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"),
+    )
+    .expect("the guarded option value dereferences as a model reference");
+}
+```
+
+The companion test `tests/it/dispatch_emission.rs::an_omitted_optional_parameter_matches_an_explicit_absent_call` asserts equality of `semantic_graph.nodes` and `checked_term_data` for omitted and explicit-absent calls.
+
+## Rebase re-review — round 3
+
+At rebased PR head `949d3b080ca60d4b4fefb37479553464afa8da5e`, the previously fixed tests remain present in the complete diff against `origin/main`. FND-001 remains fixed; no new code-review findings were found. No builds or tests were run for this re-review.

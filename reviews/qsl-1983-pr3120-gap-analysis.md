@@ -46,3 +46,34 @@ The repository-wide `quoin matrix` reports 1,216 untagged criteria and 257 crite
 | --- | --- | --- |
 | FND-001 | still-open | `FR-056-AC-65` now has a matrix binder, but the intake test uses a native Integer parameter and does not exercise the specified optional Option-valued parameter refusal or required Option-valued parameter acceptance. |
 | FND-002 | still-open | `FR-103-AC-12` now has matrix binders and tests for option presence/value rules, but no test asserts that omitted and explicit-`absent` calls lower to equal checked nodes and term data as this criterion requires. |
+| FND-001 | fixed | The intake test now covers optional Option<T> refusal and required Option<T> acceptance. |
+| FND-002 | fixed | A focused emission test now checks omitted and explicit-absent calls have equal semantic graph nodes and checked term data. |
+
+After excerpt for FND-001:
+
+```rust
+let refusals = read_records(
+    "acme/optionals",
+    &parse_document(optional_option.to_string().as_bytes()),
+)
+.expect_err("optional presence cannot wrap an Option<T> parameter twice");
+...
+.expect("a required Option<T> parameter is admitted");
+```
+
+After excerpt for FND-002:
+
+```rust
+assert_eq!(
+    omitted_wire["semantic_graph"]["nodes"], explicit_wire["semantic_graph"]["nodes"],
+    "both calls lower to the same semantic graph"
+);
+assert_eq!(
+    omitted_wire["checked_term_data"], explicit_wire["checked_term_data"],
+    "both calls produce the same checked term data"
+);
+```
+
+## Rebase re-review — round 3
+
+At rebased PR head `949d3b080ca60d4b4fefb37479553464afa8da5e`, matrix binders for FR-056-AC-65 and FR-103-AC-12 remain present. FND-001 and FND-002 remain fixed; no new PR-specific gap findings were found. The repository-wide matrix still has its prior baseline of unrelated untagged criteria.
