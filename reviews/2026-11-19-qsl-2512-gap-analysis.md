@@ -33,4 +33,3 @@ Reconciliation: quoin matrix --repo /Users/peter/dev/qsl-2512-code --json, quoin
 Plan completion: not assessed
 
 The retained ignored public-entry/operation-coverage stubs were inspected as separately owned work, not counted as passing evidence. The Text limit test is tagged to AC-10 but uses the existing internal runner; the public-entry part remains dependent on its owner. Source behavior is owned by FR-752 and FSpec FR-190; no new requirement was invented. Optional semantic review was not run.
-
