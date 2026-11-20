@@ -1993,8 +1993,8 @@ fn an_unplaced_occurrence_refuses() {
 
 /// FR-062-AC-5 third clause, S4 emitter half (TC-160 step 6):
 /// `emit_checked` returns an emission or an `EmitRefusal`, never
-/// `Incomplete`, across a fixture set of a package that writes every node, a
-/// package with nothing writable, and three whose occurrences it cannot
+/// `Incomplete`, across a fixture set of a package that writes every node and
+/// three whose occurrences it cannot
 /// place (`t` and `q`/`t` built without spans, and a declared type). `classify` matches `Result<Emission, EmitRefusal>` and
 /// every `EmitRefusal` variant with no wildcard arm, so a variant added to the
 /// refusal type, such as an `Incomplete`, stops this test compiling until it
@@ -2006,7 +2006,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
     #[derive(Debug, Eq, PartialEq)]
     enum Seen {
         Written { omitting: bool },
-        NothingToEmit,
         UnlocatedOccurrence,
         UnknownOccurrenceRole,
         Encoding,
@@ -2033,7 +2032,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Ok(emission) => Seen::Written {
                 omitting: !emission.omitted.is_empty(),
             },
-            Err(EmitRefusal::NothingToEmit { .. }) => Seen::NothingToEmit,
+            Err(EmitRefusal::NothingToEmit { .. }) => {
+                panic!("the fixture is a checked package with nodes to emit")
+            }
             Err(EmitRefusal::UnlocatedOccurrence { .. }) => Seen::UnlocatedOccurrence,
             Err(EmitRefusal::UnknownOccurrenceRole { .. }) => Seen::UnknownOccurrenceRole,
             Err(EmitRefusal::Encoding { .. }) => Seen::Encoding,
@@ -2130,10 +2131,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
     assert_eq!(
         classify(emit_checked(&q_and_t_package())),
         Seen::UnlocatedOccurrence
-    );
-    assert_eq!(
-        classify(emit_checked(&package(Vec::new()))),
-        Seen::NothingToEmit
     );
     assert_eq!(
         classify(emit_checked(&package(vec![t()]))),

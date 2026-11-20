@@ -903,8 +903,9 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
          function refers using v(): Boolean pure {{ protocol Bad }}\n\
          protocol Bad using p over (input: M::Order) on origin {{\n\
          role R on M::Order;\n\
-         run sequence Main {{ repeat Again by R visible (e.ok) while {{ not e.ok }} \
-         sequence Body {{ event E by R as (e: Ack) {{ true }}; }} }}\n\
+         run sequence Main {{ repeat Loop by R visible () while {{ true }} \
+         sequence Outer {{ repeat Inner by R visible () while {{ true }} \
+         sequence Body {{ event E by R as (e: Ack) {{ true }}; }} }} }}\n\
          finish End as (outcome: Boolean) {{ true }};\n}}\n\
          temporal Due using t over (c: M::Order) clock \"model-steps\" \
          on origin {{ always holds(refers()) }}\n{}",

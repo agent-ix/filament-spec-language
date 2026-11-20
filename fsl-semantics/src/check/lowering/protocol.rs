@@ -296,10 +296,10 @@ impl ProtocolInput<'_> {
                 | K::Await
                 | K::Parallel => true,
                 K::Check | K::Finish | K::CompensateTemplate => false,
-                // A repeat makes progress when its body makes progress. In
-                // particular, this lets an outer repeat step through a
-                // nested repeat whose body contains an action.
-                K::Repeat => child(0),
+                // A repeat does not guarantee its own completion: even when
+                // its body performs an action, an always-true guard can keep
+                // it from returning control to an enclosing repeat.
+                K::Repeat => false,
                 K::Branch | K::Case => child(0),
                 K::Sequence => (0..control.children.len()).any(child),
                 K::Choice => (0..control.children.len()).all(child),

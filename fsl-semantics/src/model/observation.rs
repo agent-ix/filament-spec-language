@@ -1683,6 +1683,7 @@ pub(crate) fn model_views<'a>(
 ) -> Result<Vec<ModelView>, AdmissionFailure> {
     let model_selections = model_selections.into();
     let mut views = Vec::with_capacity(model_selections.selections.len());
+    let mut included_sources = BTreeSet::new();
     for selection in model_selections.selections {
         let source = model_selections.source(&selection.identity);
         let domain_package = match source {
@@ -1699,6 +1700,9 @@ pub(crate) fn model_views<'a>(
                 DomainPackage::new(package_ref, records)
             }
         };
+        if source.is_some() {
+            included_sources.insert(selection.identity.as_str());
+        }
         let view = match normalize(&domain_package, limits) {
             NormalizeOutcome::Completed(view) => view,
             // A reached ceiling of `ModelNormalizationLimits` is the caller's
@@ -1730,6 +1734,37 @@ pub(crate) fn model_views<'a>(
         } else {
             ModelView::new(view)
         });
+    }
+    // Source declarations are always part of a checked unit, even when the
+    // unit selects no model package (or selects only unrelated model
+    // packages). Observation admission still needs their effective views to
+    // resolve source-owned clause contexts and declaration names.
+    for source in model_selections.sources {
+        if !included_sources.insert(source.model_selection.identity.as_str()) {
+            continue;
+        }
+        let view = match normalize(source, limits) {
+            NormalizeOutcome::Completed(view) => view,
+            NormalizeOutcome::Incomplete(incomplete) => {
+                return Err(caller_budget_refusal(
+                    &incomplete.denial(),
+                    INSUFFICIENT_NEXT_CHARGE,
+                ))
+            }
+            NormalizeOutcome::Refused(refusals) => {
+                return Err(refusals
+                    .iter()
+                    .find_map(|refusal| {
+                        let denial = refusal.cause.denial()?;
+                        Some(caller_budget_refusal(
+                            &denial,
+                            refusal.cause.catalog_code().cause(),
+                        ))
+                    })
+                    .unwrap_or_else(|| fault("model-reconsistent-normalize")))
+            }
+        };
+        views.push(ModelView::source(view));
     }
     Ok(views)
 }
