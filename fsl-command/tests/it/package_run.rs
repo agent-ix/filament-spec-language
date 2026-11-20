@@ -159,7 +159,7 @@ fn package_synthesis_conflicts_with_a_call_before_package_read() {
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "absent.json"},
-            "synthesis": {"selection": "planned"},
+            "synthesis": {"declaration": "Pick"},
             "call": {"function": "half", "arguments": []}}),
     );
     assert_eq!(exit, 20, "{value}");
