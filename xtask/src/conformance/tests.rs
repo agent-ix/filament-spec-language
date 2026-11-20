@@ -144,6 +144,40 @@ fn each_selection_refuses_missing_evidence_or_failure() {
     }
 }
 
+/// QSL-2270: what a selection's Cargo child writes reaches the gate's own
+/// output as it is written and is still captured whole for the checks.
+#[test]
+fn child_output_is_echoed_and_captured() {
+    let child =
+        b"   Compiling fsl-package v0.3.0\nBlocking waiting for file lock on build directory\n";
+    let mut echoed = Vec::new();
+    let captured = super::echo_and_capture(&child[..], &mut echoed).unwrap();
+    assert_eq!(echoed, child);
+    assert_eq!(captured, child);
+}
+
+/// A sink that refuses writes, standing in for a closed gate stdout.
+struct ClosedSink;
+
+impl std::io::Write for ClosedSink {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A gate output that cannot be written stops the echo, never the capture
+/// the checks judge.
+#[test]
+fn a_closed_echo_sink_still_captures_child_output() {
+    let child = b"test result: ok. 1 passed; 0 failed; 0 ignored;\n";
+    let captured = super::echo_and_capture(&child[..], ClosedSink).unwrap();
+    assert_eq!(captured, child);
+}
+
 #[test]
 fn zero_source_map_entries_refuse() {
     let root = crate::test_support::tempdir();
