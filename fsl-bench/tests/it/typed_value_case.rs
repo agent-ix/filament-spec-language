@@ -4,7 +4,7 @@
 use filament_eval::FamilyOutcome;
 use filament_exact::{Integer, Meter, Outcome, Value, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_bench::prop::value::{CollectionKind, Expr, Type, TypedExpression};
+use fsl_bench::prop::value::{Expr, Type, TypedExpression};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
@@ -91,7 +91,7 @@ fn argument(domain: &Type, seed: u8) -> Expr {
             let width = upper - lower + 1;
             Expr::Integer(lower + i64::from(seed) % width)
         }
-        Type::Boolean => Expr::Boolean(seed % 2 == 0),
+        Type::Boolean => Expr::Boolean(seed.is_multiple_of(2)),
         Type::Rational => Expr::Rational {
             numerator: i64::from(seed % 11) - 5,
             denominator: 1 + seed % 3,
@@ -101,7 +101,14 @@ fn argument(domain: &Type, seed: u8) -> Expr {
             scale: seed % 3,
         },
         Type::Text => Expr::Text("x".repeat(usize::from(seed % 17))),
-        Type::Option(member) => Expr::OptionSome(Box::new(argument(member, seed))),
+        Type::Option(member) => Expr::Let {
+            name: "arg_payload".into(),
+            ty: (**member).clone(),
+            value: Box::new(argument(member, seed)),
+            body: Box::new(Expr::OptionSome(Box::new(Expr::Parameter(
+                "arg_payload".into(),
+            )))),
+        },
         Type::Record(member) | Type::Tuple(member) => Expr::Let {
             name: "arg_member".into(),
             ty: (**member).clone(),
@@ -110,17 +117,29 @@ fn argument(domain: &Type, seed: u8) -> Expr {
                 Type::Record(_) => Expr::Record(Box::new(Expr::Parameter("arg_member".into()))),
                 Type::Tuple(_) => Expr::Tuple(
                     Box::new(Expr::Parameter("arg_member".into())),
-                    seed % 2 == 0,
+                    seed.is_multiple_of(2),
                 ),
                 _ => unreachable!("this arm admits only record and tuple domains"),
             }),
         },
-        Type::Collection { kind, member } => Expr::Collection {
-            kind: *kind,
-            members: (0..seed % 5)
-                .map(|offset| argument(member, seed.wrapping_add(offset)))
-                .collect(),
-        },
+        Type::Collection { kind, member } => {
+            let count = seed % 5;
+            let mut expression = Expr::Collection {
+                kind: *kind,
+                members: (0..count)
+                    .map(|offset| Expr::Parameter(format!("arg_item_{offset}")))
+                    .collect(),
+            };
+            for offset in (0..count).rev() {
+                expression = Expr::Let {
+                    name: format!("arg_item_{offset}"),
+                    ty: (**member).clone(),
+                    value: Box::new(argument(member, seed.wrapping_add(offset))),
+                    body: Box::new(expression),
+                };
+            }
+            expression
+        }
     }
 }
 
@@ -130,7 +149,16 @@ pub(super) fn sampled_source(input: &TypedExpression, seed: u8) -> String {
         .iter()
         .enumerate()
         .map(|(index, (_, domain))| {
-            argument(domain, seed.wrapping_add(u8::try_from(index).unwrap())).source()
+            Expr::Let {
+                name: "typed_arg".into(),
+                ty: domain.clone(),
+                value: Box::new(argument(
+                    domain,
+                    seed.wrapping_add(u8::try_from(index).unwrap()),
+                )),
+                body: Box::new(Expr::Parameter("typed_arg".into())),
+            }
+            .source()
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -200,27 +228,32 @@ pub(super) fn inside(value: &Value, checked: &ValueType) -> bool {
     }
 }
 
-pub(super) fn family(domain: &Type) -> &'static str {
-    match domain {
-        Type::Integer | Type::BoundedInt { .. } => "integer",
-        Type::Rational => "rational",
-        Type::Decimal { .. } => "decimal",
-        Type::Collection {
-            kind: CollectionKind::Sequence,
-            ..
-        } => "sequence",
-        Type::Collection {
-            kind: CollectionKind::Set,
-            ..
-        } => "set",
-        Type::Collection {
-            kind: CollectionKind::Bag,
-            ..
-        } => "bag",
-        Type::Boolean => "boolean",
-        Type::Text => "text",
-        Type::Option(_) => "option",
-        Type::Record(_) => "record",
-        Type::Tuple(_) => "tuple",
-    }
+pub(super) fn family(value: &Value) -> Option<&'static str> {
+    Some(match value {
+        Value::Integer(_) => "integer",
+        Value::Rational(_) => "rational",
+        Value::Decimal(_) => "decimal",
+        Value::Collection(value) => match value.collection_type().kind() {
+            filament_exact::CollectionKind::Sequence => "sequence",
+            filament_exact::CollectionKind::Set => "set",
+            filament_exact::CollectionKind::Bag => "bag",
+            filament_exact::CollectionKind::OrderedSet => "ordered-set",
+        },
+        Value::Boolean(_) => "boolean",
+        Value::Text(_) => "text",
+        Value::Option(_) => "option",
+        Value::Composite(_) => "composite",
+        Value::Float(_)
+        | Value::Quantity(_)
+        | Value::String(_)
+        | Value::Bytes(_)
+        | Value::JsonObject(_)
+        | Value::Uuid(_)
+        | Value::Timestamp(_)
+        | Value::Enum(_)
+        | Value::Population(_)
+        | Value::Union(_)
+        | Value::Map(_)
+        | Value::Reference(_) => return None,
+    })
 }

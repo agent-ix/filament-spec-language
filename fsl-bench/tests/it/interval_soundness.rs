@@ -186,10 +186,14 @@ fn p3_unproved_range_refusals_are_real() {
     prop::run(
         "p3_unproved_range_refusals_are_real",
         prop::config(256),
-        &intervals(),
-        |input| {
+        &(intervals(), proptest::bool::ANY),
+        |(input, excludes_lower)| {
             let (minimum, maximum) = input.interval();
-            let declared = (minimum + 1, maximum + 1);
+            let declared = if excludes_lower {
+                (minimum + 1, maximum + 1)
+            } else {
+                (minimum - 1, maximum - 1)
+            };
             let source = input.source(declared.0, declared.1);
             let refusals = match compile(&source) {
                 Ok(_) => {
@@ -208,7 +212,8 @@ fn p3_unproved_range_refusals_are_real() {
             prop_assert!(
                 input
                     .members()
-                    .any(|(a, b)| input.result(a, b) < i128::from(declared.0)),
+                    .any(|(a, b)| input.result(a, b) < i128::from(declared.0)
+                        || input.result(a, b) > i128::from(declared.1)),
                 "refusal has no actual parameter witness\n{source}"
             );
             Ok(())
@@ -239,7 +244,7 @@ fn weakened_rule_is_caught() {
             .map_err(|error| TestCaseError::fail(format!("{error}\n{source}")))?;
             let actual = evaluated_integer(value);
             prop_assert!(
-                actual <= i128::from(upper) - 1,
+                actual < i128::from(upper),
                 "weakened + interval misses value={actual}; a={a}, b={b}\n{source}"
             );
         }

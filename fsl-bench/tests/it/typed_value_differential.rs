@@ -9,7 +9,10 @@ use proptest::prelude::{any, prop_assert, TestCaseError};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
-fn membership(input: &value::TypedExpression, assignment: u8) -> Result<(), TestCaseError> {
+fn membership(
+    input: &value::TypedExpression,
+    assignment: u8,
+) -> Result<&'static str, TestCaseError> {
     let source = sampled_source(input, assignment);
     let package =
         compile(&source).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
@@ -20,7 +23,18 @@ fn membership(input: &value::TypedExpression, assignment: u8) -> Result<(), Test
         inside(&result, &checked),
         "source={source}\nassignment seed={assignment}\nchecked={checked:?}\nvalue={result:?}"
     );
-    Ok(())
+    let declared = package
+        .graph()
+        .callable("f")
+        .expect("checked function")
+        .result;
+    prop_assert!(
+        inside(&result, declared),
+        "source={source}\nassignment seed={assignment}\ndeclared={declared:?}\nvalue={result:?}"
+    );
+    family(&result).ok_or_else(|| {
+        TestCaseError::fail(format!("unsupported returned value {result:?}\n{source}"))
+    })
 }
 
 // These six ordinary source fixtures guarantee the required domains even
@@ -96,13 +110,13 @@ fn p1_completed_values_lie_inside_the_checked_type() {
         |(input, assignment)| {
             if !required_done.get() {
                 for required in required_family_cases() {
-                    membership(&required, assignment)?;
-                    covered.borrow_mut().insert(family(&required.result));
+                    covered
+                        .borrow_mut()
+                        .insert(membership(&required, assignment)?);
                 }
                 required_done.set(true);
             }
-            membership(&input, assignment)?;
-            covered.borrow_mut().insert(family(&input.result));
+            covered.borrow_mut().insert(membership(&input, assignment)?);
             Ok(())
         },
     )
