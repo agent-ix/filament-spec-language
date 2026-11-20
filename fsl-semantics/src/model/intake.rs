@@ -203,7 +203,9 @@ pub fn native_budget_setting(
     }
 }
 
+mod model_unit;
 mod unit;
+pub use model_unit::{CompiledModelUnit, compile_model_unit, package_input_from_sources};
 pub use unit::{
     admit_unit, admit_unit_with_cancel, admit_units_with_cancel, OperationClauseFailure,
     SelectedModel, SelectedModels, TypeInvariantFailure, UnitIntakeCause, UnitIntakeRefusal,
@@ -1117,6 +1119,25 @@ pub fn package_input<'a>(
 ) -> Result<PackageInput, ModelRefusal> {
     let mut input = PackageInput::new();
     for bytes in documents {
+        if model_unit::looks_like_model_unit(bytes) {
+            let compiled = model_unit::compile_model_unit_bytes(bytes)?;
+            if input
+                .insert(compiled.identity().to_owned(), compiled.bytes().to_vec())
+                .is_some()
+            {
+                return Err(ModelRefusal {
+                    code: Code::InvalidPackage,
+                    cause: ModelRefusalCause::ConflictingPackage {
+                        identity: compiled.identity().to_owned(),
+                    },
+                    detail: format!(
+                        "two supplied domain packages declare identity {:?}; one domain package is supplied per identity",
+                        compiled.identity()
+                    ),
+                });
+            }
+            continue;
+        }
         let document = PackageDocument::parse(
             bytes,
             IntakeLimits::default()
