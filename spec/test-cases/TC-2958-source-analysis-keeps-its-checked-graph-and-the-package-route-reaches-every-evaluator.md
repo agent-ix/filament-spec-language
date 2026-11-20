@@ -31,9 +31,10 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
    (FR-940-AC-16) through the `package` selection; check its certificate.
 5. Analyze the Counter program over source with a binding whose `packages`
    leave out `test/counter`, and again with it supplied.
-6. Analyze `Bounded` with `AtMostTwo`, and `ReachThree`, over source with the replay's
-   `ReplayPackage` byte ceiling below the emission's length, and again with a
-   test-only emitter that fails at the replay's emission.
+6. Analyze `Bounded` with `AtMostTwo`, and `ReachThree`, over source and
+   over the handoff directory with `replay.input_bytes` below the
+   emission's length, and over source again with a test-only emitter that
+   fails at the replay's emission.
 
 Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
@@ -51,7 +52,9 @@ Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
 - Step 5: `missing_import`/`missing-selection` naming `test/counter`, `details.path`
   under `/semantic_graph/nodes/`, `items` `[]`, `last_stage` `S4`, exit 20,
   never `runtime_invariant`; with the package supplied, exit 0.
-- Step 6: the replaying item `inconclusive`, `replay_refused` carrying
-  `resource_exhausted`, never `package-emission`; `Bounded` `proved`; no
-  whole-run refusal; with the failing emitter, the item settles `failed` with
+- Step 6: on both routes `AtMostTwo` and `ReachThree` settle `inconclusive`,
+  `replay_refused` carrying `stage_limit_exceeded`/`input-bytes-exceeded`
+  naming `replay.input_bytes`, never `package-emission` or `package-bytes`
+  and never `proved` for `ReachThree`; `Bounded` `proved`; no whole-run
+  refusal; with the failing emitter, `AtMostTwo` settles `failed` with
   `analyze`/`package-emission`.

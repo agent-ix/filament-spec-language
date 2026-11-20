@@ -14,7 +14,7 @@ relationships:
 
 Verify that a snapshot or model-header refusal written as `native-run-result/2`
 carries a `document` locus that the strict reader reads back, and that the
-reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-28.
+reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-27 and FR-267-AC-29.
 
 ## Test Procedure
 
@@ -36,7 +36,7 @@ reader keeps the locus kind set closed. Scope: FR-267-AC-25 to FR-267-AC-28.
 8. Run a replay request whose member names no member of its package, and a
    run with an absent request file.
 9. Read step 1's document with its locus replaced by each `input` locus of
-   FR-267-AC-28, and by each defective `input` locus and the `file` kind.
+   FR-267-AC-29, and by each defective `input` locus and the `file` kind.
 
 Tag the tests `#[trace("TC-3081", "<AC id>")]`.
 
