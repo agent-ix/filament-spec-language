@@ -305,6 +305,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
                 .iter()
                 .find(|node| &node.node_id == target)
                 .expect("declared parameter");
+            assert_eq!(parameter.semantic_form.as_ref(), "parameter");
             let CheckedTerm::Aggregate { members } = &parameter.body else {
                 panic!("parameter metadata");
             };
@@ -319,20 +320,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
                     _ => None,
                 })
                 .expect("parameter name");
-            let CheckedTerm::Reference { target: name } = name else {
-                panic!("parameter name reference");
-            };
-            let name = graph
-                .nodes
-                .iter()
-                .find(|node| &node.node_id == name)
-                .expect("parameter name literal");
-            match name
-                .body
-                .literal_read()
-                .expect("parameter name value")
-                .value
-            {
+            match name.literal_read().expect("parameter name value").value {
                 CheckedLiteralValue::Text("ready") => Some(target),
                 _ => None,
             }
