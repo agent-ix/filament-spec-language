@@ -191,6 +191,13 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
     let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
         panic!("the lost branch traps")
     };
+    assert_eq!(instance.over.as_ref(), Some(&world.reference("g")));
+    let over = ModelInstance {
+        population: world.subject(&["g"], UNLIMITED).simulation.universes[0]
+            .population
+            .clone(),
+        key: "g".to_owned(),
+    };
     assert_eq!(names(&stem.steps), ["play", "lose"]);
     let mut observed = None;
     let record = fsl_replay::settle_state_graph(
@@ -204,10 +211,17 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
         world.claim("CanStillWin"),
         &crate::fill::tcb_01_event_position_selection(&world.package),
         &Cancel::new(),
-        |evidence| {
+        |offered| {
+            let StateGraphOutcome::Trapped { stem } = &offered.outcome else {
+                panic!("settlement must replay its returned trap")
+            };
             let replay = world.replay_evidence(
                 world.claim("CanStillWin"),
-                evidence.clone(),
+                GraphEvidence::Trap {
+                    stem: stem.clone(),
+                    closure: fsl_replay::TrapClosure::StateGraph,
+                    over: Some(over.clone()),
+                },
                 &["g"],
                 ReplayLimits::default(),
             )?;
@@ -224,12 +238,6 @@ fn a_returned_trap_settles_from_its_real_closure_and_a_shortened_stem_names_the_
 
     let mut shortened = stem.clone();
     shortened.steps.pop();
-    let over = ModelInstance {
-        population: world.subject(&["g"], UNLIMITED).simulation.universes[0]
-            .population
-            .clone(),
-        key: "g".to_owned(),
-    };
     let replay = world
         .replay_evidence(
             world.claim("CanStillWin"),
