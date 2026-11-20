@@ -238,7 +238,7 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
             "absent" => {
                 missing.push(TimestampedMissingValuation {
                     position: u64::try_from(index).map_err(|error| error.to_string())?,
-                    atom: 0,
+                    atom: 1,
                 });
                 false
             }
