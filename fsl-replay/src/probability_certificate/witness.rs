@@ -38,6 +38,14 @@ pub struct ProbabilityWitnessStep {
     pub elapsed: Rational,
 }
 
+fn same_draw(left: &Option<Vec<SemanticValue>>, right: &Option<Vec<SemanticValue>>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => same_values(left, right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 /// One finite path from the witness's initial state.
 #[derive(Clone, Debug)]
 pub struct ProbabilityWitnessPath {
@@ -539,7 +547,7 @@ fn replay_probabilistic_witness_impl(
                 if a.action != b.action
                     || a.transition != b.transition
                     || a.post_key != b.post_key
-                    || !same_values(&a.draw, &b.draw)
+                    || !same_draw(&a.draw, &b.draw)
                 {
                     prefix = false;
                     break;

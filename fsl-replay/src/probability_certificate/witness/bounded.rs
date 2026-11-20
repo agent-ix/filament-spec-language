@@ -295,7 +295,7 @@ pub(super) fn replay(
                 poll_cancel(cancel)?;
                 if a.action != b.action
                     || a.transition != b.transition
-                    || !same_values(&a.draw, &b.draw)
+                    || !super::same_draw(&a.draw, &b.draw)
                     || a.post_key != b.post_key
                 {
                     prefix = false;

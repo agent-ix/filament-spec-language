@@ -1402,6 +1402,68 @@ struct CheckerGraph {
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
 }
 
+fn topological_order(
+    graph: &CheckerGraph,
+    cancel: &Cancel,
+) -> Result<Vec<ProbabilityProductKey>, ExactProbabilityGraphError> {
+    let zero = rational(0);
+    let mut indegree = BTreeMap::new();
+    for key in graph.states.keys() {
+        poll_cancel(cancel)?;
+        indegree.insert(key.clone(), 0_usize);
+    }
+    for state in graph.states.values() {
+        for edge in state.choices.iter().flatten() {
+            poll_cancel(cancel)?;
+            if edge.probability == zero {
+                continue;
+            }
+            let Some(count) = indegree.get_mut(&edge.target) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            *count = count
+                .checked_add(1)
+                .ok_or(ExactProbabilityGraphError::TooManyEdges)?;
+        }
+    }
+    let mut ready = BTreeSet::new();
+    for (key, degree) in &indegree {
+        poll_cancel(cancel)?;
+        if *degree == 0 {
+            ready.insert(key.clone());
+        }
+    }
+    let mut order = Vec::with_capacity(graph.states.len());
+    while let Some(key) = ready.pop_first() {
+        poll_cancel(cancel)?;
+        order.push(key.clone());
+        let Some(state) = graph.states.get(&key) else {
+            return Err(ExactProbabilityGraphError::MissingSuccessor);
+        };
+        for edge in state.choices.iter().flatten() {
+            poll_cancel(cancel)?;
+            if edge.probability == zero {
+                continue;
+            }
+            let Some(count) = indegree.get_mut(&edge.target) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            let Some(remaining) = count.checked_sub(1) else {
+                return Err(ExactProbabilityGraphError::MissingSuccessor);
+            };
+            *count = remaining;
+            if *count == 0 {
+                ready.insert(edge.target.clone());
+            }
+        }
+    }
+    if order.len() == graph.states.len() {
+        Ok(order)
+    } else {
+        Err(ExactProbabilityGraphError::Cycle)
+    }
+}
+
 /// Check exact reachability values on a checker-owned graph.
 ///
 /// The graph representation and this evaluator are independent of
@@ -1479,7 +1541,9 @@ fn check_exact_reachability(
                 }
                 let denominator = one.sub(&internal);
                 if !denominator.is_zero() {
-                    exit_values.push(outside.div(&denominator));
+                    if let Some(value) = outside.div(&denominator) {
+                        exit_values.push(value);
+                    }
                 }
             }
         }
@@ -1659,7 +1723,7 @@ fn nonprogressive_end_components(
         .map(|(index, key)| (key.clone(), index))
         .collect::<BTreeMap<_, _>>();
     let mut pending = vec![(0..keys.len()).collect::<BTreeSet<_>>()];
-    let mut result = Vec::new();
+    let mut result: Vec<Vec<usize>> = Vec::new();
     let zero = rational(0);
     while let Some(mut candidate) = pending.pop() {
         loop {

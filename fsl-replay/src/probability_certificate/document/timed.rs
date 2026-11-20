@@ -331,7 +331,9 @@ fn check_mean_time_values(
                 }
                 let denominator = one().sub(&internal);
                 if !denominator.is_zero() {
-                    exits.push((key.clone(), choice_index, reward.div(&denominator)));
+                    if let Some(value) = reward.div(&denominator) {
+                        exits.push((key.clone(), choice_index, value));
+                    }
                 }
             }
         }
