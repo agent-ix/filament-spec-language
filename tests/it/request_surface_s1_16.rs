@@ -1092,7 +1092,12 @@ fn both_routes(leaf: &str) -> (String, String) {
 
 /// [`both_routes`] with the package leg selecting `package`.
 fn both_routes_over(leaf: &str, package: Value) -> (String, String) {
-    let unit = shape_low(leaf);
+    unit_both_routes(&shape_low(leaf), package)
+}
+
+/// [`both_routes_over`] over the whole `unit`.
+fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
+    let unit = unit.to_owned();
     let lower = json!({"clause": "Low"});
     let (code, value) = run(&unit, true, ("tl_lowering", lower.clone()));
     assert_eq!(code, 0, "{value}");
@@ -1977,4 +1982,44 @@ fn case_binders_print_under_their_declared_names_without_a_model_read() {
         renamed_source.contains("Rect(ww, mm): ww + mm <= 4"),
         "{renamed_source}"
     );
+}
+
+/// The `Low` unit with `declarations` before its clause and `leaf` under
+/// `always`.
+fn declaring_low(declarations: &str, leaf: &str) -> String {
+    shape_low(leaf).replacen(
+        "union Shape",
+        &format!("{declarations}\nunion Shape"),
+        1,
+    )
+}
+
+/// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630, package
+/// half): the checker records the alias a `count` type argument names, the
+/// emitter writes it as the member's `alias`, and the package route prints
+/// the declaration key the source route prints. A structural argument and a
+/// chain of aliases print as the source route prints them.
+#[test]
+#[trace("TC-2601", "FR-931-AC-16")]
+fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
+    let items = "sequence[c.versionNumber, 1, 2, 3]";
+    let identity = "test:s1-16:unit.native";
+    for (declarations, argument, printed) in [
+        ("type Small = Int[0, 4];", "Small", format!("ix://{identity}/Small")),
+        (
+            "type Small = Tiny;\ntype Tiny = Int[0, 4];",
+            "Small",
+            format!("ix://{identity}/Small"),
+        ),
+        ("type Small = Int[0, 4];", "Int[0, 4]", "Int[0, 4]".to_owned()),
+    ] {
+        let leaf = format!("holds(count<{argument}>(x in {items}: x > 1) >= 1)");
+        let unit = declaring_low(declarations, &leaf);
+        let expected =
+            format!("holds(count<{printed}>(x in {items}: x > 1) >= 1)");
+        let (from_source, from_package) =
+            unit_both_routes(&unit, json!({"directory": "handoff"}));
+        assert_eq!(from_source, expected, "{unit}");
+        assert_eq!(from_package, expected, "{unit}");
+    }
 }
