@@ -726,7 +726,11 @@ fn a_clause_function_body_carries_its_location_rows() {
     let rows = wire["checked_term_data"]["body_locations"]
         .as_array()
         .expect("body_locations carrier");
-    let is_sqrt = |row: &Value| row["application"]["path"].to_string().contains("float64.sqrt");
+    let is_sqrt = |row: &Value| {
+        row["application"]["path"]
+            .to_string()
+            .contains("float64.sqrt")
+    };
     let sqrt_paths: Vec<Value> = rows
         .iter()
         .filter(|row| is_sqrt(row))
@@ -749,19 +753,17 @@ fn a_clause_function_body_carries_its_location_rows() {
         "both rows belong to the clause function"
     );
 
-    let refused_at = |wire: &Value| {
-        match CheckedPackageV2::read(
-            &serde_json::to_vec(wire).unwrap(),
-            CheckedPackageReadLimits::bounded(),
-            &evidence(wire),
-        ) {
-            CheckedPackageV2ReadResult::Refused(refusal) => refusal.loci[0]
-                .path
-                .as_ref()
-                .map(ToString::to_string)
-                .expect("the refusal has a path"),
-            other => panic!("the package must be refused: {other:?}"),
-        }
+    let refused_at = |wire: &Value| match CheckedPackageV2::read(
+        &serde_json::to_vec(wire).unwrap(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence(wire),
+    ) {
+        CheckedPackageV2ReadResult::Refused(refusal) => refusal.loci[0]
+            .path
+            .as_ref()
+            .map(ToString::to_string)
+            .expect("the refusal has a path"),
+        other => panic!("the package must be refused: {other:?}"),
     };
     let mut without_second = wire.clone();
     let second = without_second["checked_term_data"]["body_locations"]
@@ -774,9 +776,69 @@ fn a_clause_function_body_carries_its_location_rows() {
         .as_array_mut()
         .unwrap()
         .remove(second);
-    assert_eq!(refused_at(&without_second), "/checked_term_data/body_locations");
+    assert_eq!(
+        refused_at(&without_second),
+        "/checked_term_data/body_locations"
+    );
 
     let mut without_carrier = wire.clone();
     without_carrier["checked_term_data"]["body_locations"] = json!([]);
-    assert_eq!(refused_at(&without_carrier), "/checked_term_data/body_locations");
+    assert_eq!(
+        refused_at(&without_carrier),
+        "/checked_term_data/body_locations"
+    );
+}
+
+/// FR-531-AC-39, FSpec FR-322: one unit holding every shape of function body
+/// the producer locates (arithmetic, a conversion, `sqrt`, an attribute read
+/// through `self`, an implicit coercion, `let`, `if`, `case`, a node
+/// reached twice and a clause function) is emitted and read back through the
+/// strict reader, which owes a row for every term of every body.
+#[trace("TC-3133", "FR-531-AC-39")]
+#[test]
+fn a_unit_of_every_body_shape_reads_back_through_the_strict_reader() {
+    let float = "Float64[nearest-even]";
+    let sqrt = "filament::value::ieee::sqrt";
+    let (bytes, _) = emit_with_capture(&format!(
+        "body sizeA using v on Config::ConfigVersion::size() {{ 1 }}\n\
+         body sizeB using v on Config::Sub::size() {{ 2 }}\n\
+         body sizeC using v on Config::Leaf::size() {{ 3 }}\n\
+         union Shape {{ Empty, Circle(Integer), Rect(Integer, Integer) }}\n\
+         function arith using v(x: Integer, y: Integer): Integer pure {{ x + y * 2 - 1 }}\n\
+         function conv using v(a: Rational[-10, 10; 1, 10]): {float} pure {{ convert<{float}>(a) }}\n\
+         function root using v(p: {float}, q: {float}): Boolean pure {{ {sqrt}(p) <= {sqrt}(q) }}\n\
+         function coerce using v(a: Int[0, 9], b: Integer): Integer pure {{ a + b }}\n\
+         function twice using v(a: Integer): Integer pure {{ let t = a + 1 in t * t }}\n\
+         function pick using v(a: Boolean, x: Integer): Integer pure {{ if a then x + 1 else 0 }}\n\
+         function area using v(s: Shape): Integer pure \
+         {{ case s {{ Empty: 0; Circle(r): r; Rect(w, h): w * h; }} }}\n\
+         pre rootCall using v on Config::ConfigVersion::probe {{ self.size() > 0 }}\n\
+         pre sqrtPre using v on Config::ConfigVersion::size {{ {sqrt}(float64(bits: 0x4000000000000000)) <= {sqrt}(float64(bits: 0x4000000000000000)) and self.versionNumber = self.versionNumber }}\n"
+    ));
+    admitted(&bytes);
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = wire["checked_term_data"]["body_locations"]
+        .as_array()
+        .expect("body_locations carrier");
+    let mut functions: Vec<String> = rows
+        .iter()
+        .map(|row| row["location"]["origin"]["name"].to_string())
+        .collect();
+    functions.sort();
+    functions.dedup();
+    assert_eq!(
+        functions,
+        [
+            "area",
+            "arith",
+            "coerce",
+            "conv",
+            "ix://example/config-version/ConfigVersion/size.precondition",
+            "pick",
+            "root",
+            "twice",
+        ]
+        .map(|name| json!(name).to_string()),
+        "a row group per body with a term"
+    );
 }

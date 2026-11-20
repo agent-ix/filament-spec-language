@@ -758,7 +758,7 @@ fn a_workload_reads_back_as_the_s3_record() {
 /// FSL FR-740: an enum-valued random parameter is emitted with an `enum`
 /// support literal typed at the enumeration and naming each case, and the
 /// strict reader admits it.
-#[trace("TC-2062", "FR-740-AC-8")]
+#[trace("TC-2062", "FR-740-AC-1")]
 #[test]
 fn an_enum_valued_random_parameter_is_emitted_and_read_back() {
     use super::variant_types::fixture;
@@ -801,7 +801,7 @@ fn an_enum_valued_random_parameter_is_emitted_and_read_back() {
 /// FSL FR-740: a Boolean-valued random parameter is emitted with `boolean`
 /// support literals `true` and `false` at their exact weights, and the strict
 /// reader admits it.
-#[trace("TC-2062", "FR-740-AC-8")]
+#[trace("TC-2062", "FR-740-AC-1")]
 #[test]
 fn a_boolean_valued_random_parameter_is_emitted_and_read_back() {
     use super::abstraction::fixture;
@@ -2374,8 +2374,8 @@ fn refusal_of(
     )
 }
 
-/// TC-2062 (FR-185-AC-12): the S4 refusal of a delay and a workload
-/// is located at the declaration (its label span in
+/// TC-2062 (FR-185-AC-12): the S4 refusal of a delay, a random parameter and a
+/// workload is located at the declaration (its label span in
 /// the unit's text) and names the declaration in words, with no debug
 /// rendering of a span or source reference.
 #[trace("TC-2062", "FR-185-AC-12")]
@@ -2389,12 +2389,36 @@ fn probabilistic_refusals_have_locus() {
                  dimension Time; unit ms : Time = rational(1, 1);\ntime O dense unit ms;\n";
     let abstraction_document =
         crate::emit::tests::wire_bytes(&abstraction::document()).expect("serializes");
-    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 2] = [
+    // A random parameter over a `String`, which has no support literal kind,
+    // is the refusal a random parameter still gets.
+    let mut string_model = abstraction::document();
+    string_model["types"]
+        .as_array_mut()
+        .expect("the types")
+        .iter_mut()
+        .find(|declaration| declaration["identity"] == abstraction::id("ConfigVersion"))
+        .map(|declaration| {
+            declaration["operations"][0]["params"][0]["typeRef"] =
+                json!("ix://filament/native/String");
+        })
+        .expect("the first parameter of attemptUpdate");
+    let string_document = crate::emit::tests::wire_bytes(&string_model).expect("serializes");
+    let cases: [(String, Vec<u8>, ProbabilisticFeature, &str); 3] = [
         (
             format!("{head}{timed}{objects}delay O::step ~ uniform;\n"),
             Vec::new(),
             ProbabilisticFeature::Delay,
             "step",
+        ),
+        (
+            format!(
+                "{head}profile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n\
+                 random ConfigVersion::attemptUpdate(n) ~ {{ \"a\": 1, \"b\": 1 }};\n",
+                abstraction::PACKAGE
+            ),
+            string_document,
+            ProbabilisticFeature::RandomParameter,
+            "attemptUpdate(n)",
         ),
         (
             format!(

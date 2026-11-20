@@ -169,8 +169,11 @@ pub(super) fn term_rows<L>(
         };
         // An attribute read through `deref` lowers two terms at its one
         // position, the `project` and the `deref` it reads; each is keyed.
+        // A clause function's `self` read lowers the `deref` of an attribute
+        // the checker does not flag as derefed, so the recorded `deref`
+        // applications decide, not the flag.
         let mut claimed_here = vec![application];
-        if matches!(node.kind(), NodeKind::Attribute { derefed: true, .. }) {
+        if matches!(node.kind(), NodeKind::Attribute { .. }) {
             claimed_here.extend(
                 applications
                     .get(at)

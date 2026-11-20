@@ -25,19 +25,27 @@ fn emitted_at(package: &CheckedPackage, bound: u64) -> Result<Emission, EmitRefu
     crate::emit::emit_package(package, whole_unit, EmitLimits::new(bound))
 }
 
+const UNIT_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+                            profile v = \"filament.value.complete/v1\";\n\
+                            function f using v(): Boolean pure { ";
+
 /// A pure Boolean function whose body is `depth` nested `not` expressions,
 /// read and checked from source with front-end ceilings raised to fit.
 fn nested_not_package(depth: usize) -> CheckedPackage {
-    let mut source = String::from(
-        "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"filament.value.complete/v1\";\n\
-         function f using v(): Boolean pure { ",
-    );
-    for _ in 0..depth {
-        source.push_str("not ");
-    }
-    source.push_str("true }\n");
+    checked_unit(&format!("{UNIT_HEADER}{}true }}\n", "not ".repeat(depth)))
+}
 
+/// A pure Boolean function whose body is `depth` nested `let`s, which hold no
+/// term and so carry no body-location row.
+fn nested_let_package(depth: usize) -> CheckedPackage {
+    let bindings: String = (0..depth)
+        .map(|level| format!("let b{level} = true in "))
+        .collect();
+    checked_unit(&format!("{UNIT_HEADER}{bindings}true }}\n"))
+}
+
+/// `source` read and checked with front-end ceilings raised to fit it.
+fn checked_unit(source: &str) -> CheckedPackage {
     let source_limits = fsl_cst::Limits {
         source_bytes: source.len(),
         tokens: source.len(),
@@ -74,20 +82,12 @@ fn nested_not_package(depth: usize) -> CheckedPackage {
 }
 
 fn emitted_byte_count(depth: usize) -> usize {
-    let package = nested_not_package(depth);
+    let package = nested_let_package(depth);
     let emission =
         crate::emit::emit_checked(&package, EmitLimits::new(u64::MAX)).unwrap_or_else(|refusal| {
             panic!("depth {depth} emits under a raised output limit: {refusal}")
         });
-    // The body-location rows carry each term's path from the root, so they
-    // grow with the square of the depth; the package without them is what
-    // stays linear.
-    let mut wire: serde_json::Value =
-        serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
-    if let Some(data) = wire["checked_term_data"].as_object_mut() {
-        data.remove("body_locations");
-    }
-    serde_json::to_vec(&wire).expect("serializes").len()
+    emission.package().bytes().len()
 }
 
 /// The bound is inclusive: `N` bytes under bound `N` are emitted, byte for
@@ -197,34 +197,37 @@ fn emit_output_bytes_sets_only_the_output_byte_bound() {
     assert_eq!(EmitLimits::new(1).with_output_bytes(9).output_bytes, 9);
 }
 
-/// QSL-1985: canonical emission cost for the same trivial body scales with
-/// its nested `not` count; the measured bytes per level stay within 5%.
+/// QSL-1985: canonical emission cost for a body that holds no term row scales
+/// with its nested `let` count; the measured bytes per level stay within 5%.
+/// A body of nested terms also writes a body-location row per term, each row
+/// carrying its path from the root, so its bytes grow with the square of its
+/// depth (FR-264 Behavior 5) and are bounded by the next test.
 #[trace("FR-264-AC-6", "FR-255-AC-1")]
 #[test]
-fn nested_not_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
+fn nested_let_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
     let at_one_thousand = emitted_byte_count(1_000);
     let at_five_thousand = emitted_byte_count(5_000);
-    let per_not_at_one_thousand = at_one_thousand / 1_000;
-    let per_not_at_five_thousand = at_five_thousand / 5_000;
-    let difference = per_not_at_one_thousand.abs_diff(per_not_at_five_thousand);
+    let per_let_at_one_thousand = at_one_thousand / 1_000;
+    let per_let_at_five_thousand = at_five_thousand / 5_000;
+    let difference = per_let_at_one_thousand.abs_diff(per_let_at_five_thousand);
 
     eprintln!(
-        "measured canonical bytes per not: depth 1,000 => {per_not_at_one_thousand}, depth 5,000 => {per_not_at_five_thousand}"
+        "measured canonical bytes per let: depth 1,000 => {per_let_at_one_thousand}, depth 5,000 => {per_let_at_five_thousand}"
     );
     assert!(
-        per_not_at_one_thousand > 0,
+        per_let_at_one_thousand > 0,
         "the emitted package is nonempty"
     );
     assert!(
-        difference * 100 <= per_not_at_one_thousand.max(per_not_at_five_thousand) * 5,
-        "bytes per not should remain linear: 1,000 => {at_one_thousand} bytes ({per_not_at_one_thousand}/not), 5,000 => {at_five_thousand} bytes ({per_not_at_five_thousand}/not)"
+        difference * 100 <= per_let_at_one_thousand.max(per_let_at_five_thousand) * 5,
+        "bytes per let should remain linear: 1,000 => {at_one_thousand} bytes ({per_let_at_one_thousand}/let), 5,000 => {at_five_thousand} bytes ({per_let_at_five_thousand}/let)"
     );
 }
 
-/// QSL-1985: the default output ceiling refuses 20,000 nested `not`s at a
-/// source occurrence; raising the named setting admits a 2,000-level package
-/// (the rows of a deeper body are charged by path length), and a 100-level
-/// body remains below the default ceiling.
+/// QSL-1985: the default output ceiling refuses 4,500 nested `not`s at a
+/// source occurrence, because the body-location rows of the terms hold each
+/// path from the root; raising the named setting admits the same package, and
+/// a 100-level body remains below the default ceiling.
 #[trace("FR-264-AC-6", "FR-255-AC-4")]
 #[test]
 fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
@@ -233,11 +236,11 @@ fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
     crate::emit::emit_checked(&shallow, EmitLimits::new(DEFAULT_OUTPUT_BYTES))
         .expect("100 nested nots emit under the default output limit");
 
-    let deep = nested_not_package(20_000);
+    let deep = nested_not_package(4_500);
     let refusal = match crate::emit::emit_checked(&deep, EmitLimits::new(DEFAULT_OUTPUT_BYTES)) {
         Err(refusal) => refusal,
         Ok(emission) => panic!(
-            "20,000 nested nots emitted {} bytes under the default limit",
+            "4,500 nested nots emitted {} bytes under the default limit",
             emission.package().bytes().len()
         ),
     };
@@ -254,8 +257,34 @@ fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
     assert!(message.contains("output byte limit"), "{message}");
     assert!(message.contains("emit.output_bytes"), "{message}");
 
-    // The rows of a 20,000-level body cost the square of its depth, so the
-    // raised ceiling is shown at a depth whose rows stay small.
-    crate::emit::emit_checked(&nested_not_package(2_000), EmitLimits::new(u64::MAX))
-        .expect("raising emit.output_bytes admits the 2,000-level package");
+    crate::emit::emit_checked(&deep, EmitLimits::new(u64::MAX))
+        .expect("raising emit.output_bytes admits the 4,500-level package");
+}
+
+/// FR-264-AC-6 over a body that writes body-location rows: a package of `N`
+/// canonical bytes is emitted at bound `N`, byte for byte as under a larger
+/// bound, so the byte charge of its rows never exceeds the bytes written; at
+/// `N - 1` it is refused.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
+    let package = nested_not_package(300);
+    let larger = crate::emit::emit_checked(&package, EmitLimits::new(u64::MAX))
+        .expect("an unbounded ceiling emits");
+    let rows = serde_json::from_slice::<serde_json::Value>(larger.package().bytes())
+        .expect("the package is JSON")["checked_term_data"]["body_locations"]
+        .as_array()
+        .map_or(0, Vec::len);
+    assert!(rows >= 300, "the body writes a row per term: {rows}");
+    let n = u64::try_from(larger.package().bytes().len()).unwrap();
+
+    let exact = crate::emit::emit_checked(&package, EmitLimits::new(n))
+        .expect("a ceiling of exactly N bytes emits");
+    assert_eq!(exact.package().bytes(), larger.package().bytes());
+    let limit = limit_of(
+        crate::emit::emit_checked(&package, EmitLimits::new(n - 1))
+            .expect_err("a ceiling below N refuses"),
+    );
+    assert_eq!(limit.configured_bound(), n - 1);
+    assert!(limit.actual() > u128::from(n - 1));
 }

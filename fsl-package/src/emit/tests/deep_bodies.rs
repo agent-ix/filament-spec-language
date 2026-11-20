@@ -127,6 +127,7 @@ fn deep_declarations(source: &str) -> PackageDeclarations {
 /// and the checked package clones, compares equal to its clone, formats for
 /// debug and drops there.
 #[trace("TC-725", "FR-258-AC-1", "FR-258-AC-5")]
+#[trace("TC-738", "FR-264-AC-8")]
 #[test]
 fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
     for label in ["sum", "else if", "let"] {
@@ -153,10 +154,16 @@ fn a_100000_deep_body_checks_lowers_and_emits_on_a_small_stack() {
                     crate::EmitLimits::new(if label == "sum" { 1 << 27 } else { 1 << 32 }),
                 );
                 if label == "sum" {
-                    assert!(
-                        matches!(emitted, Err(EmitRefusal::OutputLimit(_))),
-                        "{label}: refused at the output limit: {emitted:?}"
+                    let Err(EmitRefusal::OutputLimit(limit)) = &emitted else {
+                        panic!("{label}: refused at the output limit: {emitted:?}");
+                    };
+                    assert_eq!(
+                        emitted.as_ref().expect_err("refused").code(),
+                        Code::StageLimitExceeded
                     );
+                    assert_eq!(limit.setting(), fsl_foundation::Setting::EmitOutputBytes);
+                    assert_eq!(limit.configured_bound(), 1 << 27);
+                    assert!(limit.actual() > 1 << 27, "{label}: {limit}");
                 } else {
                     let emission =
                         emitted.unwrap_or_else(|refusal| panic!("{label}: emits: {refusal:?}"));

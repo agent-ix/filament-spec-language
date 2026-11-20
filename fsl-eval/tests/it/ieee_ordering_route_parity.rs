@@ -204,13 +204,13 @@ fn f64v(bits: u64) -> Value {
 
 /// FR-397-AC-30, FR-940-AC-15: each ordering body charges the same log on
 /// both routes, with ordinary operands and with `p` a quiet NaN. The AC's
-/// `sqrt` body is under the ignored
-/// `an_ordering_over_square_roots_charges_the_same_on_both_routes` (QSL-2625),
-/// so this test covers the AC's other bodies only.
+/// `sqrt` body is covered by
+/// `an_ordering_over_square_roots_charges_the_same_on_both_routes`, so this
+/// test covers the AC's other bodies.
 #[trace("TC-3077", "FR-397-AC-30")]
 #[trace("TC-3077", "FR-940-AC-15")]
 #[test]
-fn an_ordering_charges_the_same_on_the_source_and_package_routes_except_square_roots() {
+fn an_ordering_charges_the_same_on_the_source_and_package_routes() {
     let one = f64v(0x3ff0_0000_0000_0000);
     let two = f64v(0x4000_0000_0000_0000);
     let nan = f64v(0x7ff8_0000_0000_0001);

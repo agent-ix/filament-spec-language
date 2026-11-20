@@ -5848,9 +5848,6 @@ fn push_scalar_type(
     });
 }
 
-/// Replace producer-local temporary timed identities with their structural
-/// identities. Timed graph edges are acyclic, so each pass resolves another
-/// level of references until every node and source-map entry agrees.
 /// Replace every `NodeRef` of `data` equal to `old` with `new`: the identity
 /// map `rekey_timed_model_nodes` applies to the graph, applied to the sidecar.
 fn replace_term_data_node(
@@ -5932,6 +5929,9 @@ fn replace_term_data_node(
     }
 }
 
+/// Replace producer-local temporary timed identities with their structural
+/// identities. Timed graph edges are acyclic, so each pass resolves another
+/// level of references until every node and source-map entry agrees.
 fn rekey_timed_model_nodes(
     ids: &StructuralIds,
     nodes: &mut [CheckedSemanticNodeV2],
