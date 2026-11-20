@@ -43,3 +43,26 @@ filament-eval #42 is mergeable, with one low finding (FND-008). filament-spec-la
 | FND-008 | low | `CaseArm.names` is a `Vec<String>` parallel to `binders: Vec<Slot>`. Nothing in the type enforces equal length: the printer checks it at runtime, and the checker and reader build the two vectors in lockstep. A `Vec<(Slot, String)>` or a binder struct would make the invariant structural (rust-style) | filament-eval crates/filament-checked/src/node.rs:243-252 |
 | FND-009 | low | #3115 pins filament-checked and filament-eval to the #42 head e88c319a. A squash merge of #42 leaves that commit off main, so #3115 must be re-pinned to the main merge commit before it merges. QSL-2562 is also already marked Done while both code PRs are open | Cargo.toml:25, :28 |
 | FND-010 | low | `an_authors_let_prints_under_its_declared_name` is traced `#[trace("TC-3039", "FR-931-AC-13")]` but asserts the FR-931-AC-14 case (an author's `ieee_operand_0` let prints as written); retrace it to FR-931-AC-14 | fsl-command/src/command/tl/canonical.rs:1105-1126 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | low | Case arms print in stored order; the printer never checks `arm.member` ascending, and the package-route test sorts the arm names before comparing, so FR-931-AC-13's member-declaration order is unasserted on the reader route. Assert unsorted order in the package test (or fault in the printer on out-of-order arms) | fsl-command/src/command/tl/canonical.rs:456-467, fsl-eval/tests/it/package_binder_names.rs:110-111 |
+| FND-012 | low | Unit-test comment says "`Z > -A` is the same tree with the operands read the other way", but the block builds the non-strict composition and asserts `<=`; the comment describes a different case than the code tests | fsl-command/src/command/tl/canonical.rs:1038-1049 |
+| FND-013 | low | `a_case_or_let_under_a_field_read_is_parenthesised` names `let` but exercises only a `case` base; add a `let` (and `if`) field-base assertion | fsl-command/src/command/tl/canonical.rs:1095-1156 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Rebased; `git merge-tree --write-tree origin/main 7539972` exits 0 with no conflicts; Field/Attribute arms use alias-free checked names |
+| FND-002 | still-open | Stale field-identity reason is gone and two ignores cite live Backlog tickets (QSL-2627, QSL-2628), but `case_binders_print_under_their_declared_names` cites QSL-2629, which is Done (spec ruling); the code follow-up is QSL-2632 (Specced). Retarget the ignore to QSL-2632 |
+| FND-003 | fixed | `Callee::Union(_) => None` reverts the widening; ruled in QSL-2629 (FR-317-AC-7/8, #3117) with code follow-up QSL-2632 |
+| FND-004 | fixed | `postfix_base` parenthesises any base below precedence 9; unit test asserts `(case ix://p/U::B { A: true; B: true; }).f` |
+| FND-005 | fixed | New `fsl-eval/tests/it/package_binder_names.rs` drives emit→read→`project_function` and asserts arm, `_` and `let` names including a rename |
+| FND-006 | deferred | QSL-2630 (Backlog): FR-931 type-argument rules and canonical printing for count/sum/only/fold |
+| FND-007 | fixed | `slot_name` returns `Result` and refuses with internal fault `checked-binding-slot-has-a-declared-name` |
+| FND-008 | deferred | Lives in filament-eval (merged as #42 / ad8e55d); not changeable in #3115 |
+| FND-009 | fixed | Cargo.toml/lock pin filament-eval main merge commit ad8e55d (on origin/main) |
+| FND-010 | fixed | `an_authors_let_prints_under_its_declared_name` now traced `("TC-3039", "FR-931-AC-14")` |

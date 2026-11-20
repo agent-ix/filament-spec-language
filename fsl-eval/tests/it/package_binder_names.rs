@@ -101,25 +101,22 @@ fn reader_names(body: &str) -> (Vec<String>, Vec<String>, Vec<Vec<Vec<String>>>)
 #[trace("TC-3039", "FR-931-AC-13")]
 #[test]
 fn the_reader_gives_case_arm_and_let_binders_their_declared_names() {
-    let (lets, queries, arms) = reader_names(
-        "case s { Empty: true; Rect(_, h): let k = h in k <= 4; Circle(r): r <= 2; }",
-    );
+    let (lets, queries, arms) =
+        reader_names("case s { Empty: true; Rect(_, h): let k = h in k <= 4; Circle(r): r <= 2; }");
     assert_eq!(lets, ["k"]);
     assert!(queries.is_empty());
     assert_eq!(arms.len(), 1);
-    let mut names = arms[0].clone();
-    names.sort();
     assert_eq!(
-        names,
+        arms[0],
         [
-            vec![],
+            vec!["r".to_owned()],
             vec!["_".to_owned(), "h".to_owned()],
-            vec!["r".to_owned()]
+            vec![]
         ]
     );
     let (lets, _, arms) = reader_names(
         "case s { Empty: true; Rect(width, h): let kk = h in kk <= 4; Circle(r): r <= 2; }",
     );
     assert_eq!(lets, ["kk"]);
-    assert!(arms[0].iter().any(|names| names == &["width", "h"]));
+    assert_eq!(arms[0][1], ["width", "h"]);
 }

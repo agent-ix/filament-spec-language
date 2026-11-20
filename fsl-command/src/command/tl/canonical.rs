@@ -453,6 +453,9 @@ impl Printer<'_> {
                     .get(declaration)
                     .ok_or_else(|| "checked case has its union's declared members".to_owned())?;
                 let mut printed_arms = String::new();
+                if !arms.windows(2).all(|pair| pair[0].member < pair[1].member) {
+                    return Err("checked case arms are in declared member order".to_owned());
+                }
                 for (position, arm) in arms.iter().enumerate() {
                     let member = members
                         .get(arm.member)
@@ -935,10 +938,7 @@ mod tests {
     use filament_exact::IeeeValue;
     use ix_trace_rs::trace;
 
-    fn ordinary(
-        nodes: &mut Vec<ExpressionNode>,
-        kind: NodeKind<usize, CheckedLiteral>,
-    ) -> usize {
+    fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
         nodes.push(ExpressionNode {
             kind,
             value_type: ValueType::Boolean,
@@ -981,12 +981,7 @@ mod tests {
         } else {
             ordinary(
                 nodes,
-                NodeKind::Connective(
-                    Connective::Or,
-                    ConnectiveOrigin::Synthesized,
-                    total,
-                    equal,
-                ),
+                NodeKind::Connective(Connective::Or, ConnectiveOrigin::Synthesized, total, equal),
             )
         };
         and(nodes, both, relation)
@@ -1035,7 +1030,7 @@ mod tests {
             format!("-{A_TEXT} < {Z_TEXT}")
         );
 
-        // `Z > -A` is the same tree with the operands read the other way.
+        // `Z >= -A` is the same tree, non-strict, with the operands read the other way.
         let mut nodes = Vec::new();
         let a = float(&mut nodes, A);
         let negated = ordinary(&mut nodes, NodeKind::Negate(a));
@@ -1093,19 +1088,26 @@ mod tests {
     }
 
     /// FR-931 "Parenthesisation": a `case` or `let` under a field read is
-    /// parenthesised so the text parses back to the same tree.
-    #[test]
-    #[trace("TC-3039", "FR-931-AC-13")]
-    fn a_case_or_let_under_a_field_read_is_parenthesised() {
-        let key = NodeKey::new("p", vec![filament_exact::PathSegment::Text("U".into())], 0)
-            .unwrap();
+    /// A two-member union `U` (`A`, `B`) with its declaration rows.
+    fn union_rows() -> (NodeKey, CanonicalRows) {
+        let key =
+            NodeKey::new("p", vec![filament_exact::PathSegment::Text("U".into())], 0).unwrap();
         let mut rows = CanonicalRows::default();
         rows.declarations.insert(key.clone(), "ix://p/U".to_owned());
         rows.union_members
             .insert(key.clone(), vec!["A".to_owned(), "B".to_owned()]);
-        let mut nodes = Vec::new();
+        (key, rows)
+    }
+
+    /// A `case` over `U::B` whose arms name members `first` and `second`.
+    fn case_over(
+        nodes: &mut Vec<ExpressionNode>,
+        key: &NodeKey,
+        first: usize,
+        second: usize,
+    ) -> usize {
         let scrutinee = ordinary(
-            &mut nodes,
+            nodes,
             NodeKind::UnionValue {
                 declaration: key.clone(),
                 member: 1,
@@ -1113,46 +1115,100 @@ mod tests {
             },
         );
         let truth = ordinary(
-            &mut nodes,
+            nodes,
             NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
         );
-        let case = ordinary(
-            &mut nodes,
+        let arm = |member| filament_checked::node::CaseArm {
+            member,
+            binders: vec![],
+            names: vec![],
+            body: truth,
+        };
+        ordinary(
+            nodes,
             NodeKind::Case {
                 scrutinee,
                 declaration: key.clone(),
-                arms: vec![
-                    filament_checked::node::CaseArm {
-                        member: 0,
-                        binders: vec![],
-                        names: vec![],
-                        body: truth,
-                    },
-                    filament_checked::node::CaseArm {
-                        member: 1,
-                        binders: vec![],
-                        names: vec![],
-                        body: truth,
-                    },
-                ],
+                arms: vec![arm(first), arm(second)],
             },
-        );
-        let field = filament_checked::node::RecordField::new(key, "f");
-        let root = ordinary(
-            &mut nodes,
-            NodeKind::Field {
-                operand: case,
-                field,
-                optional: false,
-            },
-        );
-        let text = CheckedExpression { nodes, root }
-            .render(&[], &rows)
-            .unwrap();
+        )
+    }
+
+    /// FR-931 "Parenthesisation": a `case`, `let` or `if` under a field read
+    /// is parenthesised so the text parses back to the same tree.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-13")]
+    fn a_case_or_let_under_a_field_read_is_parenthesised() {
+        let (key, rows) = union_rows();
+        let field_of = |build: &dyn Fn(&mut Vec<ExpressionNode>) -> usize| {
+            let mut nodes = Vec::new();
+            let operand = build(&mut nodes);
+            let field = filament_checked::node::RecordField::new(key.clone(), "f");
+            let root = ordinary(
+                &mut nodes,
+                NodeKind::Field {
+                    operand,
+                    field,
+                    optional: false,
+                },
+            );
+            CheckedExpression { nodes, root }
+                .render(&[], &rows)
+                .unwrap()
+        };
         assert_eq!(
-            text,
+            field_of(&|nodes| case_over(nodes, &key, 0, 1)),
             "(case ix://p/U::B { A: true; B: true; }).f"
         );
+        assert_eq!(
+            field_of(&|nodes| {
+                let value = float(nodes, A);
+                let body = ordinary(nodes, NodeKind::Local(0));
+                ordinary(
+                    nodes,
+                    NodeKind::Let {
+                        slot: 0,
+                        name: "v".to_owned(),
+                        value,
+                        body,
+                    },
+                )
+            }),
+            format!("(let v = {A_TEXT} in v).f")
+        );
+        assert_eq!(
+            field_of(&|nodes| {
+                let condition = ordinary(
+                    nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+                );
+                let then = float(nodes, A);
+                let otherwise = float(nodes, 0);
+                ordinary(
+                    nodes,
+                    NodeKind::If {
+                        condition,
+                        then,
+                        otherwise,
+                    },
+                )
+            }),
+            format!("(if true then {A_TEXT} else {Z_TEXT}).f")
+        );
+    }
+
+    /// FR-931-AC-13: arms out of declared member order are a typed fault,
+    /// not a reordered print.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-13")]
+    fn case_arms_out_of_declared_order_are_an_internal_fault() {
+        let (key, rows) = union_rows();
+        let mut nodes = Vec::new();
+        let root = case_over(&mut nodes, &key, 1, 0);
+        let fault = CheckedExpression { nodes, root }
+            .render(&[], &rows)
+            .unwrap_err();
+        assert!(fault.contains("declared member order"), "{fault}");
     }
 
     /// FR-931-AC-14: an author's `let ieee_operand_0 = e in ...` is an
