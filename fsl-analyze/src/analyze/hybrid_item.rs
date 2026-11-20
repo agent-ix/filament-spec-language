@@ -3,9 +3,9 @@
 //! provider its negotiated candidate names and settled by the arm of the
 //! provider's verdict: a solver result by FR-250's map, a claimed refutation
 //! by FR-450's exact replay, and an unsupported construct as a located
-//! `unsupported` record. A provider's certificate is not read here: FR-751's
-//! checker is a later slice (QSL-2531), so the item settles `uncertified` and
-//! the answer's certificate is neither checked nor written to the outcome.
+//! `unsupported` record. A provider's certificate is read against the entry's
+//! form (a refusal is `invalid_result`), checked by FR-751 only where the
+//! settlement rests on it, and written to the outcome with its check's result.
 
 use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
@@ -32,6 +32,7 @@ pub(crate) struct HybridReport {
     pub(crate) value: TerminalValue,
     pub(crate) counterexample: Option<Box<HybridCounterexample>>,
     pub(crate) wire: Result<Value, fsl_replay::CounterexampleWireError>,
+    pub(crate) certificate: Option<fsl_replay::CertificateRecord>,
 }
 
 /// The package and request context a hybrid item reads to spell a locus.
@@ -114,14 +115,29 @@ pub(super) fn hybrid_item<'a>(
                     },
                 };
                 let answer = provider.solve(&request, cancel);
+                let certificate = match answer.read_certificate(graph, checked) {
+                    Ok(certificate) => certificate,
+                    Err(refusal) => {
+                        let mut detail = Map::new();
+                        detail.insert("pointer".to_owned(), refusal.pointer.into());
+                        return EngineReport::Refused(Refusal::FailedWithDetail(
+                            CatalogCode::new("invalid_result", refusal.code.as_str()),
+                            detail,
+                        ));
+                    }
+                };
                 let mut meter = HybridReplayMeter::new(work_units);
                 let settled = match answer.verdict {
-                    HybridVerdict::Solved(result) => result.settle(graph, checked, &mut meter),
-                    HybridVerdict::Refuted(claimed) => {
-                        HybridSettlement::from_provider_counterexample(
-                            graph, checked, *claimed, &mut meter,
-                        )
+                    HybridVerdict::Solved(result) => {
+                        result.settle_certified(graph, checked, certificate.as_ref(), &mut meter)
                     }
+                    HybridVerdict::Refuted(claimed) => HybridSettlement::from_provider_certified(
+                        graph,
+                        checked,
+                        *claimed,
+                        certificate.as_ref(),
+                        &mut meter,
+                    ),
                     HybridVerdict::Unsupported(construct) => {
                         return unsupported_construct(graph, &wire, position, model, &construct);
                     }
@@ -137,6 +153,7 @@ pub(super) fn hybrid_item<'a>(
                         EngineReport::Hybrid(Box::new(HybridReport {
                             value: settled.value,
                             counterexample: settled.counterexample.map(Box::new),
+                            certificate: settled.certificate,
                             wire,
                         }))
                     }

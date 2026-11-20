@@ -514,6 +514,7 @@ pub(super) fn request_and_envelope<T: Clone + fsl_eval::simulation::SubjectTrans
     } = shape;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
+        certificate: None,
         package,
         profile_selections: Vec::new(),
         dependencies,
@@ -602,6 +603,7 @@ pub(crate) fn replay_protocol_over(
     .map_err(|_| fault("package-emission"))?;
     let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
     let wire = ReplayRequestWire {
+        certificate: None,
         package,
         profile_selections: Vec::new(),
         dependencies: super::request::dependency_wires(inputs.package),

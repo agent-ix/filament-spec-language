@@ -26,9 +26,9 @@ use fsl_foundation::SourceIdentity;
 use fsl_replay::{ExactReplay, HybridReplayMeter};
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
+use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -456,6 +456,7 @@ fn hybrid_replay_request_for(
     )
     .expect("the hybrid unit compiles");
     fsl_replay::ReplayRequestWire {
+        certificate: None,
         package: fsl_replay::ReplayPackage::read(
             compiled.bytes(),
             fsl_replay::ReplayLimits::default().input_bytes,
@@ -465,7 +466,7 @@ fn hybrid_replay_request_for(
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
             fsl_replay::QualifiedName::new(vec![
-                filament_exact::Identifier::new(claim).expect("the claim name is an identifier"),
+                filament_exact::Identifier::new(claim).expect("the claim name is an identifier")
             ])
             .expect("the claim name is qualified"),
         ),
@@ -532,7 +533,6 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-1")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
-#[ignore = "QSL-2531: core check of hybrid provider certificates not implemented yet"]
 fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, accepted) = first_item(
@@ -574,7 +574,6 @@ fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-2")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
-#[ignore = "QSL-2531: core check of flowpipe certificates not implemented yet"]
 fn a_flowpipe_step_violating_picard_is_rejected() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
@@ -600,7 +599,6 @@ fn a_flowpipe_step_violating_picard_is_rejected() {
 #[test]
 #[trace("TC-2101", "FR-751-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2531: work-limited certificate check not implemented yet"]
 fn a_work_limited_certificate_check_is_rejected() {
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
     let (_, item) = first_item(
@@ -618,17 +616,34 @@ fn a_work_limited_certificate_check_is_rejected() {
 /// entry refuses `invalid_result`/`invalid-value` at `/certificate`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2531: certificate form check not implemented yet"]
 fn a_mismatched_certificate_form_refuses_at_certificate() {
     let mut entry = inductive_entry("20");
     entry["certificate"] = json!({"type": "flowpipe", "steps": []});
     let unit = braking(&claim("Bounded", "always holds(h.v < 30)"));
+    let (fixture, _) = answering("hybrid-fixture", move |request| {
+        let read =
+            HybridAnswer::read_entry(&entry, &[], request.graph, request.claim, request.wire);
+        assert!(
+            matches!(
+                &read,
+                Err(fsl_replay::HybridEntryRefusal::Entry(
+                    fsl_replay::PluginResultRefusal::Malformed { pointer, .. }
+                )) if pointer == "/certificate"
+            ),
+            "{read:?}"
+        );
+        let mut base = entry.clone();
+        base.as_object_mut().expect("object").remove("certificate");
+        let mut answer = entry_answer(base)(request);
+        answer.certificate = entry.get("certificate").cloned();
+        answer
+    });
     let (_, item) = first_item(
         "hybrid-652-4",
         &unit,
         named("Bounded", "hybrid-fixture"),
         json!({}),
-        vec![hybrid_fixture("hybrid-fixture", &entry)],
+        vec![fixture],
     );
     let text = item.to_string();
     assert!(text.contains("invalid_result"), "{item}");
@@ -681,7 +696,6 @@ fn grow_witness(steps: usize) -> Value {
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
 #[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-#[ignore = "QSL-2531: validated-witness refutation not implemented yet"]
 fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
     let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
         "enclosure": {"v": interval("1", "1")}}, "jumps": []});
@@ -740,7 +754,6 @@ fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
 /// and `inconclusive`, `replay-parity` `not-exact`, when it is rejected.
 #[test]
 #[trace("TC-1221", "FR-450-AC-11")]
-#[ignore = "QSL-2531: validated-witness settlement of a NotExact provider refutation not implemented yet"]
 fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
     let trace = json!({"start": {"mode": "Up", "time": interval("0", "0"),
         "enclosure": {"v": interval("1", "1")}}, "jumps": []});
@@ -772,11 +785,26 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
         vec![hybrid_fixture("hybrid-fixture", &entry(grow_witness(8)))],
     );
     assert_eq!(rejected["record"]["result"], "inconclusive", "{rejected}");
-    assert_eq!(rejected["certificate"]["rule"], "witness-violation", "{rejected}");
+    assert_eq!(
+        rejected["certificate"]["rule"], "witness-violation",
+        "{rejected}"
+    );
     let text = rejected.to_string();
     assert!(text.contains("replay-parity"), "{rejected}");
-    assert!(text.contains("not-exact"), "{rejected}");
+    assert!(text.contains("hybrid-trace"), "{rejected}");
     assert!(rejected.get("counterexample").is_none(), "{rejected}");
+}
+
+/// `n/16` in lowest terms, the form FSpec FR-331 `Rational` objects take.
+fn sixteenths(n: u32) -> String {
+    let divisor = (1..=16_u32)
+        .rev()
+        .find(|d| n % d == 0 && 16 % d == 0)
+        .unwrap_or(1);
+    match 16 / divisor {
+        1 => (n / divisor).to_string(),
+        denominator => format!("{}/{denominator}", n / divisor),
+    }
 }
 
 /// `Braking`'s flowpipe: 160 `Moving` steps of 1/16 s contracted to
@@ -784,9 +812,9 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
 fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
     let mut steps = Vec::new();
     for k in 0..160_u32 {
-        let start = format!("{k}/16");
-        let end = format!("{}/16", k + 1);
-        let upper = format!("{}/16", 320 - k);
+        let start = sixteenths(k);
+        let end = sixteenths(k + 1);
+        let upper = sixteenths(320 - k);
         steps.push(
             json!({"mode": "Moving", "time": interval(&start, &end), "step": rational("1/16"),
             "box": {"v": interval("0", &upper), "a": interval("1", "2")},
@@ -794,8 +822,8 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
         );
     }
     steps.push(
-        json!({"mode": "Stopped", "time": interval(jump_time.0, jump_time.1),
-        "step": rational("10"), "box": {"v": interval("0", "0"), "a": interval("1", "2")},
+        json!({"mode": "Stopped", "from": {"dwell": 0, "transition": 0},
+        "time": interval(jump_time.0, jump_time.1), "step": rational("10"), "box": {"v": interval("0", "0"), "a": interval("1", "2")},
         "apriori": {"v": interval("0", "0"), "a": interval("1", "2")}}),
     );
     json!({"request_index": 0, "result": "proved", "certification": "uncertified",
@@ -811,7 +839,6 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
 /// accepted; against a violated claim it is rejected with rule `claim`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-5")]
-#[ignore = "QSL-2531: flowpipe guard and boundary-invariant check not implemented yet"]
 fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
     let unit = braking_pair();
     let check = |name: &str, claim: &str, jump_time: (&str, &str)| {
@@ -1023,18 +1050,102 @@ fn an_undefined_evaluation_counterexample_reads_back() {
     assert!(counterexample.contains("division-by-zero"), "{item}");
 }
 
+fn grow_counterexample() -> fsl_replay::HybridCounterexample {
+    use fsl_replay::{
+        ExactInterval, HybridCounterexample, HybridCounterexampleKind, HybridTrace, TraceState,
+    };
+    let point = |value| ExactInterval::point(exact(value));
+    HybridCounterexample {
+        kind: HybridCounterexampleKind::Formula,
+        trace: HybridTrace {
+            start: TraceState {
+                mode: ModeIndex::new(0),
+                time: point(0),
+                enclosure: vec![point(1)],
+            },
+            jumps: Vec::new(),
+            delta: None,
+            loop_to: None,
+            end: None,
+        },
+    }
+}
+
+fn grow_replay(certificate: Option<Value>) -> fsl_replay::ReplayRequestWire {
+    let mut wire = hybrid_replay_request_for(GROW, "Below", grow_counterexample());
+    wire.certificate = certificate;
+    wire
+}
+
 /// FR-750-AC-15: a `Below` replay request carrying FSpec FR-652-AC-3's
 /// witness at `/replay/certificate` writes the `hybrid` row
 /// `reproduced-with-validated-witness`; the cut witness or none writes
 /// `inconclusive` `not-exact`; the witness on a `function` request refuses
-/// `unknown-member` at `/replay/certificate`. `ReplayRequestWire` has no
-/// certificate member yet, so the request cannot be built until it lands.
+/// `unknown-member` at `/replay/certificate`.
 #[test]
 #[trace("TC-3035", "FR-750-AC-15")]
-#[ignore = "QSL-2531: the replay request's validated-witness certificate is not implemented yet"]
 fn a_witness_refuted_hybrid_item_replays_with_validated_witness() {
-    let _witnesses = (grow_witness(9), grow_witness(8), GROW);
-    todo!("QSL-2531: FR-750-AC-15 needs `ReplayRequestWire`'s certificate member");
+    let row = |certificate: Option<Value>| -> Value {
+        let result = fsl_replay::replay(
+            grow_replay(certificate),
+            fsl_replay::ReplayLimits::default(),
+        )
+        .expect("the Grow counterexample settles as a row");
+        serde_json::from_str(&result.to_function_json().expect("the row serializes"))
+            .expect("the row is JSON")
+    };
+    let accepted = row(Some(grow_witness(9)));
+    assert_eq!(
+        accepted["settlement"], "reproduced-with-validated-witness",
+        "{accepted}"
+    );
+    assert_eq!(accepted["category"], "success", "{accepted}");
+    assert_eq!(
+        accepted["replay"]["exact"]["outcome"], "not-exact",
+        "{accepted}"
+    );
+    assert_eq!(accepted["counterexample"]["kind"], "formula", "{accepted}");
+    for certificate in [Some(grow_witness(8)), None] {
+        let inconclusive = row(certificate);
+        assert_eq!(inconclusive["settlement"], "inconclusive", "{inconclusive}");
+        assert_eq!(
+            inconclusive["replay"]["exact"]["outcome"], "not-exact",
+            "{inconclusive}"
+        );
+        assert_eq!(
+            inconclusive["disagreement"]["disagreement"]["type"], "not-exact",
+            "{inconclusive}"
+        );
+    }
+    let mut foreign = grow_replay(Some(grow_witness(9)));
+    foreign.source = fsl_replay::ReplaySource::Input(Vec::new());
+    let error = fsl_replay::replay(foreign, fsl_replay::ReplayLimits::default())
+        .expect_err("a certificate on a non-hybrid source is refused");
+    assert_eq!(error.code(), fsl_foundation::Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("unknown-member"));
+    assert_eq!(error.pointer().as_deref(), Some("/replay/certificate"));
+    let wrong_form = fsl_replay::replay(
+        grow_replay(Some(json!({"type": "flowpipe", "steps": []}))),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect_err("a certificate that is not a validated-witness is refused");
+    assert_eq!(wrong_form.cause(), Some("invalid-value"));
+    assert_eq!(
+        wrong_form.pointer().as_deref(),
+        Some("/replay/certificate/type")
+    );
+    let mut malformed = grow_witness(9);
+    malformed["dwells"][0][0]["from"] = json!({"dwell": 0, "transition": 0});
+    let error = fsl_replay::replay(
+        grow_replay(Some(malformed)),
+        fsl_replay::ReplayLimits::default(),
+    )
+    .expect_err("a structurally invalid witness is refused");
+    assert_eq!(error.code(), fsl_foundation::Code::InvalidRuntimeInput);
+    assert_eq!(
+        error.pointer().as_deref(),
+        Some("/replay/certificate/dwells/0/0/from")
+    );
 }
 
 /// FR-750-AC-10: the refuted `TooSlow` item's `replay` resolves to the
@@ -1120,9 +1231,9 @@ fn a_process_failed_entry_settles_failed_by_fr_290() {
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-2531: the Rational wire rule on the plan validation path"]
+#[ignore = "QSL-2534: the plan validation item and the reference provider are not implemented yet"]
 fn a_plan_validation_item_carries_rational_objects() {
-    todo!("QSL-2531: FR-1021-AC-3");
+    todo!("QSL-2534: FR-1021-AC-3");
 }
 
 /// `Shuttle` of FR-750-AC-12, its `Moving -> Stopped` reset `reset`, with
@@ -1456,4 +1567,98 @@ fn a_replay_request_settles_each_hybrid_refusal_by_its_row() {
     assert_eq!(trace.pointer.to_string(), "/loop");
     assert_eq!(trace.code(), "invalid_result");
     assert_eq!(trace.cause(), "invalid-value");
+}
+
+/// A structurally valid `Braking` `validated-witness` for [`point_counterexample`]
+/// whose first `box` misses the trace's start `v = 20`.
+fn braking_witness_missing_start() -> Value {
+    let moving = json!({"v": interval("0", "1"), "a": interval("1", "2")});
+    let stopped = json!({"v": interval("0", "0"), "a": interval("1", "2")});
+    json!({"type": "validated-witness", "dwells": [
+        [{"mode": "Moving", "time": interval("0", "1"), "step": rational("1"),
+            "box": moving.clone(), "apriori": moving}],
+        [{"mode": "Stopped", "time": interval("10", "11"), "step": rational("1"),
+            "box": stopped.clone(), "apriori": stopped}]]})
+}
+
+/// FR-750-AC-16: exact replay settles before any witness; a malformed
+/// witness refuses at its `/replay/certificate/...` pointer; a witness check
+/// the `work_units` bound stops writes the `incomplete` row; and the analyze
+/// path records a certificate it does not rest on unchecked.
+#[test]
+#[trace("TC-3035", "FR-750-AC-16")]
+fn exact_replay_settles_before_any_witness_and_a_bad_witness_refuses() {
+    let row = |wire: fsl_replay::ReplayRequestWire| -> Value {
+        let result = fsl_replay::replay(wire, fsl_replay::ReplayLimits::default())
+            .expect("the request settles as a row");
+        serde_json::from_str(&result.to_function_json().expect("the row serializes"))
+            .expect("the row is JSON")
+    };
+    let mut reproduced = hybrid_replay_request(&braking_pair(), point_counterexample());
+    reproduced.certificate = Some(braking_witness_missing_start());
+    let wire = row(reproduced);
+    assert_eq!(
+        wire["settlement"], "reproduced-with-evaluated-witness",
+        "{wire}"
+    );
+    let mut off = hybrid_replay_request(
+        &braking_pair(),
+        point_counterexample_with_acceleration(1, 20),
+    );
+    off.certificate = Some(braking_witness_missing_start());
+    let wire = row(off);
+    assert_eq!(wire["settlement"], "inconclusive", "{wire}");
+    assert_eq!(
+        wire["replay"]["exact"]["outcome"], "not-reproduced",
+        "{wire}"
+    );
+
+    let refuse = |certificate: Value| {
+        fsl_replay::replay(
+            grow_replay(Some(certificate)),
+            fsl_replay::ReplayLimits::default(),
+        )
+        .expect_err("the witness is refused before any row")
+    };
+    let mut step = grow_witness(9);
+    step["dwells"][0][0]["step"] = json!("4");
+    let error = refuse(step);
+    assert_eq!(error.code(), fsl_foundation::Code::InvalidRuntimeInput);
+    assert_eq!(error.cause(), Some("wrong-value-kind"));
+    assert_eq!(
+        error.pointer().as_deref(),
+        Some("/replay/certificate/dwells/0/0/step")
+    );
+    let mut second = grow_witness(9);
+    second["dwells"] = json!([second["dwells"][0].clone(), second["dwells"][0].clone()]);
+    let error = refuse(second);
+    assert_eq!(error.cause(), Some("invalid-value"));
+    assert_eq!(
+        error.pointer().as_deref(),
+        Some("/replay/certificate/dwells")
+    );
+
+    let mut limited = grow_replay(Some(grow_witness(9)));
+    limited.accounting_limits.work_units = 40;
+    let wire = row(limited);
+    assert_eq!(wire["category"], "incomplete", "{wire}");
+
+    // A `bounded-solver` proof FR-193 settles `insufficient-horizon` records
+    // its flowpipe unchecked: `form` and `identity`, no `accepted`.
+    let mut entry = braking_flowpipe(("0", "10"));
+    entry["basis"]["horizon"] = rational("1");
+    let (_, item) = first_item(
+        "hybrid-750-16",
+        &braking_pair(),
+        named("SlowEnough", "hybrid-fixture"),
+        json!({}),
+        vec![hybrid_fixture("hybrid-fixture", &entry)],
+    );
+    assert_ne!(item["record"]["certification"], "certified", "{item}");
+    let certificate = item["certificate"]
+        .as_object()
+        .unwrap_or_else(|| panic!("the certificate is carried: {item}"));
+    assert!(certificate.contains_key("form"), "{item}");
+    assert!(certificate.contains_key("identity"), "{item}");
+    assert!(!certificate.contains_key("accepted"), "{item}");
 }

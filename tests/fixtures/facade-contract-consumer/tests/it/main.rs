@@ -290,6 +290,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         let replay_limits = fsl_replay::ReplayLimits::default();
         let request = fsl_replay::ReplayRequest::decode(
             fsl_replay::ReplayRequestWire {
+                certificate: None,
                 package: fsl_replay::ReplayPackage::read(&site.package, replay_limits.input_bytes)
                     .expect("read emitted package"),
                 profile_selections: vec![],

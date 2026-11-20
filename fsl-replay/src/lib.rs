@@ -221,6 +221,7 @@ pub use execute::{
     ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
 pub use hybrid::{
+    CertificateRecord, CertificateStatus, HYBRID_CERTIFICATE_CHECKER,
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem, AdmittedHybridProcessRequest,
     BoundDimension, BudgetRefusal, ClaimHorizon, HybridProcessDependencyPackage, HybridProcessItem,
     HybridProcessPackageContext, HybridProcessRequest, HybridProcessRequestRefusal,
@@ -229,6 +230,11 @@ pub use hybrid::{
     SolverOutcome, SolverResult, SolverStop, UnsupportedConstruct,
 };
 pub use hybrid_replay::{
+    check_certificate as check_hybrid_certificate, read_certificate as read_hybrid_certificate,
+    Acceptance as HybridCertificateAcceptance, CertificateOutcome as HybridCertificateOutcome,
+    CertificateRefusal as HybridCertificateRefusal, Decisive as HybridDecisive,
+    HybridCertificate, HybridCertificateRule, ProofCoverage as HybridProofCoverage,
+    Rejection as HybridCertificateRejection,
     admit as admit_hybrid_trace, exact_replay, static_replay, ExactCheck, ExactGap, ExactInterval,
     polynomial_class_gap, ExactReal, ExactRecord, ExactReplay, ExpansionGap, ExpressionLocus, ExpressionSite,
     HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter, HybridReplayRefusal,
@@ -661,6 +667,7 @@ mod redaction_tests {
         let entry_x: Vec<u8> = (0..4096u32).map(|i| (i % 241) as u8).collect();
         // It returns the full content through the typed accessor.
         let valid_wire = ReplayRequestWire {
+            certificate: None,
             profile_selections: vec![],
             package: crate::request::raw_package_descriptor(
                 "fixture",

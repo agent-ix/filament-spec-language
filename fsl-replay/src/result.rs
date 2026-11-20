@@ -1186,6 +1186,9 @@ impl HybridReplayResult {
             HybridReplaySettlement::Reproduced { replay, .. } => {
                 static_replay_bytes(&replay.static_outcome)
             }
+            HybridReplaySettlement::ReproducedWithValidatedWitness { replay } => {
+                static_replay_bytes(&replay.static_outcome)
+            }
             HybridReplaySettlement::Inconclusive { replay, .. } => {
                 static_replay_bytes(&replay.static_outcome)
                     + replay.exact.as_ref().map_or(0, exact_replay_bytes)
@@ -1210,7 +1213,7 @@ fn exact_replay_bytes(replay: &crate::ExactRecord) -> usize {
     }
 }
 
-/// A hybrid replay's three possible settlements.
+/// A hybrid replay's possible settlements.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HybridReplaySettlement {
     /// The trace exactly reproduced the claim violation.
@@ -1219,6 +1222,13 @@ pub enum HybridReplaySettlement {
         replay: HybridReplayRecord,
         /// The replayed counterexample (its kind is the replay's own).
         counterexample: Box<crate::HybridCounterexample>,
+    },
+    /// Exact replay could not decide the trace, and its `validated-witness`
+    /// was accepted (FSpec FR-652): the violation is established by exact
+    /// interval enclosure.
+    ReproducedWithValidatedWitness {
+        /// Static and exact replay results; the exact check was `not-exact`.
+        replay: crate::ReplayRecord,
     },
     /// The trace was admitted but did not reproduce the claimed violation.
     Inconclusive {
@@ -1312,7 +1322,10 @@ impl ReplayResult {
             },
             Self::ProtocolAnalysis(result) => result.category(),
             Self::Hybrid(result) => match result.settlement {
-                HybridReplaySettlement::Reproduced { .. } => Category::Success,
+                HybridReplaySettlement::Reproduced { .. }
+                | HybridReplaySettlement::ReproducedWithValidatedWitness { .. } => {
+                    Category::Success
+                }
                 HybridReplaySettlement::Inconclusive { .. } => Category::Inconclusive,
                 HybridReplaySettlement::Incomplete { .. } => Category::Incomplete,
             },

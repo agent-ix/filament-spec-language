@@ -3065,6 +3065,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         | ReplayRefusal::NativePayload { .. }
         | ReplayRefusal::ModelTrace(_)
         | ReplayRefusal::HybridTrace(_)
+        | ReplayRefusal::HybridCertificate(_)
         | ReplayRefusal::UnfairLasso { .. }
         | ReplayRefusal::MissingFairnessPremise { .. }
         | ReplayRefusal::ObservedTemporalMismatch { .. }

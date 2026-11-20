@@ -3361,7 +3361,7 @@ struct ItemMembers {
 /// selection. `None` when the claim names no single owning package: a
 /// package with no model selection, or several and a claim with no `over`
 /// object type.
-fn owning_model<'p>(package: &'p CheckedPackage, claim: &OccurrenceKey) -> Option<&'p str> {
+fn owning_model<'p>(package: &'p CheckedPackage, claim: &'p OccurrenceKey) -> Option<&'p str> {
     let graph = package.graph();
     let over = graph
         .temporal_clauses()
@@ -3373,7 +3373,12 @@ fn owning_model<'p>(package: &'p CheckedPackage, claim: &OccurrenceKey) -> Optio
             }
             _ => None,
         });
-    over.or_else(|| match graph.model_selections() {
+    let hybrid = graph
+        .hybrid_claim_sites()
+        .iter()
+        .any(|site| &site.identity == claim.node())
+        .then(|| claim.node().package());
+    over.or(hybrid).or_else(|| match graph.model_selections() {
         [selection] => Some(selection.identity.as_str()),
         _ => None,
     })
@@ -3400,6 +3405,35 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value>
         | super::Counterexample::Hybrid(_) => json!({"state_clause": qualified}),
         super::Counterexample::ScheduleMiss(_) => return None,
     })
+}
+
+/// FR-621's `certificate` of a hybrid item (FSpec FR-652): `identity` and
+/// `form`, and for a certificate FR-751 checked `checker`, `accepted` and,
+/// when rejected, `rule` and `at`.
+fn hybrid_certificate_member(identity: Value, recorded: &fsl_replay::CertificateRecord) -> Value {
+    let mut member = Map::new();
+    member.insert("identity".to_owned(), identity);
+    member.insert("form".to_owned(), recorded.form.clone());
+    match &recorded.outcome {
+        fsl_replay::CertificateStatus::Unchecked => {}
+        fsl_replay::CertificateStatus::Accepted => {
+            member.insert(
+                "checker".to_owned(),
+                fsl_replay::HYBRID_CERTIFICATE_CHECKER.into(),
+            );
+            member.insert("accepted".to_owned(), true.into());
+        }
+        fsl_replay::CertificateStatus::Rejected { rule, at } => {
+            member.insert(
+                "checker".to_owned(),
+                fsl_replay::HYBRID_CERTIFICATE_CHECKER.into(),
+            );
+            member.insert("accepted".to_owned(), false.into());
+            member.insert("rule".to_owned(), rule.spelling().into());
+            member.insert("at".to_owned(), at.clone().into());
+        }
+    }
+    Value::Object(member)
 }
 
 /// One FR-621 item from the FR-286 item `written`.
@@ -3430,7 +3464,17 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
-    if let (Some(checker), Some(identity), Some(result)) = (
+    if let (Some(recorded), Some(identity)) = (
+        detail
+            .as_ref()
+            .and_then(|detail| detail.hybrid_certificate.as_ref()),
+        identity.clone(),
+    ) {
+        item.insert(
+            "certificate".to_owned(),
+            hybrid_certificate_member(identity, recorded),
+        );
+    } else if let (Some(checker), Some(identity), Some(result)) = (
         detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
