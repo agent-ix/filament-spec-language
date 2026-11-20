@@ -10,8 +10,9 @@ use filament_exact::{Integer, Rational, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, ClockOp,
-    MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind, TimedConstruct, TimedModel,
+    AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode,
+    CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
+    TimedConstruct, TimedModel,
 };
 use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
