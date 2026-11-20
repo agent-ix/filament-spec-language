@@ -53,10 +53,9 @@ impl StdioHost {
 
     /// The outcome stage a host writes for the item the provider left open.
     fn incomplete(&self, cause: &Value) -> Vec<u8> {
-        let outcome = json!({"results": [{"request_index": 0, "backend": self.backend,
-            "kind": "temporal-satisfaction", "result": "incomplete", "cause": cause}],
-            "counterexamples": []});
-        encode(&outcome)
+        let entry = json!({"request_index": 0, "backend": self.backend,
+            "kind": "temporal-satisfaction", "result": "incomplete", "cause": cause});
+        encode(&crate::support::stage(vec![entry], Vec::new()))
     }
 
     fn failure_after_end(child: &mut Child) -> ToolFailure {
@@ -72,7 +71,7 @@ impl HybridProcessExchange for StdioHost {
     fn exchange(&self, request: &[u8], cancel: &Cancel) -> Result<Vec<u8>, ToolFailure> {
         let body: Value =
             serde_json::from_slice(request).map_err(|_| ToolFailure::MalformedBody)?;
-        let deadline_ms = body["deadline_ms"]
+        let deadline_ms = body["request"]["deadline_ms"]
             .as_u64()
             .ok_or(ToolFailure::MalformedBody)?;
         let mut child = Command::new(&self.program)
@@ -123,6 +122,11 @@ impl StdioHost {
         match self.next(child, frames, started, deadline, cancel) {
             Next::Frame(Frame::Envelope { kind, .. }) if kind == "hello" => {}
             Next::Frame(Frame::Envelope { .. }) => return Err(ToolFailure::UnknownFrameKind),
+            // A cancel before the hello leaves nothing to ask the provider to
+            // stop: the host ends it and settles the item cancelled.
+            Next::Cancelled(cause) => {
+                return Ok(self.incomplete(&json!({"type": "cancelled", "source": source(cause)})));
+            }
             other => return self.settle_without_frame(child, other),
         }
         write_frame(stdin, 1, "request", request);
@@ -135,6 +139,14 @@ impl StdioHost {
                     }
                     if id != 1 {
                         return Err(ToolFailure::UnknownRequestId);
+                    }
+                    // FSpec FR-462 "Cancellation": a cancelled request settles
+                    // `incomplete`/`cancelled`, whatever a late result says.
+                    if let Some((_, cause)) = cancelled_at {
+                        write_frame(stdin, 2, "shutdown", &json!({}));
+                        return Ok(
+                            self.incomplete(&json!({"type": "cancelled", "source": source(cause)}))
+                        );
                     }
                     write_frame(stdin, 2, "shutdown", &json!({}));
                     return match child.wait() {

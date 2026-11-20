@@ -24,8 +24,12 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("fsl-hybrid-process-{name}-{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "fsl-hybrid-process-{name}-{}-{serial}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Self { dir }
@@ -144,7 +148,16 @@ pub fn outcome(mut entry: Value, counterexamples: &[Value]) -> Value {
         .iter()
         .map(|found| json!({"request_index": 0, "backend": BACKEND, "counterexample": found}))
         .collect();
-    json!({"results": [entry], "counterexamples": found})
+    stage(vec![entry], found)
+}
+
+/// An FSpec FR-331 outcome stage around `results` and `counterexamples`.
+pub fn stage(results: Vec<Value>, counterexamples: Vec<Value>) -> Value {
+    json!({"contract_version": "filament.backend-provider/v1",
+        "capability_vocabulary": "filament.capability-kind/v1",
+        "dispositions": [], "artifacts": [], "results": results,
+        "counterexamples": counterexamples,
+        "accounting": [{"request_index": 0, "settled_by": "result"}]})
 }
 
 /// A `refuted` outcome carrying the formula counterexample over `trace`.
@@ -205,6 +218,18 @@ pub fn process_engine(ws: &Workspace, script: &Value, limits: ProviderLimits) ->
     engine_at(BACKEND, Path::new(PROVIDER), &path, limits)
 }
 
+/// [`run`] under `cancel`, which the caller trips while the provider runs.
+pub fn run_with_cancel(
+    ws: &Workspace,
+    unit: &str,
+    item: Value,
+    engines: Vec<Engine>,
+    limits: ProviderLimits,
+    cancel: &filament_exact::Cancel,
+) -> Value {
+    settle(ws, unit, item, engines, limits, cancel)
+}
+
 /// The first outcome item of the request over `unit` naming `claim` and
 /// `backend`, with `options` on the item, settled with `engines` under
 /// `limits`.
@@ -214,6 +239,24 @@ pub fn run(
     item: Value,
     engines: Vec<Engine>,
     limits: ProviderLimits,
+) -> Value {
+    settle(
+        ws,
+        unit,
+        item,
+        engines,
+        limits,
+        &filament_exact::Cancel::new(),
+    )
+}
+
+fn settle(
+    ws: &Workspace,
+    unit: &str,
+    item: Value,
+    engines: Vec<Engine>,
+    limits: ProviderLimits,
+    cancel: &filament_exact::Cancel,
 ) -> Value {
     ws.write("unit.fsl", unit.as_bytes());
     let document = json!({"format": "native-analyze/1", "request": {
@@ -228,7 +271,7 @@ pub fn run(
         &ProviderOptions {
             provider_limits: limits,
         },
-        &filament_exact::Cancel::new(),
+        cancel,
     ) {
         Ok(result) => result.value.to_string().into_bytes(),
         Err(error) => error

@@ -719,6 +719,9 @@ pub struct ItemDetail {
     pub finite_replay: Option<FiniteReplayDetail>,
     /// A hybrid entry's certificate and its outcome (FSpec FR-652).
     pub hybrid_certificate: Option<fsl_replay::CertificateRecord>,
+    /// The FR-286 spelling of the provider's complete counterexample in a
+    /// `hybrid-trace` disagreement (FR-450 "Settlement").
+    pub hybrid_disagreement: Option<serde_json::Value>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -755,6 +758,7 @@ impl ItemDetail {
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
             hybrid_certificate: record.hybrid_certificate.clone(),
+            hybrid_disagreement: record.hybrid_disagreement.clone(),
         }
     }
 }
@@ -1189,6 +1193,23 @@ impl Engines {
     pub fn under(mut self, options: ProviderOptions) -> Self {
         self.options = options;
         self
+    }
+
+    /// The registry snapshot a process request carries (FSpec FR-331): the
+    /// FR-331 descriptor of every registered engine, ordered by backend.
+    pub(crate) fn manifest_wire(&self) -> Vec<serde_json::Value> {
+        let mut snapshot: Vec<_> = self
+            .engines
+            .iter()
+            .map(|engine| (engine.descriptor.id().as_str(), engine))
+            .collect();
+        snapshot.sort_by_key(|(id, _)| *id);
+        snapshot
+            .into_iter()
+            .map(|(_, engine)| {
+                hybrid_process::descriptor_wire(&engine.descriptor, &engine.tool)
+            })
+            .collect()
     }
 
     /// The run's provider options.
@@ -1834,6 +1855,9 @@ pub struct AnalyzeRecord {
     /// The certificate of a hybrid provider's entry and what FR-751 did
     /// with it (FSpec FR-652).
     pub hybrid_certificate: Option<fsl_replay::CertificateRecord>,
+    /// The FR-286 spelling of the provider's complete counterexample in a
+    /// `hybrid-trace` disagreement (FR-450 "Settlement").
+    pub hybrid_disagreement: Option<serde_json::Value>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1877,6 +1901,7 @@ impl AnalyzeRecord {
             schedule_miss: None,
             hybrid_counterexample: None,
             hybrid_certificate: None,
+            hybrid_disagreement: None,
             state_graph: None,
         }
     }
@@ -2723,6 +2748,7 @@ fn settle(
                 counterexample,
                 wire,
                 certificate,
+                disagreement,
             } = *report;
             // A refuted value without its replayed counterexample is an
             // engine fault, never a verdict.
@@ -2733,6 +2759,7 @@ fn settle(
             AnalyzeRecord {
                 hybrid_counterexample: counterexample.map(|found| Spelled { found, wire }),
                 hybrid_certificate: certificate,
+                hybrid_disagreement: disagreement,
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

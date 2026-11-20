@@ -6,7 +6,7 @@
 //!
 //! The script is a JSON object: `mode` (`answer`, `silent`, `crash`,
 //! `exit-nonzero`, `garbage`, `noncanonical`, `foreign-protocol`, `oversize`
-//! or `hang`), `outcome` (the FSpec FR-331 outcome stage an `answer` returns
+//! `hang`, `no-hello` or `late-result`), `outcome` (the FSpec FR-331 outcome stage an `answer` returns
 //! as its `result` body), `stderr` (text written to standard error) and
 //! `size` (the length an `oversize` frame announces) and `record_request` (a
 //! path the request body is written to).
@@ -52,6 +52,12 @@ fn run(script: &Value) -> Result<(), String> {
     }
     let mut output = std::io::stdout().lock();
     let mut input = std::io::stdin().lock();
+    if mode == "no-hello" {
+        // A provider that never speaks first.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     write_frame(
         &mut output,
         &frame(
@@ -108,6 +114,13 @@ fn run(script: &Value) -> Result<(), String> {
                 .write_all(&size.to_be_bytes())
                 .and_then(|()| output.flush())
                 .map_err(|error| error.to_string())?;
+            Ok(())
+        }
+        "late-result" => {
+            // Answers only after the host's `cancel` frame arrives.
+            let _ = read_frame(&mut input);
+            write_frame(&mut output, &frame(id, "result", script["outcome"].clone()))?;
+            let _ = read_frame(&mut input);
             Ok(())
         }
         "hang" => loop {

@@ -271,7 +271,14 @@ impl HybridAnswer {
                             outcome: SolverOutcome::EnclosureDisjoint,
                             coverage: SolverCoverage::Inductive,
                         },
-                        _ => return Err(HybridEntryRefusal::NotRead("proved".to_owned())),
+                        // FSpec FR-193 admits only a `bounded-solver` or an
+                        // `inductive-solver` basis on a hybrid claim.
+                        _ => {
+                            return Err(HybridEntryRefusal::Entry(PluginResultRefusal::Malformed {
+                                pointer: "/basis/type".to_owned(),
+                                cause: ValueFault::InvalidValue,
+                            }))
+                        }
                     },
                 )
             }

@@ -749,6 +749,12 @@ fn an_accepted_witness_settles_a_not_exact_provider_refutation() {
         rejected["record"]["cause"]["parity"]["disagreement"]["type"], "not-exact",
         "{rejected}"
     );
+    // FR-450-AC-3: the disagreement retains the complete counterexample.
+    assert_eq!(
+        rejected["record"]["cause"]["parity"]["disagreement"]["counterexample"]["type"],
+        "hybrid-counterexample",
+        "{rejected}"
+    );
     assert!(rejected.get("counterexample").is_none(), "{rejected}");
 }
 
@@ -1158,9 +1164,9 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-2534: the hybrid plan synthesis that builds the validation item (QSL-1978) is not implemented yet"]
+#[ignore = "QSL-1978: the hybrid plan synthesis that builds the validation item is not implemented yet"]
 fn a_plan_validation_item_carries_rational_objects() {
-    todo!("QSL-2534: FR-1021-AC-3");
+    todo!("QSL-1978: FR-1021-AC-3");
 }
 
 /// `Shuttle` of FR-750-AC-12, its `Moving -> Stopped` reset `reset`, with

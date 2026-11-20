@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::support::{
     braking, braking_with, claim, engine_at, interval, limits, outcome, point_trace,
-    process_engine, rational, refuted, run, Workspace, BACKEND, PROVIDER,
+    process_engine, rational, refuted, run, run_with_cancel, Workspace, BACKEND,
 };
 
 fn named(claim: &str) -> Value {
@@ -56,6 +56,11 @@ fn a_process_provider_refutation_settles_by_exact_replay() {
         item["record"]["cause"]["parity"]["disagreement"]["type"], "not-reproduced",
         "{item}"
     );
+    assert_eq!(
+        item["record"]["cause"]["parity"]["disagreement"]["counterexample"]["trace"],
+        point_trace("1"),
+        "{item}"
+    );
     assert!(
         item.get("counterexample").is_none_or(Value::is_null),
         "{item}"
@@ -79,6 +84,11 @@ fn a_not_exact_process_refutation_names_its_disagreement_type() {
     assert_eq!(item["record"]["cause"]["kind"], "replay-parity", "{item}");
     assert_eq!(
         item["record"]["cause"]["parity"]["disagreement"]["type"], "not-exact",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["cause"]["parity"]["disagreement"]["counterexample"]["type"],
+        "hybrid-counterexample",
         "{item}"
     );
 }
@@ -246,7 +256,6 @@ fn assert_defect(item: &Value, defect: &str) {
 /// exits non-zero, ends without answering, or speaks garbage settles the
 /// item `failed` with the typed defect; none is `proved` or `refuted`.
 #[test]
-#[trace("TC-2100", "FR-750-AC-5")]
 fn a_misbehaving_process_provider_settles_failed_with_a_typed_defect() {
     let good = outcome(
         json!({"result": "proved", "certification": "trusted", "basis": {
@@ -294,7 +303,6 @@ fn a_misbehaving_process_provider_settles_failed_with_a_typed_defect() {
 
 /// A provider that is not there is a typed failure, never a verdict.
 #[test]
-#[trace("TC-2100", "FR-750-AC-4")]
 fn a_missing_provider_executable_settles_failed() {
     let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
     let ws = Workspace::new("missing");
@@ -307,7 +315,6 @@ fn a_missing_provider_executable_settles_failed() {
 /// A provider that overruns the run's `deadline_ms` is ended and the item
 /// settles `incomplete`, `timed-out`, never `proved` or `refuted`.
 #[test]
-#[trace("TC-2100", "FR-750-AC-5")]
 fn a_provider_over_the_deadline_settles_incomplete_timed_out() {
     let item = failure_of(&json!({"mode": "hang"}), |limits| limits.deadline_ms = 300);
     assert_eq!(item["record"]["result"], "incomplete", "{item}");
@@ -338,14 +345,16 @@ fn item_options_and_the_deadline_reach_the_process_provider() {
     let request: Value =
         serde_json::from_slice(&std::fs::read(recorded).expect("the request was recorded"))
             .expect("the request is JSON");
-    assert_eq!(request["items"][0]["options"], json!({"step": "1/16"}));
     assert_eq!(
-        request["items"][0]["requirements"],
+        request["request"]["items"][0]["options"],
+        json!({"step": "1/16"})
+    );
+    assert_eq!(
+        request["request"]["items"][0]["requirements"],
         json!(["hybrid-dynamics"])
     );
-    assert_eq!(request["deadline_ms"], limits().deadline_ms);
-    assert!(request["package"].is_string());
-    let _ = (interval("0", "1"), PROVIDER);
+    assert_eq!(request["request"]["deadline_ms"], limits().deadline_ms);
+    assert!(request["request"]["package"].is_string());
 }
 
 /// FR-750 "Dispatch": a process provider's `proved` word is `trusted`; its
@@ -388,4 +397,191 @@ fn a_process_proof_is_trusted_unless_its_certificate_is_accepted() {
         claimed.to_string().contains("certification-mismatch"),
         "{claimed}"
     );
+}
+
+fn solver_proof(horizon: &str, certification: &str) -> Value {
+    json!({"result": "proved", "certification": certification, "basis": {
+        "type": "bounded-solver", "method": "delta-complete", "horizon": rational(horizon),
+        "jumps": 1, "exhaustive": ["time"]}})
+}
+
+/// FR-750 "Dispatch" ("settle it by the same rules") with FSpec FR-193's
+/// hybrid basis rule: only a `bounded-solver` or `inductive-solver` proof
+/// is a hybrid provider's `proved`, and only that settles `proved`
+/// (`trusted`); every other result an entry can spell is refuted after
+/// replay, `incomplete`, `failed` or refused `invalid_result`, never
+/// settled as the entry says.
+#[test]
+fn only_a_solver_basis_proof_settles_proved_and_it_is_trusted() {
+    let refused = |pointer: &str| ("failed", Some(("invalid_result", pointer.to_owned())));
+    let rows: Vec<(&str, Value, &str, Option<(&str, String)>)> = vec![
+        (
+            "solver proof",
+            solver_proof("10", "trusted"),
+            "proved",
+            None,
+        ),
+        (
+            "solver proof claiming uncertified",
+            solver_proof("10", "uncertified"),
+            refused("/certification").0,
+            refused("/certification").1,
+        ),
+        (
+            "solver proof claiming certified",
+            solver_proof("10", "certified"),
+            refused("/certification").0,
+            refused("/certification").1,
+        ),
+        (
+            "short horizon",
+            solver_proof("1", "trusted"),
+            "inconclusive",
+            Some(("insufficient-horizon", String::new())),
+        ),
+        (
+            "exhaustive basis",
+            json!({"result": "proved", "certification": "trusted",
+                "basis": {"type": "exhaustive"}}),
+            refused("/basis/type").0,
+            refused("/basis/type").1,
+        ),
+        (
+            "bounded-complete basis",
+            json!({"result": "proved", "certification": "trusted",
+                "basis": {"type": "bounded-complete", "depth": 1}}),
+            refused("/basis/type").0,
+            refused("/basis/type").1,
+        ),
+        (
+            "tested",
+            json!({"result": "tested", "certification": "trusted"}),
+            refused("/result").0,
+            refused("/result").1,
+        ),
+        (
+            "measured",
+            json!({"result": "measured", "certification": "trusted"}),
+            refused("/result").0,
+            refused("/result").1,
+        ),
+        (
+            "declined",
+            json!({"result": "declined"}),
+            refused("/result").0,
+            refused("/result").1,
+        ),
+        (
+            "refuted by a trace replay rejects",
+            json!({"result": "refuted", "counterexample": 0}),
+            "inconclusive",
+            Some(("replay-parity", String::new())),
+        ),
+        (
+            "failed",
+            json!({"result": "failed", "cause": {"type": "tool-failure", "defect": "crash"}}),
+            "failed",
+            Some(("tool-failure", String::new())),
+        ),
+    ];
+    for (name, entry, result, marker) in rows {
+        let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
+        let ws = Workspace::new("settlement-table");
+        let counterexamples = if entry["result"] == "refuted" {
+            vec![json!({"type": "hybrid-counterexample", "kind": "formula",
+                "trace": point_trace("1")})]
+        } else {
+            Vec::new()
+        };
+        // A refuted trace that replays would settle `refuted`: this claim
+        // holds, so the trace never reproduces.
+        let script = answer(&outcome(entry, &counterexamples));
+        let engine = process_engine(&ws, &script, limits());
+        let item = run(&ws, &unit, named("SlowEnough"), vec![engine], limits());
+        assert_eq!(item["record"]["result"], result, "{name}: {item}");
+        let text = item.to_string();
+        match marker {
+            Some((marker, pointer)) => {
+                assert!(text.contains(marker), "{name}: {marker}: {item}");
+                assert!(text.contains(&pointer), "{name}: {pointer}: {item}");
+            }
+            None => {}
+        }
+        if result == "proved" {
+            assert_eq!(item["record"]["certification"], "trusted", "{name}: {item}");
+        } else {
+            assert!(
+                item["record"]
+                    .get("certification")
+                    .is_none_or(Value::is_null),
+                "{name}: nothing but a solver proof is certified: {item}"
+            );
+        }
+    }
+}
+
+/// FSpec FR-462 "Cancellation": a request cancelled while the provider
+/// works is told so, and when the provider ends its answer a late `proved`
+/// the host still settles the item `incomplete`, `cancelled`.
+#[test]
+fn a_cancelled_process_item_ignores_a_late_proof() {
+    let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
+    let ws = Workspace::new("cancel-late");
+    let proof = outcome(solver_proof("10", "trusted"), &[]);
+    let script = json!({"mode": "late-result", "outcome": proof});
+    let mut run_limits = limits();
+    run_limits.grace_ms = 5_000;
+    let engine = process_engine(&ws, &script, run_limits);
+    let cancel = filament_exact::Cancel::new();
+    let trip = cancel.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        trip.cancel(filament_exact::CancelCause::Requested);
+    });
+    let item = run_with_cancel(
+        &ws,
+        &unit,
+        named("SlowEnough"),
+        vec![engine],
+        run_limits,
+        &cancel,
+    );
+    canceller.join().expect("the canceller ran");
+    assert_eq!(item["record"]["result"], "incomplete", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "cancelled", "{item}");
+}
+
+/// FSpec FR-462 "Cancellation": a provider that ignores `cancel` is ended
+/// after the grace period and the item settles `incomplete`, `cancelled`;
+/// so does a request cancelled before the provider has said hello.
+#[test]
+fn a_cancelled_process_item_ends_the_provider_after_the_grace() {
+    for (name, mode) in [("cancel-hang", "hang"), ("cancel-no-hello", "no-hello")] {
+        let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
+        let ws = Workspace::new(name);
+        let script = json!({"mode": mode});
+        let mut run_limits = limits();
+        run_limits.grace_ms = 100;
+        let engine = process_engine(&ws, &script, run_limits);
+        let cancel = filament_exact::Cancel::new();
+        let trip = cancel.clone();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            trip.cancel(filament_exact::CancelCause::Requested);
+        });
+        let item = run_with_cancel(
+            &ws,
+            &unit,
+            named("SlowEnough"),
+            vec![engine],
+            run_limits,
+            &cancel,
+        );
+        canceller.join().expect("the canceller ran");
+        assert_eq!(item["record"]["result"], "incomplete", "{name}: {item}");
+        assert_eq!(
+            item["record"]["cause"]["kind"], "cancelled",
+            "{name}: {item}"
+        );
+    }
 }
