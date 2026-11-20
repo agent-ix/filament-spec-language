@@ -55,6 +55,7 @@ mod call_replay_context_items;
 mod call_requirements_items;
 mod check_imports;
 mod checked_clause_kind_unique;
+mod checked_package_state_core;
 #[cfg(feature = "checked-handoff")]
 mod checker_value_boundaries;
 mod clock_derivation;
@@ -125,7 +126,9 @@ mod compound_quantity_types;
 mod fairness_item_path;
 mod hybrid_request_items;
 mod layer_crate_reexports;
+mod lifecycle_boundaries;
 mod limit_name_patterns;
+mod lowering_intake_boundaries;
 #[cfg(feature = "checked-handoff")]
 mod mapping_support;
 mod mapping_support_occurrences;

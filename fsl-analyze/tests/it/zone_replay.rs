@@ -34,6 +34,8 @@ use crate::zone_search::{
     stall, stall_resetting, ticker, time_lock_item, violated, windowed, Outcome, INFINITE, TIMED,
 };
 
+mod replay_boundary_cases;
+
 /// Replay `payload` over `world`'s timed subject: as its first clause's
 /// counterexample, or as a derived item's when `derived`.
 fn replay_on(

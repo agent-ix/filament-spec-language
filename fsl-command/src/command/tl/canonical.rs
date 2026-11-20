@@ -9,13 +9,15 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind, Visit,
 };
 use filament_exact::IeeeWidth;
-use filament_exact::{CollectionKind, NodeKey, Value, ValueType};
+use filament_exact::{CollectionKind, Integer, NodeKey, Value, ValueType};
 use filament_semantic_value::declaration::EqualityOperator;
 use fsl_semantics::check::{CheckedNode, NodeId};
 
+#[derive(Clone)]
 struct ExpressionNode {
     kind: NodeKind<usize, CheckedLiteral>,
     value_type: ValueType,
+    type_argument: Option<String>,
 }
 
 #[derive(Default)]
@@ -24,6 +26,7 @@ pub(super) struct CanonicalRows {
     functions: BTreeMap<usize, String>,
     record_fields: BTreeMap<NodeKey, Vec<String>>,
     union_members: BTreeMap<NodeKey, Vec<String>>,
+    type_arguments: BTreeMap<String, String>,
 }
 
 /// A checked expression arena with children remapped to its own indices.
@@ -67,6 +70,7 @@ impl CheckedExpression {
                 ExpressionNode {
                     kind,
                     value_type: node.value_type().clone(),
+                    type_argument: node.type_argument().map(str::to_owned),
                 }
             })
             .collect();
@@ -141,6 +145,30 @@ impl CheckedExpression {
             .get(&(self.root, root_env))
             .map(|(text, _)| text.clone())
             .ok_or_else(|| "checked expression root is rendered".to_owned())
+    }
+}
+
+impl CanonicalRows {
+    fn aggregate_type_argument(&self, node: &ExpressionNode) -> String {
+        node.type_argument
+            .as_ref()
+            .and_then(|name| self.type_arguments.get(name))
+            .cloned()
+            .unwrap_or_else(|| self.type_argument(&node.value_type))
+    }
+
+    fn type_argument(&self, value_type: &ValueType) -> String {
+        let mut spellings = fsl_semantics::model::spelling::SourceSpellings::default();
+        for (key, declaration) in &self.declarations {
+            spellings.name_node(key.clone(), declaration.clone());
+        }
+        fsl_semantics::model::spelling::fsl_spelling(
+            &fsl_semantics::model::domain_package::ValueTypeRef::Resolved(Box::new(
+                value_type.clone(),
+            )),
+            &spellings,
+            None,
+        )
     }
 }
 
@@ -392,6 +420,80 @@ impl Printer<'_> {
         matches!(self.scopes[scope].entry, Entry::Operand { .. }).then_some(scope)
     }
 
+    /// Whether the node at `index` is a population.
+    fn is_population(&self, index: usize) -> bool {
+        self.expression.nodes.get(index).is_some_and(|node| {
+            matches!(
+                &node.kind,
+                NodeKind::AllInstances { .. }
+                    | NodeKind::PopulationObjects { .. }
+                    | NodeKind::NamedPopulation { .. }
+            )
+        })
+    }
+
+    /// Whether the node at `index` is the literal `true`, the checked form
+    /// of a population `count` that writes no `where`.
+    fn is_true(&self, index: usize) -> bool {
+        self.expression.nodes.get(index).is_some_and(|node| {
+            matches!(
+                &node.kind,
+                NodeKind::Literal(CheckedLiteral(Value::Boolean(true)))
+            )
+        })
+    }
+
+    /// The population and `where` condition texts of the filter at `index`,
+    /// when it filters a population under the binder `slot` named `name` that
+    /// the enclosing `only` or `sum` also binds, so the pair is one
+    /// population form; any other filter source is a collection filter.
+    fn population_filter(
+        &self,
+        index: usize,
+        slot: usize,
+        name: &str,
+        env: Env,
+    ) -> Option<(String, String)> {
+        let NodeKind::Query {
+            visit: Visit::Filter,
+            slot: filter_slot,
+            name: filter_name,
+            source,
+            ..
+        } = &self.expression.nodes.get(index)?.kind
+        else {
+            return None;
+        };
+        if *filter_slot != slot || filter_name != name || !self.is_population(*source) {
+            return None;
+        }
+        let plan = self.plans.get(&(index, env))?;
+        let population = self.memo.get(plan.first()?)?.0.clone();
+        let condition = self.memo.get(plan.get(1)?)?.0.clone();
+        Some((population, condition))
+    }
+
+    /// The condition and summand texts of the guarded summand
+    /// `if q then e else 0` planned under `key`, the form the checker gives
+    /// an integer population sum's `where`.
+    fn guarded_summand(&self, key: Key) -> Option<(String, String)> {
+        let node = self.expression.nodes.get(key.0)?;
+        if !matches!(node.value_type, ValueType::Integer | ValueType::Int(_)) {
+            return None;
+        }
+        let NodeKind::If { otherwise, .. } = &node.kind else {
+            return None;
+        };
+        let zero = matches!(
+            &self.expression.nodes.get(*otherwise)?.kind,
+            NodeKind::Literal(CheckedLiteral(Value::Integer(value))) if *value == Integer::zero()
+        );
+        let plan = self.plans.get(&key)?;
+        let condition = self.memo.get(plan.first()?)?.0.clone();
+        let summand = self.memo.get(plan.get(1)?)?.0.clone();
+        zero.then_some((condition, summand))
+    }
+
     fn print(&self, index: usize, env: Env) -> Result<Printed, String> {
         let rows = self.rows;
         let node = &self.expression.nodes[index];
@@ -499,21 +601,81 @@ impl Printer<'_> {
                     )
                 }
             }
-            NodeKind::Query { visit, name, .. } => {
+            NodeKind::Query {
+                visit,
+                slot,
+                name,
+                source: source_index,
+                body: body_index,
+            } => {
                 let keyword = match visit {
                     Visit::Map => "map",
                     Visit::Filter => "filter",
                     Visit::Forall => "forall",
                     Visit::Exists => "exists",
-                    Visit::Count | Visit::Sum | Visit::Only => {
-                        return Err(
-                            "checked expression has no canonical printer for this form".to_owned()
-                        );
-                    }
+                    Visit::Count => "count",
+                    Visit::Sum => "sum",
+                    Visit::Only => "only",
                 };
+                let prefix = match visit {
+                    Visit::Count | Visit::Sum | Visit::Only => {
+                        format!("{keyword}<{}>", rows.aggregate_type_argument(node))
+                    }
+                    _ => keyword.to_owned(),
+                };
+                let filtered = matches!(visit, Visit::Only | Visit::Sum)
+                    .then(|| self.population_filter(*source_index, *slot, name, env))
+                    .flatten();
+                let guarded = (matches!(visit, Visit::Sum) && self.is_population(*source_index))
+                    .then(|| plan.get(1).and_then(|key| self.guarded_summand(*key)))
+                    .flatten();
+                let text = if let Some((population, condition)) = filtered {
+                    let (body, _) = planned(1)?;
+                    format!("{prefix}({name} in {population} where {condition}: {body})")
+                } else if let Some((condition, summand)) = guarded {
+                    let (source, _) = planned(0)?;
+                    format!("{prefix}({name} in {source} where {condition}: {summand})")
+                } else if matches!(visit, Visit::Count) && self.is_population(*source_index) {
+                    let (source, _) = planned(0)?;
+                    let (condition, _) = planned(1)?;
+                    if self.is_true(*body_index) {
+                        format!("{prefix}({name} in {source})")
+                    } else {
+                        format!("{prefix}({name} in {source} where {condition})")
+                    }
+                } else {
+                    let (source, _) = planned(0)?;
+                    let (body, _) = planned(1)?;
+                    format!("{prefix}({name} in {source}: {body})")
+                };
+                (text, 10)
+            }
+            NodeKind::Fold {
+                accumulator_name,
+                binder_name,
+                identity,
+                ..
+            } => {
                 let (source, _) = planned(0)?;
-                let (body, _) = planned(1)?;
-                (format!("{keyword}({name} in {source}: {body})"), 10)
+                let (step, _) = planned(if identity.is_some() { 2 } else { 1 })?;
+                let type_argument = rows.aggregate_type_argument(node);
+                match identity {
+                    Some(_) => {
+                        let (identity, _) = planned(1)?;
+                        (
+                            format!(
+                                "fold<{type_argument}>({accumulator_name}, {binder_name} in {source}: {step}, identity: {identity})"
+                            ),
+                            10,
+                        )
+                    }
+                    None => (
+                        format!(
+                            "reduce<{type_argument}>({accumulator_name}, {binder_name} in {source}: {step})"
+                        ),
+                        10,
+                    ),
+                }
             }
             NodeKind::Seq { name, .. } => {
                 let (low, _) = planned(0)?;
@@ -813,6 +975,7 @@ pub(super) fn source_labels(
         functions: valuation.canonical_functions.clone(),
         record_fields: valuation.canonical_record_fields.clone(),
         union_members: valuation.canonical_union_members.clone(),
+        type_arguments: valuation.canonical_type_arguments.clone(),
     };
     valuation
         .checked_conditions
@@ -935,13 +1098,27 @@ fn literal_text(value: &Value, declarations: &BTreeMap<NodeKey, String>) -> Resu
 mod tests {
     use super::*;
     use filament_checked::node::ConnectiveOrigin;
-    use filament_exact::IeeeValue;
+    use filament_exact::{IeeeValue, Integer, IntegerInterval};
     use ix_trace_rs::trace;
 
     fn ordinary(nodes: &mut Vec<ExpressionNode>, kind: NodeKind<usize, CheckedLiteral>) -> usize {
         nodes.push(ExpressionNode {
             kind,
             value_type: ValueType::Boolean,
+            type_argument: None,
+        });
+        nodes.len() - 1
+    }
+
+    fn typed(
+        nodes: &mut Vec<ExpressionNode>,
+        kind: NodeKind<usize, CheckedLiteral>,
+        value_type: ValueType,
+    ) -> usize {
+        nodes.push(ExpressionNode {
+            kind,
+            value_type,
+            type_argument: None,
         });
         nodes.len() - 1
     }
@@ -1231,6 +1408,409 @@ mod tests {
         assert_eq!(
             render(nodes, root).unwrap(),
             format!("let ieee_operand_0 = {A_TEXT} in ieee_operand_0")
+        );
+    }
+
+    /// FR-931-AC-16: query forms print the result type retained by the
+    /// checked node, including a structural bounded integer.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn count_sum_and_only_print_the_checked_result_type() {
+        let bounded = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
+        );
+        for (visit, integer_body, result_type, expected) in [
+            (
+                Visit::Count,
+                false,
+                bounded.clone(),
+                "count<Int[0, 4]>(x in xs: true)",
+            ),
+            (
+                Visit::Sum,
+                true,
+                ValueType::Integer,
+                "sum<Integer>(x in xs: 0)",
+            ),
+            (
+                Visit::Only,
+                true,
+                bounded.clone(),
+                "only<Int[0, 4]>(x in xs: 0)",
+            ),
+        ] {
+            let mut nodes = Vec::new();
+            let source = ordinary(&mut nodes, NodeKind::Local(0));
+            let body = if integer_body {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+                    ValueType::Integer,
+                )
+            } else {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+                    ValueType::Boolean,
+                )
+            };
+            let root = typed(
+                &mut nodes,
+                NodeKind::Query {
+                    visit,
+                    slot: 1,
+                    name: "x".to_owned(),
+                    source,
+                    body,
+                },
+                result_type,
+            );
+            let expression = CheckedExpression { nodes, root };
+            assert_eq!(
+                expression
+                    .render(&["xs".to_owned()], &CanonicalRows::default())
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// FR-931-AC-16: a named scalar aggregate argument keeps its declaration
+    /// identity while an otherwise identical structural type stays structural.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn aggregate_type_alias_keeps_its_source_identity() {
+        let bounded = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
+        );
+        let mut nodes = Vec::new();
+        let source = ordinary(&mut nodes, NodeKind::Local(0));
+        let body = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+            ValueType::Boolean,
+        );
+        let root = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source,
+                body,
+            },
+            bounded,
+        );
+        nodes[root].type_argument = Some("Small".to_owned());
+        let expression = CheckedExpression { nodes, root };
+        let rows = CanonicalRows {
+            type_arguments: BTreeMap::from([("Small".to_owned(), "ix://I/Small".to_owned())]),
+            ..CanonicalRows::default()
+        };
+        assert_eq!(
+            expression.render(&["xs".to_owned()], &rows).unwrap(),
+            "count<ix://I/Small>(x in xs: true)"
+        );
+    }
+
+    /// FR-931-AC-16: fold and reduce take their printed type from the checked
+    /// result node and distinguish themselves by the retained identity.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn fold_and_reduce_print_the_checked_result_type() {
+        for (identity, expected) in [
+            (Some(0), "fold<Integer>(acc, x in xs: acc, identity: 0)"),
+            (None, "reduce<Integer>(acc, x in xs: acc)"),
+        ] {
+            let mut nodes = Vec::new();
+            let source = ordinary(&mut nodes, NodeKind::Local(0));
+            let identity_node = identity.map(|_| {
+                typed(
+                    &mut nodes,
+                    NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+                    ValueType::Integer,
+                )
+            });
+            let step = ordinary(&mut nodes, NodeKind::Local(1));
+            let root = typed(
+                &mut nodes,
+                NodeKind::Fold {
+                    accumulator: 1,
+                    binder: 2,
+                    accumulator_name: "acc".to_owned(),
+                    binder_name: "x".to_owned(),
+                    source,
+                    step,
+                    identity: identity_node,
+                },
+                ValueType::Integer,
+            );
+            let expression = CheckedExpression { nodes, root };
+            assert_eq!(
+                expression
+                    .render(&["xs".to_owned()], &CanonicalRows::default())
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// FR-931-AC-17: population `where` clauses print in their source form;
+    /// population counts omit the expression colon.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-17")]
+    fn population_query_forms_print_where_without_a_filter_call() {
+        let population = filament_checked::key::DeclarationKey {
+            package: "p".to_owned(),
+            node: "P".to_owned(),
+        };
+        let mut nodes = Vec::new();
+        let population_node = ordinary(
+            &mut nodes,
+            NodeKind::NamedPopulation {
+                population: population.clone(),
+                members: Vec::new(),
+            },
+        );
+        let condition = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let filtered_population = ordinary(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Filter,
+                slot: 1,
+                name: "x".to_owned(),
+                source: population_node,
+                body: condition,
+            },
+        );
+        let result = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+            ValueType::Integer,
+        );
+        let only = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Only,
+                slot: 1,
+                name: "x".to_owned(),
+                source: filtered_population,
+                body: result,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression {
+                nodes: nodes.clone(),
+                root: only,
+            }
+            .render(&[], &CanonicalRows::default())
+            .unwrap(),
+            "only<Integer>(x in ix://p/P where true: 0)"
+        );
+
+        let count = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source: population_node,
+                body: condition,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression { nodes, root: count }
+                .render(&[], &CanonicalRows::default())
+                .unwrap(),
+            "count<Integer>(x in ix://p/P)"
+        );
+    }
+
+    /// FR-931-AC-17: an integer population sum whose `where` the checker
+    /// folded into an `if q then e else 0` summand prints its `where` form.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-17")]
+    fn a_folded_population_sum_prints_its_where() {
+        let population = filament_checked::key::DeclarationKey {
+            package: "p".to_owned(),
+            node: "P".to_owned(),
+        };
+        let mut nodes = Vec::new();
+        let source = ordinary(
+            &mut nodes,
+            NodeKind::NamedPopulation {
+                population,
+                members: Vec::new(),
+            },
+        );
+        let condition = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let summand = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::from(3u64)))),
+            ValueType::Integer,
+        );
+        let zero = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Integer(Integer::zero()))),
+            ValueType::Integer,
+        );
+        let guarded = typed(
+            &mut nodes,
+            NodeKind::If {
+                condition,
+                then: summand,
+                otherwise: zero,
+            },
+            ValueType::Integer,
+        );
+        let sum = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Sum,
+                slot: 1,
+                name: "x".to_owned(),
+                source,
+                body: guarded,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression { nodes, root: sum }
+                .render(&[], &CanonicalRows::default())
+                .unwrap(),
+            "sum<Integer>(x in ix://p/P where true: 3)"
+        );
+    }
+
+    /// FR-931-AC-17: a population `count` writes its `where` only when its
+    /// checked form holds one.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-17")]
+    fn a_population_count_prints_where_only_with_a_condition() {
+        let population = filament_checked::key::DeclarationKey {
+            package: "p".to_owned(),
+            node: "P".to_owned(),
+        };
+        let mut nodes = Vec::new();
+        let source = ordinary(
+            &mut nodes,
+            NodeKind::NamedPopulation {
+                population,
+                members: Vec::new(),
+            },
+        );
+        let condition = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(false))),
+        );
+        let count = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source,
+                body: condition,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression { nodes, root: count }
+                .render(&[], &CanonicalRows::default())
+                .unwrap(),
+            "count<Integer>(x in ix://p/P where false)"
+        );
+    }
+
+    /// FR-931-AC-17: a collection `filter` that is the source of a `count`
+    /// keeps its own body, never read as a population `where`.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-17")]
+    fn a_collection_filter_source_keeps_its_body() {
+        let mut nodes = Vec::new();
+        let collection = ordinary(&mut nodes, NodeKind::Local(0));
+        let kept = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+        );
+        let filtered = ordinary(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Filter,
+                slot: 1,
+                name: "y".to_owned(),
+                source: collection,
+                body: kept,
+            },
+        );
+        let body = ordinary(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(false))),
+        );
+        let count = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source: filtered,
+                body,
+            },
+            ValueType::Integer,
+        );
+        assert_eq!(
+            CheckedExpression { nodes, root: count }
+                .render(&["xs".to_owned()], &CanonicalRows::default())
+                .unwrap(),
+            "count<Integer>(x in filter(y in xs: true): false)"
+        );
+    }
+
+    /// FR-931-AC-16: a named type argument with no owner of its own (an
+    /// imported or qualified name) prints its retained authored name, never
+    /// the structural spelling.
+    #[test]
+    #[trace("TC-2601", "FR-931-AC-16")]
+    fn an_imported_alias_prints_its_authored_name() {
+        let bounded = ValueType::Int(
+            IntegerInterval::new(Integer::from(0_i64), Integer::from(4_i64)).unwrap(),
+        );
+        let mut nodes = Vec::new();
+        let source = ordinary(&mut nodes, NodeKind::Local(0));
+        let body = typed(
+            &mut nodes,
+            NodeKind::Literal(CheckedLiteral(Value::Boolean(true))),
+            ValueType::Boolean,
+        );
+        let root = typed(
+            &mut nodes,
+            NodeKind::Query {
+                visit: Visit::Count,
+                slot: 1,
+                name: "x".to_owned(),
+                source,
+                body,
+            },
+            bounded,
+        );
+        nodes[root].type_argument = Some("Lib::Small".to_owned());
+        let rows = CanonicalRows {
+            type_arguments: BTreeMap::from([("Lib::Small".to_owned(), "Lib::Small".to_owned())]),
+            ..CanonicalRows::default()
+        };
+        assert_eq!(
+            CheckedExpression { nodes, root }
+                .render(&["xs".to_owned()], &rows)
+                .unwrap(),
+            "count<Lib::Small>(x in xs: true)"
         );
     }
 }

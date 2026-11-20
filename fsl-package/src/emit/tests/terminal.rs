@@ -13,6 +13,8 @@ use super::admission_corpus::config_version_unit;
 use super::*;
 use crate::checked_v2::{read_terminal, read_terminals, ReadTerminalDeclaration, V2ReadRefusal};
 
+mod emission_boundaries;
+
 const WHEN: &str = "terminal Done using v on Config when { self.versionNumber = 3 };";
 /// A declaration other than a `terminal`, so the unit is not empty.
 const NONE: &str = "function noop using v(): Boolean pure { true }";

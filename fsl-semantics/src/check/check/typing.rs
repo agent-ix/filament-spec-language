@@ -658,6 +658,7 @@ struct QueryFrame<'e> {
 struct AccumulateFrame<'e> {
     form: Accumulation,
     value_type: ValueType,
+    type_argument: String,
     accumulator: &'e str,
     binder: &'e str,
     step: ExprRef<'e>,
@@ -731,6 +732,7 @@ enum Tally {
 struct TallyFrame<'e> {
     tally: Tally,
     value_type: ValueType,
+    type_argument: String,
     binder: &'e str,
     body: ExprRef<'e>,
     location: Location,
@@ -2019,6 +2021,7 @@ impl<'a> Typer<'a> {
                 frames.push(Frame::Accumulate(Box::new(AccumulateFrame {
                     form: *form,
                     value_type,
+                    type_argument: accumulator_type.clone(),
                     accumulator,
                     binder,
                     step: expression.at(*step),
@@ -2785,6 +2788,7 @@ impl<'a> Typer<'a> {
         frames.push(Frame::Tally(Box::new(TallyFrame {
             tally,
             value_type,
+            type_argument: result_type.to_owned(),
             binder,
             body,
             location,
@@ -3992,7 +3996,8 @@ impl<'a> Typer<'a> {
             },
             frame.value_type,
             &frame.location,
-        ))
+        )
+        .with_type_argument(frame.type_argument))
     }
 
     fn accept_tally<'e, 'r>(
@@ -4025,6 +4030,7 @@ impl<'a> Typer<'a> {
                 };
                 let TallyFrame {
                     value_type,
+                    type_argument,
                     location,
                     binder,
                     ..
@@ -4033,17 +4039,20 @@ impl<'a> Typer<'a> {
                 {
                     return Err(mismatch(&body.location));
                 }
-                Ok(Step::Typed(node(
-                    NodeKind::Query {
-                        visit,
-                        slot,
-                        name: self.slot_name(slot, &location)?,
-                        source: self.push(source),
-                        body: self.push(body),
-                    },
-                    value_type,
-                    &location,
-                )))
+                Ok(Step::Typed(
+                    node(
+                        NodeKind::Query {
+                            visit,
+                            slot,
+                            name: self.slot_name(slot, &location)?,
+                            source: self.push(source),
+                            body: self.push(body),
+                        },
+                        value_type,
+                        &location,
+                    )
+                    .with_type_argument(type_argument),
+                ))
             }
         }
     }

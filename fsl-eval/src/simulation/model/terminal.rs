@@ -11,6 +11,8 @@
 //! conforms to `P`'s `self`. The state graph alone decides; no fairness
 //! constraint is read.
 
+use std::collections::BTreeSet;
+
 use super::input::{ModelTerminalDeclaration, TerminalWhen};
 use filament_exact::Meter;
 
@@ -156,6 +158,9 @@ impl ModelSystem<'_> {
         if has_successor {
             return Ok(TerminalClass::NotTerminal);
         }
+        // FR-124-AC-12: only the declarations of the identities the subject
+        // reads are consulted, every alias of each; a declaration of another
+        // identity, its `terminal any` included, never is.
         // FR-124: intended when ANY declaration intends the state; else
         // undecided when any is refused; else undefined when any is; else
         // deadlocked. The first refused and first undefined declaration, in
@@ -163,7 +168,16 @@ impl ModelSystem<'_> {
         // depend on the order.
         let mut refused = None;
         let mut undefined = None;
-        for terminal in self.terminals() {
+        let read: BTreeSet<&str> = self
+            .universes
+            .keys()
+            .map(|population| population.package.as_str())
+            .collect();
+        for terminal in self
+            .terminals()
+            .iter()
+            .filter(|terminal| read.contains(terminal.model.identity()))
+        {
             match terminal.declaration {
                 ModelTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
                 ModelTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {

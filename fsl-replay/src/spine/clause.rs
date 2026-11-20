@@ -492,6 +492,8 @@ pub struct TemporalValuation {
     /// Alias-free declaration spellings referenced by the checked conditions.
     /// Structural package keys never provide surface labels by themselves.
     pub canonical_declarations: BTreeMap<filament_exact::NodeKey, String>,
+    /// Canonical source keys for named aggregate type arguments.
+    pub canonical_type_arguments: BTreeMap<String, String>,
     /// Alias-free identities of local functions called by checked conditions.
     pub canonical_functions: BTreeMap<usize, String>,
     /// Declared field order of record constructors in checked conditions.
@@ -536,6 +538,8 @@ impl TemporalValuation {
             }
         }
         let canonical_declarations = canonical_condition_declarations(graph, &checked_conditions);
+        let canonical_type_arguments =
+            canonical_condition_type_arguments(graph, &checked_conditions);
         let canonical_functions = canonical_condition_functions(graph, &checked_conditions);
         let canonical_record_fields = canonical_condition_record_fields(graph, &checked_conditions);
         let canonical_union_members = canonical_condition_union_members(graph, &checked_conditions);
@@ -543,6 +547,7 @@ impl TemporalValuation {
             clause: clause.clone(),
             checked_conditions,
             canonical_declarations,
+            canonical_type_arguments,
             canonical_functions,
             canonical_record_fields,
             canonical_union_members,
@@ -550,6 +555,64 @@ impl TemporalValuation {
             behaviours,
         }
     }
+}
+
+fn canonical_condition_type_arguments(
+    graph: &CheckedGraph,
+    conditions: &[(
+        fsl_semantics::check::FormulaNodeId,
+        fsl_semantics::check::CheckedBody,
+    )],
+) -> BTreeMap<String, String> {
+    let mut names = std::collections::BTreeSet::new();
+    for (_, body) in conditions {
+        let mut pending = vec![body.root()];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = pending.pop() {
+            if !visited.insert(node.id()) {
+                continue;
+            }
+            if let Some(name) = node.type_argument() {
+                names.insert(name.to_owned());
+            }
+            pending.extend(node.children());
+        }
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let key = match graph.source_owner(&name) {
+                Some(owner) => format!("ix://{}/{}", owner.identity(), name),
+                // A qualified or imported name has no owner of its own: the
+                // retained authored name is its spelling.
+                None if is_declared_type_name(&name) => name.clone(),
+                None => return None,
+            };
+            Some((name, key))
+        })
+        .collect()
+}
+
+/// Whether a retained type argument is a declared type's authored name (a
+/// path of identifiers beginning with a capital) and not a structural
+/// spelling or a builtin scalar, which the printer spells itself.
+fn is_declared_type_name(name: &str) -> bool {
+    const BUILTIN: [&str; 7] = [
+        "Integer", "Boolean", "Text", "Decimal", "Rational", "Float32", "Float64",
+    ];
+    let identifier = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    };
+    let last = name.rsplit("::").next().unwrap_or_default();
+    !BUILTIN.contains(&name)
+        && name.split("::").all(identifier)
+        && last
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
 }
 
 fn canonical_condition_record_fields(

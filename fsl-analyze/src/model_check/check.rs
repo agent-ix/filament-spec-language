@@ -136,6 +136,18 @@ pub struct ModelCheckRequest<'a> {
     pub reductions: Reductions,
 }
 
+
+/// The model system `request` runs over. The derived deadlock-freedom item
+/// classifies the terminal states of the identities its subject reads alone
+/// (FR-124-AC-12); every other item reads every selection.
+fn read_system<'a>(request: &ModelCheckRequest<'a>) -> Result<ModelSystem<'a>, AdmissionFailure> {
+    let simulation = request.subject.simulation.clone();
+    if matches!(request.item, ModelCheckItem::DeadlockFreedom) {
+        ModelSystem::new_over_read_identities(simulation)
+    } else {
+        ModelSystem::new(simulation)
+    }
+}
 /// Why [`check_model`] explored nothing (FR-126).
 #[derive(Debug, thiserror::Error)]
 pub enum ModelCheckRefusal {
@@ -544,7 +556,7 @@ pub fn check_model(
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
-    let system = ModelSystem::new(request.subject.simulation.clone())
+    let system = read_system(&request)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let (instances, root_cancelled) = if certified {
@@ -1210,7 +1222,7 @@ fn check_reduced(
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
-    let system = ModelSystem::new(request.subject.simulation.clone())
+    let system = read_system(&request)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let group = match precheck(reductions, &request.item, &system)? {

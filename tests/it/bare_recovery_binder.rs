@@ -12,6 +12,8 @@ use ix_trace_rs::trace;
 use super::checked_handoff::{admitted, request, tree};
 use fsl_command::checked_handoff::{evidence, write};
 
+mod checked_state_core;
+
 const UNLIMITED: filament_exact::ScalarLimits = filament_exact::ScalarLimits {
     integer_bits: u64::MAX,
     decimal_digits: u64::MAX,

@@ -4,6 +4,8 @@
 //! codegen negotiation belongs to its external integration tests. Other
 //! TC-762 engine members remain separately covered.
 
+mod completion_boundaries;
+
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
