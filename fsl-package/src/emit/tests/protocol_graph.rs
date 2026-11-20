@@ -1570,14 +1570,16 @@ fn source_memory_defaults_separate_emitted_package_identities() {
     let default = emit("");
     let tso = emit("memory tso");
     let repeated_tso = emit("memory tso");
-    let identity = |wire: &Value| {
-        wire["package_id"]
-            .as_str()
-            .expect("an emitted package identity")
+    let identity = |lowered: &Lowered| {
+        lowered
+            .ir
+            .as_ref()
+            .expect("an admitted emitted package")
+            .name()
             .to_owned()
     };
-    assert_ne!(identity(&default.wire), identity(&tso.wire));
-    assert_eq!(identity(&tso.wire), identity(&repeated_tso.wire));
+    assert_ne!(identity(&default), identity(&tso));
+    assert_eq!(identity(&tso), identity(&repeated_tso));
     let parallel = control_at(&tso.wire, &["Flow", "run", "Main", "Par"]);
     assert_eq!(
         lit(&argument(parallel, &PARALLEL, "memory")["members"][0]),
