@@ -2212,7 +2212,12 @@ fn an_option_clock_reads_its_presence_bit() {
 /// `Reference<Call>` itself. Keep the binder term as the second operand of
 /// the clock place's `presence_read`; lowering an object dereference here
 /// would give each place two encodings.
-#[trace("TC-685", "FR-829-AC-3", "FSpec-FR-322-AC-455")]
+#[trace(
+    "TC-685",
+    "FR-829-AC-3",
+    "FR-1040-AC-4",
+    "FSpec-FR-322-AC-455"
+)]
 #[test]
 fn a_population_clock_presence_read_uses_the_visited_reference() {
     let document = option_clock_document();
