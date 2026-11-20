@@ -143,6 +143,17 @@ pub enum Expr {
     },
     /// A present optional value.
     OptionSome(Box<Expr>),
+    /// A typed local binding, preserving a refined member domain in constructors.
+    Let {
+        /// Local binding name.
+        name: String,
+        /// Declared binding domain.
+        ty: Type,
+        /// Initializer evaluated outside the new binding's scope.
+        value: Box<Expr>,
+        /// Expression evaluated with the new binding in scope.
+        body: Box<Expr>,
+    },
     /// A one-field record constructor.
     Record(Box<Expr>),
     /// A two-member tuple constructor.
@@ -204,6 +215,17 @@ impl Expr {
             } => format!("rational({numerator}, {denominator})"),
             Self::Decimal { coefficient, scale } => format!("decimal({coefficient}, {scale})"),
             Self::OptionSome(member) => format!("Some({})", member.source()),
+            Self::Let {
+                name,
+                ty,
+                value,
+                body,
+            } => format!(
+                "let {name}: {} = ({}) in ({})",
+                ty.source().0,
+                value.source(),
+                body.source()
+            ),
             Self::Record(member) => format!("RecordValue {{ field: {} }}", member.source()),
             Self::Tuple(member, flag) => format!("TupleValue({}, {flag})", member.source()),
             Self::Collection { kind, members } => {
@@ -264,7 +286,14 @@ fn inhabit(ty: &Type, choice: u8) -> Expr {
             scale: choice % 3,
         },
         Type::Text => Expr::Text("a".repeat(usize::from(choice % 10))),
-        Type::Option(member) => Expr::OptionSome(Box::new(inhabit(member, choice))),
+        Type::Option(member) => Expr::Let {
+            name: "some_member".into(),
+            ty: (**member).clone(),
+            value: Box::new(inhabit(member, choice)),
+            body: Box::new(Expr::OptionSome(Box::new(Expr::Parameter(
+                "some_member".into(),
+            )))),
+        },
         Type::Record(member) => Expr::Record(Box::new(inhabit(member, choice))),
         Type::Tuple(member) => Expr::Tuple(Box::new(inhabit(member, choice)), choice % 2 == 0),
         Type::Collection { kind, member } => Expr::Collection {

@@ -83,6 +83,7 @@ struct Builder {
     normal: BTreeMap<Production, usize>,
     targeted: BTreeMap<Production, usize>,
     target: Production,
+    replacement: Option<(Production, Box<Builder>)>,
 }
 
 impl Builder {
@@ -111,6 +112,12 @@ impl Builder {
             }
             Rule::Production(production) => {
                 let start = tokens.len();
+                if let Some((context, replacement)) = &self.replacement {
+                    if production == context {
+                        replacement.render(&replacement.grammar[production], true, timed, tokens);
+                        return;
+                    }
+                }
                 self.render(
                     &self.grammar[production],
                     seek && *production != self.target,
@@ -190,6 +197,31 @@ impl Builder {
     }
 }
 
+fn target_costs(
+    grammar: &Grammar,
+    normal: &BTreeMap<Production, usize>,
+    target: Production,
+) -> BTreeMap<Production, usize> {
+    let mut targeted = BTreeMap::from([(target, normal[&target])]);
+    for _ in 0..grammar.len() {
+        let previous = targeted.clone();
+        for (production, rule) in grammar {
+            if *production != target {
+                targeted.insert(
+                    *production,
+                    targeted_cost(rule, normal, &previous)
+                        .saturating_add(1)
+                        .min(INFINITE),
+                );
+            }
+        }
+        if targeted == previous {
+            break;
+        }
+    }
+    targeted
+}
+
 /// Derive one bounded complete-unit context per grammar-table production.
 ///
 /// The finite least-cost calculation bounds recursion without filtering parser
@@ -213,23 +245,7 @@ pub fn covering_derivations() -> Vec<Derivation> {
     }
     let mut output = Vec::new();
     for target in grammar.keys().copied() {
-        let mut targeted = BTreeMap::from([(target, normal[&target])]);
-        for _ in 0..grammar.len() {
-            let previous = targeted.clone();
-            for (production, rule) in &grammar {
-                if *production != target {
-                    targeted.insert(
-                        *production,
-                        targeted_cost(rule, &normal, &previous)
-                            .saturating_add(1)
-                            .min(INFINITE),
-                    );
-                }
-            }
-            if targeted == previous {
-                break;
-            }
-        }
+        let targeted = target_costs(&grammar, &normal, target);
         if targeted
             .get(&Production::CompleteUnit)
             .copied()
@@ -243,6 +259,21 @@ pub fn covering_derivations() -> Vec<Derivation> {
             normal: normal.clone(),
             targeted,
             target,
+            replacement: None,
+        };
+        // `a.step.op` is also an ordinary member path. In a `holds`
+        // condition that earlier grammar branch wins; MatchBlock is the
+        // grammar's unambiguous hyper-expression context.
+        let builder = if target == Production::StepLabel {
+            Builder {
+                grammar: complete_v1(),
+                normal: normal.clone(),
+                targeted: target_costs(&grammar, &normal, Production::MatchBlock),
+                target: Production::MatchBlock,
+                replacement: Some((Production::MatchBlock, Box::new(builder))),
+            }
+        } else {
+            builder
         };
         let mut tokens = Vec::new();
         builder.render(
