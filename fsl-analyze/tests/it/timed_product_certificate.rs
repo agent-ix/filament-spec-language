@@ -465,9 +465,12 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert_eq!(proved_value(&record), ratio(20, 9));
     let doc = document(&record);
     assert_eq!(doc["objective"]["timed"]["form"], "expected-elapsed");
-    assert!(doc["values"][0]["state"]
-        .to_string()
-        .contains("boundary-region"));
+    let encoded = doc["values"][0]["state"]
+        .as_str()
+        .expect("encoded boundary-region key");
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+    let key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+    assert_eq!(key[2][1][0], "boundary-region");
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
