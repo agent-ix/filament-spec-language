@@ -8,7 +8,16 @@ use super::super::{Result, RunCause};
 use serde_json::{Map, Value};
 
 /// The members of a verification plan request (FSpec FR-824).
-const MEMBERS: [&str; 6] = ["plan", "emit", "execute", "initial", "seed", "document"];
+const MEMBERS: [&str; 8] = [
+    "plan",
+    "emit",
+    "execute",
+    "initial",
+    "seed",
+    "max_trace_length",
+    "max_value_bits",
+    "document",
+];
 
 /// Which run route carries the request: FSpec FR-824 "Selection" lets only a
 /// run over a selected checked package carry `document`.
@@ -35,6 +44,10 @@ pub struct PlanRequest {
     pub initial: Option<String>,
     /// The generation seed, when given.
     pub seed: Option<u64>,
+    /// The model-based trace bound, when given.
+    pub max_trace_length: Option<u64>,
+    /// The model-based size bound, when given.
+    pub max_value_bits: Option<u64>,
     /// The plan document file of a package-route run.
     pub document: Option<String>,
 }
@@ -53,7 +66,13 @@ impl PlanRequest {
     /// # Errors
     ///
     /// `unknown-member` at `/verification_plan/initial` or `/seed`.
-    pub fn close_by_plan(&self, consumes_initial: bool, consumes_seed: bool) -> Result<()> {
+    pub fn close_by_plan(
+        &self,
+        consumes_initial: bool,
+        consumes_seed: bool,
+        consumes_max_trace_length: bool,
+        consumes_max_value_bits: bool,
+    ) -> Result<()> {
         if self.initial.is_some() && !consumes_initial {
             return Err(refuse(
                 "/initial",
@@ -66,6 +85,20 @@ impl PlanRequest {
                 "/seed",
                 "unknown-member",
                 "no step of the selected plan consumes `seed`",
+            ));
+        }
+        if self.max_trace_length.is_some() && !consumes_max_trace_length {
+            return Err(refuse(
+                "/max_trace_length",
+                "unknown-member",
+                "no step of the selected plan consumes `max_trace_length`",
+            ));
+        }
+        if self.max_value_bits.is_some() && !consumes_max_value_bits {
+            return Err(refuse(
+                "/max_value_bits",
+                "unknown-member",
+                "no step of the selected plan consumes `max_value_bits`",
             ));
         }
         Ok(())
@@ -115,6 +148,45 @@ fn seed(object: &Map<String, Value>) -> Result<Option<u64>> {
             )
         }),
         Some(_) => Err(kind_error("seed", "an unsigned 64-bit integer")),
+    }
+}
+
+fn max_trace_length(object: &Map<String, Value>) -> Result<Option<u64>> {
+    match object.get("max_trace_length") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .filter(|value| *value >= 1)
+            .map(Some)
+            .ok_or_else(|| {
+                refuse(
+                    "/max_trace_length",
+                    "invalid-value",
+                    "the trace bound is an unsigned integer of at least 1",
+                )
+            }),
+        Some(_) => Err(kind_error(
+            "max_trace_length",
+            "an unsigned integer of at least 1",
+        )),
+    }
+}
+
+fn max_value_bits(object: &Map<String, Value>) -> Result<Option<u64>> {
+    match object.get("max_value_bits") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .filter(|value| (1..=64).contains(value))
+            .map(Some)
+            .ok_or_else(|| {
+                refuse(
+                    "/max_value_bits",
+                    "invalid-value",
+                    "the value-size bound is an integer from 1 to 64",
+                )
+            }),
+        Some(_) => Err(kind_error("max_value_bits", "an integer from 1 to 64")),
     }
 }
 
@@ -192,6 +264,8 @@ pub fn read(member: &Value, route: Route) -> Result<PlanRequest> {
     }
     let initial = text(object, "initial")?;
     let seed = seed(object)?;
+    let max_trace_length = max_trace_length(object)?;
+    let max_value_bits = max_value_bits(object)?;
     let document = document(object, route)?;
     Ok(PlanRequest {
         plan,
@@ -199,6 +273,8 @@ pub fn read(member: &Value, route: Route) -> Result<PlanRequest> {
         execute,
         initial,
         seed,
+        max_trace_length,
+        max_value_bits,
         document,
     })
 }
@@ -225,18 +301,86 @@ mod tests {
             Route::Source,
         )
         .unwrap();
-        assert!(request.close_by_plan(true, true).is_ok());
+        assert!(request.close_by_plan(true, true, true, true).is_ok());
         for (initial, seed, pointer) in [
             (true, false, "/request/verification_plan/seed"),
             (false, true, "/request/verification_plan/initial"),
         ] {
-            match request.close_by_plan(initial, seed) {
+            match request.close_by_plan(initial, seed, true, true) {
                 Err(RunCause::PlanRequest { path, cause, .. }) => {
                     assert_eq!((path.as_str(), cause), (pointer, "unknown-member"));
                 }
                 other => panic!("expected unknown-member, got {other:?}"),
             }
         }
+    }
+
+    /// FR-824-AC-3/7: trace and size inputs are closed by their consumers and
+    /// enforce their declared numeric domains.
+    #[test]
+    #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-7")]
+    #[trace("FSpec-TC-2046", "FSpec-FR-824-AC-7")]
+    fn model_based_bounds_are_read_and_closed_by_consuming_steps() {
+        let request = read(
+            &json!({"plan": "Sized", "max_trace_length": 8, "max_value_bits": 64}),
+            Route::Source,
+        )
+        .unwrap();
+        assert_eq!(request.max_trace_length, Some(8));
+        assert_eq!(request.max_value_bits, Some(64));
+        assert!(request.close_by_plan(true, true, true, true).is_ok());
+        for (member, pointer) in [
+            (
+                "max_trace_length",
+                "/request/verification_plan/max_trace_length",
+            ),
+            (
+                "max_value_bits",
+                "/request/verification_plan/max_value_bits",
+            ),
+        ] {
+            let mut input = json!({"plan": "Sized"});
+            input[member] = json!(8);
+            let request = read(&input, Route::Source).unwrap();
+            let error = request
+                .close_by_plan(
+                    true,
+                    true,
+                    member != "max_trace_length",
+                    member != "max_value_bits",
+                )
+                .expect_err("an unconsumed input is unknown to the selected plan");
+            match error {
+                RunCause::PlanRequest { path, cause, .. } => {
+                    assert_eq!(path, pointer);
+                    assert_eq!(cause, "unknown-member");
+                }
+                other => panic!("expected unknown-member, got {other:?}"),
+            }
+        }
+        for bad in [json!(0), json!(65), json!(-1), json!(7.5)] {
+            assert_eq!(
+                cause(&json!({"max_value_bits": bad}), Route::Source),
+                (
+                    "/request/verification_plan/max_value_bits".to_owned(),
+                    "invalid-value"
+                )
+            );
+        }
+        assert_eq!(
+            cause(&json!({"max_trace_length": 0}), Route::Source),
+            (
+                "/request/verification_plan/max_trace_length".to_owned(),
+                "invalid-value"
+            )
+        );
+        assert_eq!(
+            cause(&json!({"max_value_bits": "8"}), Route::Source),
+            (
+                "/request/verification_plan/max_value_bits".to_owned(),
+                "wrong-value-kind"
+            )
+        );
     }
 
     #[test]

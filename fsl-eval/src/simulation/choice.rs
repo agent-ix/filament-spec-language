@@ -274,6 +274,37 @@ pub(crate) fn choose(at: ChoicePoint, weights: &Weights) -> (usize, u64) {
     }
 }
 
+/// Uniformly select an index from an arbitrary positive integer-sized domain
+/// using the sampler draw stream. Domains wider than one digest concatenate
+/// enough consecutive draw values to cover `count` without truncation.
+pub(crate) fn choose_integer(at: ChoicePoint, count: &Integer) -> Option<(Integer, u64)> {
+    if count.is_negative() || count.is_zero() {
+        return None;
+    }
+    if *count == Integer::one() {
+        return Some((Integer::zero(), 0));
+    }
+    let bits = count.sub(&Integer::one()).magnitude_bits();
+    let digests_per_choice = bits.div_ceil(256);
+    let range = Integer::one().shifted_left(digests_per_choice.checked_mul(256)?);
+    let divisor = NonZeroInteger::try_from(count).ok()?;
+    let (quotient, _) = range.div_mod_floor(divisor);
+    let accept_below = quotient.mul(count);
+    let mut draw = 0_u64;
+    loop {
+        let mut value = Integer::zero();
+        for _ in 0..digests_per_choice {
+            let digest = big_endian(plain_digest(&DrawPreimage::at(at, draw)));
+            draw = draw.checked_add(1)?;
+            value = value.shifted_left(256).add(&digest);
+        }
+        if value < accept_below {
+            let (_, remainder) = value.div_mod_floor(NonZeroInteger::try_from(count).ok()?);
+            return Some((remainder, draw));
+        }
+    }
+}
+
 /// [`weighted_choice`], with how many draw digests it computed: none when
 /// the weights are refused or there is one of them.
 pub(crate) fn weighted_choice_counted(
@@ -404,6 +435,53 @@ mod tests {
         };
         assert_eq!(choose(at, &Weights::uniform(1).expect("one")), (0, 0));
         assert!(choose(at, &Weights::uniform(2).expect("two")).1 >= 1);
+    }
+
+    /// FR-190-AC-21: model-based assignments use the same sampler preimage,
+    /// with each parameter at choice position `p` on step zero.
+    #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-21")]
+    #[test]
+    fn integer_domain_choices_match_the_pinned_sampler_vectors() {
+        let integer_count = Integer::from(511_u64);
+        let (integer_index, integer_draws) = choose_integer(
+            ChoicePoint {
+                seed: 7,
+                trace: 5,
+                step: 0,
+                choice: 0,
+            },
+            &integer_count,
+        )
+        .expect("the bounded Integer domain has members");
+        assert_eq!(integer_index, Integer::from(116_u64));
+        assert_eq!(integer_draws, 1);
+
+        let text_count = "1236687452161".parse::<Integer>().expect("exact count");
+        let (text_index, text_draws) = choose_integer(
+            ChoicePoint {
+                seed: 7,
+                trace: 10,
+                step: 0,
+                choice: 0,
+            },
+            &text_count,
+        )
+        .expect("the exact Text domain has members");
+        assert_eq!(text_index, "968414557300".parse().expect("exact index"));
+        assert_eq!(text_draws, 1);
+
+        let wide_count = Integer::one().shifted_left(300);
+        let (_, wide_draws) = choose_integer(
+            ChoicePoint {
+                seed: 7,
+                trace: 10,
+                step: 0,
+                choice: 0,
+            },
+            &wide_count,
+        )
+        .expect("wide finite domains are sampled without truncation");
+        assert_eq!(wide_draws, 2);
     }
 
     fn at(trace: u64) -> ChoicePoint {

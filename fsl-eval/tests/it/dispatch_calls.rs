@@ -34,18 +34,18 @@ use fsl_forms::{
     BinaryOperator, ClauseKind, DeclarationSpans, DeclaredClauseKind, Expression, ExpressionSpans,
     FunctionDeclaration, StateClauseKind, TypeForm,
 };
+use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::ProfileSelection;
-use fsl_foundation::Span;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{
-    checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
-    OperationClauses,
-};
 use fsl_semantics::check::{
     AdmittedModel, CheckCause, CheckRefusal, DispatchCandidate, DispatchFunctionRole,
     DispatchOperation, DispatchTable, InvalidDispatchDeclaration, ModelClause, PackageDeclarations,
     StateClauseDeclaration,
+};
+use fsl_semantics::check::{
+    DispatchBridgeRefusal, DispatchRoot, OperationClauses, checked_dispatch_operation,
+    object_type_supertypes,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -56,7 +56,7 @@ use fsl_semantics::model::domain_package::{
     ProcessRecord, ValueTypeRef,
 };
 use fsl_semantics::model::normalize::{
-    normalize, EffectiveView, ModelRefusalCause, NormalizeOutcome,
+    EffectiveView, ModelRefusalCause, NormalizeOutcome, normalize,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
@@ -297,6 +297,7 @@ fn one_candidate_package(
             receiver_type: receiver_type.clone(),
             member: "size".to_owned(),
             parameters: Vec::new(),
+            required_arity: 0,
             result,
             selected_operation_owner: receiver_type,
             selected_operation: "size".to_owned(),
@@ -1079,9 +1080,9 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
     assert_eq!(
         location,
         &Location::root(Origin::Body {
-                function: "candidate.body".to_owned(),
-                index: 0,
-            }),
+            function: "candidate.body".to_owned(),
+            index: 0,
+        }),
         "an Arity refusal must point at the candidate function's own declaration, not the expression root"
     );
 }
@@ -1139,9 +1140,9 @@ fn dispatch_candidate_with_a_mismatched_parameter_type_is_refused_invalid_dispat
     assert_eq!(
         location,
         &Location::root(Origin::Body {
-                function: "candidate.body".to_owned(),
-                index: 0,
-            }),
+            function: "candidate.body".to_owned(),
+            index: 0,
+        }),
         "a ParameterType refusal must point at the candidate function's own declaration, not the expression root"
     );
 }
@@ -1185,9 +1186,9 @@ fn dispatch_candidate_with_a_mismatched_result_type_is_refused_invalid_dispatch(
     assert_eq!(
         location,
         &Location::root(Origin::Body {
-                function: "candidate.body".to_owned(),
-                index: 0,
-            }),
+            function: "candidate.body".to_owned(),
+            index: 0,
+        }),
         "a ResultType refusal must point at the candidate function's own declaration, not the expression root"
     );
 }
@@ -1521,6 +1522,7 @@ fn d06_two_operations_sharing_one_table_report_the_operation_actually_dispatched
                 receiver_type: receiver_type.clone(),
                 member: "size".to_owned(),
                 parameters: Vec::new(),
+                required_arity: 0,
                 result: ValueType::Integer,
                 selected_operation_owner: receiver_type.clone(),
                 selected_operation: "size".to_owned(),
@@ -1530,6 +1532,7 @@ fn d06_two_operations_sharing_one_table_report_the_operation_actually_dispatched
                 receiver_type: receiver_type.clone(),
                 member: "weight".to_owned(),
                 parameters: Vec::new(),
+                required_arity: 0,
                 result: ValueType::Integer,
                 selected_operation_owner: receiver_type.clone(),
                 selected_operation: "weight".to_owned(),

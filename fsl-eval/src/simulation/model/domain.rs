@@ -4,14 +4,16 @@
 //! product of domains one element at a time.
 
 use filament_exact::{
-    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
-    Integer, NodeKey, ObjectReference, OptionValue, Presence, UnionMember, UnionValue, Value,
-    ValueType,
+    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, NodeKey, ObjectReference,
+    OptionValue, Presence, TextType, UnionMember, UnionValue, Value, ValueType, from_admitted,
+    from_admitted_slots,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
 };
 use std::collections::BTreeMap;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Each record type's slot indices in declaration order, the first the most
 /// significant component of its enumerated domain (FR-120, FR-215). A record
@@ -51,6 +53,7 @@ pub(crate) fn record_orders(
 pub(crate) fn enumerable(value_type: &ValueType) -> bool {
     match value_type {
         ValueType::Boolean | ValueType::Int(_) | ValueType::Reference(_) => true,
+        ValueType::Text(_) => true,
         ValueType::Option(payload) => enumerable(payload),
         ValueType::Collection(collection) => {
             collection.kind() == CollectionKind::Sequence
@@ -65,7 +68,6 @@ pub(crate) fn enumerable(value_type: &ValueType) -> bool {
         | ValueType::BoundedQuantity(_)
         | ValueType::CarriedQuantity(_)
         | ValueType::Map(_)
-        | ValueType::Text(_)
         | ValueType::String
         | ValueType::Bytes
         | ValueType::JsonObject
@@ -375,6 +377,10 @@ pub(super) fn composite_values<E>(
 /// by element index, the first element most significant.
 pub(super) enum Domain {
     Boolean,
+    /// An unbounded integer type restricted to FR-190's size-ordered `S_b`.
+    SizeInteger {
+        bits: u8,
+    },
     Int {
         lower: Integer,
         len: u128,
@@ -410,6 +416,8 @@ pub(super) enum Domain {
         min: u64,
         max: u64,
     },
+    /// A bounded FR-141 text domain in FR-804 retained-value order.
+    Text(TextType),
     /// A random parameter's support, in declared order (FR-187, ADR-024
     /// PM-1): its finite domain whatever its declared type.
     Listed(Vec<Value>),
@@ -429,6 +437,7 @@ impl Domain {
     ) -> Option<Self> {
         match value_type {
             ValueType::Boolean => Some(Self::Boolean),
+            ValueType::Text(text_type) => Some(Self::Text(*text_type)),
             ValueType::Int(interval) => {
                 let span = interval.upper().sub(interval.lower()).add(&Integer::one());
                 Some(Self::Int {
@@ -489,6 +498,24 @@ impl Domain {
         }
     }
 
+    /// The domain of `value_type` under FR-190's size bound for an otherwise
+    /// unbounded integer. Other unbounded carriers remain unavailable until
+    /// their canonical size measures are implemented.
+    pub(super) fn of_bounded(
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        types: &TypeEnvironment,
+        orders: &RecordOrders,
+        max_value_bits: Option<u8>,
+    ) -> Option<Self> {
+        match value_type {
+            ValueType::Integer => Some(Self::SizeInteger {
+                bits: max_value_bits?,
+            }),
+            _ => Self::of(value_type, objects, types, orders),
+        }
+    }
+
     /// How many values a `Map<K, V>[min, max]` of FR-120 holds without
     /// enumerating them, saturating at `u128::MAX`: a map is a set of
     /// distinct keys each with a value, so with `|K|` keys and `|V|` values it
@@ -519,6 +546,7 @@ impl Domain {
     pub(super) fn len(&self) -> u128 {
         match self {
             Self::Boolean => 2,
+            Self::SizeInteger { bits } => (1_u128 << (u32::from(*bits) + 1)) - 1,
             Self::Int { len, .. } => *len,
             Self::Option { inner, .. } => inner.len().saturating_add(1),
             Self::Reference(objects) => objects.len() as u128,
@@ -552,6 +580,9 @@ impl Domain {
                     total.saturating_add(arrangements(base, u128::from(length)))
                 })
             }
+            Self::Text(text_type) => text_domain_count(text_type)
+                .and_then(|count| count.to_string().parse::<u128>().ok())
+                .unwrap_or(u128::MAX),
         }
     }
 
@@ -563,6 +594,7 @@ impl Domain {
                 1 => Some(Value::Boolean(true)),
                 _ => None,
             },
+            Self::SizeInteger { bits } => size_integer_nth(*bits, index),
             Self::Int { lower, len } => {
                 if index >= *len {
                     return None;
@@ -698,8 +730,701 @@ impl Domain {
                 }
                 None
             }
+            Self::Text(text_type) => {
+                text_unrank(text_type, &Integer::from_str(&index.to_string()).ok()?)
+                    .and_then(|text| admitted_text_value(text_type, &text))
+            }
         }
     }
+
+    /// The exact number of values when this domain has a supported exact
+    /// count. Text counts may exceed the machine integer used by iteration.
+    pub(super) fn exact_len(&self) -> Option<Integer> {
+        match self {
+            Self::Text(text_type) => text_domain_count(text_type),
+            _ => Integer::from_str(&self.len().to_string()).ok(),
+        }
+    }
+
+    /// The value at an exact integer index, including Text domains wider than
+    /// the machine index used by finite graph enumeration.
+    pub(super) fn nth_exact(&self, index: &Integer) -> Option<Value> {
+        match self {
+            Self::Text(text_type) => {
+                text_unrank(text_type, index).and_then(|text| admitted_text_value(text_type, &text))
+            }
+            _ => self.nth(index.to_string().parse().ok()?),
+        }
+    }
+
+    /// The zero-based FR-120/FR-190 domain index of `value`.
+    pub(super) fn index_of(&self, value: &Value) -> Option<u128> {
+        match (self, value) {
+            (Self::Boolean, Value::Boolean(false)) => Some(0),
+            (Self::Boolean, Value::Boolean(true)) => Some(1),
+            (Self::Int { lower, len }, Value::Integer(value)) => {
+                let offset = value.sub(lower).to_string().parse::<u128>().ok()?;
+                (offset < *len).then_some(offset)
+            }
+            (Self::SizeInteger { bits }, Value::Integer(value)) => {
+                if value.is_zero() {
+                    return Some(0);
+                }
+                let magnitude = value.abs().to_u64()? as u128;
+                let level = u8::try_from(u128::BITS - magnitude.leading_zeros()).ok()?;
+                if level > *bits {
+                    return None;
+                }
+                let start = (1_u128.checked_shl(u32::from(level))?).checked_sub(1)?;
+                let half = 1_u128.checked_shl(u32::from(level - 1))?;
+                let offset = if value.is_negative() {
+                    (half.checked_mul(2)?.checked_sub(1)?).checked_sub(magnitude)?
+                } else {
+                    half.checked_add(magnitude.checked_sub(half)?)?
+                };
+                start.checked_add(offset)
+            }
+            _ => {
+                let mut index = 0_u128;
+                while let Some(candidate) = self.nth(index) {
+                    if super::probabilistic::same_value(&candidate, value) {
+                        return Some(index);
+                    }
+                    index = index.checked_add(1)?;
+                }
+                None
+            }
+        }
+    }
+}
+
+/// `Integer` at the zero-based index in FR-190's size order.
+fn text_domain_count(text_type: &TextType) -> Option<Integer> {
+    let min = text_type.min();
+    let max = text_type.max();
+    let profile = text_type.profile();
+    match profile {
+        filament_exact::TextProfile::UnicodeScalars => {
+            let alphabet = Integer::from(1_112_064_u64);
+            Some((min..=max).fold(Integer::zero(), |total, length| {
+                total.add(&alphabet.pow(&Integer::from(length)))
+            }))
+        }
+        filament_exact::TextProfile::BinaryUtf8 => {
+            let max = usize::try_from(max).ok()?;
+            let mut weights = Vec::with_capacity(max.saturating_add(1));
+            for length in 0..=max {
+                let count = match length {
+                    0 => Integer::one(),
+                    _ => {
+                        let mut total = Integer::zero();
+                        for (width, alphabet) in
+                            [128_u64, 1_920, 61_440, 1_048_576].into_iter().enumerate()
+                        {
+                            if let Some(previous) = length.checked_sub(width + 1) {
+                                total = total.add(&Integer::from(alphabet).mul(&weights[previous]));
+                            }
+                        }
+                        total
+                    }
+                };
+                weights.push(count);
+            }
+            let mut total = Integer::zero();
+            for length in usize::try_from(min).ok()?..=max {
+                total = total.add(weights.get(length)?);
+            }
+            Some(total)
+        }
+        filament_exact::TextProfile::Nfd | filament_exact::TextProfile::Nfkd => {
+            let table = nfd_suffix_counts(profile, max)?;
+            let first = usize::try_from(min).ok()?;
+            let last = usize::try_from(max).ok()?;
+            Some((first..=last).fold(Integer::zero(), |total, length| {
+                total.add(&table[length][0])
+            }))
+        }
+        filament_exact::TextProfile::Nfc | filament_exact::TextProfile::Nfkc => {
+            let table = composed_suffix_counts(profile, max)?;
+            let first = usize::try_from(min).ok()?;
+            let last = usize::try_from(max).ok()?;
+            Some((first..=last).fold(Integer::zero(), |total, length| {
+                total.add(&table[length][0][0])
+            }))
+        }
+    }
+}
+
+fn text_unrank(text_type: &TextType, index: &Integer) -> Option<String> {
+    if index.is_negative() {
+        return None;
+    }
+    if index.is_zero() {
+        if text_type.min() == 0 {
+            return Some(String::new());
+        }
+        let count = usize::try_from(text_type.min()).ok()?;
+        return Some(std::iter::repeat_n('\0', count).collect());
+    }
+    if *index >= text_domain_count(text_type)? {
+        return None;
+    }
+    match text_type.profile() {
+        filament_exact::TextProfile::UnicodeScalars => {
+            let mut prefix = String::new();
+            let mut remaining = index.clone();
+            loop {
+                let length = u64::try_from(prefix.chars().count()).ok()?;
+                if (text_type.min()..=text_type.max()).contains(&length) {
+                    if remaining.is_zero() {
+                        return Some(prefix);
+                    }
+                    remaining = remaining.sub(&Integer::one());
+                }
+                let child_count = unicode_prefix_count(length.checked_add(1)?, text_type)?;
+                let alphabet = Integer::from(1_112_064_u64);
+                let scalar_index = remaining
+                    .div_mod_floor(filament_exact::NonZeroInteger::try_from(&child_count).ok()?);
+                let scalar_rank = u32::try_from(scalar_index.0.to_u64()?).ok()?;
+                if scalar_rank >= 1_112_064 {
+                    return None;
+                }
+                let _ = alphabet;
+                remaining = scalar_index.1;
+                prefix.push(scalar_from_rank(scalar_rank)?);
+            }
+        }
+        filament_exact::TextProfile::BinaryUtf8 => {
+            let mut prefix = String::new();
+            let mut remaining = index.clone();
+            let mut weights = Vec::new();
+            let max = usize::try_from(text_type.max()).ok()?;
+            for length in 0..=max {
+                let count = match length {
+                    0 => Integer::one(),
+                    _ => {
+                        let mut total = Integer::zero();
+                        for (width, alphabet) in
+                            [128_u64, 1_920, 61_440, 1_048_576].into_iter().enumerate()
+                        {
+                            if let Some(previous) = length.checked_sub(width + 1) {
+                                total = total.add(&Integer::from(alphabet).mul(&weights[previous]));
+                            }
+                        }
+                        total
+                    }
+                };
+                weights.push(count);
+            }
+            loop {
+                let byte_length = u64::try_from(prefix.len()).ok()?;
+                if (text_type.min()..=text_type.max()).contains(&byte_length) {
+                    if remaining.is_zero() {
+                        return Some(prefix);
+                    }
+                    remaining = remaining.sub(&Integer::one());
+                }
+                let mut found = None;
+                for (width, start, end) in [
+                    (1_usize, 0_u32, 0x7f_u32),
+                    (2, 0x80, 0x7ff),
+                    (3, 0x800, 0xffff),
+                    (4, 0x10000, 0x10ffff),
+                ] {
+                    let Some(next_bytes) = prefix.len().checked_add(width) else {
+                        continue;
+                    };
+                    let mut child_count = Integer::zero();
+                    for length in usize::try_from(text_type.min()).ok()?.max(next_bytes)..=max {
+                        let left = length.checked_sub(next_bytes)?;
+                        child_count = child_count.add(weights.get(left)?);
+                    }
+                    if child_count.is_zero() {
+                        continue;
+                    }
+                    let width_count = if width == 3 {
+                        u64::from(0xd7ff - start + 1) + u64::from(end - 0xe000 + 1)
+                    } else {
+                        u64::from(end - start + 1)
+                    };
+                    let group_count = child_count.mul(&Integer::from(width_count));
+                    if remaining >= group_count {
+                        remaining = remaining.sub(&group_count);
+                        continue;
+                    }
+                    let (rank, suffix) = remaining.div_mod_floor(
+                        filament_exact::NonZeroInteger::try_from(&child_count).ok()?,
+                    );
+                    let rank = u32::try_from(rank.to_u64()?).ok()?;
+                    let surrogate_gap = 0xd800 - start;
+                    let scalar = if width == 3 && rank >= surrogate_gap {
+                        0xe000 + (rank - surrogate_gap)
+                    } else {
+                        start + rank
+                    };
+                    found = Some((scalar_from_rank_or_scalar(scalar)?, suffix));
+                    break;
+                }
+                let (character, suffix) = found?;
+                prefix.push(character);
+                remaining = suffix;
+            }
+        }
+        filament_exact::TextProfile::Nfd | filament_exact::TextProfile::Nfkd => {
+            let mut prefix = String::new();
+            let mut remaining = index.clone();
+            let max = usize::try_from(text_type.max()).ok()?;
+            let table = nfd_suffix_counts(text_type.profile(), text_type.max())?;
+            let alphabet = normalized_scalar_alphabet(text_type.profile())?;
+            let mut last_ccc = 0_u8;
+            loop {
+                let length = prefix.chars().count();
+                if (usize::try_from(text_type.min()).ok()?..=max).contains(&length) {
+                    if remaining.is_zero() {
+                        return Some(prefix);
+                    }
+                    remaining = remaining.sub(&Integer::one());
+                }
+                if length >= max {
+                    return None;
+                }
+                let mut selected = None;
+                for (character, ccc) in alphabet {
+                    if *ccc != 0 && last_ccc > *ccc {
+                        continue;
+                    }
+                    let new_length = length.checked_add(1)?;
+                    let first = usize::try_from(text_type.min()).ok()?.max(new_length);
+                    let child_count = (first..=max).fold(Integer::zero(), |total, target| {
+                        total.add(&table[target - new_length][usize::from(*ccc)])
+                    });
+                    if child_count.is_zero() {
+                        continue;
+                    }
+                    if remaining < child_count {
+                        selected = Some((*character, *ccc));
+                        break;
+                    }
+                    remaining = remaining.sub(&child_count);
+                }
+                let (character, ccc) = selected?;
+                prefix.push(character);
+                last_ccc = ccc;
+            }
+        }
+        filament_exact::TextProfile::Nfc | filament_exact::TextProfile::Nfkc => {
+            let table = composed_suffix_counts(text_type.profile(), text_type.max())?;
+            let alphabet = composed_scalar_alphabet(text_type.profile())?;
+            let mut prefix = String::new();
+            let mut remaining = index.clone();
+            let mut starter = 0_usize;
+            let mut last_ccc = 0_u8;
+            let max = usize::try_from(text_type.max()).ok()?;
+            loop {
+                let length = prefix.chars().count();
+                if (usize::try_from(text_type.min()).ok()?..=max).contains(&length) {
+                    if remaining.is_zero() {
+                        return Some(prefix);
+                    }
+                    remaining = remaining.sub(&Integer::one());
+                }
+                if length >= max {
+                    return None;
+                }
+                let mut selected = None;
+                for (character, ccc, next_starter) in &alphabet.alphabet {
+                    if *ccc != 0 && last_ccc > *ccc {
+                        continue;
+                    }
+                    if (last_ccc == 0 || last_ccc < *ccc)
+                        && composed_pair_exists(alphabet, starter, *character)
+                    {
+                        continue;
+                    }
+                    let new_length = length.checked_add(1)?;
+                    let first = usize::try_from(text_type.min()).ok()?.max(new_length);
+                    let ccc_index = alphabet.ccc_indexes[usize::from(*ccc)];
+                    let child_count = (first..=max).fold(Integer::zero(), |total, target| {
+                        total.add(&table[target - new_length][*next_starter][ccc_index])
+                    });
+                    if child_count.is_zero() {
+                        continue;
+                    }
+                    if remaining < child_count {
+                        selected = Some((*character, *ccc, *next_starter));
+                        break;
+                    }
+                    remaining = remaining.sub(&child_count);
+                }
+                let (character, ccc, next_starter) = selected?;
+                prefix.push(character);
+                if ccc == 0 {
+                    starter = next_starter;
+                }
+                last_ccc = ccc;
+            }
+        }
+    }
+}
+
+fn unicode_prefix_count(prefix_length: u64, text_type: &TextType) -> Option<Integer> {
+    if prefix_length > text_type.max() {
+        return Some(Integer::zero());
+    }
+    let alphabet = Integer::from(1_112_064_u64);
+    let first = prefix_length.max(text_type.min());
+    Some(
+        (first..=text_type.max()).fold(Integer::zero(), |total, length| {
+            total.add(&alphabet.pow(&Integer::from(length - prefix_length)))
+        }),
+    )
+}
+
+fn scalar_from_rank(rank: u32) -> Option<char> {
+    let scalar = if rank < 0xd800 {
+        rank
+    } else {
+        rank.checked_add(0x800)?
+    };
+    char::from_u32(scalar)
+}
+
+fn scalar_from_rank_or_scalar(scalar: u32) -> Option<char> {
+    char::from_u32(scalar)
+}
+
+fn is_normalized(profile: filament_exact::TextProfile, text: &str) -> bool {
+    let Some(form) = profile.normalization() else {
+        return true;
+    };
+    form.apply(text).eq(text.chars())
+}
+
+fn normalized_scalar_alphabet(
+    profile: filament_exact::TextProfile,
+) -> Option<&'static [(char, u8)]> {
+    static NFD: OnceLock<Vec<(char, u8)>> = OnceLock::new();
+    static NFKD: OnceLock<Vec<(char, u8)>> = OnceLock::new();
+    let cache = match profile {
+        filament_exact::TextProfile::Nfd => &NFD,
+        filament_exact::TextProfile::Nfkd => &NFKD,
+        _ => return None,
+    };
+    Some(cache.get_or_init(|| {
+        (0..1_112_064_u32)
+            .filter_map(|rank| {
+                let character = scalar_from_rank(rank)?;
+                is_normalized(profile, &character.to_string()).then_some((
+                    character,
+                    unicode_normalization::char::canonical_combining_class(character),
+                ))
+            })
+            .collect()
+    }))
+}
+
+type DecomposedCounts = Vec<Vec<Integer>>;
+type ComposedCounts = Vec<Vec<Vec<Integer>>>;
+type CountCache<T> = OnceLock<Mutex<BTreeMap<usize, Arc<T>>>>;
+
+fn nfd_suffix_counts(
+    profile: filament_exact::TextProfile,
+    max: u64,
+) -> Option<Arc<DecomposedCounts>> {
+    static NFD: CountCache<DecomposedCounts> = OnceLock::new();
+    static NFKD: CountCache<DecomposedCounts> = OnceLock::new();
+    let cache = match profile {
+        filament_exact::TextProfile::Nfd => &NFD,
+        filament_exact::TextProfile::Nfkd => &NFKD,
+        _ => return None,
+    };
+    let max = usize::try_from(max).ok()?;
+    if max <= 4 {
+        if let Some(counts) = cache
+            .get_or_init(Default::default)
+            .lock()
+            .ok()?
+            .get(&max)
+            .cloned()
+        {
+            return Some(counts);
+        }
+    }
+    let alphabet = normalized_scalar_alphabet(profile)?;
+    let mut by_ccc = [0_u64; 256];
+    for (_, ccc) in alphabet {
+        by_ccc[usize::from(*ccc)] = by_ccc[usize::from(*ccc)].saturating_add(1);
+    }
+    let mut counts = vec![vec![Integer::zero(); 256]; max.saturating_add(1)];
+    counts[0].fill(Integer::one());
+    for remaining in 1..=max {
+        for previous in 0..=u8::MAX {
+            let mut total = Integer::from(by_ccc[0]).mul(&counts[remaining - 1][0]);
+            for ccc in 1..=u8::MAX {
+                if previous <= ccc {
+                    total = total.add(
+                        &Integer::from(by_ccc[usize::from(ccc)])
+                            .mul(&counts[remaining - 1][usize::from(ccc)]),
+                    );
+                }
+            }
+            counts[remaining][usize::from(previous)] = total;
+        }
+    }
+    let counts = Arc::new(counts);
+    if max <= 4 {
+        cache
+            .get_or_init(Default::default)
+            .lock()
+            .ok()?
+            .insert(max, counts.clone());
+    }
+    Some(counts)
+}
+
+struct ComposedTextTables {
+    alphabet: Vec<(char, u8, usize)>,
+    starters: Vec<char>,
+    compositions: BTreeMap<char, Vec<char>>,
+    by_ccc: [u64; 256],
+    ccc_values: Vec<u8>,
+    ccc_indexes: [usize; 256],
+    by_starter: Vec<u64>,
+}
+
+fn composed_scalar_alphabet(
+    profile: filament_exact::TextProfile,
+) -> Option<&'static ComposedTextTables> {
+    static NFC: OnceLock<ComposedTextTables> = OnceLock::new();
+    static NFKC: OnceLock<ComposedTextTables> = OnceLock::new();
+    let cache = match profile {
+        filament_exact::TextProfile::Nfc => &NFC,
+        filament_exact::TextProfile::Nfkc => &NFKC,
+        _ => return None,
+    };
+    Some(cache.get_or_init(|| {
+        use unicode_normalization::char::{
+            canonical_combining_class, compose, decompose_canonical,
+        };
+
+        let alphabet: Vec<(char, u8)> = (0..1_112_064_u32)
+            .filter_map(|rank| {
+                let character = scalar_from_rank(rank)?;
+                is_normalized(profile, &character.to_string())
+                    .then_some((character, canonical_combining_class(character)))
+            })
+            .collect();
+        let members: std::collections::BTreeSet<char> =
+            alphabet.iter().map(|(character, _)| *character).collect();
+        let mut compositions = BTreeMap::<char, Vec<char>>::new();
+        for (output, _) in &alphabet {
+            let mut decomposition = Vec::new();
+            decompose_canonical(*output, |character| decomposition.push(character));
+            let Some(mut starter) = decomposition.first().copied() else {
+                continue;
+            };
+            for character in decomposition.into_iter().skip(1) {
+                if let Some(composed) = compose(starter, character) {
+                    if members.contains(&character) {
+                        compositions.entry(starter).or_default().push(character);
+                    }
+                    starter = composed;
+                } else if canonical_combining_class(character) == 0 {
+                    starter = character;
+                }
+            }
+        }
+        for candidates in compositions.values_mut() {
+            candidates.sort_unstable();
+            candidates.dedup();
+        }
+        compositions.retain(|_, candidates| !candidates.is_empty());
+        let starters: Vec<char> = compositions.keys().copied().collect();
+        let state_of = |character: char| {
+            starters
+                .binary_search(&character)
+                .map_or(0, |index| index + 1)
+        };
+        let mut by_ccc = [0_u64; 256];
+        let mut by_starter = vec![0_u64; starters.len() + 1];
+        let alphabet = alphabet
+            .into_iter()
+            .map(|(character, ccc)| {
+                by_ccc[usize::from(ccc)] = by_ccc[usize::from(ccc)].saturating_add(1);
+                let next_starter = if ccc == 0 { state_of(character) } else { 0 };
+                if ccc == 0 {
+                    by_starter[next_starter] = by_starter[next_starter].saturating_add(1);
+                }
+                (character, ccc, next_starter)
+            })
+            .collect();
+        let ccc_values: Vec<u8> = (0..=u8::MAX)
+            .filter(|ccc| by_ccc[usize::from(*ccc)] > 0)
+            .collect();
+        let mut ccc_indexes = [0_usize; 256];
+        for (index, ccc) in ccc_values.iter().copied().enumerate() {
+            ccc_indexes[usize::from(ccc)] = index;
+        }
+        ComposedTextTables {
+            alphabet,
+            starters,
+            compositions,
+            by_ccc,
+            ccc_values,
+            ccc_indexes,
+            by_starter,
+        }
+    }))
+}
+
+fn composed_pair_exists(tables: &ComposedTextTables, starter: usize, following: char) -> bool {
+    starter > 0
+        && tables
+            .starters
+            .get(starter - 1)
+            .and_then(|starter| tables.compositions.get(starter))
+            .is_some_and(|candidates| candidates.binary_search(&following).is_ok())
+}
+
+fn composed_suffix_counts(
+    profile: filament_exact::TextProfile,
+    max: u64,
+) -> Option<Arc<ComposedCounts>> {
+    static NFC: CountCache<ComposedCounts> = OnceLock::new();
+    static NFKC: CountCache<ComposedCounts> = OnceLock::new();
+    let cache = match profile {
+        filament_exact::TextProfile::Nfc => &NFC,
+        filament_exact::TextProfile::Nfkc => &NFKC,
+        _ => return None,
+    };
+    let max = usize::try_from(max).ok()?;
+    if max <= 4 {
+        if let Some(counts) = cache
+            .get_or_init(Default::default)
+            .lock()
+            .ok()?
+            .get(&max)
+            .cloned()
+        {
+            return Some(counts);
+        }
+    }
+    let tables = composed_scalar_alphabet(profile)?;
+    let states = tables.starters.len() + 1;
+    let mut counts =
+        vec![vec![vec![Integer::zero(); tables.ccc_values.len()]; states]; max.saturating_add(1)];
+    for starter in &mut counts[0] {
+        starter.fill(Integer::one());
+    }
+    for remaining in 1..=max {
+        let mut zero_total = Integer::zero();
+        for (next_starter, amount) in tables.by_starter.iter().enumerate() {
+            zero_total = zero_total
+                .add(&Integer::from(*amount).mul(&counts[remaining - 1][next_starter][0]));
+        }
+        for starter in 0..states {
+            for (previous_index, previous_ccc) in tables.ccc_values.iter().copied().enumerate() {
+                let mut total = zero_total.clone();
+                if previous_ccc == 0 && starter > 0 {
+                    let character = tables.starters[starter - 1];
+                    if let Some(composing) = tables.compositions.get(&character) {
+                        for following in composing {
+                            if unicode_normalization::char::canonical_combining_class(*following)
+                                == 0
+                            {
+                                let following_starter = tables
+                                    .starters
+                                    .binary_search(following)
+                                    .map_or(0, |index| index + 1);
+                                let ccc_zero = tables.ccc_indexes[0];
+                                total =
+                                    total.sub(&counts[remaining - 1][following_starter][ccc_zero]);
+                            }
+                        }
+                    }
+                }
+                for ccc in tables.ccc_values.iter().copied().filter(|ccc| *ccc > 0) {
+                    if previous_ccc > ccc || tables.by_ccc[usize::from(ccc)] == 0 {
+                        continue;
+                    }
+                    let mut allowed = tables.by_ccc[usize::from(ccc)];
+                    if previous_ccc < ccc && starter > 0 {
+                        let character = tables.starters[starter - 1];
+                        if let Some(composing) = tables.compositions.get(&character) {
+                            let composed = composing
+                                .iter()
+                                .filter(|following| {
+                                    unicode_normalization::char::canonical_combining_class(
+                                        **following,
+                                    ) == ccc
+                                })
+                                .count() as u64;
+                            allowed = allowed.saturating_sub(composed);
+                        }
+                    }
+                    total = total.add(&Integer::from(allowed).mul(
+                        &counts[remaining - 1][starter][tables.ccc_indexes[usize::from(ccc)]],
+                    ));
+                }
+                counts[remaining][starter][previous_index] = total;
+            }
+        }
+    }
+    let counts = Arc::new(counts);
+    if max <= 4 {
+        cache
+            .get_or_init(Default::default)
+            .lock()
+            .ok()?
+            .insert(max, counts.clone());
+    }
+    Some(counts)
+}
+
+pub(super) fn admitted_text_value(text_type: &TextType, text: &str) -> Option<Value> {
+    use filament_exact::{Meter, Outcome, TextPayload, admit_text};
+    let payload = TextPayload::from_utf8(text.as_bytes()).ok()?;
+    let unlimited = filament_exact::ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+    match admit_text(&payload, text_type, &mut Meter::new(unlimited)) {
+        Outcome::Completed(value) => Some(Value::Text(value)),
+        Outcome::Undefined(_) | Outcome::Refused(_) | Outcome::Incomplete(_) => None,
+    }
+}
+
+fn size_integer_nth(bits: u8, index: u128) -> Option<Value> {
+    if index == 0 {
+        return Some(Value::Integer(Integer::from(0_i64)));
+    }
+    let level = u8::try_from(127_u32.checked_sub((index + 1).leading_zeros())?).ok()?;
+    if level == 0 || level > bits {
+        return None;
+    }
+    let start = (1_u128.checked_shl(u32::from(level))?).checked_sub(1)?;
+    let offset = index.checked_sub(start)?;
+    let half = 1_u128.checked_shl(u32::from(level - 1))?;
+    let magnitude = if offset < half {
+        (half.checked_mul(2)?).checked_sub(1)?.checked_sub(offset)?
+    } else {
+        half.checked_add(offset.checked_sub(half)?)?
+    };
+    let magnitude = Integer::from(u64::try_from(magnitude).ok()?);
+    let value = if offset < half {
+        magnitude.mul(&Integer::from(-1_i64))
+    } else {
+        magnitude
+    };
+    Some(Value::Integer(value))
 }
 
 /// The number of maps of `min` to `max` entries over `keys` possible keys and
@@ -827,6 +1552,7 @@ fn power(base: u128, exponent: u64) -> u128 {
 mod tests {
     use filament_exact::{CardinalityBound, IntegerInterval};
     use ix_trace_rs::trace;
+    use unicode_normalization::UnicodeNormalization;
 
     use super::*;
 
@@ -872,6 +1598,32 @@ mod tests {
             panic!("index 0 is an option")
         };
         assert!(none.payload().is_none());
+    }
+
+    /// FSpec FR-190's size domain is ordered least-magnitude first and has
+    /// exactly `2^(bits + 1) - 1` signed integers.
+    #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-9")]
+    #[test]
+    fn size_bounded_integer_uses_the_pinned_size_order() {
+        let domain = Domain::of_bounded(
+            &ValueType::Integer,
+            &[],
+            &types(),
+            &RecordOrders::new(),
+            Some(3),
+        )
+        .expect("max_value_bits bounds Integer");
+        let values: Vec<String> = (0..domain.len())
+            .map(|index| integer(&domain.nth(index).expect("in range")))
+            .collect();
+        assert_eq!(
+            values,
+            [
+                "0", "-1", "1", "-3", "-2", "2", "3", "-7", "-6", "-5", "-4", "4", "5", "6", "7"
+            ]
+        );
+        assert_eq!(domain.len(), 15);
+        assert!(domain.nth(15).is_none());
     }
 
     /// FR-120: a sequence with a declared maximum ranges over every length
@@ -1360,5 +2112,78 @@ mod tests {
             Some(1)
         );
         assert_eq!(size(&map(keys200, one_value, 201, 300)), Some(0));
+    }
+
+    /// FR-190-AC-18: the unranked Text domains use exact profile lengths and
+    /// FR-804 prefix-first scalar or UTF-8 byte order.
+    #[trace("FSpec-TC-1600", "FSpec-FR-190-AC-18")]
+    #[test]
+    fn text_domains_unrank_unicode_and_binary_utf8_prefixes() {
+        let text = |max, profile| {
+            Domain::of(
+                &ValueType::Text(TextType::new(0, max, profile).expect("Text bounds")),
+                &[],
+                &types(),
+                &RecordOrders::new(),
+            )
+            .expect("finite Text domain")
+        };
+        let unicode = text(2, filament_exact::TextProfile::UnicodeScalars);
+        assert_eq!(unicode.len(), 1_236_687_452_161);
+        let text_at = |domain: &Domain, index| match domain.nth(index) {
+            Some(Value::Text(text)) => text.retained().to_owned(),
+            value => panic!("expected Text at {index}, got {value:?}"),
+        };
+        assert_eq!(text_at(&unicode, 0), "");
+        assert_eq!(text_at(&unicode, 1), "\0");
+        assert_eq!(text_at(&unicode, 2), "\0\0");
+        assert_eq!(text_at(&unicode, 3), "\0\u{1}");
+        assert_eq!(text_at(&unicode, 1_112_066), "\u{1}");
+        assert_eq!(text_at(&unicode, 61_492_746_241), "\u{e000}");
+        assert_eq!(text_at(&unicode, 1_236_687_452_160), "\u{10ffff}\u{10ffff}");
+        assert_eq!(text_at(&unicode, 968_414_557_300), "\u{d51a9}\u{87ac9}");
+
+        let binary = text(3, filament_exact::TextProfile::BinaryUtf8);
+        assert_eq!(binary.len(), 2_668_545);
+        assert_eq!(text_at(&binary, 18_434), "\u{1}");
+        assert_eq!(text_at(&binary, 2_359_425), "\u{80}");
+        assert_eq!(text_at(&binary, 2_607_105), "\u{800}");
+        assert_eq!(text_at(&binary, 2_668_544), "\u{ffff}");
+
+        let single = |profile| {
+            Domain::of(
+                &ValueType::Text(TextType::new(0, 1, profile).expect("Text bounds")),
+                &[],
+                &types(),
+                &RecordOrders::new(),
+            )
+            .expect("finite one-scalar Text domain")
+        };
+        assert_eq!(
+            text_at(&single(filament_exact::TextProfile::UnicodeScalars), 193),
+            "\u{c0}"
+        );
+        assert_eq!(
+            text_at(&single(filament_exact::TextProfile::Nfc), 193),
+            "\u{c0}"
+        );
+        assert_eq!(
+            text_at(&single(filament_exact::TextProfile::Nfd), 193),
+            "\u{c6}"
+        );
+        assert_eq!(
+            text_at(&single(filament_exact::TextProfile::Nfc), 161),
+            "\u{a0}"
+        );
+        assert_eq!(
+            text_at(&single(filament_exact::TextProfile::Nfkc), 161),
+            "\u{a1}"
+        );
+
+        let nfc = text(2, filament_exact::TextProfile::Nfc);
+        for index in [0, 1, 2, 3, 4, nfc.len() / 2, nfc.len() - 1] {
+            let value = text_at(&nfc, index);
+            assert!(value.chars().eq(value.chars().nfc()));
+        }
     }
 }
