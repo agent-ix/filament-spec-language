@@ -199,3 +199,31 @@ object Node { relationship next: Ghost [0, 1]; }
     assert_eq!(span.start.byte, source.find("Ghost").expect("target name"));
     assert_eq!(span.end.byte, span.start.byte + "Ghost".len());
 }
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn duplicate_object_declarations_refuse_at_the_second_name() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/graph";
+object Node { }
+object Node { }
+"#;
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "duplicate-model"),
+        "duplicate.fsl",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source metadata admitted");
+    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect_err("duplicate object identities are refused");
+    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
+    assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
+    let span = parsed
+        .source()
+        .render(diagnostic.region.as_ref().expect("located refusal"))
+        .expect("source region renders");
+    let second_name = source.rfind("Node").expect("second declaration name");
+    assert_eq!(span.start.byte, second_name);
+    assert_eq!(span.end.byte, second_name + "Node".len());
+}

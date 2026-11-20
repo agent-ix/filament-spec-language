@@ -221,7 +221,7 @@ pub fn compile_model_unit(
                         parsed,
                         CompleteCode::AmbiguousDeclaration,
                         CompleteCause::AmbiguousName,
-                        tokens[declaration_start].span,
+                        object.name_span,
                         format!("object {} is declared more than once", object.name),
                     )]);
                 }
@@ -396,6 +396,7 @@ fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {
 
 struct ObjectRead {
     name: String,
+    name_span: Span,
     wire: Value,
     relationship_targets: Vec<(String, Span)>,
 }
@@ -408,6 +409,7 @@ fn read_object(
 ) -> Option<(ObjectRead, usize)> {
     let start = tokens.get(index)?.span.start;
     index += 1;
+    let name_span = tokens.get(index)?.span;
     let name = tokens.get(index)?.text.clone();
     index += 1;
     let mut identity_fields = Vec::new();
@@ -584,6 +586,7 @@ fn read_object(
     Some((
         ObjectRead {
             name,
+            name_span,
             wire,
             relationship_targets,
         },
