@@ -1424,7 +1424,7 @@ fn check_exact_reachability(
     };
     let zero = rational(0);
     let one = rational(1);
-    let components = nonprogressive_end_components(graph, cancel)?;
+    let components = nonprogressive_end_components(graph, cancel, None)?;
     let mut component_of = BTreeMap::new();
     for (component, members) in components.iter().enumerate() {
         for key in members {
@@ -1650,6 +1650,7 @@ fn certificate_values(
 fn nonprogressive_end_components(
     graph: &CheckerGraph,
     cancel: &Cancel,
+    costs: Option<&BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>>,
 ) -> Result<Vec<Vec<ProbabilityProductKey>>, ExactProbabilityGraphError> {
     let keys = graph.states.keys().cloned().collect::<Vec<_>>();
     let indices = keys
@@ -1672,8 +1673,19 @@ fn nonprogressive_end_components(
                     return Err(ExactProbabilityGraphError::MissingSuccessor);
                 };
                 let mut has_internal_action = false;
-                for choice in &state.choices {
-                    if internal_nonprogressive_choice(key, choice, &candidate, &indices, &zero)? {
+                for (choice_index, choice) in state.choices.iter().enumerate() {
+                    let choice_costs = costs
+                        .and_then(|costs| costs.get(key))
+                        .and_then(|costs| costs.get(choice_index))
+                        .map(Vec::as_slice);
+                    if internal_nonprogressive_choice(
+                        key,
+                        choice,
+                        choice_costs,
+                        &candidate,
+                        &indices,
+                        &zero,
+                    )? {
                         has_internal_action = true;
                         break;
                     }
@@ -1703,8 +1715,19 @@ fn nonprogressive_end_components(
                 .states
                 .get(key)
                 .ok_or(ExactProbabilityGraphError::MissingSuccessor)?;
-            for choice in &state.choices {
-                if !internal_nonprogressive_choice(key, choice, &candidate, &indices, &zero)? {
+            for (choice_index, choice) in state.choices.iter().enumerate() {
+                let choice_costs = costs
+                    .and_then(|costs| costs.get(key))
+                    .and_then(|costs| costs.get(choice_index))
+                    .map(Vec::as_slice);
+                if !internal_nonprogressive_choice(
+                    key,
+                    choice,
+                    choice_costs,
+                    &candidate,
+                    &indices,
+                    &zero,
+                )? {
                     continue;
                 }
                 for edge in choice.iter().filter(|edge| edge.probability > zero) {
@@ -1730,38 +1753,97 @@ fn nonprogressive_end_components(
 fn internal_nonprogressive_choice(
     source: &ProbabilityProductKey,
     choice: &ProbabilityChoice,
+    costs: Option<&[Rational]>,
     candidate: &BTreeSet<usize>,
     indices: &BTreeMap<ProbabilityProductKey, usize>,
     zero: &Rational,
 ) -> Result<bool, ExactProbabilityGraphError> {
     let mut has_support = false;
-    for edge in choice.iter().filter(|edge| edge.probability > *zero) {
+    let clocks = timed_clock_count(source);
+    let has_deadline = timed_has_deadline(source);
+    let mut positive_cost = false;
+    for (edge_index, edge) in choice.iter().enumerate() {
+        if edge.probability <= *zero {
+            continue;
+        }
         has_support = true;
         let Some(target) = indices.get(&edge.target) else {
             return Err(ExactProbabilityGraphError::MissingSuccessor);
         };
-        if !candidate.contains(target) || deadline_advances(source, &edge.target) {
+        if !candidate.contains(target) || timed_key_progresses(source, &edge.target) {
             return Ok(false);
         }
+        if costs
+            .and_then(|costs| costs.get(edge_index))
+            .is_some_and(|cost| !cost.is_zero())
+        {
+            positive_cost = true;
+        }
     }
-    Ok(has_support)
+    Ok(has_support && !(!has_deadline && clocks == Some(0) && positive_cost))
 }
 
-/// Whether a checker-key edge advances the deadline's elapsed clock.
-fn deadline_advances(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
-    fn elapsed(key: &ProbabilityProductKey) -> Option<String> {
+/// Whether a checker-key edge advances time beyond the current region.
+fn timed_key_progresses(from: &ProbabilityProductKey, to: &ProbabilityProductKey) -> bool {
+    fn timed_model(key: &ProbabilityProductKey) -> Option<Value> {
         let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
-        let timed = root.get(2)?.get(1)?;
-        let deadline = timed.get(5)?.as_array()?;
-        if deadline.first()?.as_str()? != "deadline" {
-            return None;
+        Some(root.get(2)?.get(1)?.clone())
+    }
+    let (Some(from_model), Some(to_model)) = (timed_model(from), timed_model(to)) else {
+        return false;
+    };
+    if let (Some(from_deadline), Some(to_deadline)) = (
+        from_model.get(5).and_then(Value::as_array),
+        to_model.get(5).and_then(Value::as_array),
+    ) {
+        if from_deadline.first().and_then(Value::as_str) == Some("deadline")
+            && to_deadline.first().and_then(Value::as_str) == Some("deadline")
+        {
+            return from_deadline.get(2) != to_deadline.get(2);
         }
-        deadline.get(2)?.as_str().map(ToOwned::to_owned)
     }
-    match (elapsed(from), elapsed(to)) {
-        (Some(from), Some(to)) => from != to,
-        _ => false,
-    }
+    let (Some(from_clocks), Some(to_clocks)) = (
+        from_model.get(4).and_then(Value::as_array),
+        to_model.get(4).and_then(Value::as_array),
+    ) else {
+        return false;
+    };
+    to_clocks.iter().any(|to_clock| {
+        let Some(identity) = to_clock.get(0) else {
+            return true;
+        };
+        let Some(from_clock) = from_clocks
+            .iter()
+            .find(|from_clock| from_clock.get(0) == Some(identity))
+        else {
+            return false;
+        };
+        let Some(from_value) = from_clock.get(1).and_then(Value::as_str) else {
+            return true;
+        };
+        let Some(to_value) = to_clock.get(1).and_then(Value::as_str) else {
+            return true;
+        };
+        to_value.parse::<u64>().unwrap_or(0) > from_value.parse::<u64>().unwrap_or(0)
+    })
+}
+
+fn timed_clock_count(key: &ProbabilityProductKey) -> Option<usize> {
+    let root: Value = serde_json::from_slice(key.as_bytes()).ok()?;
+    root.get(2)?.get(1)?.get(4)?.as_array().map(Vec::len)
+}
+
+fn timed_has_deadline(key: &ProbabilityProductKey) -> bool {
+    let Some(root) = serde_json::from_slice::<Value>(key.as_bytes()).ok() else {
+        return false;
+    };
+    root.get(2)
+        .and_then(|model| model.get(1))
+        .and_then(|timed| timed.get(5))
+        .and_then(Value::as_array)
+        .and_then(|deadline| deadline.first())
+        .and_then(Value::as_str)
+        == Some("deadline")
 }
 
 fn restricted_components(
@@ -2054,8 +2136,65 @@ mod tests {
             })
             .expect("digital timed keys are valid")
         };
-        assert!(!deadline_advances(&key(0), &key(0)));
-        assert!(deadline_advances(&key(0), &key(1)));
+        assert!(!timed_key_progresses(&key(0), &key(0)));
+        assert!(timed_key_progresses(&key(0), &key(1)));
+
+        let no_clock = digital_probability_product_key(DigitalProductKeyInput {
+            binding: None,
+            discrete: json!([]),
+            unit: json!("second"),
+            scale: 1,
+            clocks: Vec::new(),
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+        })
+        .expect("clockless timed key is valid");
+        let one_clock = digital_probability_product_key(DigitalProductKeyInput {
+            binding: None,
+            discrete: json!([]),
+            unit: json!("second"),
+            scale: 1,
+            clocks: vec![DigitalClockKey {
+                identity: json!(["Type", "clock", ["u", "object"]]),
+                value: 0,
+                cap: 2,
+            }],
+            deadline: None,
+            tail: DigitalTail::Running,
+            monitor: None,
+            accumulator: None,
+            pending: None,
+        })
+        .expect("clocked timed key is valid");
+        let graph = |state| CheckerGraph {
+            initial: state.clone(),
+            states: BTreeMap::from([(
+                state.clone(),
+                CheckerState {
+                    terminal: None,
+                    choices: vec![vec![ProbabilityEdge {
+                        target: state,
+                        probability: rational(1),
+                    }]],
+                },
+            )]),
+        };
+        let positive_cost = BTreeMap::from([(no_clock.clone(), vec![vec![rational(1)]])]);
+        assert!(
+            nonprogressive_end_components(&graph(no_clock), &Cancel::new(), Some(&positive_cost),)
+                .expect("clockless time progress is understood")
+                .is_empty()
+        );
+        let reset_cost = BTreeMap::from([(one_clock.clone(), vec![vec![rational(1)]])]);
+        assert_eq!(
+            nonprogressive_end_components(&graph(one_clock), &Cancel::new(), Some(&reset_cost),)
+                .expect("a positive-cost reset loop remains nonprogressive")
+                .len(),
+            1
+        );
     }
 
     fn certificate(initial_value: Rational) -> ExactProbabilityCertificate {

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -252,8 +252,112 @@ fn check_mean_time_values(
             .unwrap_or_else(|| graph.initial.clone());
         return Ok(rejected(ProbabilityCertificateRule::RankMissing, at));
     }
+    let components = super::super::nonprogressive_end_components(graph, cancel, Some(costs))?;
+    let mut component_of = BTreeMap::new();
+    for (component, members) in components.iter().enumerate() {
+        for key in members {
+            component_of.insert(key.clone(), component);
+        }
+    }
+    for members in &components {
+        poll(cancel)?;
+        let member_set = members.iter().cloned().collect::<BTreeSet<_>>();
+        let mut exits = Vec::new();
+        let mut positive_internal_cost = false;
+        for key in members {
+            let state = graph
+                .states
+                .get(key)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            if action_costs.len() != state.choices.len() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            for (choice_index, choice) in state.choices.iter().enumerate() {
+                let edge_costs = action_costs
+                    .get(choice_index)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                if edge_costs.len() != choice.len() {
+                    return Err(ProbabilityDocumentError::Malformed);
+                }
+                let mut mass = zero();
+                let mut internal = zero();
+                let mut reward = zero();
+                for (edge, cost) in choice.iter().zip(edge_costs) {
+                    poll(cancel)?;
+                    check_scalar(cost, limits)?;
+                    mass = arithmetic(
+                        filament_exact::RationalArithmetic::Add(&mass, &edge.probability),
+                        meter,
+                        cancel,
+                    )?;
+                    let term = if member_set.contains(&edge.target) {
+                        if !cost.is_zero() {
+                            positive_internal_cost = true;
+                        }
+                        internal = arithmetic(
+                            filament_exact::RationalArithmetic::Add(&internal, &edge.probability),
+                            meter,
+                            cancel,
+                        )?;
+                        zero()
+                    } else {
+                        values
+                            .get(&edge.target)
+                            .ok_or(ProbabilityDocumentError::Malformed)?
+                            .clone()
+                    };
+                    let step_value = arithmetic(
+                        filament_exact::RationalArithmetic::Add(cost, &term),
+                        meter,
+                        cancel,
+                    )?;
+                    let weighted = arithmetic(
+                        filament_exact::RationalArithmetic::Multiply(
+                            &edge.probability,
+                            &step_value,
+                        ),
+                        meter,
+                        cancel,
+                    )?;
+                    reward = arithmetic(
+                        filament_exact::RationalArithmetic::Add(&reward, &weighted),
+                        meter,
+                        cancel,
+                    )?;
+                }
+                if mass != one() {
+                    return Err(ProbabilityDocumentError::Malformed);
+                }
+                let denominator = one().sub(&internal);
+                if !denominator.is_zero() {
+                    exits.push(reward.div(&denominator));
+                }
+            }
+        }
+        if exits.is_empty() && positive_internal_cost {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        let expected = match objective {
+            ProbabilityObjective::Minimum => exits.into_iter().min(),
+            ProbabilityObjective::Maximum => exits.into_iter().max(),
+            ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
+        }
+        .unwrap_or_else(zero);
+        for key in members {
+            if values.get(key) != Some(&expected) || ranks.get(key).copied() != Some(0) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::RankBroken,
+                    key.clone(),
+                ));
+            }
+        }
+    }
     for (key, state) in &graph.states {
         poll(cancel)?;
+        if component_of.contains_key(key) {
+            continue;
+        }
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
@@ -643,10 +747,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
+        [
+            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+            | fsl_eval::simulation::model::PredicateReading::Refused(_),
+        ] => Err(ProbabilityDocumentError::Unsupported),
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
