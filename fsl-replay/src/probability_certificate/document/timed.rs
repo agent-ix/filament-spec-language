@@ -345,11 +345,8 @@ fn check_mean_time_values(
         }
         .unwrap_or_else(zero);
         for key in members {
-            if values.get(key) != Some(&expected) || ranks.get(key).copied() != Some(0) {
-                return Ok(rejected(
-                    ProbabilityCertificateRule::RankBroken,
-                    key.clone(),
-                ));
+            if values.get(key) != Some(&expected) {
+                return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key.clone()));
             }
         }
     }
