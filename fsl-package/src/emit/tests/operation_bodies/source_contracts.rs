@@ -21,7 +21,7 @@ fn admitted(
 #[trace("TC-1011", "FR-576-AC-1", "FR-576-AC-2", "FR-576-AC-9")]
 #[test]
 fn strict_body_lookup_recovers_integer_and_boolean_values_without_an_invocation() {
-    for (name, type_ref, expression, expected) in [
+    for (name, type_ref, source_expression, expected) in [
         (
             "score",
             "ix://filament/native/Integer",
@@ -39,7 +39,7 @@ fn strict_body_lookup_recovers_integer_and_boolean_values_without_an_invocation(
         op["returns"]["typeRef"] = json!(type_ref);
         let document = package(vec![op], &[]);
         let source = format!(
-            "body authored using v on Config::ConfigVersion::{name}() {{ {expression} }}\n"
+            "body authored using v on Config::ConfigVersion::{name}() {{ {source_expression} }}\n"
         );
         let emission = emitted(&document, &source);
         let checked = admitted(&document, &emission);
@@ -89,14 +89,20 @@ fn strict_body_lookup_recovers_integer_and_boolean_values_without_an_invocation(
                 .value,
             expected
         );
-        let wire = wire(&emission);
+        let text = unit(&source, &["Config"]);
+        let expected_start = text.rfind(source_expression).expect("authored expression");
         assert!(
-            wire["source_map"]
-                .as_array()
-                .expect("source map")
+            checked
+                .source_map()
                 .iter()
-                .any(|entry| entry["node_id"] == json!(function.node_id)),
-            "the recovered function must retain its authored provenance"
+                .filter(|entry| entry.node_id == expression.node_id)
+                .flat_map(|entry| &entry.regions)
+                .any(|region| region.source.authority.as_ref() == "agent-ix"
+                    && region.source.identity.as_ref() == "test:spine-model"
+                    && usize::try_from(region.start).expect("source start") == expected_start
+                    && usize::try_from(region.end).expect("source end")
+                        == expected_start + source_expression.len()),
+            "the recovered literal must retain its exact authored source identity and interval"
         );
     }
 }
