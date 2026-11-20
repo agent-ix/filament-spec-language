@@ -212,6 +212,9 @@ pub fn settle_hyper_check(
         HyperOutcome::Holds { .. } | HyperOutcome::HoldsReduced { .. } => {
             return Err(HyperSettleRefusal::ProductClosureCheckerNotBuilt)
         }
+        HyperOutcome::HoldsClosed { .. } => {
+            Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope)
+        }
         HyperOutcome::Reduction { cause, .. } => match cause {
             HyperReductionCause::NotPreserving { .. } => {
                 return Err(HyperSettleRefusal::ReductionFormNotRepresentable)

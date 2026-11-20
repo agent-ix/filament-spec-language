@@ -132,6 +132,15 @@ pub enum HyperCounterexampleKind {
     /// loop, and `trace_position` is the projected position the visible steps
     /// reach.
     Projected,
+    /// Event-position HP-2 or HP-3 (FR-173 "Event-position form"): one closed
+    /// finite execution per trace variable (the universal variables alone for
+    /// an HP-3 clause), none a lasso and none stutter-extended, each ending at
+    /// a terminal state or covering the body's horizon. For HP-2 the body is
+    /// false on the matched tuple; for HP-3 no matched existential tuple of
+    /// closed executions satisfies it. The traces may differ in step count,
+    /// and `trace_position` is the joint position at which the body is false
+    /// (HP-2) or the last candidate is lost (HP-3).
+    Closed,
     /// HP-1: a tuple of reachable transitions refutes a model relation.
     StepTuple,
     /// Any form: the traces are finite paths to the state an undefined

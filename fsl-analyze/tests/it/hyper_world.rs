@@ -1037,7 +1037,23 @@ impl World {
         max_witness_set: u64,
     ) -> Result<ModelTraceSettlement, ReplayRefusal> {
         let system = ModelSystem::new(self.subject().simulation).expect("the subject admits");
-        let instance = instance();
+        // One binding per object parameter, each to the vault of its alias.
+        let instance: Vec<ParameterBinding> = self
+            .clause
+            .parameters()
+            .iter()
+            .map(|parameter| ParameterBinding {
+                parameter: parameter.name.clone(),
+                instance: ModelInstance {
+                    population: if parameter.alias.as_str() == OTHER_ALIAS {
+                        other_key("vaults")
+                    } else {
+                        key("vaults")
+                    },
+                    key: KEY.to_owned(),
+                },
+            })
+            .collect();
         replay_hyper_trace_tuple(
             &HyperReplay {
                 clause: &self.clause,

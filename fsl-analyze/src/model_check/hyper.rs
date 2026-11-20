@@ -96,6 +96,7 @@
 //! waits for S4 to emit a hyper clause. The core of that replay is
 //! `fsl_replay::replay_hyper_trace_tuple`.
 
+mod closed;
 mod lift;
 mod reductions;
 
@@ -222,6 +223,11 @@ pub enum HyperRefusal {
         "an undefined evaluation on the universal side of an HP-3 clause names no existential path"
     )]
     NoPartnerPath,
+    /// An atom of an event-position clause's body has no value on a tuple of
+    /// closed executions (ADR-023 HV-8): the counterexample shape that names it
+    /// is not built.
+    #[error("an undefined evaluation on a tuple of closed finite executions is not decided")]
+    ClosedUndefined,
     /// A fairness constraint names an operation its variable's subject does
     /// not declare.
     #[error("the fairness constraint on `{name}` names an operation the subject does not declare")]
@@ -699,6 +705,12 @@ impl<'a> Run<'_, 'a> {
                 cause: UndecidedCause::NoInstance,
                 stats: totals.stats(),
             });
+        }
+        if self.request.clause.profile()
+            == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+            && !self.projected
+        {
+            return self.decide_closed(instances, totals);
         }
         if let Some(outcome) = self.precheck(&totals)? {
             return Ok(outcome);

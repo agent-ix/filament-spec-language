@@ -30,6 +30,7 @@ use crate::model_operations::{
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
+const FIXED: &str = "filament.temporal.fixed-sample.false-extension/v1";
 const VAULT: &str = "example/config-version";
 const SAVING: &str = "example/device-saving";
 const NORMAL: &str = "example/device-normal";
@@ -648,10 +649,11 @@ fn a_clause_outside_the_admitted_forms_names_its_rule() {
 
 /// FR-173-AC-3: a single-existential clause with a `match` block refuses at
 /// the block; the same noninterference under the event-position profile
-/// records its profile and no form.
-#[trace("TC-598")]
+/// records its profile and form `Universal`, and under the fixed-sample profile
+/// its profile and no form.
+#[trace("TC-598", "FR-173-AC-3")]
 #[test]
-fn a_single_existential_clause_admits_no_match_and_another_profile_has_no_form() {
+fn a_single_existential_clause_admits_no_match_and_the_event_profile_classifies() {
     let (text, cause) = hyper_cause(
         &["V"],
         "hyper Possible using inf over behaviours (v: V::ConfigVersion) \
@@ -674,7 +676,11 @@ fn a_single_existential_clause_admits_no_match_and_another_profile_has_no_form()
         event.profile(),
         TemporalProfile::EventPositionFalseExtension
     );
-    assert_eq!(event.form(), None);
+    assert_eq!(event.form(), Some(&HyperForm::Universal));
+
+    let fixed = clause_under(&["V"], FIXED, &non_interference());
+    assert_eq!(fixed.profile(), TemporalProfile::FixedSampleFalseExtension);
+    assert_eq!(fixed.form(), None);
 }
 
 /// FR-173-AC-4 (S3): the clause records one subject alias per distinct model

@@ -65,7 +65,7 @@ use fsl_replay::{
     ModelCheckLimits, ModelLasso, ModelPath, ModelStep, OpenCause, ReachedLimit, RunEnd, RunStats,
     UndefinedEvaluation, UndefinedLocus, UndefinedSite, WitnessSource, DEFAULT_WITNESS_SEED,
 };
-use fsl_semantics::check::{CheckedHyperClause, HyperForm};
+use fsl_semantics::check::{CheckedHyperClause, HyperForm, TemporalProfile};
 
 use super::{
     fault, instances, retain, tree_path, widen, FairModel, HyperGraph, HyperRefusal, Positions,
@@ -152,6 +152,9 @@ pub fn check_single_existential(
                 .collect(),
             seed,
         });
+    }
+    if clause.profile() == TemporalProfile::EventPositionFalseExtension {
+        return decide_closed(&request, &system, &bindings, seed, budgets, cancel);
     }
     let run = Run {
         request: &request,
@@ -1227,4 +1230,160 @@ impl<'a> Decision<'_, '_, 'a> {
             },
         })
     }
+}
+
+/// The `match` seam of a clause with none: an HP-5 clause admits no `match`
+/// block (ADR-023 SE-1), so every joint step is matched.
+struct Unmatched;
+
+impl fsl_eval::hyper::StepMatch for Unmatched {
+    fn universal(
+        &self,
+        _instance: &[ParameterBinding],
+        _steps: &[fsl_eval::hyper::StepLabel<'_>],
+        _meter: &mut Meter,
+    ) -> Result<fsl_eval::hyper::MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        Ok(fsl_eval::hyper::MatchReading::Holds)
+    }
+
+    fn existential(
+        &self,
+        _instance: &[ParameterBinding],
+        _steps: &[fsl_eval::hyper::StepLabel<'_>],
+        _meter: &mut Meter,
+    ) -> Result<fsl_eval::hyper::MatchReading, fsl_eval::hyper::MatchIncomplete> {
+        Ok(fsl_eval::hyper::MatchReading::Holds)
+    }
+}
+
+/// An event-position HP-5 run (FR-173 "Event-position form", ADR-023 SE-4,
+/// SE-5): from each initial state, search the closed finite executions of the
+/// subject, in the canonical order, for one on which the body holds. The
+/// instance is `ClosedWitnessed` with one closed witness per initial state, or
+/// `Trapped` at the first initial state from which the exhausted search holds
+/// none.
+fn decide_closed(
+    request: &SingleExistentialRequest<'_>,
+    system: &ModelSystem<'_>,
+    bindings: &[Vec<ParameterBinding>],
+    seed: u64,
+    budgets: Budgets,
+    cancel: &Cancel,
+) -> Result<SingleExistentialRun, ModelCheckRefusal> {
+    use fsl_eval::hyper::{
+        closed_executions, horizon, judge_closed_tuple, ClosedInputs, ClosedStop, ClosedVerdict,
+    };
+    let clause = request.clause;
+    let depth = horizon(clause.body()).ok_or_else(|| fault("a-body-has-a-horizon"))?;
+    let limits = request.limits;
+    let mut stats = RunStats::default();
+    let executions = match closed_executions(system, depth, limits.limits.max_states, cancel) {
+        Ok(executions) => executions,
+        Err(stop) => {
+            let end = match stop {
+                ClosedStop::Encoding(refusal) => return Err(ModelCheckRefusal::Encoding(refusal)),
+                ClosedStop::Cancelled => cancelled(cancel)
+                    .map(|halt| halt.end())
+                    .ok_or_else(|| fault("a-cancelled-run-has-a-cause"))?,
+                ClosedStop::Executions { limit } => RunEnd::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: widen(limit),
+                    }),
+                },
+                ClosedStop::Expansion(stop) => expansion_stop(&stop, budgets)?.end(),
+            };
+            return Ok(SingleExistentialRun {
+                instances: bindings
+                    .iter()
+                    .map(|binding| ExistentialInstanceOutcome {
+                        instance: named(binding),
+                        outcome: ExistentialOutcome::NoDecision {
+                            end: end.clone(),
+                            open: BTreeSet::new(),
+                        },
+                        sampled: Vec::new(),
+                        walks_stopped: 0,
+                        stats,
+                    })
+                    .collect(),
+                seed,
+            });
+        }
+    };
+    stats.product_states = widen(executions.len());
+    stats.depth = depth;
+    let initials = system.initial().len();
+    let matcher = Unmatched;
+    let mut outcomes = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let inputs = ClosedInputs {
+            clause,
+            instance: binding,
+            letters: request.letters,
+            matcher: &matcher,
+            meter: request.meter,
+            cancel,
+        };
+        let mut paths = Vec::with_capacity(initials);
+        let mut trapped = None;
+        for initial in 0..initials {
+            let mut witness = None;
+            for execution in executions
+                .iter()
+                .filter(|candidate| candidate.initial == initial)
+            {
+                match judge_closed_tuple(&inputs, &[execution]) {
+                    ClosedVerdict::Holds => {
+                        witness = Some(execution);
+                        break;
+                    }
+                    ClosedVerdict::Undefined => {
+                        return Err(HyperRefusal::ClosedUndefined.into());
+                    }
+                    ClosedVerdict::Fault(internal) => {
+                        return Err(ModelCheckRefusal::Fault(internal));
+                    }
+                    _ => {}
+                }
+            }
+            let Some(execution) = witness else {
+                trapped = Some(initial);
+                break;
+            };
+            paths.push(ModelPath {
+                initial: u32::try_from(initial).map_err(|_| fault("an-initial-fits-u32"))?,
+                steps: execution
+                    .steps
+                    .iter()
+                    .map(|step| ModelStep {
+                        transition: step.transition.clone(),
+                        post_state: step.post_state.clone(),
+                        delay: None,
+                    })
+                    .collect(),
+            });
+        }
+        let outcome = match trapped {
+            Some(initial) => ExistentialOutcome::Trapped {
+                stem: ModelPath {
+                    initial: u32::try_from(initial).map_err(|_| fault("an-initial-fits-u32"))?,
+                    steps: Vec::new(),
+                },
+            },
+            None => ExistentialOutcome::ClosedWitnessed { paths },
+        };
+        outcomes.push(ExistentialInstanceOutcome {
+            instance: named(binding),
+            outcome,
+            sampled: Vec::new(),
+            walks_stopped: 0,
+            stats,
+        });
+    }
+    Ok(SingleExistentialRun {
+        instances: outcomes,
+        seed,
+    })
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-183 (ADR-023 HX-2, HX-5, PA-7): [`replay_hyper_trace_tuple`], the replay
-//! of a hyper counterexample's `Lockstep`, `WitnessExhausted`, `Projected` and
-//! `Undefined` arms
+//! of a hyper counterexample's `Lockstep`, `WitnessExhausted`, `Projected`,
+//! `Closed` and `Undefined` arms
 //! through each trace variable's `ModelSystem`.
 //!
 //! It re-executes every trace from its initial snapshot, a step's post-state
@@ -27,6 +27,12 @@
 //!   the last step; positions past it read around the loop. An expansion whose
 //!   findings say a member was dropped, or could not be told to be kept (an
 //!   undefined or refused `μ` or contract), completes no value.
+//! - `Closed` (FR-173 "Event-position form"): the traces are closed finite
+//!   executions with no loop and no terminal stutter step, each ending at a
+//!   terminal state or covering the body's horizon; the replay evaluates the
+//!   body over them with `fsl-eval`'s closed-tuple reading, an atom past a
+//!   trace's end being false, and settles `Reproduced` when the clause fails
+//!   (HP-2) or no closed partner satisfies it (HP-3).
 //! - `Undefined`: the traces are paths to the joint position the payload
 //!   names. The replay reads `μ_U`, `μ_E`, the body's atoms and each component's
 //!   contract conjunctions at the joint positions up to it, in the order EN-1
@@ -53,8 +59,10 @@
 
 use fsl_eval::automaton::translate_negation;
 use fsl_eval::hyper::{
-    ComponentStep, Halt, HyperFinding, HyperLetters, HyperState, HyperTransition, MatchReading,
-    ParameterBinding, Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
+    closed_executions, horizon as closed_horizon, judge_closed_tuple, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStep, ClosedStop, ClosedVerdict, ComponentStep, Halt,
+    HyperFinding, HyperLetters, HyperState, HyperTransition, MatchReading, ParameterBinding,
+    PartnerSearch, Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::AtomStop;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -308,6 +316,9 @@ pub fn replay_hyper_trace_tuple(
     if counterexample.kind == HyperCounterexampleKind::Projected {
         return projected(replay, counterexample);
     }
+    if counterexample.kind == HyperCounterexampleKind::Closed {
+        return closed(replay, counterexample);
+    }
     // A clause with `align skip` is read over projected prefixes, so even an
     // `Undefined` counterexample of one has paths of unequal length and
     // positions that count visible steps: FR-183 does not state their replay.
@@ -337,6 +348,7 @@ pub fn replay_hyper_trace_tuple(
             Err(fault("an-unreplayed-counterexample-is-refused-first"))
         }
         HyperCounterexampleKind::StepTuple => Err(fault("step-tuple-replay-dispatches-first")),
+        HyperCounterexampleKind::Closed => Err(fault("closed-replay-dispatches-first")),
     }
 }
 
@@ -457,6 +469,9 @@ fn shape(
             return Err(shape_error(
                 "step-tuple is not a hyper-clause counterexample",
             ));
+        }
+        HyperCounterexampleKind::Closed => {
+            return Err(fault("closed-replay-dispatches-first"));
         }
         HyperCounterexampleKind::Undefined(claimed) => {
             let position = u64::try_from(steps).unwrap_or(u64::MAX);
@@ -1366,4 +1381,168 @@ impl TupleLetters for ProjectedLetters<'_> {
             .atom(atom, self.instance, &states, meter)
             .map_err(LetterStop::from)
     }
+}
+
+/// Event-position HP-2 and HP-3 (FR-173 "Event-position form"): each trace is
+/// re-executed and found closed, a terminal state ending it or its steps
+/// covering the body's horizon, and the verdict is recomputed by the code the
+/// engine runs. HP-2 reproduces when the body is false on the matched tuple;
+/// HP-3 when no closed execution tuple of the existential variables is
+/// matched with the body holding.
+fn closed(
+    replay: &HyperReplay<'_, '_>,
+    counterexample: &HyperCounterexample,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    let clause = replay.clause;
+    let exists = match clause.form() {
+        Some(HyperForm::Universal) => false,
+        Some(HyperForm::ForallExistsSafety) => true,
+        _ => {
+            return Err(shape_error(
+                "is of a clause that is not an event-position universal or forall-exists safety hyperproperty",
+            ));
+        }
+    };
+    if clause.profile() != fsl_semantics::check::TemporalProfile::EventPositionFalseExtension {
+        return Err(shape_error(
+            "is of a clause that is not read under the event-position profile",
+        ));
+    }
+    let traced = if exists {
+        clause.universals()
+    } else {
+        clause.quantifiers().len()
+    };
+    about_clause(replay, counterexample, traced)?;
+    let Some(horizon) = closed_horizon(clause.body()) else {
+        return Err(fault("a-body-has-a-horizon"));
+    };
+    let Some(executed) = execute(replay, counterexample)? else {
+        return Ok(no_value());
+    };
+    let mut executions = Vec::with_capacity(executed.len());
+    for ((trace, positions), system) in counterexample
+        .traces
+        .iter()
+        .zip(&executed)
+        .zip(&replay.systems)
+    {
+        let mut steps = Vec::with_capacity(trace.steps.len());
+        for step in &trace.steps {
+            match step {
+                HyperStep::Model(step) => steps.push(ClosedStep {
+                    transition: step.transition.clone(),
+                    post_state: step.post_state.clone(),
+                }),
+                HyperStep::TerminalStutter => {
+                    return Err(shape_error(
+                        "holds a stutter step in a closed finite trace, which a terminal state does not extend",
+                    ));
+                }
+            }
+        }
+        let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
+        let covers = u64::try_from(steps.len()).is_ok_and(|taken| taken == horizon);
+        if !covers {
+            let Ok(expansion) = expand(*system, &last.state)? else {
+                return Ok(no_value());
+            };
+            if !expansion.successors.is_empty() {
+                return Err(shape_error(
+                    "holds a trace that neither ends at a terminal state nor covers the body's horizon",
+                ));
+            }
+        }
+        executions.push(ClosedExecution {
+            initial: usize::try_from(trace.initial).unwrap_or(usize::MAX),
+            states: positions
+                .iter()
+                .map(|position| position.state.clone())
+                .collect(),
+            steps,
+        });
+    }
+    let inputs = ClosedInputs {
+        clause,
+        instance: replay.instance,
+        letters: replay.letters,
+        matcher: replay.matcher,
+        meter: replay.meter,
+        cancel: replay.cancel,
+    };
+    let reproduced = |position: u64| {
+        if position == counterexample.trace_position {
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Truth(false),
+                trace_position: Some(position),
+            }
+        } else {
+            ModelTraceSettlement::Inconclusive(disagreement(Category::Violation))
+        }
+    };
+    if !exists {
+        let tuple: Vec<&ClosedExecution> = executions.iter().collect();
+        return Ok(match judge_closed_tuple(&inputs, &tuple) {
+            ClosedVerdict::Violated { at } => reproduced(at),
+            ClosedVerdict::Holds => {
+                ModelTraceSettlement::Inconclusive(disagreement(Category::Success))
+            }
+            ClosedVerdict::UniversalUnmatched | ClosedVerdict::ExistentialUnmatched => {
+                return Err(refused(ModelTraceRefusal::HyperUnmatched {
+                    joint: counterexample.trace_position,
+                }));
+            }
+            ClosedVerdict::Fault(_) => return Err(fault("the-closed-tuple-evaluates")),
+            ClosedVerdict::MatchUndetermined
+            | ClosedVerdict::Undefined
+            | ClosedVerdict::Incomplete(_) => no_value(),
+        });
+    }
+    let mut lists = Vec::new();
+    for (component, system) in replay.systems.iter().enumerate().skip(traced) {
+        let limit = usize::try_from(replay.max_witness_set).unwrap_or(usize::MAX);
+        match closed_executions(system, horizon, limit, replay.cancel) {
+            Ok(list) => lists.push(list),
+            Err(ClosedStop::Executions { .. }) => {
+                return Ok(ModelTraceSettlement::Stopped {
+                    reached: ReachedLimit {
+                        limit: ModelCheckLimit::MaxWitnessSet,
+                        value: replay.max_witness_set,
+                    },
+                    count: None,
+                });
+            }
+            Err(ClosedStop::Expansion(stop)) if stop.is_internal_failure() => {
+                return Err(fault("model-expansion"));
+            }
+            Err(_) => return Ok(no_value()),
+        }
+        let _ = component;
+    }
+    let universal: Vec<&ClosedExecution> = executions.iter().collect();
+    let existentials: Vec<&[ClosedExecution]> = lists.iter().map(Vec::as_slice).collect();
+    Ok(
+        match search_partner(&inputs, &universal, &existentials, replay.max_witness_set) {
+            PartnerSearch::Exhausted { position } => reproduced(position),
+            PartnerSearch::Witnessed => {
+                ModelTraceSettlement::Inconclusive(disagreement(Category::Success))
+            }
+            PartnerSearch::UniversalUnmatched => {
+                return Err(refused(ModelTraceRefusal::HyperUnmatched {
+                    joint: counterexample.trace_position,
+                }));
+            }
+            PartnerSearch::TooMany { limit } => ModelTraceSettlement::Stopped {
+                reached: ReachedLimit {
+                    limit: ModelCheckLimit::MaxWitnessSet,
+                    value: limit,
+                },
+                count: None,
+            },
+            PartnerSearch::Stopped(ClosedVerdict::Fault(_)) => {
+                return Err(fault("the-closed-tuple-evaluates"));
+            }
+            PartnerSearch::Stopped(_) => no_value(),
+        },
+    )
 }

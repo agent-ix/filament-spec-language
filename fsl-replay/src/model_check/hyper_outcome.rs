@@ -73,6 +73,14 @@ pub enum HyperOutcome {
         /// The run's counts.
         stats: RunStats,
     },
+    /// Every tuple of closed finite executions the event-position clause ranges
+    /// over was read and the body held on each matched one (FR-173 "Event-position
+    /// form"): the decision scope is complete and closed, so no product-closure
+    /// certificate stands between the run and its proof.
+    HoldsClosed {
+        /// The run's counts.
+        stats: RunStats,
+    },
     /// The request's reductions were settled before any state was expanded
     /// (V-6, V-8).
     Reduction {
@@ -126,6 +134,7 @@ impl HyperOutcome {
     pub fn stats(&self) -> RunStats {
         match self {
             Self::Holds { stats }
+            | Self::HoldsClosed { stats }
             | Self::HoldsReduced { stats, .. }
             | Self::Reduction { stats, .. }
             | Self::Violated { stats, .. }
