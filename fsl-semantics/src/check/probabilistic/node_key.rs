@@ -12,7 +12,7 @@
 use filament_exact::{NodeKey, PathSegment, Rational, Value};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 
-use super::claim::{BoundedMeasure, Event, ProbForm};
+use super::claim::{BoundedMeasure, Event, ProbForm, Weighting};
 use super::{
     CheckedProbabilisticClaim, CheckedProbabilisticModel, Delay, DelayDistribution, ProbScheduler,
     RandomParameter, Reward, Workload,
@@ -277,7 +277,7 @@ impl CheckedProbabilisticClaim {
             match measure {
                 BoundedMeasure::Accumulate { reward, .. } => Some(reward.as_str()),
                 BoundedMeasure::Fraction(fraction) => {
-                    fraction.weight.as_ref().map(|reward| reward.as_str())
+                    fraction.weight.as_ref().and_then(Weighting::reward_name)
                 }
                 BoundedMeasure::Steps { .. } | BoundedMeasure::Elapsed { .. } => None,
             }
@@ -289,10 +289,10 @@ impl CheckedProbabilisticClaim {
             }
             | ProbForm::Quantile { measure: read, .. } => measure(read),
             ProbForm::MeanOfFraction { fraction, .. } => {
-                fraction.weight.as_ref().map(|reward| reward.as_str())
+                fraction.weight.as_ref().and_then(Weighting::reward_name)
             }
             ProbForm::LongRunFraction { weight, .. } => {
-                weight.as_ref().map(|reward| reward.as_str())
+                weight.as_ref().and_then(Weighting::reward_name)
             }
             ProbForm::ExpectedReward { reward, .. } => Some(reward.as_str()),
             ProbForm::Probability {

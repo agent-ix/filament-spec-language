@@ -634,7 +634,12 @@ fn subject(
     let cancel = cx.cancel;
     let identity = cx.identity;
     let objective = match weight {
-        Some(name) => {
+        // FR-186 delay weighting reads a timed subject, which the guard above
+        // already refused: this certificate covers untimed workloads only.
+        Some(fsl_semantics::check::Weighting::Delay) => {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        Some(fsl_semantics::check::Weighting::Reward(name)) => {
             #[cfg(feature = "test-support")]
             cx.phase(LongRunProbabilityPhase::Unit)?;
             cx.work(1)?;

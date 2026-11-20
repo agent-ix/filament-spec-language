@@ -12,7 +12,7 @@
 
 use std::collections::{hash_map, BTreeMap};
 
-use filament_exact::{Identifier, NodeKey, PathSegment, Rational, ValueType};
+use filament_exact::{NodeKey, PathSegment, Rational, ValueType};
 use fsl_forms::DeclaredClauseKind;
 
 use super::temporal::{stage_fault, FormulaCondition, FormulaInput};
@@ -27,7 +27,7 @@ use crate::check::node_key::{
 use crate::check::probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
     CheckedTemporalFormula, ClaimActivation, Event, FractionMeasure, ProbForm, ReachTarget, Reward,
-    Statement,
+    Statement, Weighting,
 };
 use crate::check::refusal::CheckRefusal;
 use filament_semantic_value::location::ExpressionLocation as Location;
@@ -625,20 +625,17 @@ impl Lowering<'_> {
         }
     }
 
-    /// The `weighting` binding of a measure weighted by `weight`. `delay`
-    /// weighting is FR-186 delay weighting (QSL-2551), which has no spelling
-    /// here: a reward that happens to be named `delay` is never written as one.
-    fn weighting_statement(
-        weight: Option<&Identifier>,
-        cx: &StatementCx<'_>,
-    ) -> Result<Statement, CheckRefusal> {
-        if weight.is_some_and(|weight| weight.as_str() == "delay") {
-            return Err(stage_fault(cx.at, "delay-weighting-is-not-emitted"));
-        }
-        Ok(Statement::Aggregate(vec![(
-            "kind",
-            Statement::Text(if weight.is_some() { "reward" } else { "none" }.into()),
-        )]))
+    /// The `weighting` binding of a measure weighted by `weight` (FR-498):
+    /// `none`, `reward` (the claim's `reward` binding names the reward) or
+    /// `delay` (FR-186 delay weighting, which reads the subject's delays and
+    /// no reward).
+    fn weighting_statement(weight: Option<&Weighting>) -> Statement {
+        let kind = match weight {
+            None => "none",
+            Some(Weighting::Reward(_)) => "reward",
+            Some(Weighting::Delay) => "delay",
+        };
+        Statement::Aggregate(vec![("kind", Statement::Text(kind.into()))])
     }
 
     fn fraction_statement(
@@ -654,7 +651,7 @@ impl Lowering<'_> {
             ("window", window),
             (
                 "weighting",
-                Self::weighting_statement(fraction.weight.as_ref(), cx)?,
+                Self::weighting_statement(fraction.weight.as_ref()),
             ),
         ]))
     }
@@ -798,7 +795,7 @@ impl Lowering<'_> {
                 Statement::Aggregate(vec![
                     kind("long_run_fraction"),
                     ("predicate", predicate),
-                    ("weighting", Self::weighting_statement(weight.as_ref(), cx)?),
+                    ("weighting", Self::weighting_statement(weight.as_ref())),
                     ("bound", bound),
                 ])
             }
