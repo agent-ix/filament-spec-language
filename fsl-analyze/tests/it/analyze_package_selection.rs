@@ -621,6 +621,46 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
+/// FR-940: package `claim_names` resolves named operation clauses to their
+/// claim occurrence, and FR-489 sends those operation-contract items through
+/// `contract-checker` instead of settling an unknown claim.
+#[trace("TC-2702", "FR-962-AC-1")]
+#[trace("TC-2725", "FR-968-AC-2")]
+#[test]
+fn named_operation_clauses_resolve_over_a_package() {
+    for (name, clause) in [
+        (
+            "Keeps",
+            "post Keeps using v on M::Counter::setTo { self.value = n }\n",
+        ),
+        (
+            "CanSet",
+            "pre CanSet using v on M::Counter::setTo { true }\n",
+        ),
+    ] {
+        let items = json!([{"claim": name}]);
+        let ws = Workspace::new(&format!("package-operation-clause-{name}"));
+        let request = counter_request(&ws, clause, items.clone());
+        let source = analyze(&request);
+        let (members, _) = package_selection(&ws, &request_of(&request));
+        let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
+        let item = run.item(0);
+        assert!(!item.to_string().contains("unknown-claim"), "{item}");
+        assert_eq!(
+            item["request"]["candidates"]["backends"],
+            json!(["contract-checker"]),
+            "{item}"
+        );
+        assert_eq!(
+            item["request"]["candidates"],
+            source.item(0)["request"]["candidates"],
+            "source: {}; package: {}",
+            source.item(0),
+            item
+        );
+    }
+}
+
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
 /// handoff with no `checked-package.json`, refuse the request
 /// `invalid_package`/`missing-file` at the request stage, exit 20.

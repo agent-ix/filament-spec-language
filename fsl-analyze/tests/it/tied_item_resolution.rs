@@ -6,9 +6,9 @@
 use std::sync::Mutex;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{counter_request, label, Fr290, Workspace};
+use crate::analyze_cli_support::{Fr290, Workspace, counter_request, label};
 
 const AT_MOST_THREE: &str =
     "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n";
@@ -345,7 +345,6 @@ fn contract_provider(
 /// `operation-contract` request item.
 #[trace("TC-2725", "FR-968-AC-2")]
 #[test]
-#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim"]
 fn a_post_item_with_a_provider_matches_contract_checker_and_the_provider() {
     use fsl_analyze::provider::ProviderVerdict;
     let ws = Workspace::new("post-item-with-provider");
@@ -498,7 +497,6 @@ fn a_provider_contract_verdict_settles_after_replay() {
 /// `ambiguous-backend`.
 #[trace("TC-2702", "FR-962-AC-1")]
 #[test]
-#[ignore = "QSL-2580: analyze settles a named `post` clause unknown-claim, so the post item never reaches negotiation"]
 fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
     let ws = Workspace::new("post-item-one-candidate");
     let request = set_to_request(&ws, KEEPS, json!([{"claim": "Keeps"}]));
@@ -517,6 +515,33 @@ fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
     );
     assert!(
         !document.to_string().contains("ambiguous-backend"),
+        "{document}"
+    );
+}
+
+/// FR-489 and FR-940: a named `pre` clause resolves to its operation-contract
+/// occurrence and reaches the contract checker through the source route.
+#[trace("TC-2702", "FR-962-AC-1")]
+#[test]
+fn an_operation_pre_item_reaches_negotiation_with_contract_checker() {
+    let ws = Workspace::new("pre-item-one-candidate");
+    let body = "pre CanSet using v on M::Counter::setTo { true }\n";
+    let request = set_to_request(&ws, body, json!([{"claim": "CanSet"}]));
+    let (document, seen) = analyze_recording(&request, Vec::new());
+    assert_eq!(
+        seen,
+        vec![vec!["contract-checker".to_owned()]],
+        "{document}"
+    );
+    let item = &document["items"][0];
+    assert!(item["request"].get("backend").is_none(), "{item}");
+    assert_eq!(
+        item["request"]["candidates"],
+        json!({"type": "set", "backends": ["contract-checker"]}),
+        "{item}"
+    );
+    assert!(
+        !document.to_string().contains("unknown-claim"),
         "{document}"
     );
 }

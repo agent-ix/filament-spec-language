@@ -223,7 +223,7 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
-    Invariant {
+    StateClause {
         index: RequestIndex,
         name: &'s str,
         declaration: CheckedNodeId,
@@ -242,7 +242,7 @@ enum Named<'s> {
 enum Route<'a> {
     Clause(Box<PackageClauseSubject<'a>>),
     Deadlock,
-    Invariant,
+    StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
 }
 
@@ -358,16 +358,16 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
-            Named::Invariant {
+            Named::StateClause {
                 index,
                 name,
                 declaration,
                 selection,
-            } => match reads.invariant(index, name, &declaration, selection)? {
+            } => match reads.state_clause(index, name, &declaration, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     invariant_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::Invariant);
+                    routes.insert(index, Route::StateClause);
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -707,10 +707,10 @@ fn resolve_names<'s>(
                         selection,
                     });
                 }
-                if !is_invariant(view, &found.declaration) {
+                if !is_state_clause(view, &found.declaration) {
                     return Err(pending(PendingFamily::Declaration));
                 }
-                return Ok(Named::Invariant {
+                return Ok(Named::StateClause {
                     index,
                     name,
                     declaration: found.declaration,
@@ -740,22 +740,15 @@ fn resolve_names<'s>(
         .collect()
 }
 
-/// Whether the package node `node` is an `invariant` state clause (FR-625):
-/// a `state`/`state_clause` node of the `invariant` kind.
-fn is_invariant(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
-    use filament_contract_model::CheckedNodePathSegment;
+/// Whether the package node `node` names a state clause. The kind determines
+/// whether FR-489 routes it to `contract-checker` or EN-1.
+fn is_state_clause(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
     view.package()
         .resolved_graph()
         .nodes
         .iter()
         .find(|candidate| candidate.node_id == *node)
-        .is_some_and(|candidate| {
-            candidate.semantic_form.as_ref() == "state_clause"
-                && matches!(
-                    node.path.get(2),
-                    Some(CheckedNodePathSegment::Name(kind)) if kind.as_ref() == "invariant"
-                )
-        })
+        .is_some_and(|candidate| candidate.semantic_form.as_ref() == "state_clause")
 }
 
 /// FR-850: a derived item whose `claim` names no claim row and no model
@@ -871,7 +864,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             // A temporal clause's one record is `temporal-satisfaction`.
@@ -1001,7 +994,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::TemporalSatisfaction,
@@ -1180,7 +1173,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
     /// item with no model subject is decided by EN-2's contract check, which
     /// has no package form yet.
-    fn invariant(
+    fn state_clause(
         &self,
         index: RequestIndex,
         name: &str,
@@ -1206,8 +1199,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .state_clause_at(&key)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
-        // FR-290: the record's extent from its domain kinds, as S3 classifies
-        // the invariant's `operation-contract` record.
+        // FR-290: the operation-contract record's extent from its domain
+        // kinds, as S3 classifies the selected state clause.
         let kinds = input
             .invariant_domain_kinds(
                 clause,
@@ -1230,7 +1223,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::OperationContract,
@@ -1252,10 +1245,12 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         if kind == Capability::OperationContract && !model_subject {
             return Err(pending(PendingFamily::Declaration));
         }
-        let candidates = invariant_tie(
+        let candidates = state_clause_tie(
             self.registry.candidates(kind, named.as_ref()),
             kind,
             named.as_ref(),
+            model_subject,
+            clause.invariant,
         );
         let temporal = selection.temporal.clone().unwrap_or_default();
         let item = ClaimItem {
@@ -1288,16 +1283,21 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
     }
 }
 
-/// FR-962's tie rule for an unnamed `operation-contract` item over an
-/// `invariant` state clause and a model subject: EN-1 stays a candidate, and
-/// a tie between EN-1 and EN-2 selects EN-1 (FR-489).
-fn invariant_tie(
+/// FR-962's operation-contract tie rule for a package state clause. EN-1
+/// decides an invariant over a model subject; pre/post clauses go to
+/// `contract-checker` regardless of whether the subject has a model.
+fn state_clause_tie(
     candidates: CandidateOutcome,
     kind: Capability,
     named: Option<&BackendId>,
+    model_subject: bool,
+    invariant: bool,
 ) -> CandidateOutcome {
     if named.is_some() || kind != Capability::OperationContract {
         return candidates;
+    }
+    if !model_subject || !invariant {
+        return fsl_route::tie::exclude_en1(candidates, kind, named, false);
     }
     let CandidateOutcome::Candidates(set) = &candidates else {
         return candidates;
@@ -1430,7 +1430,7 @@ impl<'a> WorkInputs<'_, 'a> {
             }
             // FR-489's tie routed the invariant over the model subject to
             // EN-1 (FR-625, FR-951), as on the source route.
-            (_, Some(Route::Invariant))
+            (_, Some(Route::StateClause))
                 if item.kind == Capability::OperationContract
                     && negotiated.disposition.target().is_some_and(|backend| {
                         backend.id().as_str() == crate::model_check::manifest::BACKEND_ID
