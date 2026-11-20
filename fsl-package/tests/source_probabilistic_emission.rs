@@ -144,7 +144,7 @@ const TIMED: &str = "object O { d: Clock; operation step() modifies self.d; }\n\
 #[trace("TC-3012", "FR-740-AC-5")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2439: delays on a timed source model emitted on the source object node not implemented yet"]
+#[ignore = "QSL-2463: S4 emission of a source-owned declaration waits on the contract-ir #1082 pin (PR 3157 carries the pin bump) and the identity-row join (QSL-2645)"]
 fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
     let package = check(&format!(
         "{TIMED}time O dense unit ms;\n\
@@ -186,7 +186,7 @@ fn a_delay_on_an_untimed_source_model_is_refused_at_its_span() {
 #[trace("TC-3012", "FR-740-AC-6")]
 #[trace("FSpec-TC-2033", "FSpec-FR-640-AC-6")]
 #[test]
-#[ignore = "QSL-2439: random parameters and workloads on the source model emitted on the source object node not implemented yet"]
+#[ignore = "QSL-2463: S4 emission of a source-owned declaration waits on the contract-ir #1082 pin (PR 3157 carries the pin bump) and the identity-row join (QSL-2645)"]
 fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
     let package = check(
         "object O { n: Integer; operation step(k: Int[1, 3]) modifies self.n; }\n\
@@ -226,4 +226,52 @@ fn a_source_operation_entry_lists_its_parameters() {
     );
     assert!(parameters[0]["type_node"].is_null());
     assert!(parameters[1]["type_node"].is_object(), "{parameters:?}");
+}
+
+const SWITCH: &str = "object Switch { n: Integer; \
+    operation choose(k: Int[0, 1]) modifies self.n; operation clear() modifies self.n; }\n\
+    object Other { n: Integer; operation poke() modifies self.n; }\n";
+
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_workload_on_a_source_object_type_is_admitted_with_that_types_operations() {
+    let package = check(&format!(
+        "{SWITCH}workload Input on Switch {{ weight Switch::choose = 1; weight Switch::clear = 0; }}\n"
+    ))
+    .unwrap_or_else(|refusals| panic!("S3 admits the workload: {refusals:?}"));
+    let [workload] = package.graph().probabilistic_model().workloads() else {
+        panic!("one checked workload");
+    };
+    assert_eq!(workload.name(), "Input");
+    assert_eq!(workload.weights().len(), 2);
+    assert!(workload.model_key().is_some(), "{workload:?}");
+}
+
+#[trace("TC-2062", "FR-185-AC-12")]
+#[test]
+fn a_workload_on_a_source_object_type_weighs_only_that_types_operations() {
+    let Err(refusals) = check(&format!(
+        "{SWITCH}workload Input on Switch {{ weight Switch::choose = 1; weight Switch::clear = 1; \
+         weight Other::poke = 1; }}\n"
+    )) else {
+        panic!("a weight on another object type is refused");
+    };
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code().as_str(), "invalid_probabilistic_model");
+
+    let Err(refusals) = check(&format!(
+        "{SWITCH}workload Input on Switch {{ weight Switch::choose = 1; }}\n"
+    )) else {
+        panic!("a workload that omits an operation is refused");
+    };
+    assert_eq!(refusals[0].cause.cause(), Some("incomplete-workload"));
+
+    let Err(refusals) = check(&format!(
+        "{SWITCH}workload Input on Missing {{ weight Switch::choose = 1; }}\n"
+    )) else {
+        panic!("an on-name that is neither an alias nor an object is refused");
+    };
+    assert_eq!(refusals[0].cause.cause(), Some("missing-name"));
 }
