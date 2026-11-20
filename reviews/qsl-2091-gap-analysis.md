@@ -13,7 +13,7 @@ Ticket: QSL-2091. Reviewed frozen source `4b911c94db93985df0b8a0ddfbf03c8d88cbd3
 
 ## Verdict
 
-**CONDITIONAL** — fix FND-001 inside this candidate. The certificate-resource and exact-probability cases use real production outcomes and independent boundaries; no other defect was found in the assigned diff.
+**PASS** — FND-001 is fixed at `d84a5f48b4226f68b12d3741dbe7748db35c3421`; see Dispositions. No new finding arose from the confined fixture fix. This is the scoped review result, not a whole-ticket completion or final-gate claim.
 
 ## Findings
 
@@ -38,6 +38,23 @@ Examined implementation seams are the existing production `check_simulation_cert
 ## Assurance Context
 
 No AssuranceProfile was selected in this bounded assignment. Whole-repository profile selection and broader assurance evidence were not performed; none is claimed. No new exception is introduced.
+
+## Dispositions
+
+Round 1, confined fix review at `d84a5f48b4226f68b12d3741dbe7748db35c3421`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Only the new child now constructs actual native `constraint Low` and `constraint Started` through `World::new`; all four child cases use that fixture. Inherited `count`, `COUNT` and parents are unchanged. The author corrected QSL-2713's evidence and scope, explicitly retracting the original invariant-based run; comment f55e315c and the new actual-constraint receipt ground the remaining owner-pending liveness oracle. |
+
+After excerpt from the corrected child fixture:
+
+```rust
+         constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+         constraint Started using v on M::Counter at current { self.v >= 1 }\n",
+```
+
+The trusted author receipt reports three changed active qualified cases passed individually and the actual-constraint liveness oracle was executed once, returning `ReducedLiveness`. No original invalid fixture or unaffected passing test was rerun. The latter is one strict ignored owner-pending test, excluded from coverage. Eight new active cases remain accepted; final component gate is the lead's next step. This disposition inspected only the fix diff and receipt, with no tests, builds, lint, matrix, owner-record recheck, Done audit or new whole review.
 
 ## Examined units
 
