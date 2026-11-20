@@ -350,16 +350,13 @@ fn contract_provider(
         >,
     >,
 ) {
-    use fsl_semantics::check::Capability::{OperationContract, ValueValidity};
+    use fsl_semantics::check::Capability::OperationContract;
     let sent = std::sync::Arc::new(Mutex::new(Vec::new()));
     let targets = std::sync::Arc::new(Mutex::new(Vec::new()));
     let engine = fsl_analyze::analyze::Engine::external(
         advertising(
             "fsl.test-contract",
-            &[
-                (OperationContract, fsl_route::Mode::Unbounded),
-                (ValueValidity, fsl_route::Mode::Unbounded),
-            ],
+            &[(OperationContract, fsl_route::Mode::Unbounded)],
         ),
         fsl_analyze::analyze::BackendTool::new("test-contract", "1").expect("a tool"),
         Box::new(Answering {
@@ -546,6 +543,35 @@ fn a_provider_contract_verdict_settles_after_replay() {
     inconclusive(&assignments, "replay-parity");
 }
 
+/// FR-968-AC-3: an assignments counterexample returned for a contract target
+/// cannot be replayed as a contract counterexample, so it settles as
+/// `replay-parity` without publishing a counterexample.
+#[trace("TC-2725", "FR-968-AC-3")]
+#[test]
+fn a_provider_contract_assignments_counterexample_settles_replay_parity() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let ws = Workspace::new("contract-provider-assignments-replay-parity");
+    let (provider, _, _) = contract_provider(ProviderVerdict::Refuted {
+        counterexample: vec![filament_exact::Value::Integer(0_i64.into())],
+    });
+    let request = set_to_request(
+        &ws,
+        KEEPS,
+        json!([{"claim": "Keeps", "backend": "fsl.test-contract"}]),
+    );
+    let document = analyze_recording(&request, vec![provider]).0;
+    let item = &document["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert!(item["record"].to_string().contains("replay-parity"), "{item}");
+    assert!(
+        document["counterexamples"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "{document}"
+    );
+}
+
 /// FR-962-AC-1 (`post` half): an unnamed `operation-contract` item for an
 /// operation's `post` contract reaches the negotiator with exactly
 /// `[contract-checker]`, names no backend, and never settles
@@ -576,7 +602,7 @@ fn an_operation_post_item_reaches_negotiation_with_contract_checker() {
 
 /// FR-489 and FR-940: a named `pre` clause resolves to its operation-contract
 /// occurrence and reaches the contract checker through the source route.
-#[trace("TC-2702", "FR-962-AC-1")]
+#[trace("TC-2702", "FR-489-AC-2")]
 #[test]
 fn an_operation_pre_item_reaches_negotiation_with_contract_checker() {
     let ws = Workspace::new("pre-item-one-candidate");

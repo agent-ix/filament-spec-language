@@ -586,6 +586,9 @@ pub(crate) enum ProviderReport {
     Proved,
     /// The provider could not decide the claim.
     Unknown,
+    /// The provider's assignment-shaped counterexample could not be replayed
+    /// as an operation-contract counterexample.
+    ReplayParity,
     /// The provider transport failed while enforcing a typed byte limit.
     Failed(ToolFailure),
     /// The provider's counterexample, confirmed by replay or not.
@@ -1055,10 +1058,9 @@ pub(crate) fn finish(
             ProviderVerdict::Failed { .. } => EngineReport::Refused(Refusal::Failed(
                 InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
             )),
-            ProviderVerdict::Refuted { .. } => EngineReport::Refused(Refusal::Failed(
-                InternalFault::new("external-provider", "contract-counterexample-unsupported")
-                    .catalog_code(),
-            )),
+            ProviderVerdict::Refuted { .. } => {
+                EngineReport::Provider(Box::new(ProviderReport::ReplayParity))
+            }
         },
     }
 }
@@ -1135,6 +1137,21 @@ pub(crate) fn settle_record(
                     trace: None,
                     replay: None,
                 },
+            ),
+            None,
+        ),
+        ProviderReport::ReplayParity => (
+            TerminalRecord::inconclusive(
+                index,
+                backend,
+                InconclusiveCause::ReplayParity(fsl_replay::DisagreementCause::Verdicts {
+                    proved: fsl_replay::Verdict::from_category(
+                        filament_semantic_value::catalog::Category::Violation,
+                    ),
+                    replayed: fsl_replay::Verdict::from_category(
+                        filament_semantic_value::catalog::Category::Success,
+                    ),
+                }),
             ),
             None,
         ),
