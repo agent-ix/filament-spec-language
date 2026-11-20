@@ -488,23 +488,23 @@ fn claim_over(name: &str, scheduler: &str, bound: &str, event: &str) -> String {
 /// The digital clocks and the deadline clock a product key carries, scaled
 /// back to model units: `(clock values, deadline clock)`.
 fn digital_clocks_of(key: &fsl_analyze::exact_probabilistic::ProbKey) -> (Vec<u64>, Option<u64>) {
-    let bytes = &key.model;
-    let word = |at: usize| {
-        let eight: [u8; 8] = bytes[at..at + 8].try_into().expect("a word");
-        u64::from_be_bytes(eight)
+    let product: serde_json::Value = serde_json::from_slice(&key.model).expect("a product key");
+    let digital = &product[2][1];
+    assert_eq!(digital[0], "digital");
+    let count = |value: &serde_json::Value| -> u64 {
+        value
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .expect("a decimal count")
     };
-    let prefix = b"filament.simulation.state-key/v1/digital\n".len();
-    let model = usize::try_from(word(prefix)).expect("a length");
-    let mut at = prefix + 8 + model;
-    let scale = word(at);
-    let count = usize::try_from(word(at + 8)).expect("a count");
-    at += 16;
-    let mut clocks = Vec::new();
-    for _ in 0..count {
-        clocks.push(word(at) / scale);
-        at += 16;
-    }
-    let deadline = (bytes[at] == 1).then(|| word(at + 1) / scale);
+    let scale = count(&digital[3]);
+    let clocks = digital[4]
+        .as_array()
+        .expect("clock rows")
+        .iter()
+        .map(|clock| count(&clock[1]) / scale)
+        .collect();
+    let deadline = digital[5].as_array().map(|row| count(&row[2]) / scale);
     (clocks, deadline)
 }
 

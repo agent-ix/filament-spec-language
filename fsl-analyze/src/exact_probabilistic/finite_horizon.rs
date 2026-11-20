@@ -246,7 +246,7 @@ fn collapse_zero_time_components(
     max_rational_bits: u64,
     max_policy_iterations: u64,
 ) -> Result<Option<(Vec<Rational>, Vec<Option<usize>>)>, FhError> {
-    let graph = Graph::new(product).map_err(|error| match error {
+    let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
         UnboundedError::InvalidState => FhError::InvalidState,
         _ => FhError::InvalidProbability,
     })?;
@@ -274,7 +274,7 @@ fn collapse_zero_time_components(
         if !has_cycle(&zero_graph)? {
             return Ok(None);
         }
-        let graph = Graph::new(product).map_err(|error| match error {
+        let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
             UnboundedError::InvalidState => FhError::InvalidState,
             _ => FhError::InvalidProbability,
         })?;

@@ -869,8 +869,21 @@ pub(crate) struct Graph<'a> {
 
 impl<'a> Graph<'a> {
     pub(crate) fn new(product: &'a ProbProduct) -> Result<Self, UnboundedError> {
+        Self::with_terminals(product, &[])
+    }
+
+    /// The graph of `product` in which every state with a `terminal` value is
+    /// absorbing: its outgoing edges are not choices.
+    pub(crate) fn with_terminals(
+        product: &'a ProbProduct,
+        terminal: &[Option<Rational>],
+    ) -> Result<Self, UnboundedError> {
         let mut choices = Vec::with_capacity(product.states.len());
         for state in product.ids() {
+            if terminal.get(state.index()).is_some_and(Option::is_some) {
+                choices.push(Vec::new());
+                continue;
+            }
             let edges = product.outgoing(state);
             let mut groups: Vec<Choice<'a>> = Vec::new();
             for edge in edges {
