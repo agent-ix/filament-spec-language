@@ -7,15 +7,15 @@ use fsl_eval::temporal::TemporalOutcome;
 use fsl_package::protocol_view::{Port, PortRef};
 use fsl_semantics::check::PredicateRole;
 use serde::Serialize;
-use serde_json::Value;
 use serde_json::value::RawValue;
+use serde_json::Value;
 
-use super::{Charges, LimitWire, limit_wire};
-use crate::ReachedLimit;
+use super::{limit_wire, Charges, LimitWire};
 use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement};
 use crate::protocol_analysis::{ProtocolReplayResult, ProtocolReplaySettlement, WalkDisagreement};
 use crate::result::wire::{CauseCodecError, CauseWire};
 use crate::spine::{replay_locus_wire, replay_outcome_wire};
+use crate::ReachedLimit;
 use crate::{
     HybridReplayResult, HybridReplaySettlement, ObservedTemporalKind, ObservedTemporalResult,
     ObservedTemporalSettlement, ReplayResult,
@@ -84,6 +84,16 @@ pub(super) fn hybrid(result: &HybridReplayResult) -> Result<String, CauseCodecEr
             None,
             None,
         ),
+        HybridReplaySettlement::ReproducedWithValidatedWitness { replay } => (
+            "reproduced-with-validated-witness",
+            Some(serde_json::json!({
+                "static": static_wire(&replay.static_outcome),
+                "exact": {"outcome": "not-exact"},
+            })),
+            result.counterexample_wire.clone(),
+            None,
+            None,
+        ),
         HybridReplaySettlement::Inconclusive {
             replay,
             disagreement,
@@ -125,7 +135,8 @@ pub(super) fn hybrid(result: &HybridReplayResult) -> Result<String, CauseCodecEr
         arm: "hybrid",
         settlement,
         category: match &result.settlement {
-            HybridReplaySettlement::Reproduced { .. } => "success",
+            HybridReplaySettlement::Reproduced { .. }
+            | HybridReplaySettlement::ReproducedWithValidatedWitness { .. } => "success",
             HybridReplaySettlement::Inconclusive { .. } => "inconclusive",
             HybridReplaySettlement::Incomplete { .. } => "incomplete",
         },

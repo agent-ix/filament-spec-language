@@ -171,7 +171,7 @@ mod code_generation {
         .expect("public facade locates function");
         assert_eq!(site.site.parameters.len(), 1);
         assert_eq!(site.site.parameters[0].0.as_str(), "x");
-        assert!(!format!("{:?}", site.site.obligation_identity()).is_empty());
+        assert_eq!(site.site.obligation_identity().ordinal(), 0);
         assert!(!site.package.is_empty());
     }
 
@@ -222,7 +222,7 @@ mod code_generation {
             &function_selection,
         )
         .expect("public facade locates function");
-        assert!(!format!("{:?}", function.site.obligation_identity()).is_empty());
+        assert_eq!(function.site.obligation_identity().ordinal(), 0);
 
         let model = model_with_touch();
         let selected = fsl_replay::spine::OperationName {
@@ -242,7 +242,7 @@ mod code_generation {
         )
         .expect("public facade locates operation");
         assert_eq!(site.site.frame_operation.to_string(), "M::Widget::touch");
-        assert!(!format!("{:?}", site.site.obligation_identity()).is_empty());
+        assert_eq!(site.site.obligation_identity().ordinal(), 0);
     }
 
     #[test]
@@ -290,6 +290,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         let replay_limits = fsl_replay::ReplayLimits::default();
         let request = fsl_replay::ReplayRequest::decode(
             fsl_replay::ReplayRequestWire {
+                certificate: None,
                 package: fsl_replay::ReplayPackage::read(&site.package, replay_limits.input_bytes)
                     .expect("read emitted package"),
                 profile_selections: vec![],
@@ -415,7 +416,7 @@ mod ir {
     use super::*;
 
     #[test]
-    #[trace("TC-2584", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ir_01_01_strict_v2_reader_admits_emitted_package() {
         assert_eq!(
             fsl_package::CHECKED_PACKAGE_V2,
@@ -448,7 +449,7 @@ mod ir {
     }
 
     #[test]
-    #[trace("TC-1202", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ir_03_01_schedulability_root_exposes_occurrence_identity() {
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile t = \"filament.temporal.complete/v1\";\n\
@@ -484,7 +485,6 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
         };
         assert_eq!(root.occurrence().origin().role().as_str(), "claim");
         assert_eq!(root.occurrence().origin().ordinal(), 0);
-        assert!(!format!("{:?}", root.occurrence()).is_empty());
     }
 
     #[test]
@@ -532,7 +532,7 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
     }
 
     #[test]
-    #[trace("TC-2587", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ir_02_01_import_view_exposes_checked_exports() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::check::PackageDeclarations;
@@ -643,7 +643,7 @@ mod driver {
     }
 
     #[test]
-    #[trace("TC-1340", "FR-911-AC-4")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_dr_03_01_native_run_result_exposes_command_error_fields() {
         let value = serde_json::json!({
             "format": "native-run-result/2", "stage": "profile",
@@ -670,7 +670,7 @@ mod runtime {
     use super::*;
 
     #[test]
-    #[trace("TC-2586", "FR-911-AC-1")]
+    #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_rt_01_01_emit_plan_root_exposes_plan_emission_and_checked_unit() {
         let source = fsl_replay::SourceIdentity::new("consumer", "plan-root");
         let package_name = fsl_replay::LibraryName::new("consumer").expect("library name");
@@ -729,8 +729,8 @@ temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventual
                 .expect("public facade emits plan root");
         assert_eq!(root.obligations().len(), 2);
         assert!(!root.emission().package().bytes().is_empty());
-        assert!(!format!("{:?}", root.plan()).is_empty());
-        assert!(!format!("{:?}", root.checked_unit()).is_empty());
+        assert!(root.plan().activation_capacity() > 0);
+        assert!(root.checked_unit().static_subject().is_ok());
     }
 
     #[test]

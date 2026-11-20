@@ -278,6 +278,7 @@ pub(super) fn request_from_package(
         provided.push(bytes.clone());
     }
     ReplayRequestWire {
+        certificate: None,
         package: crate::ReplayPackage::read(
             package_bytes,
             crate::ReplayLimits::default().input_bytes,

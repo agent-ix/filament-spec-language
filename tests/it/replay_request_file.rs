@@ -235,6 +235,7 @@ impl Fixture {
     fn wire(&self, package: &Value) -> ReplayRequestWire {
         let site = self.site();
         ReplayRequestWire {
+            certificate: None,
             package: canonical(package),
             profile_selections: Vec::new(),
             dependencies: vec![DependencyEntryWire {

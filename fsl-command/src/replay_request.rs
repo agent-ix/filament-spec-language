@@ -442,6 +442,7 @@ fn decode<E: From<RequestDefect>>(
         })
         .collect::<Result<_, RequestDefect>>()?;
     Ok(ReplayRequestWire {
+        certificate: None,
         package: raw_package,
         profile_selections: array(&value["profile_selections"], "/profile_selections")?
             .iter()

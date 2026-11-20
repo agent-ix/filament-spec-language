@@ -14,7 +14,10 @@ use fsl_semantics::check::{
 use serde_json::Value;
 
 use super::{SolverBudget, SolverCoverage, SolverMethod, SolverOutcome, SolverResult, SolverStop};
-use crate::hybrid_replay::{ExpressionSite, HybridCounterexample, TermLocus};
+use crate::hybrid_replay::{
+    read_certificate, CertificateRefusal, Expect, ExpressionSite, HybridCertificate,
+    HybridCounterexample, RefusalCode, TermLocus,
+};
 use crate::proof_result::{
     read_plugin_basis, read_plugin_hybrid_counterexample_over, read_plugin_inconclusive_cause_over,
     InconclusiveCause, PluginResultRefusal, ProofBasis, ValueFault,
@@ -139,6 +142,54 @@ pub enum HybridEntryRefusal {
 }
 
 impl HybridAnswer {
+    /// The answer's certificate, read against the form the entry takes (FSpec
+    /// FR-652 "Checking order"): a proof takes the form of its basis, a refutation
+    /// or a `solver-inconclusive` entry carrying a trace takes `validated-witness`,
+    /// and no other entry carries one.
+    ///
+    /// # Errors
+    ///
+    /// [`CertificateRefusal`] for a certificate the reader cannot read.
+    pub fn read_certificate(
+        &self,
+        graph: &CheckedGraph,
+        claim: &CheckedHybridClaim,
+    ) -> Result<Option<HybridCertificate>, CertificateRefusal> {
+        let Some(value) = &self.certificate else {
+            return Ok(None);
+        };
+        let model = graph
+            .hybrid_models()
+            .get(claim.model.get())
+            .ok_or_else(|| CertificateRefusal {
+                pointer: "/certificate".to_owned(),
+                code: RefusalCode::InvalidValue,
+            })?;
+        let expect = match &self.verdict {
+            HybridVerdict::Refuted(claimed) => Some(Expect::Witness(&claimed.trace)),
+            HybridVerdict::Solved(result) => match (&result.outcome, &result.coverage) {
+                (
+                    SolverOutcome::Unsat | SolverOutcome::EnclosureDisjoint,
+                    SolverCoverage::Bounded { .. },
+                ) => Some(Expect::Bounded),
+                (
+                    SolverOutcome::Unsat | SolverOutcome::EnclosureDisjoint,
+                    SolverCoverage::Inductive,
+                ) => Some(Expect::Inductive),
+                (SolverOutcome::Unknown(Some(trace)), _) => Some(Expect::Witness(trace)),
+                _ => None,
+            },
+            HybridVerdict::Unsupported(_) => None,
+        };
+        let Some(expect) = expect else {
+            return Err(CertificateRefusal {
+                pointer: "/certificate".to_owned(),
+                code: RefusalCode::UnknownMember,
+            });
+        };
+        read_certificate(model, expect, value).map(Some)
+    }
+
     /// An answer that carries no certificate.
     pub const fn solved(result: SolverResult) -> Self {
         Self {
@@ -307,10 +358,14 @@ impl HybridAnswer {
             },
             other => return Err(HybridEntryRefusal::NotRead(other.to_owned())),
         };
-        Ok(Self {
+        let answer = Self {
             verdict,
             certificate: entry.get("certificate").cloned(),
-        })
+        };
+        answer
+            .read_certificate(graph, claim)
+            .map_err(|refusal| HybridEntryRefusal::Entry(refusal.into()))?;
+        Ok(answer)
     }
 }
 

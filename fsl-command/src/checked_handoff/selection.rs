@@ -770,13 +770,13 @@ fn check_clause(row: &ClauseRow, package: &CheckedPackageV2) -> Result<(), Selec
         .iter()
         .find(|node| node.node_id == row.node)
         .ok_or_else(|| refusal(SelectionAxis::ClauseNode, Some(row)))?;
-    // The package carries a declared name only where Contract IR's rules give
-    // the node one; a temporal clause node has none today, so the sidecar's
-    // name has nothing to be compared with and this comparison does not run.
-    if let Some(declaration) = &node.declaration {
-        if declaration.qualified_name.last().map(AsRef::as_ref) != Some(row.name.as_str()) {
-            return Err(refusal(SelectionAxis::ClauseName, Some(row)));
-        }
+    if !package
+        .temporal_clause_names()
+        .unwrap_or_default()
+        .iter()
+        .any(|name| name.declaration == node.node_id && name.name.as_ref() == row.name.as_str())
+    {
+        return Err(refusal(SelectionAxis::ClauseName, Some(row)));
     }
     let mut named_by = Vec::new();
     for (index, kind) in package.node_kinds().iter().enumerate() {

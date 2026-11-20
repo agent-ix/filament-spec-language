@@ -689,6 +689,7 @@ impl From<ReplayRefusal> for AdmittedRefusal {
             | ReplayRefusal::ObjectEnvironment(_)
             | ReplayRefusal::ModelTrace(_)
             | ReplayRefusal::HybridTrace(_)
+            | ReplayRefusal::HybridCertificate(_)
             | ReplayRefusal::UnfairLasso { .. } => Self::Fault(InternalFault::new(
                 "replay",
                 "compile-refuses-only-compile-refusals",

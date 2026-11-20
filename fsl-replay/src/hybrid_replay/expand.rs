@@ -148,7 +148,7 @@ impl Exp {
         self.any_node(|node| matches!(node, Self::Activation(_) | Self::Capture(_)))
     }
 
-    fn any_node(&self, predicate: impl Fn(&Self) -> bool) -> bool {
+    pub(crate) fn any_node(&self, predicate: impl Fn(&Self) -> bool) -> bool {
         let mut pending = vec![self];
         while let Some(node) = pending.pop() {
             if predicate(node) {

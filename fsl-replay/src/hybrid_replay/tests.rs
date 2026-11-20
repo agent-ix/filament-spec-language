@@ -19,6 +19,7 @@ use super::poly::Poly;
 use super::*;
 
 mod activation_tests;
+mod certificate_tests;
 mod quantifier_tests;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\

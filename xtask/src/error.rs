@@ -37,6 +37,8 @@ pub enum Code {
     Conformance,
     /// FR-761 consumer-facade input or metadata error.
     ConsumerFacades,
+    /// FR-911/FR-912 consumer-facade test gate input error.
+    FacadeTests,
     /// QSL#157: `cargo xtask test-suites` found an undeclared empty suite or
     /// a wrong declaration, or `cargo` itself failed.
     TestSuites,
@@ -66,6 +68,7 @@ impl Code {
             Self::Metadata => "metadata",
             Self::Conformance => "conformance",
             Self::ConsumerFacades => "consumer-facades",
+            Self::FacadeTests => "facade-tests",
             Self::TestSuites => "test-suites",
             Self::Refinement => "refinement",
             Self::Qualification => "qualify",
@@ -352,6 +355,9 @@ pub enum Error {
     /// FR-761: Cargo metadata omitted a required field.
     #[error("consumer-facades: cargo metadata output has no {0}")]
     ConsumerFacadesMetadataMissing(&'static str),
+    /// FR-911/FR-912 facade-test input, parse, or inventory error.
+    #[error("facade-tests: {0}")]
+    FacadeTestsRefusal(String),
     /// `xtask::canonical_types` found one or more violations; `summary`
     /// lists them.
     #[error("{summary}")]
@@ -497,6 +503,7 @@ impl Error {
             | Self::ConsumerFacadesMetadataFailed { .. }
             | Self::ConsumerFacadesMetadataJson { .. }
             | Self::ConsumerFacadesMetadataMissing(_) => Code::ConsumerFacades,
+            Self::FacadeTestsRefusal(_) => Code::FacadeTests,
             Self::TestSuitesUnknownLane { .. }
             | Self::TestSuitesLaneMismatch { .. }
             | Self::TestSuitesUnsupportedSelection { .. }
@@ -545,6 +552,7 @@ impl Error {
             | Code::ExamplesCheck => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
             Code::ConsumerFacades => 2,
+            Code::FacadeTests => 2,
             Code::Qualification => 2,
             Code::ExamplesCheckInput => 2,
             // FSpec FR-301's tool-failure code: the gate could not report.

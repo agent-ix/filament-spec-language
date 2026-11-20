@@ -1,4 +1,4 @@
-.PHONY: check-no-committed-binaries seam-probe string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify cargo-deny-bans fuzz-deep-input test-deep-format ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
+.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify cargo-deny-bans fuzz-deep-input test-deep-format ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
 
 # Fail when a tracked file is executable/binary content or exceeds
 # the size ceiling. See the script's own header for the detection method and
@@ -41,6 +41,10 @@ check-spec-validation:
 # of whatever feature set the caller's own `cargo build`/`clippy` steps used.
 seam-probe:
 	cargo run --package xtask -- seam-probe
+	$(MAKE) seam-probe-capability
+
+seam-probe-capability:
+	cargo test --locked --package xtask --lib seam_probe::tests::a_capability_variant_with_no_applicable_family_entry_does_not_compile -- --ignored --exact --test-threads=1
 
 # QSL#214 (FR-064): scans the FSL crates' non-test source for a
 # string comparison or string `match` outside a `#[string_edge]`-marked
@@ -358,13 +362,8 @@ ci: check-spec-validation pin-check
 pin-check:
 	@cargo run --locked --package xtask -- pin-check
 
-# Scope the conformance prerequisite to this graph, so standalone targets such
-# as ci-clean-build retain their own process oracle.
 .PHONY: ci-internal
 ci-internal: $(CI_TARGETS)
-ifneq ($(filter ci-internal,$(MAKECMDGOALS)),)
-$(CI_TARGETS):
-endif
 
 # FSpec inputs come from the pinned published package dependency.
 CONFORMANCE_XTASK = cargo run --locked --package xtask --

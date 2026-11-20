@@ -111,6 +111,7 @@ fn request(package: &Value, program: &str) -> ReplayRequestWire {
     )
     .expect("the program's call site resolves");
     ReplayRequestWire {
+        certificate: None,
         package: canonical(package),
         profile_selections: Vec::new(),
         dependencies: vec![DependencyEntryWire {
