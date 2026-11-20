@@ -222,6 +222,47 @@ impl Exp {
         }
     }
 
+    /// `self` with each variable, activation variable and capture read
+    /// replaced by `replace`'s expression, where it gives one.
+    pub(crate) fn map_reads(&self, replace: &impl Fn(&Self) -> Option<Self>) -> Self {
+        let map = |e: &Self| Box::new(e.map_reads(replace));
+        match self {
+            Self::Variable(_) | Self::Activation(_) | Self::Capture(_) => {
+                replace(self).unwrap_or_else(|| self.clone())
+            }
+            Self::Parameter(_) | Self::Number(_) | Self::Boolean(_) => self.clone(),
+            Self::Negate(a) => Self::Negate(map(a)),
+            Self::Not(a) => Self::Not(map(a)),
+            Self::Arithmetic(op, a, b, locus) => {
+                Self::Arithmetic(*op, map(a), map(b), locus.clone())
+            }
+            Self::Compare(op, a, b) => Self::Compare(*op, map(a), map(b)),
+            Self::Logic(op, a, b) => Self::Logic(*op, map(a), map(b)),
+            Self::Conditional(a, b, c, locus) => {
+                Self::Conditional(map(a), map(b), map(c), locus.clone())
+            }
+            Self::Ranged {
+                value,
+                range,
+                role,
+                locus,
+            } => Self::Ranged {
+                value: map(value),
+                range: range.clone(),
+                role: *role,
+                locus: locus.clone(),
+            },
+            Self::Recursive(call) => Self::Recursive(RecursiveCall {
+                arguments: call
+                    .arguments
+                    .iter()
+                    .map(|argument| argument.map_reads(replace))
+                    .collect(),
+                ..call.clone()
+            }),
+        }
+    }
+
     /// `self` with every activation variable read as the current variable.
     pub(crate) fn activation_as_current(&self) -> Self {
         let map = |e: &Self| Box::new(e.activation_as_current());

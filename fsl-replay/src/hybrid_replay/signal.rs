@@ -99,7 +99,10 @@ fn min_upper(a: Option<End>, b: Option<End>) -> Option<End> {
 }
 
 /// The pieces of `span` cut at `breakpoints`.
-fn partition(span: &Span, breakpoints: Vec<ExactReal>) -> Vec<(ExactReal, ExactReal, bool)> {
+pub(super) fn partition(
+    span: &Span,
+    breakpoints: Vec<ExactReal>,
+) -> Vec<(ExactReal, ExactReal, bool)> {
     let mut points: Vec<ExactReal> = breakpoints
         .into_iter()
         .filter(|b| *b >= span.low && (*b < span.high || (span.high_closed && *b == span.high)))

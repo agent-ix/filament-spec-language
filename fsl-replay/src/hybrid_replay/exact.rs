@@ -28,6 +28,10 @@ use super::{
     UndefinedCause, UndefinedInstant,
 };
 
+mod activation;
+
+use activation::Obligations;
+
 /// One state of a point trace: its time and point.
 #[derive(Clone, Debug)]
 struct Point {
@@ -381,6 +385,9 @@ struct Claim<'c> {
     atoms: Vec<Exp>,
     guard: Option<Exp>,
     captures: Vec<Exp>,
+    /// Set for an `on each` claim under `model-time` whose obligations read
+    /// the activation position's state, decided obligation by obligation.
+    each: Option<Obligations>,
 }
 
 fn substitute(exp: &Exp, posts: &[Option<Exp>]) -> Exp {
@@ -802,8 +809,12 @@ impl Claim<'_> {
         &self,
         segments: &[ClaimSegment],
         tail: ExactReal,
+        meter: &mut HybridReplayMeter,
         records: &mut Records,
     ) -> Result<Tri, HybridReplayRefusal> {
+        if let Some(obligations) = &self.each {
+            return self.each_time(obligations, segments, &tail, meter, records);
+        }
         let timeline = Timeline {
             spans: segments.iter().map(|s| s.span.clone()).collect(),
             tail: Some(tail),
@@ -841,7 +852,20 @@ impl Claim<'_> {
                 let Some(first) = segments.first() else {
                     return Ok(Tri::Unknown);
                 };
-                let Some(captures) = self.captures(first, &[], records)? else {
+                // The captures read the state at the first position, not
+                // the dwell's solution.
+                let here = match first.span.low.as_rational() {
+                    Some(at) => ClaimSegment {
+                        values: first
+                            .values
+                            .iter()
+                            .map(|p| Poly::constant(p.eval(at)))
+                            .collect(),
+                        ..first.clone()
+                    },
+                    None => first.clone(),
+                };
+                let Some(captures) = self.captures(&here, &[], records)? else {
                     return Ok(Tri::Unknown);
                 };
                 let signal = self.formula_signal(&timeline, segments, &captures, &[], records)?;
@@ -874,7 +898,7 @@ impl Claim<'_> {
             match eval(exp, &env, at, &mut Vec::new())? {
                 Ev::Boolean(value) => values.push(Constant::Boolean(value)),
                 Ev::Number(value) => {
-                    let value = rational_of(&value).ok_or(ExactGap::ActivationState)?;
+                    let value = rational_of(&value).ok_or(ExactGap::IllKindedTerm)?;
                     let inside = match self
                         .claim
                         .captures
@@ -1022,7 +1046,7 @@ impl Claim<'_> {
 
     /// Under `model-time`, the `on each` guard is the formula's last atom.
     fn guard_atom(&self) -> Option<usize> {
-        (self.claim.clock == HybridClock::ModelTime && self.guard.is_some())
+        (self.claim.clock == HybridClock::ModelTime && self.each.is_none() && self.guard.is_some())
             .then(|| self.atoms.len() - 1)
     }
 }
@@ -1438,13 +1462,14 @@ pub(super) fn replay(
     let mut atoms = converter.atoms;
     let time_each = matches!(claim.activation, HybridActivation::Each { .. })
         && claim.clock == HybridClock::ModelTime;
-    if time_each {
+    // One obligation at every instant, each with its own captured values
+    // when it reads its activation position's state.
+    let by_state = time_each && (!captures.is_empty() || atoms.iter().any(Exp::reads_activation));
+    if time_each && !by_state {
         // Under `model-time`, one obligation at every instant: the claim is
-        // `always (g implies body)`, read when no obligation reads its own
+        // `always (g implies body)` when no obligation reads its own
         // activation state.
-        if !captures.is_empty() || atoms.iter().any(Exp::reads_activation) {
-            return Err(ExactGap::ActivationState.into());
-        }
+        let body_formula = formula.clone();
         let body = match &guard {
             Some(guard) => {
                 atoms.push(guard.activation_as_current());
@@ -1458,7 +1483,9 @@ pub(super) fn replay(
         };
         let mut always = window(None);
         if let Some(period) = &period {
-            always.upper = Some(period.onset.add(&period.period));
+            // The prefix and `1 + ceil(R / P)` periods, `R` the formula's
+            // past reach: later obligations agree with earlier ones.
+            always.upper = Some(activation::decided_until(&body_formula, period, meter)?);
         }
         formula = Formula::Unary {
             window: always,
@@ -1516,10 +1543,24 @@ pub(super) fn replay(
         }
     }
     // Check 5 and the decisive instant.
+    let each = if by_state {
+        Some(Obligations {
+            until: match &period {
+                Some(period) => Some(activation::decided_until(&formula, period, replay.meter)?),
+                None => None,
+            },
+        })
+    } else {
+        None
+    };
     let horizon_clock = match (&claim.activation, claim.clock) {
         (HybridActivation::Each { .. }, HybridClock::ModelSteps) => {
             Rational::from_integer(n.into())
         }
+        (HybridActivation::Each { .. }, HybridClock::ModelTime) => each
+            .as_ref()
+            .and_then(|each| each.until.clone())
+            .unwrap_or_else(zero),
         _ => zero(),
     };
     let horizon = horizon_clock.add(&reach(&formula));
@@ -1530,9 +1571,10 @@ pub(super) fn replay(
         atoms,
         guard,
         captures,
+        each,
     };
     let mut records = std::mem::take(&mut replay.records);
-    let value = claim_reading.value(&segments, tail, &mut records)?;
+    let value = claim_reading.value(&segments, tail, &mut *replay.meter, &mut records)?;
     let reproduced = |kind| {
         Ok(ExactReplay::Reproduced(Box::new(HybridCounterexample {
             kind,
@@ -1566,7 +1608,8 @@ pub(super) fn replay(
             };
             let (kept, tail) =
                 cut_segments(&segments, &cut, claim.clock == HybridClock::ModelSteps);
-            let before = claim_reading.value(&kept, tail, &mut Records::default())?;
+            let before =
+                claim_reading.value(&kept, tail, &mut *replay.meter, &mut Records::default())?;
             if before == Tri::False {
                 reproduced(HybridCounterexampleKind::Formula)
             } else {
