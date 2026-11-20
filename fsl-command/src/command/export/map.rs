@@ -13,7 +13,7 @@ use super::{Disposition, Mapped, Record, Unlowered};
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::NodeKey;
 use fsl_semantics::check::wire_id::WireGraph;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One authored clause of the program an obligation name may resolve to.

@@ -16,10 +16,10 @@
 //! every step of `Next_<clause>`, which includes the terminal step, so both
 //! targets count FSL's terminal stutter positions.
 
-use super::{CONSTRUCT, ClauseLow, Iv, Tf};
+use super::{ClauseLow, Iv, Tf, CONSTRUCT};
 use crate::command::export::lower::{
-    Definition, Input, Lower, Object, Operation, Target, bullets, defer_at, define, mangle,
-    parameters, refusal, scalars, snapshot_rows, tla_domain,
+    bullets, defer_at, define, mangle, parameters, refusal, scalars, snapshot_rows, tla_domain,
+    Definition, Input, Lower, Object, Operation, Target,
 };
 use std::collections::BTreeSet;
 
@@ -712,7 +712,11 @@ impl Ctx<'_> {
 }
 
 fn boolean(value: bool) -> &'static str {
-    if value { "TRUE" } else { "FALSE" }
+    if value {
+        "TRUE"
+    } else {
+        "FALSE"
+    }
 }
 
 // ---- Deterministic monitors ------------------------------------------------

@@ -22,8 +22,8 @@ pub use analyze::{
     analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorProviders, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
@@ -2629,9 +2629,25 @@ fn is_domain_package(model: &wire::Model) -> bool {
     model.format == DOMAIN_PACKAGE_PROFILE
 }
 
-/// Refuse an edition the spine does not admit at the declared token.
+/// Refuse a language or edition the spine does not admit at the declared token.
 #[ix_trace_rs::string_edge]
 fn require_complete_edition(source: &Source) -> Result<()> {
+    if let Some(declared) = fsl_cst::declared_language(source.text()) {
+        if declared.language != "ix:native" {
+            return Err(RunCause::Native(fsl_foundation::diagnostic::error(
+                source,
+                Code::UnknownLanguage,
+                fsl_foundation::Phase::Source,
+                declared.span.start,
+                declared.span.end,
+                format!(
+                    "{} declares language {:?}; this command reads \"ix:native\"",
+                    source.path(),
+                    declared.language
+                ),
+            )));
+        }
+    }
     if let Some(declared) = fsl_cst::declared_edition(source.text()) {
         if declared.edition != fsl_cst::EDITION {
             return Err(RunCause::Native(fsl_foundation::diagnostic::error(
