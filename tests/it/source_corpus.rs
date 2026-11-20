@@ -1176,6 +1176,94 @@ fn corpus_operation_parameters() {
     println!("{report}");
 }
 
+/// Materialize QSL-2041's minimal native-Decimal operation model from the
+/// existing checked-handoff fixture and its parameter-only extension.
+fn stage_original_decimal_parameter_model(destination: &Path, source: &Path) -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let bytes = std::fs::read(repository.join("examples/checked-handoff/model.semantic-ir.json"))
+        .map_err(|error| error.to_string())?;
+    let mut model: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(source.join("workflow.native-decimal.json"))
+        .map_err(|error| error.to_string())?;
+    let extension: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let populations = model
+        .get_mut("populations")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| "checked-handoff model must declare populations".to_owned())?;
+    populations.extend(
+        extension
+            .get("populations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "Decimal extension must declare populations".to_owned())?
+            .iter()
+            .cloned(),
+    );
+    for operation in extension
+        .get("operations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let owner = operation
+            .get("owner")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Decimal operation extension must name its owner".to_owned())?;
+        let declaration = operation
+            .get("declaration")
+            .ok_or_else(|| "Decimal operation extension must have a declaration".to_owned())?;
+        model
+            .get_mut("types")
+            .and_then(Value::as_array_mut)
+            .and_then(|types| {
+                types
+                    .iter_mut()
+                    .find(|record| record.get("identity").and_then(Value::as_str) == Some(owner))
+            })
+            .and_then(|record| record.get_mut("operations"))
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| format!("checked-handoff model has no operations for {owner}"))?
+            .push(declaration.clone());
+    }
+    std::fs::write(
+        destination.join("workflow-model.json"),
+        serde_json::to_vec(&model).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[trace(
+    "TC-3042",
+    "FR-056-AC-66",
+    "FR-056-AC-68",
+    "FR-056-AC-71",
+    "FR-056-AC-72"
+)]
+#[test]
+fn corpus_decimal_model_and_native_parameter_cases() {
+    let fixtures = corpus_root().join("operations/parameters/pending/decimal-model");
+    for directory in [&fixtures, &fixtures.join("admission")] {
+        let report = run_directory(directory)
+            .unwrap_or_else(|error| panic!("Decimal parameter corpus: {error}"));
+        println!("{report}");
+    }
+
+    let original = corpus_root().join("operations/parameters/pending/original-decimal-model");
+    let scratch = tempfile::tempdir().expect("original Decimal parameter request directory");
+    for name in [
+        "decimal.native",
+        "decimal.expected.json",
+        "decimal.request.json",
+    ] {
+        std::fs::copy(original.join(name), scratch.path().join(name))
+            .unwrap_or_else(|error| panic!("stage original Decimal case {name}: {error}"));
+    }
+    stage_original_decimal_parameter_model(scratch.path(), &original)
+        .unwrap_or_else(|error| panic!("original Decimal parameter model: {error}"));
+    let report = run_directory(scratch.path())
+        .unwrap_or_else(|error| panic!("original native Decimal parameter corpus: {error}"));
+    println!("{report}");
+}
+
 #[test]
 fn corpus_temporal() {
     run_area("temporal");
