@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -58,6 +59,7 @@ fn run(body: &str, key: &str) -> (u8, Value) {
 /// one `parent` edge, so the invariant is true, and the reversed control, the
 /// parent reaching the child, is false.
 #[test]
+#[trace("FR-104-AC-9", "FR-365-AC-7")]
 fn reaches_over_an_optional_reference_target_evaluates() {
     let (exit, value) = run(
         "if present(self.parent) then reaches(self,value(self.parent),parent) else false",

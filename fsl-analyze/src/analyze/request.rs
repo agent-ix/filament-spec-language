@@ -402,24 +402,30 @@ pub(crate) fn analyze_bound<'a>(
 > {
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
+    // The compiled package is read back through the strict reader once,
+    // before the binding is admitted and before any item runs: a reader
+    // refusal (a domain package the binding leaves out, among them) is this
+    // typed refusal and never a fault of a later step, and the items share
+    // the one read. A package that does not emit has no read, and its items
+    // settle as they do without one.
+    let read = match crate::provider::read_package(package, binding.packages, limits.emit) {
+        Ok(read) => Some(read),
+        Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+            return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
+                refusal,
+            )));
+        }
+        Err(crate::provider::NotAdmitted::Other) => None,
+    };
     let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
-    // The compiled package is read back through the strict reader before any
-    // item runs, so a reader refusal is this typed refusal and never a fault
-    // of a later step.
-    if let Err(crate::provider::NotAdmitted::Refused(refusal)) =
-        crate::provider::read_package(package, binding.packages, limits.emit)
-    {
-        return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
-            refusal,
-        )));
-    }
+    let shared = read.as_ref().map(crate::provider::Shared::of);
     let items = requested
         .iter()
-        .map(|item| work(analysis, binding, provision, item, engines, limits))
+        .map(|item| work(analysis, binding, provision, item, engines, limits, shared))
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -534,12 +540,9 @@ pub(super) fn simulation<'a>(
 }
 
 fn checked_v2_package(
-    package: &fsl_package::CheckedPackage,
-    binding: &super::SubjectBinding<'_>,
-    limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'_>>,
 ) -> Option<Box<filament_contract_model::CheckedPackageV2>> {
-    let admitted = crate::provider::read_package(package, binding.packages, limits.emit).ok()?;
-    Some(Box::new(admitted.admitted().clone()))
+    shared.map(|shared| Box::new(shared.admitted.clone()))
 }
 
 /// The role of `protocol` named `name`. Only a role of that protocol
@@ -570,6 +573,7 @@ fn protocol_analysis_work<'a>(
     binding: &super::SubjectBinding<'a>,
     item: &super::ClaimItem,
     limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'a>>,
 ) -> super::AnalyzeItem<'a> {
     let Some(selection) = item.options.protocol_analysis.as_ref() else {
         return super::AnalyzeItem::unadapted(
@@ -592,7 +596,7 @@ fn protocol_analysis_work<'a>(
             Some(fsl_semantics::check::DeclarationFamily::Protocol),
         );
     };
-    let Some(v2) = checked_v2_package(analysis.package, binding, limits) else {
+    let Some(v2) = checked_v2_package(shared) else {
         return super::AnalyzeItem::unadapted(
             item.request_index,
             item.kind,
@@ -707,6 +711,7 @@ fn work<'a>(
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
+    shared: Option<crate::provider::Shared<'a>>,
 ) -> super::AnalyzeItem<'a> {
     let (package, input) = (analysis.package, &analysis.model);
     use super::AnalyzeItem;
@@ -737,7 +742,7 @@ fn work<'a>(
                 Capability::LocalProjection | Capability::Realizability
             ) =>
         {
-            protocol_analysis_work(analysis, binding, item, limits)
+            protocol_analysis_work(analysis, binding, item, limits, shared)
         }
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
             if _form.item_kind == ItemKind::DeadlockFreedom {
@@ -952,6 +957,7 @@ fn work<'a>(
                 super::hybrid_item::Spelling {
                     packages: binding.packages,
                     emit: limits.emit,
+                    shared,
                 },
             )
             .unwrap_or_else(absent)
@@ -1038,7 +1044,7 @@ fn work<'a>(
                     item.backend.as_ref(),
                 )
                 .map(|routed| routed.with_options(item.options.backend_options.clone()));
-                crate::provider::provider_item(
+                crate::provider::provider_item_over(
                     item.request_index,
                     backend.id(),
                     crate::provider::ProviderItemInput {
@@ -1049,6 +1055,7 @@ fn work<'a>(
                         emit: limits.emit,
                         selection,
                     },
+                    shared,
                 )
             } else {
                 let selection = selection.map(|target| crate::value_check::ValueRequest {

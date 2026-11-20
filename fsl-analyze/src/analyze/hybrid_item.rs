@@ -39,6 +39,8 @@ pub(crate) struct HybridReport {
 pub(super) struct Spelling<'a> {
     pub(super) packages: &'a PackageInput,
     pub(super) emit: EmitLimits,
+    /// The run's one strict read of its package, when it holds it.
+    pub(super) shared: Option<crate::provider::Shared<'a>>,
 }
 
 /// The item of the hybrid claim at `claim`, or `None` when the package holds
@@ -252,8 +254,14 @@ fn unsupported_construct(
 /// The graph of the package emitted for this request, whose node ids spell
 /// a `Locus`.
 fn wire_graph(package: &CheckedPackage, spelling: Spelling<'_>) -> Option<WireGraph> {
-    let bytes = crate::provider::admitted_bytes(package, spelling.packages, spelling.emit).ok()?;
-    WireGraph::of_package_bytes(bytes.bytes()).ok()
+    match spelling.shared {
+        Some(shared) => WireGraph::of_package_bytes(shared.emitted.bytes()).ok(),
+        None => {
+            let bytes =
+                crate::provider::admitted_bytes(package, spelling.packages, spelling.emit).ok()?;
+            WireGraph::of_package_bytes(bytes.bytes()).ok()
+        }
+    }
 }
 
 /// The reproduced counterexample in FR-286's spelling. A counterexample whose

@@ -4095,6 +4095,7 @@ mod tests {
     /// the run with the reader's own code, cause and pointer and that code's
     /// exit, never as a runtime invariant (exit 30).
     #[test]
+    #[trace("FR-286-AC-2")]
     fn a_refused_analyze_package_keeps_its_own_code_cause_pointer_and_exit() {
         let error = RunError {
             cause: RunCause::AnalyzeRefused(Box::new(
