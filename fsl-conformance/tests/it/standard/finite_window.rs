@@ -629,7 +629,7 @@ fn order_outcome(case: &Order, fixtures: &Fixtures) -> Result<(), Difference> {
         let twin_report = order_run(other)
             .and_then(|run| execute(&run))
             .map_err(|observed| Difference::new(format!("the same order as {twin}"), observed))?;
-        if twin_report.disposition != report.disposition {
+        if format!("{:?}", twin_report.disposition) != format!("{:?}", report.disposition) {
             return Err(Difference::new(
                 format!("the verdict of {twin}: {:?}", twin_report.disposition),
                 format!("{:?}", report.disposition),

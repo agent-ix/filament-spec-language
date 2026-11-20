@@ -13,6 +13,7 @@ use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTOR
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
@@ -539,7 +540,7 @@ fn observed(case: &SourceCase) -> Expected {
         parsed.source().reference().clone(),
         "qualification-source".to_owned(),
         unit,
-        Vec::new(),
+        SelectedModels::default(),
         Vec::new(),
     ) {
         Ok(declarations) => declarations,
