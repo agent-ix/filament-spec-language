@@ -1723,7 +1723,7 @@ fn nonprogressive_end_components(
         .map(|(index, key)| (key.clone(), index))
         .collect::<BTreeMap<_, _>>();
     let mut pending = vec![(0..keys.len()).collect::<BTreeSet<_>>()];
-    let mut result: Vec<Vec<usize>> = Vec::new();
+    let mut result: Vec<Vec<ProbabilityProductKey>> = Vec::new();
     let zero = rational(0);
     while let Some(mut candidate) = pending.pop() {
         loop {

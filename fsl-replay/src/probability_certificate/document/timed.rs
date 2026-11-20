@@ -360,7 +360,7 @@ fn check_mean_time_values(
             &exits,
             &expected,
             costs,
-            values,
+            &values,
             &ranks,
             cancel,
             meter,
@@ -563,7 +563,7 @@ fn mean_time_component_policy_valid(
                     .get(key)
                     .ok_or(ProbabilityDocumentError::Malformed)?;
                 let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
-                let mut nearest = None;
+                let mut nearest: Option<usize> = None;
                 for (choice_index, choice) in state.choices.iter().enumerate() {
                     let edge_costs = action_costs
                         .get(choice_index)
