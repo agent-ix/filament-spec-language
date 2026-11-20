@@ -691,3 +691,76 @@ fn both_timed_routes_state_the_non_zeno_premise() {
     assert_eq!(items[2]["record"]["non_zeno"], "checked", "{}", items[2]);
     assert_eq!(items[3]["record"]["non_zeno"], "checked", "{}", items[3]);
 }
+
+/// QSL-2654, FR-243: a clause over an untimed model routes by the model it
+/// reads, so a `time` declaration of another model of the unit leaves it on
+/// EN-1: same backend, same verdict and same closure certificate as without
+/// the timed model, never EN-6's zone product.
+#[trace("TC-1592", "FR-243-AC-4")]
+#[test]
+fn an_untimed_claim_stays_on_en_1_beside_a_timed_model() {
+    use crate::timed_refinement::{req, treq};
+    let mut outcomes = Vec::new();
+    for timed_m in [false, true] {
+        let time = if timed_m {
+            "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\ntime M dense unit ms;\n"
+        } else {
+            ""
+        };
+        let m_decl = if timed_m {
+            "model M = \"test/timed\";\n"
+        } else {
+            ""
+        };
+        let unit = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
+             profile inf = \"filament.temporal.infinite-trace/v1\";\nprofile t = \"filament.temporal.complete/v1\";\nprofile tt = \"filament.temporal.timed/v1\";\nmodel A = \"test/req\";\n{m_decl}{time}\
+             pre Send using v on A::Call::send {{ not self.inflight }}\n\
+             post Sent using v on A::Call::send {{ self.inflight }}\n\
+             temporal Plain using inf over (c: A::Call) clock \"model-steps\" on origin {{ always holds(c.phase <= 3) }}\n");
+        let ws = Workspace::new("probe2");
+        ws.write("program.fsl", unit.as_bytes());
+        ws.write("a.json", &req());
+        ws.write("m.json", &treq());
+        let snap = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "s0"},
+            "observation": "current", "model": {"identity": "test/req"},
+            "anchor": {"kind": "initialization", "name": "start"},
+            "populations": [{"population": "ix://test/req/calls", "complete": true,
+                "objects": [{"key": "c", "type": "ix://test/req/Call",
+                    "fields": {"phase": {"integer": "0"}, "inflight": {"boolean": false},
+                        "late": {"boolean": false}, "retried": {"boolean": false}}}]}],
+        });
+        ws.write("snap.json", snap.to_string().as_bytes());
+        let mut request =
+            crate::analyze_cli_support::request_members(Some(json!([{"claim": "Plain"}])));
+        let mut models = vec![
+            json!({"format": "semantic-ir/2.0.0", "source": {"file": "a.json", "authority": "test", "identity": "a-model", "document": "A", "formal_revision": 1}}),
+        ];
+        if timed_m {
+            models.push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "m.json", "authority": "test", "identity": "m-model", "document": "M", "formal_revision": 1}}));
+        }
+        request["models"] = json!(models);
+        request["documents"] = json!([{"file": "snap.json"}]);
+        let path = ws.write(
+            "analyze.json",
+            json!({"format": "native-analyze/1", "request": request})
+                .to_string()
+                .as_bytes(),
+        );
+        let run = analyze(&path);
+        let d = run.document();
+        let mut item = d["items"][0].clone();
+        item.as_object_mut().map(|o| o.remove("request"));
+        assert_eq!(run.exit, 0, "timed_m={timed_m}: {d}");
+        outcomes.push((
+            item["record"].clone(),
+            item["certificate"]["checker"].clone(),
+            item["certificate"]["accepted"].clone(),
+        ));
+    }
+    assert_eq!(outcomes[0].0["backend"], "en-1");
+    assert_eq!(outcomes[0].0["result"], "proved");
+    assert_eq!(outcomes[0], outcomes[1], "the timed model changes nothing");
+}

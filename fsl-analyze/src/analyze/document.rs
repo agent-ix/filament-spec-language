@@ -1645,7 +1645,11 @@ fn resolve_one(
         // FR-243, FR-635: `options.method` is negotiated against each
         // candidate's published values, so `digital-clocks` over a timed
         // subject reaches EN-1's digital-clock route and `zones` EN-6.
-        registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package))
+        registry.restrict_to_options_and_timing(
+            candidates,
+            &backend_options,
+            claim_timed(package, &claim),
+        )
     } else {
         candidates
     };
@@ -2234,6 +2238,29 @@ fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bo
 /// (FR-243): a selected model declares a time source.
 pub(super) fn timed(package: &CheckedPackage) -> bool {
     timed_over(package, &model_identities(package))
+}
+
+/// Whether the clause `claim` reads a timed model (FR-243): the model its
+/// `over` object type belongs to declares a time source. A clause over an
+/// untimed model of a unit that also selects a timed one stays on EN-1, so it
+/// does not pay for the timed model's product; a clause whose `over` type is
+/// no model object, or no clause of that occurrence, reads every selection.
+pub(super) fn claim_timed(package: &CheckedPackage, claim: &OccurrenceKey) -> bool {
+    let owner = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|clause| &OccurrenceKey::new(clause.identity(), clause.claim().clone()) == claim)
+        .and_then(|clause| match &clause.clause().over().1 {
+            filament_exact::ValueType::Reference(object) => {
+                Some(object.original().package().to_owned())
+            }
+            _ => None,
+        });
+    match owner {
+        Some(owner) => timed_over(package, &BTreeSet::from([owner.as_str()])),
+        None => timed(package),
+    }
 }
 
 /// [`timed`] for a subject that reads the model selections `reads` holds:
