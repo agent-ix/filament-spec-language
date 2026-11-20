@@ -246,6 +246,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         | ControlStep::Finish
                         | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
+                            eprintln!(
+                                "settle bad parent node={node:?} parent={parent:?} holder_step={:?} holder_children={:?}",
+                                holder.step,
+                                holder.children
+                            );
                             return Err(ProtocolRefusal::fault("a-parent-holds-controls").into());
                         }
                     }
