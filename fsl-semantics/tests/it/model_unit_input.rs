@@ -18,6 +18,7 @@ object Order identity (id) {
   id: Int[0, 999];
   total: Int[0, 100];
   operation pay(): Boolean modifies self.total;
+  invariant Nonnegative { self.total >= 0 };
 }
 population orders: Order;
 ";
@@ -85,6 +86,7 @@ fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
 }
 
 #[trace("FR-710-AC-6", "TC-2998")]
+#[trace("FR-710-AC-1", "TC-1942")]
 #[test]
 fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
     let parsed = fsl_cst::parse(
@@ -108,9 +110,32 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
         "ix://agent-ix/test:shop-model"
     );
+    let operation = &document["types"][0]["operations"][0];
+    assert_eq!(operation["identity"], "ix://example/shop/Order/pay");
+    assert_eq!(
+        operation["returns"]["typeRef"],
+        "ix://filament/native/Boolean"
+    );
+    assert_eq!(
+        operation["frame"]["modifies_receiver"][0],
+        "ix://example/shop/Order/total"
+    );
+    assert_eq!(
+        document["types"][0]["clauses"][0]["clauseId"],
+        "Nonnegative"
+    );
+    let admitted = package_input([SHOP.as_bytes()]).expect("model unit compiles to package input");
+    admit("example/shop").expect("the AC-1 model with its invariant is admitted");
+    let admitted_document: serde_json::Value =
+        serde_json::from_slice(&admitted["example/shop"]).expect("admitted document is JSON");
+    assert_eq!(
+        admitted_document["types"][0]["operations"][0]["name"],
+        "pay"
+    );
 }
 
 #[trace("FR-710-AC-6", "TC-2998")]
+#[trace("FR-710-AC-1", "TC-1942")]
 #[test]
 fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflicts() {
     let source = fsl_cst::diagnostic::read_source(
@@ -127,6 +152,21 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
         document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
         "ix://agent-ix/test:shop-model"
     );
+    let selected = unit("example/shop");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "model-unit-source-intake"),
+        "unit.native",
+        selected.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the model-selection unit parses");
+    let built = fsl_forms::build_unit(&parsed).expect("the model-selection unit builds");
+    admit_unit(
+        &built.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("source-compiled package input is admitted under its selected identity");
     let compiled = package_input([SHOP.as_bytes()]).expect("anonymous model unit compiles");
     let conflict = package_input([SHOP.as_bytes(), compiled["example/shop"].as_slice()])
         .expect_err("a model unit and its compiled document share one identity");
@@ -253,6 +293,34 @@ record Row { value: Integer; operation update(); }
     let operation = source.find("operation").expect("operation token");
     assert_eq!(span.start.byte, operation);
     assert_eq!(span.end.byte, operation + "operation".len());
+}
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn a_reserved_domain_identity_refuses_at_the_string() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "filament/native/x";
+"#;
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "reserved-model-unit"),
+        "reserved.fsl",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source metadata admitted");
+    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect_err("the native domain namespace is reserved");
+    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
+    assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
+    let span = parsed
+        .source()
+        .render(diagnostic.region.as_ref().expect("located refusal"))
+        .expect("source region renders");
+    let identity = source
+        .find("\"filament/native/x\"")
+        .expect("domain identity");
+    assert_eq!(span.start.byte, identity);
+    assert_eq!(span.end.byte, identity + "\"filament/native/x\"".len());
 }
 
 #[trace("FR-710-AC-3", "TC-1942")]
