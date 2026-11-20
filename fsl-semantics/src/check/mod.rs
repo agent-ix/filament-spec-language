@@ -2215,6 +2215,9 @@ impl PackageDeclarations {
                     .find(|composite| composite.name() == name)
                     .map(|composite| ValueType::Composite(composite.key()))
             })
+            // The mathematical `Integer` is a builtin no declaration names;
+            // it is the one builtin whose value set has no finite bound.
+            .or_else(|| (name == "Integer").then_some(ValueType::Integer))
     }
 
     /// Check every function: duplicate names, declared types, typing, static

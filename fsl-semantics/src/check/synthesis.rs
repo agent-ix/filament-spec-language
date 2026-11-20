@@ -2,7 +2,7 @@
 //! S3 finite-domain analysis for FR-754 synthesis declarations.
 
 use filament_checked::node::NodeKind;
-use filament_exact::ValueType;
+use filament_exact::{IllTypedCause, ValueType};
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -144,13 +144,13 @@ pub(crate) fn check_forms(
         let Some(domain) = named_type(scope, &form.domain.name) else {
             return Err(vec![CheckRefusal {
                 location,
-                cause: CheckCause::MissingName(form.domain.name.clone()),
+                cause: CheckCause::MissingQualifiedName(form.domain.clone()),
             }]);
         };
         let Some(grammar) = named_type(scope, &form.grammar.name) else {
             return Err(vec![CheckRefusal {
                 location,
-                cause: CheckCause::MissingName(form.grammar.name.clone()),
+                cause: CheckCause::MissingQualifiedName(form.grammar.clone()),
             }]);
         };
 
@@ -165,23 +165,27 @@ pub(crate) fn check_forms(
             signatures,
             &form.satisfies.expression,
             &parameters,
-            &ValueType::Boolean,
+            Some(&ValueType::Boolean),
             &satisfies_location,
         )
         .map_err(|refusal| vec![refusal])?;
         let objective = if let Some(objective) = &form.objective {
-            Some(
-                check_expression(
-                    scope,
-                    signatures,
-                    &objective.expression.expression,
-                    &parameters,
-                    &domain,
-                    &objective_location,
-                )
-                .map_err(|refusal| vec![refusal])?
-                .0,
+            let (body, _) = check_expression(
+                scope,
+                signatures,
+                &objective.expression.expression,
+                &parameters,
+                None,
+                &objective_location,
             )
+            .map_err(|refusal| vec![refusal])?;
+            if !is_numeric(body.root().value_type()) {
+                return Err(vec![CheckRefusal::ill_typed(
+                    &objective_location,
+                    IllTypedCause::TypeMismatch,
+                )]);
+            }
+            Some(body)
         } else {
             None
         };
@@ -204,12 +208,24 @@ fn named_type(scope: &Scope, name: &str) -> Option<ValueType> {
     Some(value_type.clone())
 }
 
+/// Whether `value_type` is a numeric type an objective may rank candidates by.
+fn is_numeric(value_type: &ValueType) -> bool {
+    matches!(
+        value_type,
+        ValueType::Integer
+            | ValueType::Int(_)
+            | ValueType::Rational(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+    )
+}
+
 fn check_expression(
     scope: &Scope,
     signatures: &Signatures,
     expression: &fsl_forms::Expression,
     parameters: &[(String, ValueType)],
-    expected: &ValueType,
+    expected: Option<&ValueType>,
     location: &Location,
 ) -> Result<(CheckedBody, Vec<String>), CheckRefusal> {
     let limits = super::CheckingLimits::default();
@@ -235,8 +251,8 @@ fn check_expression(
         &mut scopes,
     ));
     super::bind_parameters(&mut typer, parameters, location)?;
-    let body = typer.infer(expression, Some(expected), location)?;
-    if expected == &ValueType::Boolean && body.root().value_type() != expected {
+    let body = typer.infer(expression, expected, location)?;
+    if expected == Some(&ValueType::Boolean) && body.root().value_type() != &ValueType::Boolean {
         return Err(CheckRefusal {
             location: location.clone(),
             cause: CheckCause::NonBooleanRoot,

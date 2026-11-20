@@ -3141,8 +3141,8 @@ fn analysis(g: &mut Grammar) {
             x("domain"),
             r(P::QualifiedName),
             opt(c(vec![
-                s(vec![x("minimize"), r(P::Expression)]),
-                s(vec![x("maximize"), r(P::Expression)]),
+                s(vec![contextual("minimize"), r(P::Expression)]),
+                s(vec![contextual("maximize"), r(P::Expression)]),
             ])),
             x("satisfies"),
             r(P::Block),

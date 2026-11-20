@@ -109,6 +109,29 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
     };
     let source = format!("{HEADER}{declaration}\n");
     assert_eq!(&source[span.start..span.end], "Wide");
+
+    let builtin =
+        "synthesis Pick using v grammar Integer domain Integer satisfies { Pick * Pick = 49 };";
+    let refusals =
+        check(builtin).unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+    assert_eq!(
+        codes(&refusals),
+        [Some(CatalogCode::new(
+            "unsupported_projection",
+            "unbounded-extent"
+        ))],
+        "{refusals:?}"
+    );
+    let [CheckRefusal {
+        cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span },
+        ..
+    }] = refusals.as_slice()
+    else {
+        panic!("expected a located unbounded-domain refusal: {refusals:?}");
+    };
+    assert_eq!(component, "domain.Integer");
+    let source = format!("{HEADER}{builtin}\n");
+    assert_eq!(&source[span.start..span.end], "Integer");
 }
 
 /// FR-754-AC-2: a record's first unbounded field and a recursive union's
@@ -435,6 +458,27 @@ fn synthesis_name_and_type_refusals() {
             "missing-name"
         ))],
         "{missing:?}"
+    );
+    assert_missing_name_span(
+        &missing,
+        &format!(
+            "{HEADER}type Digit = Int[0, 9];\n\
+             synthesis Pick using v grammar Nothing domain Digit satisfies {{ Pick = 1 }};\n"
+        ),
+        "Nothing",
+    );
+    let missing_domain = check(
+        "type Digit = Int[0, 9];\n\
+         synthesis Pick using v grammar Digit domain Nowhere satisfies { Pick = 1 };",
+    )
+    .unwrap_or_else(|refusal| panic!("S1 and S2 admit `synthesis`: {refusal}"));
+    assert_missing_name_span(
+        &missing_domain,
+        &format!(
+            "{HEADER}type Digit = Int[0, 9];\n\
+             synthesis Pick using v grammar Digit domain Nowhere satisfies {{ Pick = 1 }};\n"
+        ),
+        "Nowhere",
     );
     let integer = check(
         "type Digit = Int[0, 9];\n\
