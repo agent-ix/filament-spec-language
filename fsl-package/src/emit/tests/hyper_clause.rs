@@ -1105,26 +1105,35 @@ fn a_substituted_hyper_clause_definition_identity_refuses_at_the_definition_fiel
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}\n{text}"));
     assert_eq!(graph.hyper_clauses().len(), 1);
     let span = graph.hyper_clauses()[0].span();
-    let selected = TemporalClockSelection::new(
-        graph.source().clone(),
-        span,
-        filament_contract_model::ClockConfiguration::EventPosition {
-            sequence_authority: "test-hyper-events".into(),
-        },
-    );
+    // FR-640: one selection per quantified trace.
+    let selected: Vec<TemporalClockSelection> = graph.hyper_clauses()[0]
+        .quantifiers()
+        .iter()
+        .map(|quantifier| {
+            let mut selection = TemporalClockSelection::new(
+                graph.source().clone(),
+                span,
+                filament_contract_model::ClockConfiguration::EventPosition {
+                    sequence_authority: "test-hyper-events".into(),
+                },
+            );
+            selection.trace = Some(quantifier.variable.as_str().into());
+            selection
+        })
+        .collect();
     let package = CheckedPackage::link(graph);
     crate::emit::emit_checked_with_temporal_selections(
         &package,
-        std::slice::from_ref(&selected),
+        &selected,
         crate::EmitLimits::fixture(),
     )
     .expect("the selection that names the clause's own law emits");
 
     let mut substituted = selected;
-    substituted.definition.identity = "filament.temporal.fixed-sample.false-extension/v1".into();
+    substituted[0].definition.identity = "filament.temporal.fixed-sample.false-extension/v1".into();
     let refusal = crate::emit::emit_checked_with_temporal_selections(
         &package,
-        std::slice::from_ref(&substituted),
+        &substituted,
         crate::EmitLimits::fixture(),
     )
     .expect_err("a substituted definition identity cannot produce a package");
