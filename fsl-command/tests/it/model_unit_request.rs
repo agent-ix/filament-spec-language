@@ -97,6 +97,40 @@ fn check_document(outcome: &command::CheckOutcome) -> Value {
     serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap()
 }
 
+fn write_route_request(directory: &Path, name: &str, request: Value) -> PathBuf {
+    let path = directory.join(name);
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": request})).unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+fn format_cases(directory: &Path) -> [(String, String, &'static str); 2] {
+    let compiled = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
+    let json_path = directory.join("model.semantic-ir.json");
+    std::fs::write(&json_path, &compiled["example/shop"]).unwrap();
+    let native_path = directory.join("model.native");
+    std::fs::write(&native_path, SHOP).unwrap();
+    [
+        (
+            "native-model-unit/1".to_owned(),
+            "model.semantic-ir.json".to_owned(),
+            "native-model-unit/1 requires a model unit",
+        ),
+        (
+            "semantic-ir/2.0.0".to_owned(),
+            "model.native".to_owned(),
+            "selected as a semantic-ir/2.0.0 document",
+        ),
+    ]
+}
+
+fn assert_selected_model_format_refusal(error: &command::RunError, reason: &str) {
+    assert!(error.to_string().contains(reason), "{error}");
+}
+
 #[test]
 #[trace("TC-2998", "FR-710-AC-6")]
 fn a_package_input_compiles_a_model_unit_under_its_domain_identity() {
@@ -295,6 +329,75 @@ fn check_takes_a_model_unit_as_a_selection_and_as_its_source() {
             .is_some_and(|file| file.ends_with("ghost.fsl")),
         "{refused}"
     );
+}
+
+#[test]
+fn clause_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "models": [{"format": format, "source": source(&file)}],
+            "program": {"source": source("program.fsl")},
+            "clause": {
+                "selection": {"clause": {
+                    "name": "Q", "observation": "current",
+                    "self": {"population": "ix://example/shop/orders", "key": "order-1"},
+                    "anchor": {"kind": "handler", "name": "validate"}
+                }},
+                "observations": {}
+            }
+        });
+        let path = write_route_request(directory.path(), "clause.json", request);
+        let error = command::read_clause_run_request(&path)
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, reason);
+    }
+}
+
+#[test]
+fn analyze_package_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(
+        handoff.join("checked-package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "package": {"directory": "handoff"},
+            "models": [{"format": format, "source": source(&file)}]
+        });
+        let path = write_route_request(directory.path(), "analyze.json", request);
+        let error = command::prepare_analyze(&path, command::RunLimits::default())
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, reason);
+    }
+}
+
+#[test]
+fn package_run_request_honors_model_format_without_content_sniffing() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"contract_version":"filament.checked-package/v2"}"#,
+    )
+    .unwrap();
+    for (format, file, reason) in format_cases(directory.path()) {
+        let request = json!({
+            "models": [{"format": format, "source": source(&file)}],
+            "package": {"file": "package.json"},
+            "call": {"function": "one", "arguments": [], "accounting": {"work_units": 1000}}
+        });
+        let path = write_route_request(directory.path(), "package-run.json", request);
+        let error = command::prepare_run(&path, command::RunLimits::default())
+            .err()
+            .expect("the selected format must be enforced");
+        assert_selected_model_format_refusal(&error, reason);
+    }
 }
 
 #[test]
