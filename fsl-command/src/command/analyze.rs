@@ -179,6 +179,7 @@ fn prepare_bytes(
         Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented {
             member: "package",
             detail: ": a prepared run holds a program source".to_owned(),
+            locus: None,
         }),
     }
 }
@@ -238,6 +239,7 @@ fn run_package(
             member: "package",
             detail: ": the memory member names a protocol subject, which has no package form yet"
                 .to_owned(),
+            locus: None,
         });
     }
     let package = fsl_package::BarePackage::new(&admitted)
@@ -287,6 +289,7 @@ fn run_package(
         PackageRunError::Pending(pending) => RunCause::AnalyzeNotYetImplemented {
             member: "package",
             detail: pending.detail(),
+            locus: pending.locus(),
         },
         PackageRunError::Document(AnalyzeDocumentError::Refused(refusal)) => {
             RunCause::AnalyzeRefused(Box::new(refusal))

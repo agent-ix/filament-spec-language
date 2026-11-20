@@ -957,6 +957,8 @@ pub enum RunCause {
         /// What of the request is pending: empty, or the item family and
         /// request index the gap is at.
         detail: String,
+        /// The package node the gap is at, in words, when the gap has one.
+        locus: Option<String>,
     },
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
@@ -1390,12 +1392,14 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category())
                     .with_diagnostics(vec![diagnostic])
             }
-            RunCause::AnalyzeNotYetImplemented { .. } => {
+            RunCause::AnalyzeNotYetImplemented { locus, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some("not-yet-implemented"),
                         self.cause.code().as_str(),
-                        None,
+                        locus.as_ref().map(|occurrence| OutcomeLocus::Occurrence {
+                            occurrence: occurrence.clone(),
+                        }),
                         self.outcome_message(),
                     ),
                 ])
