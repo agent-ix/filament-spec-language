@@ -661,6 +661,17 @@ pub(crate) fn clock_selections(
             .iter()
             .find(|hyper| hyper.name() == selection.clause)
         {
+            // One request clock cannot serve traces over different models
+            // (FR-517, FR-640): each trace's clock is derived from its model.
+            let mut aliases = Vec::new();
+            for quantifier in hyper.quantifiers() {
+                if !aliases.contains(&&quantifier.alias) {
+                    aliases.push(&quantifier.alias);
+                }
+            }
+            if aliases.len() > 1 {
+                return Err(per_trace_clocks(checked, &selection.clause, span));
+            }
             // FR-640: one row per quantified trace, each with the one
             // clock its single model reads.
             for quantifier in hyper.quantifiers() {
@@ -701,6 +712,26 @@ pub(crate) fn clock_selections(
         }
     }
     Ok(joined)
+}
+
+/// The refusal of an explicit clause-name clock selection for a hyper clause
+/// whose quantified traces range over more than one model (FR-517).
+fn per_trace_clocks(checked: &CheckedUnit, clause: &str, span: fsl_foundation::Span) -> Error {
+    let region = fsl_foundation::source::provenance::SourceRegion::new(
+        checked.source().reference().clone(),
+        span.start as u64,
+        span.end as u64,
+    )
+    .ok();
+    Error::Producer(Box::new(ReplayRefusal::Recompile {
+        refusal: Box::new(spine::CompileRefusal::Emit(
+            fsl_package::EmitRefusal::PerTraceClockConfigurations {
+                declaration: clause.to_owned(),
+            },
+            region,
+        )),
+        pointer: None,
+    }))
 }
 
 /// Emit the `filament.checked-package/v2` bytes of `request`'s source through

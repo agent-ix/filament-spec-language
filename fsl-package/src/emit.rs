@@ -233,9 +233,12 @@ pub enum EmitRefusal {
     /// program's clock-bearing declarations.
     #[error("{0}")]
     ClockSelection(Box<ClockSelectionRefusal>),
-    /// FR-640: a model trace whose parameters do not identify one event
-    /// sequence authority, named by the clause.
-    #[error("a model trace's event sequence authority is ambiguous (declaration {declaration})")]
+    /// FR-517, FR-640: an explicit clause-name clock selection for a hyper
+    /// clause whose traces range over more than one model, named by the
+    /// clause. Each trace's clock is derived from its model instead.
+    #[error(
+        "an explicit clock selection cannot serve traces over different models (declaration {declaration})"
+    )]
     PerTraceClockConfigurations {
         /// The clause's declared name.
         declaration: String,

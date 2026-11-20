@@ -96,3 +96,26 @@ The code-review and rust-review lanes ran by reading the diff. The brief allows 
 clean: false
 findings: [FND-001, FND-002, FND-003, FND-004, FND-005]
 ```
+
+## New findings (disposition pass 1)
+
+Head `d8ca6f8d0d`, rebased on FSL `origin/main` `82e13e97f`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | high | The aliases refusal was removed from `clock_selections`, so an explicit clause-name selection for a hyper clause over two models now gives every trace one request clock. FR-517 says such a clause "is not given one request clock for every trace", and the compile path derives each trace's own authority | fsl-command/src/emit_checked_v2.rs:662-676; fsl-command/src/checked_handoff/selection.rs:474-498; tests/it/checked_handoff.rs:3147 |
+
+- **FND-006.**
+  - **What changed.** The fix for FND-002 deleted the `aliases.len() > 1` check. It also rewrote the only test of that refusal, the TC-3128 request-path case with `"Saves": event_position "events-authority"`, into a round trip with no selection. A user `--clocks`/`temporal_selections` entry naming `Saves` over `S` and `N` now emits two rows with the single request authority. `Selection` copies it to both traces (`named_binding`).
+  - **Why it is wrong.** `fsl compile` derives the two models' own `ConfigVersion` identity texts for the same unit (FR-640-AC-12). The request path and the compile path now emit different clocks for the same clause. FR-517 still says such a request is refused.
+  - **Fix.** Keep the refusal for an explicit clause-name selection of a hyper clause whose quantifiers name more than one model. A handoff written by compile never trips it, because compile no longer writes derived selections. Restore the request-path refusal test next to the new round-trip test. Update FR-517's "until per-trace clock derivation lands (QSL-2277)" sentence to the landed behaviour.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `timed_clause.rs:89-112` decides each operation's guard anchor and reset anchor once, before writing. Guards merge on `operation` alone (`:189`). Tests `a_point_free_and_a_point_bound_pre_make_one_guard` and `a_point_free_and_a_point_bound_reset_share_one_anchor` (`timed_clauses.rs:1574, 1605`) both read back through I2. The point-free clause now carrying the anchor is what FSpec FR-342 requires ("holds every clause of the operation"). Its constraints and state clause are unchanged, because an operation has exactly one `pre` and one `post` point. The pre-pass's extra `clause_anchor` calls are content-addressed and add no node or occurrence. |
+| FND-002 | fixed | `handoff_clock_selections` skips model-derived per-trace selections. `clock_selections` re-derives unnamed hyper clauses with `RequestClocks::model_selections`. The sidecar writes each trace's derived clock, and on read a clause-name selection is produced only when all traces agree. That selection is applied to every trace, which reproduces the compiled clock. The selection is skipped only when it equals the derived clock, so no explicit selection is lost. The two-model `--handoff` round-trip test is at `checked_handoff.rs:3147`. The removed aliases refusal is FND-006. |
+| FND-003 | fixed | The test asserts `InvalidPackage` and the pointer `/temporal_bindings/0/trace`. |
+| FND-004 | fixed | QSL-2338 is reopened (In Progress), and both ignores name its cause. The analyze-half ignores now cite QSL-2643 (Specced) with the `FormNotDecided` cause. |
+| FND-005 | fixed | Main's import order is restored in `emit.rs:35-55`. |

@@ -3189,3 +3189,58 @@ fn a_clocked_hyper_clause_over_two_models_round_trips_its_handoff() {
         );
     }
 }
+
+/// FR-517-AC-26 with FR-640 (QSL-2277): a clocked hyper clause whose
+/// quantifiers name two models is refused `PerTraceClockConfigurations`
+/// instead of taking one request clock for both traces.
+#[trace("TC-3128", "FR-517-AC-26")]
+#[test]
+fn a_clocked_hyper_clause_over_two_models_is_refused_on_the_request_path() {
+    let holder = tempfile::tempdir().unwrap();
+    let document = std::fs::read_to_string(CONFIG_MODEL).unwrap();
+    let models: Vec<PathBuf> = ["device-saving", "device-normal"]
+        .iter()
+        .map(|name| {
+            let path = holder.path().join(format!("{name}.json"));
+            std::fs::write(
+                &path,
+                document.replace("example/config-version", &format!("example/{name}")),
+            )
+            .unwrap();
+            path
+        })
+        .collect();
+    let body = "model S = \"example/device-saving\";\nmodel N = \"example/device-normal\";\n\
+         hyper Saves using t over behaviours (d: S::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of S forall trace n of N \
+         { always [0, 3] holds(d.versionNumber @ s <= e.versionNumber @ n) }";
+    let request = hyper_request(
+        holder.path(),
+        models,
+        body,
+        vec![ClockSelection {
+            clause: "Saves".into(),
+            clock: ClockConfiguration::EventPosition {
+                sequence_authority: "events-authority".into(),
+            },
+        }],
+    );
+    let Err(Error::Compile(emit_checked_v2::Error::Producer(refusal))) =
+        write(&request, &holder.path().join("handoff"))
+    else {
+        panic!("the request is refused by the producer");
+    };
+    let fsl_replay::ReplayRefusal::Recompile { refusal, .. } = *refusal else {
+        panic!("a recompile refusal");
+    };
+    assert!(
+        matches!(
+            *refusal,
+            fsl_replay::CompileRefusal::Emit(
+                fsl_package::EmitRefusal::PerTraceClockConfigurations { ref declaration },
+                _
+            ) if declaration == "Saves"
+        ),
+        "{refusal:?}"
+    );
+}
