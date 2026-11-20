@@ -2712,7 +2712,9 @@ fn package_slot_verdict(
     }
 }
 
+#[track_caller]
 fn broken() -> ExpansionStop {
+    eprintln!("protocol expansion invariant failed at {}", std::panic::Location::caller());
     ExpansionStop {
         cause: BROKEN,
         limit: None,
