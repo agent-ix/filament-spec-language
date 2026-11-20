@@ -1680,14 +1680,14 @@ fn lifecycle_clocks() -> Value {
 #[test]
 #[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
 fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
-    // A clause run over a temporal clause still pending at the end of the
-    // trace: pending at S6a.
+    // An infinite-trace clause whose eventuality is witnessed by the last
+    // sample completes successfully at S6a.
     let directory = tempfile::tempdir().unwrap();
     write_case(
         directory.path(),
         "clause",
         LIFECYCLE_UNIT,
-        &json!({"verb":"run","exit_code":0,"category":"pending","last_stage":"S6a"}).to_string(),
+        &json!({"verb":"run","exit_code":0,"category":"success","last_stage":"S6a"}).to_string(),
     );
     let request = json!({"format":"native-run/1","request":{
         "models":[], "program": lifecycle_program("clause"), "clocks": lifecycle_clocks(),

@@ -662,29 +662,20 @@ fn a_package_selection_analyzes_as_its_source() {
     );
 }
 
-/// A package that admits reaches the analysis gap: building the in-process
-/// checked package from package bytes conflicts with FR-087-AC-2, so
-/// analysis refuses `unsupported_construct`/`not-yet-implemented` naming
-/// `package`, never `invalid-request` or a profile prohibition (FR-763).
+/// FR-620: an explicit item over a selected checked package has the same
+/// outcome as the same item over its source.
 #[trace("TC-1580", "FR-620-AC-3")]
 #[test]
-fn a_package_selection_names_its_implementation_gap() {
-    let ws = Workspace::new("wire-package-gap");
+fn an_explicit_item_on_a_package_selection_matches_its_source() {
+    let ws = Workspace::new("wire-package-item");
     let request = request_members(Some(json!([{"claim": "Bounded"}])));
-    let _ = counter_request_with(&ws, &bounded(), request.clone());
+    let source_path = counter_request_with(&ws, &bounded(), request.clone());
+    let source = analyze(&source_path);
     let (selected, _) = crate::analyze_cli_support::package_selection(&ws, &request);
     let document = json!({"format": "native-analyze/1", "request": selected});
-    let path = ws.write("analyze-package-gap.json", document.to_string().as_bytes());
+    let path = ws.write("analyze-package-item.json", document.to_string().as_bytes());
     let run = analyze(&path);
     let document = run.document();
-    let diagnostic = &document["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{document}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{document}");
-    assert!(
-        diagnostic["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("package")),
-        "{document}"
-    );
-    assert_eq!(run.exit, 21, "{document}");
+    assert_eq!(run.exit, source.exit, "{document}");
+    assert_eq!(document["items"], source.document()["items"]);
 }

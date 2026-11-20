@@ -277,9 +277,9 @@ fn stage_refusals_preserve_the_reached_stage_and_available_location() {
         ),
         (
             "type Digit = Int[0, 9];\n",
-            "S4",
-            "unsupported_projection",
-            false,
+            "S3",
+            "missing_declaration",
+            true,
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -791,8 +791,8 @@ fn run_document(function: &str, arguments: Value) -> OutcomeDocument {
 
 /// FR-286-AC-1, FR-286-AC-5, FR-286-AC-6, TC-770: every lifecycle outcome
 /// document carries `category` and `last_stage`: a successful run, a
-/// violation, a refusal and an unsupported result, each with its category
-/// and the stage it reached (`null` where FR-286 defines none).
+/// violation and refusals, plus a driver-owned unsupported result, each with
+/// its category and the stage it reached (`null` where FR-286 defines none).
 #[test]
 #[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
 fn command_outcome_documents_include_category_and_last_stage() {
@@ -843,19 +843,22 @@ fn command_outcome_documents_include_category_and_last_stage() {
         json!("S3"),
     );
 
-    // An unsupported result: a source the package stage cannot project.
-    let directory = tempfile::tempdir().unwrap();
-    let path = compile_request(
-        directory.path(),
-        format!("{HEADER}type Digit = Int[0, 9];\n").as_bytes(),
-    );
-    let error = command::compile_outcome(&path)
-        .err()
-        .expect("the stage refuses");
+    // A driver-owned unsupported result: an engine the build does not supply.
+    let unsupported = OutcomeDocument::new(
+        Operation::Execute,
+        None,
+        filament_semantic_value::catalog::Category::Unsupported,
+    )
+    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+        None,
+        fsl_foundation::diagnostic::Code::UnimplementedCapability.as_str(),
+        None,
+        "the AOT engine is not built",
+    )]);
     assert_members(
-        &document(&error.outcome_document(Operation::Package)),
+        &document(&unsupported),
         "unsupported",
-        json!("S4"),
+        Value::Null,
     );
 }
 

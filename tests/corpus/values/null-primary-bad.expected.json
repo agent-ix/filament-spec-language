@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":21,"category":"unsupported","last_stage":"S2","code":"unsupported_construct","flips_with":"G-009"}
+{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"ill_typed","cause":"type-mismatch","flips_with":"G-009"}

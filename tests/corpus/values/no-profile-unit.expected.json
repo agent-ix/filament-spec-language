@@ -1,1 +1,1 @@
-{"verb":"check","exit_code":21,"category":"unsupported","last_stage":"S4","code":"unsupported_projection","flips_with":"G-001"}
+{"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"missing_declaration","cause":"empty-package","flips_with":"G-001"}

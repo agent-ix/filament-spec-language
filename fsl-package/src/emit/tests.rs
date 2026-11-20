@@ -284,6 +284,14 @@ fn emit_checked(package: &CheckedPackage) -> Result<Emission, EmitRefusal> {
     super::emit_checked(package, ceiling())
 }
 
+/// The entry with an explicit ceiling for a measured large fixture.
+fn emit_checked_with_limits(
+    package: &CheckedPackage,
+    limits: crate::EmitLimits,
+) -> Result<Emission, EmitRefusal> {
+    super::emit_checked(package, limits)
+}
+
 fn emit_checked_with_protocol_results(
     package: &CheckedPackage,
 ) -> Result<ProtocolEmission, EmitRefusal> {
