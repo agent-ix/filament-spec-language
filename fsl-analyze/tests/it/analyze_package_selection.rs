@@ -640,7 +640,13 @@ fn named_operation_clauses_resolve_over_a_package() {
     ] {
         let items = json!([{"claim": name}]);
         let ws = Workspace::new(&format!("package-operation-clause-{name}"));
-        let request = counter_request(&ws, clause, items.clone());
+        let request = crate::analyze_cli_support::request_over(
+            &ws,
+            &crate::counter::unit_text(&format!("{}{clause}", crate::counter::CONTRACT)),
+            &crate::counter::document_with_ranged_parameter(),
+            &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+            json!({"items": items.clone()}),
+        );
         let source = analyze(&request);
         let (members, _) = package_selection(&ws, &request_of(&request));
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
