@@ -991,12 +991,6 @@ fn enumerate_digital_deadline(
             }
             Phase::Pending => {}
         }
-        if timed
-            .is_quiescent(current.timed.discrete())
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?
-        {
-            return Err(ProbabilityDocumentError::Unsupported);
-        }
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
