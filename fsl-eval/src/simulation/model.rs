@@ -2457,6 +2457,22 @@ fn rebuild_model_trace(
                 if index < requested.len() {
                     return Ok(None);
                 }
+                let state_findings = system
+                    .state_findings(&current)
+                    .map(|evaluated| {
+                        evaluated.unwrap_or_else(|stop| system.stopped_findings(&current, stop))
+                    })
+                    .unwrap_or_default();
+                if !state_findings.is_empty() {
+                    let (_, state_key) = system.state_key(&current).map_err(|refusal| {
+                        ModelShrinkError::NotSimulated(NotSimulated::KeyEncoding(refusal))
+                    })?;
+                    findings.push(StateFindings {
+                        state: state_key,
+                        depth: index,
+                        findings: state_findings,
+                    });
+                }
                 stopped = Some(StopReason::Stopped(stop.cause));
                 break;
             }
