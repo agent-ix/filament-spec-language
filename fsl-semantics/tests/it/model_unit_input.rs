@@ -6,9 +6,10 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::domain_package::DomainPackage;
 use fsl_semantics::model::intake::{
     PackageInput, admit, admit_unit, compile_model_unit, package_input, package_input_from_sources,
-    read_records,
+    read_domain_package, read_records,
 };
 use ix_trace_rs::trace;
 
@@ -93,13 +94,23 @@ fn selected_unit_declarations(
 #[trace("FR-710-AC-5", "TC-1943")]
 #[test]
 fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
-    let packages = package_input([SHOP.as_bytes()]).expect("the model unit compiles");
-    let compiled = packages["example/shop"].clone();
-    let checked_packages =
-        package_input([compiled.as_slice()]).expect("the compiled package document is admitted");
-    assert_eq!(packages, checked_packages);
-    let mut declarations =
-        selected_unit_declarations("example/shop", &packages).expect("the model unit is admitted");
+    let source = fsl_cst::diagnostic::read_source(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default().source_bytes,
+    )
+    .expect("the model source metadata is admitted");
+    let source_packages = package_input_from_sources([("example/shop", &source)])
+        .expect("the model unit compiles to a source-derived package");
+    let compiled_document = source_packages["example/shop"].clone();
+    let document_packages = package_input([compiled_document.as_slice()])
+        .expect("the compiled document becomes package input");
+    let checked_source = checked_domain_package("example/shop", &source_packages);
+    let checked_document = checked_domain_package("example/shop", &document_packages);
+    assert_eq!(checked_source, checked_document);
+    let mut declarations = selected_unit_declarations("example/shop", &source_packages)
+        .expect("the model unit is admitted");
     declarations
         .link_dispatch(ModelNormalizationLimits::default())
         .expect("dispatch links");
@@ -110,6 +121,12 @@ fn a_supplied_model_unit_is_admitted_as_its_compiled_document() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect("the invariant over M::Order checks");
+}
+
+fn checked_domain_package(identity: &str, packages: &PackageInput) -> DomainPackage {
+    let (selection, document) = admit(identity, packages, fsl_foundation::IntakeLimits::default())
+        .expect("package document is admitted under its declared identity");
+    read_domain_package(selection, &document).expect("admitted document reads as checked records")
 }
 
 #[trace("FR-710-AC-5", "TC-1943")]
@@ -193,10 +210,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
     assert_eq!(order["clauses"][0]["clauseId"], "Nonnegative");
     let populations = document["populations"].as_array().unwrap();
     assert_eq!(populations.len(), 1);
-    assert_eq!(
-        populations[0]["identity"],
-        "ix://example/shop/orders"
-    );
+    assert_eq!(populations[0]["identity"], "ix://example/shop/orders");
     assert_eq!(populations[0]["extent"], "closed");
     let constructs = document["constructs"]
         .as_array()
@@ -334,7 +348,7 @@ object Node { relationship next: Ghost [0, 1]; }
         &parsed,
         ModelNormalizationLimits::default(),
     )
-        .expect_err("an undeclared relationship target is refused");
+    .expect_err("an undeclared relationship target is refused");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
@@ -368,7 +382,7 @@ object Node { }
         &parsed,
         ModelNormalizationLimits::default(),
     )
-        .expect_err("duplicate object identities are refused");
+    .expect_err("duplicate object identities are refused");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
@@ -401,7 +415,7 @@ record Row { amount: Integer; operation update(); }
         &parsed,
         ModelNormalizationLimits::default(),
     )
-        .expect_err("FSpec does not admit operations on record value types");
+    .expect_err("FSpec does not admit operations on record value types");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
@@ -433,7 +447,7 @@ domain "filament/native/x";
         &parsed,
         ModelNormalizationLimits::default(),
     )
-        .expect_err("the native domain namespace is reserved");
+    .expect_err("the native domain namespace is reserved");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
