@@ -2015,7 +2015,7 @@ fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
         ("type Small = Int[0, 2];", "Int[0, 2]", "Int[0, 2]".to_owned()),
     ] {
         let leaf = format!(
-            "holds(let q: Sequence<Int[0, 3]>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
+            "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
              in count<{argument}>(x in {items}: x > 1) >= 1)"
         );
         let unit = declaring_low(declarations, &leaf);
