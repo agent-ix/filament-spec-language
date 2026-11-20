@@ -4,8 +4,10 @@
 //! selections and a compile request that writes the compiled document.
 
 use fsl_command::command::{self, CheckInputs};
+use fsl_foundation::SourceIdentity;
 use fsl_replay::Operation;
-use fsl_semantics::model::intake::package_input;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{compile_model_unit, package_input};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -188,6 +190,7 @@ fn a_native_model_unit_models_entry_compiles_like_its_document() {
     let path = compile_request(directory.path(), &[], "program.fsl", program_entry, &[]);
     let not_a_unit = refusal(&command::compile_outcome(&path).err().expect("no domain"));
     assert_eq!(not_a_unit["code"], "invalid-request", "{not_a_unit}");
+    assert!(not_a_unit.to_string().contains("models[0]"), "{not_a_unit}");
     assert!(
         not_a_unit.to_string().contains("native-model-unit/1"),
         "{not_a_unit}"
@@ -297,9 +300,21 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         &[("output", output)],
     );
     let outcome = command::compile_outcome(&path).expect("the model unit compiles");
-    let expected =
-        package_input([SHOP.as_bytes()]).expect("the compiled document")["example/shop"].clone();
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("agent-ix", "test:shop.fsl"),
+        "shop.fsl",
+        SHOP.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("the model unit parses");
+    let expected = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect("the model unit compiles")
+        .bytes()
+        .to_vec();
     assert_eq!(outcome.package_bytes(), expected.as_slice());
+    let outcome_document: Value =
+        serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
+    assert_eq!(outcome_document["last_stage"], "I1");
     assert_eq!(
         serde_json::from_slice::<Value>(outcome.package_bytes()).unwrap()["contractVersion"],
         "2.0.0"
