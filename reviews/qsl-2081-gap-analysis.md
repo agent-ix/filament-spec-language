@@ -15,7 +15,7 @@ Compared the new real-source interval cases with their current owning requiremen
 
 ## Verdict
 
-**CONDITIONAL** — correct the new Rpc-specific trace claims; the two explicit product blockers remain pending and excluded from coverage.
+**PASS** — the incorrect new trace bindings are fixed; the two explicit product blockers remain pending and excluded from coverage.
 
 ## Findings
 
@@ -40,3 +40,11 @@ Reconciliation: computed matrix not rerun, as explicitly instructed; no reposito
 ## Evidence boundaries
 
 Author receipts `.agent/qsl-2081-checkpoint.md` and `.agent/qsl-2081-new-intervals-focused.log/.exit` are accepted in-lane evidence. Review performed no runtime, baseline measurement, old-test rerun, matrix, inventory or ownership audit. The known lint blockers remain limitations, not green lint. One final applicable component gate remains with the original coder after the confined binding correction.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Record-only disposition at cbcc2089ba5a61e01bf10ec2773a13040f0d2a7d accepts the in-lane author receipt: all eight new replay bindings now name FR-237, while the existing Rpc bindings and runtime behavior remain unchanged. |
+
+No code reread, additional semantic review, matrix or runtime was performed for this metadata-only correction. The original finding remains recorded above. QSL-2689's two required scenarios remain strictly pending, not completed coverage; the original coder runs its one final applicable component gate next.
