@@ -408,7 +408,8 @@ pub(super) fn run_bytes(
         .deadline_ms
         .and_then(|milliseconds| started.checked_add(Duration::from_millis(milliseconds)));
     if request.package.is_some() {
-        return Err(refused("/request/synthesis", "requires a source program"));
+        return run_package_synthesis(directory, &request, &selection, run_limits.dependent_bytes)
+            .map(Some);
     }
     if request.call.is_some() || request.clause.is_some() || request.items.is_some() {
         return Err(refused(
@@ -670,6 +671,190 @@ pub(super) fn run_bytes(
     }))
 }
 
+fn run_package_synthesis(
+    directory: &Path,
+    request: &super::wire::Request,
+    selection: &Selection,
+    dependent_bytes: usize,
+) -> super::Result<super::RunResult> {
+    if request.call.is_some() || request.clause.is_some() || request.items.is_some() {
+        return Err(refused(
+            "/request/synthesis",
+            "is mutually exclusive with call, clause and items",
+        ));
+    }
+    if !request.extensions.is_empty() {
+        return Err(refused(
+            "/request/extensions",
+            "synthesis extension inputs are not supported",
+        ));
+    }
+    let package_selection = request
+        .package
+        .as_ref()
+        .ok_or_else(|| refused("/request/package", "expected a package selection"))?;
+    super::package_run::validate_request(request)?;
+    let admitted =
+        super::package_run::admit(directory, request, package_selection, dependent_bytes, None)?;
+    let mut budget = admitted.budget;
+    let identities = admitted.identities.unwrap_or_else(|| {
+        fsl_package::ReadIdentityRows::of_rows(
+            &admitted.package,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    });
+    let bare = fsl_package::BarePackage::new(&admitted.package)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: admitted.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|failure| {
+            refused(
+                "/request/synthesis",
+                format!("package admission: {failure:?}"),
+            )
+        })?;
+    let claim = select_claim(&admitted.package, selection.declaration.as_deref())?;
+    let projected = bare
+        .project_value_synthesis(&claim.declaration)
+        .map_err(|failure| {
+            refused(
+                "/request/synthesis",
+                format!("checked synthesis read: {failure:?}"),
+            )
+        })?;
+    let world = bare
+        .world()
+        .map_err(|failure| refused("/request/synthesis", format!("package world: {failure:?}")))?;
+    let package_name = admitted.package.name().to_owned();
+    let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
+    let mut meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
+        &selection.accounting,
+    )));
+    let mut evaluation_error = None;
+    let mut validation_error = None;
+    let (mut outcome, exit_code) = search_integer_outcome(
+        &package_name,
+        claim.name.as_ref(),
+        node,
+        projected.domain(),
+        selection.limits,
+        |candidate| match evaluate_bare_synthesis(
+            &world,
+            projected.satisfies(),
+            projected.candidate_slot(),
+            candidate,
+            meter.borrow_mut().as_mut(),
+        ) {
+            Ok(filament_exact::Value::Boolean(value)) => value,
+            Ok(value) => {
+                evaluation_error = Some(format!("satisfies expression returned {value:?}"));
+                false
+            }
+            Err(error) => {
+                evaluation_error = Some(error);
+                false
+            }
+        },
+        |candidate| match evaluate_bare_synthesis(
+            &world,
+            projected.satisfies(),
+            projected.candidate_slot(),
+            candidate,
+            meter.borrow_mut().as_mut(),
+        ) {
+            Ok(filament_exact::Value::Boolean(true)) => Ok(()),
+            Ok(filament_exact::Value::Boolean(false)) => {
+                Err(serde_json::json!({"kind": "candidate-rejected"}))
+            }
+            Ok(value) => {
+                validation_error = Some(format!("satisfies expression returned {value:?}"));
+                Err(serde_json::json!({"kind": "candidate-validation-failed"}))
+            }
+            Err(error) => {
+                validation_error = Some(error);
+                Err(serde_json::json!({"kind": "candidate-validation-failed"}))
+            }
+        },
+    );
+    if let Some(error) = evaluation_error.or(validation_error) {
+        return Err(refused("/request/synthesis", error));
+    }
+    if exit_code == 0 {
+        if let Some(objective) = projected.objective() {
+            let candidate = outcome
+                .candidate
+                .as_ref()
+                .and_then(|value| value.get("value"))
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<Integer>().ok())
+                .ok_or_else(|| {
+                    refused(
+                        "/request/synthesis",
+                        "objective candidate is not an integer",
+                    )
+                })?;
+            let value = evaluate_bare_synthesis(
+                &world,
+                objective.expression(),
+                projected.candidate_slot(),
+                &candidate,
+                meter.get_mut(),
+            )
+            .map_err(|error| refused("/request/synthesis/objective", error))?;
+            outcome.explored.work = outcome.explored.work.saturating_add(1);
+            outcome.optimal = Some(true);
+            let filament_exact::Value::Integer(value) = value else {
+                return Err(refused(
+                    "/request/synthesis/objective",
+                    "integer synthesis objective returned a non-integer",
+                ));
+            };
+            outcome = outcome.with_objective(serde_json::json!({
+                "direction": objective.direction(),
+                "value": integer_value(&value),
+            }));
+        }
+    }
+    Ok(super::RunResult {
+        exit_code,
+        value: super::output::NativeResult::synthesis_document(serde_json::json!({
+            "synthesis": outcome.into_value()
+        })),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::from_sources(admitted.models),
+    })
+}
+
+fn evaluate_bare_synthesis(
+    world: &fsl_package::BareWorld,
+    expression: &fsl_package::ReaderProtocolProjection,
+    slot: usize,
+    candidate: &Integer,
+    meter: &mut filament_exact::Meter,
+) -> std::result::Result<filament_exact::Value, String> {
+    let frame_size = expression.frame_slots().max(slot.saturating_add(1));
+    let mut frame = vec![None; frame_size];
+    frame[slot] = Some(filament_exact::Value::Integer(candidate.clone()));
+    let evaluation = fsl_eval::bare::evaluate_bare_expression(world, expression, frame, meter)
+        .map_err(|fault| format!("checked synthesis expression fault: {fault:?}"))?;
+    match evaluation.outcome {
+        filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value)) => {
+            Ok(value)
+        }
+        outcome => Err(format!(
+            "checked synthesis expression did not complete: {outcome:?}"
+        )),
+    }
+}
+
 fn read_selection(member: Value) -> super::Result<Selection> {
     let Some(object) = member.as_object() else {
         return Err(refused("/request/synthesis", "expected an object"));
@@ -876,8 +1061,8 @@ fn refused(member: &str, reason: impl Into<String>) -> super::RunCause {
 #[cfg(test)]
 mod tests {
     use super::{
-        search_integer_domain, select_claim_rows, SearchDisposition, SearchLimits,
-        SynthesisOutcomeDocument, DEFAULT_MAX_WORK,
+        DEFAULT_MAX_WORK, SearchDisposition, SearchLimits, SynthesisOutcomeDocument,
+        search_integer_domain, select_claim_rows,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;

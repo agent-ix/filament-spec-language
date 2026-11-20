@@ -16,8 +16,8 @@ mod expression;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
 pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
 pub use expression::{
-    evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
-    S6aRewardEvaluator,
+    ModelRelationEvaluation, S6aRewardEvaluator, evaluate_model_relation,
+    evaluate_model_relation_transitions,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
@@ -72,19 +72,12 @@ pub(crate) fn ordered_map_entries(
 // `CheckedPackageEvaluation` is the trait that carries `call` and `evaluate`
 // over the foreign-to-`value` `CheckedPackage` typestate, since an inherent
 // impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).
-pub use expression::bare_evaluate_selected_protocol_slot;
 pub use expression::collection_write::{Provenance, WrittenCollection};
-pub use expression::post_targets::{PostTarget, PostTargets};
-pub(crate) use expression::{
-    bare_post_targets, evaluate_bare_state_graph_predicate, evaluate_bare_terminal_predicate,
-    package_constraint_reads, package_guard_reads, package_operation_footprint,
-    package_term_reads, ProjectedClause,
-    source_post_targets, StateGraphOver,
-};
 pub(crate) use expression::evaluate_over_admitted_environment;
-pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub(crate) use expression::evaluate_state_predicate_at_absent_key_with_reference_bindings;
+pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub use expression::object_environment_refusal;
+pub use expression::post_targets::{PostTarget, PostTargets};
 pub use expression::{
     AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
     BINDER_ACCOUNTING_VERSION, BinderCharges, ChargeAmounts, CheckedPackageEvaluation,
@@ -104,6 +97,12 @@ pub use expression::{
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
 };
 pub use expression::{PackageOperations, bare_evaluate_frame};
+pub(crate) use expression::{
+    ProjectedClause, StateGraphOver, bare_post_targets, evaluate_bare_state_graph_predicate,
+    evaluate_bare_terminal_predicate, package_constraint_reads, package_guard_reads,
+    package_operation_footprint, package_term_reads, source_post_targets,
+};
+pub use expression::{bare_evaluate_selected_protocol_slot, evaluate_bare_expression};
 
 #[cfg(test)]
 mod map_order_tests {
