@@ -4,7 +4,6 @@
 //! outside this adapter and cannot qualify as a complete corpus.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_foundation::{Source, SourceIdentity};
@@ -79,12 +78,10 @@ impl Fixtures {
     }
 }
 
-fn fixtures(root: Option<&Path>) -> Result<Fixtures, String> {
-    let root =
-        root.ok_or_else(|| "FSPEC_DIR must name the authoritative standard checkout".to_owned())?;
-    let path = root.join(FIXTURE);
-    let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let document: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+fn fixtures(bytes: Option<&[u8]>) -> Result<Fixtures, String> {
+    let bytes =
+        bytes.ok_or_else(|| format!("the pinned FSpec package does not publish {FIXTURE}"))?;
+    let document: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
     let windows: Vec<Window> = serde_json::from_value(document["window"].clone())
         .map_err(|error| format!("{FIXTURE}/window: {error}"))?;
     if windows.is_empty() {
@@ -396,8 +393,8 @@ fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String>
 }
 
 fn standard() -> Fixtures {
-    let root = std::env::var_os("FSPEC_DIR");
-    fixtures(root.as_deref().map(Path::new)).unwrap_or_else(|error| panic!("{error}"))
+    fixtures(filament_specification::published_file(FIXTURE))
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Provenance: QSL-2048. Each result comes from parsed, checked, emitted FSL.
@@ -456,18 +453,19 @@ fn an_altered_finite_window_expectation_reports_expected_and_actual() {
     );
 }
 
-/// Provenance: QSL-2048. An absent external corpus cannot become a zero-case pass.
+/// Provenance: QSL-2048. An absent published corpus cannot become a zero-case pass.
 #[trace("FR-350-AC-20")]
 #[test]
-fn missing_fspec_directory_is_an_error_before_any_case_runs() {
-    let error = fixtures(None).err().expect("FSPEC_DIR is required");
+fn a_missing_published_fixture_is_an_error_before_any_case_runs() {
+    let error = fixtures(None)
+        .err()
+        .expect("the published fixture is required");
     assert_eq!(
         error,
-        "FSPEC_DIR must name the authoritative standard checkout"
+        format!("the pinned FSpec package does not publish {FIXTURE}")
     );
-    let root = tempfile::tempdir().expect("scratch directory");
-    let error = fixtures(Some(root.path()))
+    let error = fixtures(Some(br#"{"window":[]}"#))
         .err()
-        .expect("the fixture is missing");
-    assert!(error.contains(FIXTURE), "{error}");
+        .expect("an empty corpus fails");
+    assert_eq!(error, "finite-window fixture has no window cases");
 }
