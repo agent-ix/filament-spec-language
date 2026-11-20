@@ -5736,6 +5736,11 @@ fn read_type_node(
             ValueTypeRef::Clock
         } else if target.starts_with("ix://filament/unit/") {
             read_value_type_ref(package, &ctx, target, false)?
+        } else if target == "ix://filament/native/Decimal" {
+            // An alias of native Decimal that declares no policy is an untyped
+            // native alias; a member it types has no policy and the validator
+            // refuses that member.
+            ValueTypeRef::Native(NativeValueType::Decimal)
         } else if type_identity_segment(package, target).is_some()
             && semantic.is_some_and(|document| document.option_inner(target).is_some())
         {
@@ -6470,7 +6475,15 @@ pub fn read_domain_package(
         semantic.as_ref(),
         intake_refusals.is_empty(),
     );
+    let mut reported = std::collections::BTreeSet::new();
     for refusal in reader_refusals {
+        // A node read once per path that reaches it (an alias chain over a
+        // Decimal reaches it again) repeats one refusal.
+        if let Some(node) = refusal_node(&refusal) {
+            if !reported.insert((node.to_owned(), refusal.detail.clone())) {
+                continue;
+            }
+        }
         // The reader's own dangling `persists`/`members` entry repeats what the
         // semantic-IR missing-name refusal already reports for that node.
         let reader_node = match &refusal.cause {
@@ -6485,7 +6498,14 @@ pub fn read_domain_package(
             ModelRefusalCause::UnsupportedDeclarationForm { .. }
         ) && reader_node
             .is_some_and(|node| !unsupported_form_nodes.contains(node));
-        if !distinct_family && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node))
+        // A constraint of a node the validator refused is that refusal's
+        // detail: the validator reports an unreadable bound at its owner.
+        let constraint_owner = reader_node
+            .and_then(|node| node.rsplit_once("/constraints/"))
+            .map(|(owner, _)| owner);
+        if (!distinct_family
+            && reader_node.is_some_and(|node| semantic_refused_nodes.contains(node)))
+            || constraint_owner.is_some_and(|owner| semantic_refused_nodes.contains(owner))
         {
             continue;
         }
