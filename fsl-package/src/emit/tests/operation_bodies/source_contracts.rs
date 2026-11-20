@@ -125,10 +125,12 @@ fn a_bodyless_void_operation_has_explicit_absence_beside_a_real_body() {
     );
     let checked = admitted(&document, &emission);
     let rows = checked.operation_body_rows().expect("operation body rows");
-    let touch = rows
+    let touches: Vec<_> = rows
         .iter()
-        .find(|row| row.operation.as_ref() == "touch")
-        .expect("void operation remains declared");
+        .filter(|row| row.operation.as_ref() == "touch")
+        .collect();
+    assert_eq!(touches.len(), 1, "exactly one explicit void-operation row");
+    let touch = touches[0];
     assert_eq!(touch.body, OperationBody::NoBody);
     let score = rows
         .iter()
