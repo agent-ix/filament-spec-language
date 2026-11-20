@@ -6997,13 +6997,17 @@ fn emit_package_inner(
                 .map(|key| node_id(ids, key))
                 .map_err(encoding)
             };
+            let unit_source = source
+                .declared_in
+                .clone()
+                .unwrap_or_else(|| graph.source().clone());
             let mut model = CheckedTimedModel::from_checked_time_source(
                 source,
                 placeholder("source")?,
                 placeholder("root")?,
                 CheckedNodeOwner::Source {
-                    authority: graph.source().authority().into(),
-                    identity: graph.source().identity().into(),
+                    authority: unit_source.authority().into(),
+                    identity: unit_source.identity().into(),
                 },
                 text_type.clone(),
                 rational_type.clone(),
@@ -7013,13 +7017,13 @@ fn emit_package_inner(
                 "checked tick source has no operation anchor",
             ))?;
             let source_region = SourceRegion::new(
-                graph.source().clone(),
+                unit_source.clone(),
                 source.span.start as u64,
                 source.span.end as u64,
             )
             .map_err(encoding)?;
             let generated = CheckedSourceRegion {
-                source: source_artifact(graph.source()),
+                source: source_artifact(&unit_source),
                 start: source_region.start(),
                 end: source_region.end(),
             };
@@ -7225,7 +7229,7 @@ fn emit_package_inner(
                         role: occurrence.role.clone(),
                         ordinal: occurrence.ordinal,
                         regions: vec![CheckedSourceRegion {
-                            source: source_artifact(graph.source()),
+                            source: source_artifact(&unit_source),
                             start,
                             end,
                         }],
@@ -8642,8 +8646,16 @@ fn write_time_nominal(
     // so its `generated` occurrence takes `generated`, the
     // region of the construct that names it.
     let region = match nominal.name_span() {
-        Some(span) => SourceRegion::new(graph.source().clone(), span.start as u64, span.end as u64)
-            .map_err(encoding)?,
+        Some(span) => {
+            let declaring = match &nominal.origin {
+                TimeNominalOrigin::Source { owner, .. } => {
+                    RawSourceRef::new(owner.authority.as_str(), owner.identity.as_str())
+                        .map_err(|_| EmitRefusal::SourceMapInvariant)?
+                }
+                TimeNominalOrigin::Model(_) => graph.source().clone(),
+            };
+            SourceRegion::new(declaring, span.start as u64, span.end as u64).map_err(encoding)?
+        }
         None => generated.clone(),
     };
     source_map.push(CheckedSourceMapEntry {

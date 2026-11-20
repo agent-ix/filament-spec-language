@@ -2469,12 +2469,12 @@ impl AdmittedModel {
             .map(|place| &place.field)
     }
 
-    /// The key of every declaration record of the package, of any kind.
     /// Whether this package declares the record `key`.
     pub(crate) fn declares(&self, key: &DeclarationKey) -> bool {
         self.records.contains_key(key)
     }
 
+    /// The key of every declaration record of the package, of any kind.
     pub(crate) fn record_keys(&self) -> impl Iterator<Item = &DeclarationKey> {
         self.records.keys()
     }

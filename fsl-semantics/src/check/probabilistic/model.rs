@@ -747,8 +747,14 @@ pub(crate) struct ProbabilisticInput<'a> {
     /// position: a source object type is visible only in the unit that declares
     /// it (FR-569).
     pub(crate) declaration_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
+    /// The source unit each task-set declaration was written in, by its position.
+    pub(crate) task_set_owners: &'a [Option<fsl_foundation::source::provenance::RawSourceRef>],
     pub(crate) cancel: &'a filament_exact::Cancel,
 }
+
+/// The source unit a name is resolved in, `None` when it has none.
+#[derive(Clone, Copy)]
+pub(crate) struct Seen<'o>(Option<&'o fsl_foundation::source::provenance::RawSourceRef>);
 
 /// Why an operation name resolves to no single operation.
 pub(crate) enum Unresolved {
@@ -757,17 +763,29 @@ pub(crate) enum Unresolved {
 }
 
 impl<'a> ProbabilisticInput<'a> {
-    /// Whether the source object type `key` is visible to declaration `declaration`: a
-    /// source model is seen only by the unit that declares it (FR-569). Every other
-    /// key, and a call that names no declaration, is visible.
-    fn visible(&self, declaration: Option<usize>, key: &DeclarationKey) -> bool {
-        let Some(declaration) = declaration else {
-            return true;
-        };
-        let owner = self
-            .declaration_owners
-            .get(declaration)
-            .and_then(Option::as_ref);
+    /// The source unit probabilistic declaration `declaration` was written in.
+    /// The source unit task-set declaration `declaration` was written in.
+    pub(crate) fn seen_by_task_set(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.task_set_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    pub(crate) fn seen_by(&self, declaration: usize) -> Seen<'_> {
+        Seen(
+            self.declaration_owners
+                .get(declaration)
+                .and_then(Option::as_ref),
+        )
+    }
+
+    /// Whether the source object type `key` is visible to `seen`: a source model is
+    /// seen only by the unit that declares it (FR-569). Every other key, and a call
+    /// that names no unit, is visible.
+    fn visible(&self, seen: Seen<'_>, key: &DeclarationKey) -> bool {
+        let Seen(owner) = seen;
         self.models
             .iter()
             .filter(|model| model.declares(key))
@@ -791,7 +809,7 @@ impl<'a> ProbabilisticInput<'a> {
         &self,
         written: &NameForm,
         model: Option<&str>,
-        declaration: Option<usize>,
+        seen: Seen<'_>,
     ) -> Result<(ProbabilisticOperation, &'a OperationDeclaration), Unresolved> {
         let segments: Vec<&str> = written.name.split("::").collect();
         let (alias, object, operation) = match segments[..] {
@@ -809,7 +827,7 @@ impl<'a> ProbabilisticInput<'a> {
             })
             .filter_map(|(candidate, objects)| {
                 let key = objects.get(&object)?;
-                self.visible(declaration, key).then_some((candidate, key))
+                self.visible(seen, key).then_some((candidate, key))
             })
             .collect();
         let (alias, key) = match candidates[..] {
@@ -876,7 +894,7 @@ impl<'a> ProbabilisticInput<'a> {
             .model_objects
             .get(super::super::source_model::ALIAS)?
             .get(&object)?;
-        if !self.visible(Some(declaration), key) {
+        if !self.visible(self.seen_by(declaration), key) {
             return None;
         }
         Some((
@@ -1145,7 +1163,10 @@ impl Pass<'_, '_> {
         nodes: &mut u64,
     ) {
         let (operation, declaration) =
-            match self.input.operation(&form.operation, None, Some(index)) {
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
                 Ok(resolved) => resolved,
                 Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
             };
@@ -1305,7 +1326,10 @@ impl Pass<'_, '_> {
     ) {
         let reads = super::reward(form);
         let (operation, declaration) =
-            match self.input.operation(&form.operation, None, Some(index)) {
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
                 Ok(resolved) => resolved,
                 Err(fault) => {
                     self.refusals.extend(reads.into_iter().map(refusal));
@@ -1390,10 +1414,14 @@ impl Pass<'_, '_> {
     /// FR-253: a `delay` declaration, admitted on an operation of a `time
     /// dense` model only, with an exact distribution in the model's unit.
     fn delay(&mut self, index: usize, form: &DelayForm) {
-        let (operation, _) = match self.input.operation(&form.operation, None, Some(index)) {
-            Ok(resolved) => resolved,
-            Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
-        };
+        let (operation, _) =
+            match self
+                .input
+                .operation(&form.operation, None, self.input.seen_by(index))
+            {
+                Ok(resolved) => resolved,
+                Err(fault) => return self.refuse(unresolved(fault, &form.operation)),
+            };
         let name = form.operation.name.as_str();
         let Some(source) = self
             .input
@@ -1552,10 +1580,11 @@ impl Pass<'_, '_> {
                     operation: written.operation.name.clone(),
                 },
             );
-            let operation = match self
-                .input
-                .operation(&written.operation, Some(model), Some(index))
-            {
+            let operation = match self.input.operation(
+                &written.operation,
+                Some(model),
+                self.input.seen_by(index),
+            ) {
                 Ok((operation, _))
                     if weighable.as_ref().is_none_or(|weighable| {
                         weighable.iter().any(|(declaring, name, _)| {
@@ -1598,7 +1627,7 @@ impl Pass<'_, '_> {
         for (declaring, name, spelled) in self.input.model_operations(model, only.as_ref()) {
             let covered = form.weights.iter().any(|written| {
                 self.input
-                    .operation(&written.operation, Some(model), Some(index))
+                    .operation(&written.operation, Some(model), self.input.seen_by(index))
                     .is_ok_and(|(operation, _)| {
                         operation.declaring == declaring && operation.name.as_str() == name
                     })

@@ -795,7 +795,7 @@ fn refused_cause(units: &[(&str, &str)]) -> ProbabilisticCause {
 /// FR-569: a source object type is visible only in the unit that declares it,
 /// so a probabilistic declaration of one unit on a type of another is refused
 /// as naming nothing, whichever unit declares the type.
-#[trace("TC-620", "FR-185-AC-14")]
+#[trace("TC-1408", "FR-569-AC-2")]
 #[test]
 fn a_declaration_on_another_units_source_type_is_refused() {
     let on_a = [
@@ -838,9 +838,9 @@ fn a_declaration_on_another_units_source_type_is_refused() {
     );
 }
 
-/// FR-096: each probabilistic node's source map region names the unit that
+/// FR-096-AC-1: each probabilistic node's source map region names the unit that
 /// declares it, with that unit's offsets.
-#[trace("TC-2062", "FR-185-AC-12")]
+#[trace("TC-426", "FR-096-AC-1")]
 #[test]
 fn the_source_map_region_of_a_later_units_declaration_names_that_unit() {
     let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)])
@@ -893,4 +893,78 @@ fn a_package_name_ending_in_a_number_keys_its_source_types_under_that_name() {
     }
     assert_eq!(probabilistic(&wire, "delay_distribution").len(), 2);
     assert_eq!(probabilistic(&wire, "workload").len(), 2);
+}
+
+const CTL: &str = "taskset Ctl { task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo; }\n";
+
+/// FR-569: a `release` of one unit on another unit's source operation names
+/// nothing and is refused, whichever unit declares the type; one on the
+/// unit's own type is admitted.
+#[trace("TC-1408", "FR-569-AC-2")]
+#[test]
+fn a_release_on_another_units_source_operation_is_refused() {
+    let first = format!("{OWN_A}{CTL}");
+    let release_on_b = format!("{first}release Ctl.a on B::u;\n");
+    let release_on_a = format!("{OWN_B}release Ctl.a on A::t;\n");
+    let own = format!("{first}release Ctl.a on A::t;\n");
+    let admitted = check_units(&[("test:first", &own), ("test:second", OWN_B)]);
+    assert!(
+        admitted.is_ok(),
+        "an own-unit release: {:?}",
+        admitted.err()
+    );
+    for units in [
+        [
+            ("test:first", first.as_str()),
+            ("test:second", release_on_a.as_str()),
+        ],
+        [
+            ("test:first", release_on_b.as_str()),
+            ("test:second", OWN_B),
+        ],
+    ] {
+        let refusals = check_units(&units)
+            .err()
+            .expect("a cross-unit release is refused");
+        assert!(
+            refusals.iter().any(
+                |refusal| format!("{:?}", refusal.cause).contains("UnresolvedReleaseOperation")
+            ),
+            "{refusals:?}"
+        );
+    }
+}
+
+/// FSpec FR-322: the source map region of each node of a later unit's `time`
+/// declaration names that unit, with offsets inside its text.
+#[trace("FSpec-TC-233", "FSpec-FR-322-AC-281")]
+#[test]
+fn the_source_map_regions_of_a_later_units_time_nodes_name_that_unit() {
+    let package = check_units(&[("test:first", FIRST_UNIT), ("test:second", SECOND_UNIT)])
+        .unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let (wire, _) = emitted_and_joined(&package);
+    let text: String = HEADER
+        .lines()
+        .take(3)
+        .map(|line| format!("{line}\n"))
+        .collect::<String>()
+        + SECOND_UNIT;
+    let mut checked = 0;
+    for entry in wire["source_map"].as_array().expect("source map") {
+        let path = &entry["node_id"]["path"];
+        if !(path[0] == "B" && path[1] == "Timed" || path[0] == "s") {
+            continue;
+        }
+        for region in entry["regions"].as_array().expect("regions") {
+            assert_eq!(region["source"]["identity"], "test:second", "{entry}");
+            let (start, end) = (
+                region["start"].as_u64().expect("start") as usize,
+                region["end"].as_u64().expect("end") as usize,
+            );
+            let label = text.get(start..end).expect("a region of the second unit");
+            assert!(label == "s" || label.starts_with("time B"), "{label}");
+            checked += 1;
+        }
+    }
+    assert!(checked >= 2, "the unit's time nodes were found");
 }

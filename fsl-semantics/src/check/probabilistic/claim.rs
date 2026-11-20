@@ -1106,7 +1106,7 @@ impl Pass<'_, '_> {
                     match self.input.operation(
                         &written.operation,
                         Some(&subject.alias),
-                        Some(index),
+                        self.input.seen_by(index),
                     ) {
                         Ok((operation, _)) => {
                             let constraint = checked_constraint(

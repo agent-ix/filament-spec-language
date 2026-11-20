@@ -4264,8 +4264,19 @@ impl PackageDeclarations {
         let mut time_source_index = 0usize;
         let mut equivalence_index = 0usize;
         let mut probabilistic_index = 0usize;
+        let mut task_set_index = 0usize;
         for (source, unit) in &units {
             for form in unit.forms() {
+                if matches!(
+                    form.form(),
+                    fsl_forms::DeclarationForm::Taskset(_)
+                        | fsl_forms::DeclarationForm::Schedulable(_)
+                        | fsl_forms::DeclarationForm::Response(_)
+                        | fsl_forms::DeclarationForm::Release(_)
+                ) {
+                    source_owners.insert(format!("task_set {task_set_index}"), source.clone());
+                    task_set_index += 1;
+                }
                 if matches!(
                     form.form(),
                     fsl_forms::DeclarationForm::Random(_)
