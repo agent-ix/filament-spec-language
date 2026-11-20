@@ -648,6 +648,18 @@ pub(crate) fn routed_contract_item<'d>(
     for descriptor in registrations {
         registry.register(descriptor.clone()).ok()?;
     }
+    let record = fsl_route::request::items_from_requirements(
+        package.graph().requirements(),
+        &registry,
+        named,
+    )
+    .into_iter()
+    .find(|item| {
+        item.occurrence() == claim && item.kind() == Capability::OperationContract
+    });
+    if let Some(record) = record {
+        return Some(record.at_index(index));
+    }
     let extent = crate::analyze::document::boolean_value_clause_extent(package, claim)?;
     let result_bound = package
         .graph()
