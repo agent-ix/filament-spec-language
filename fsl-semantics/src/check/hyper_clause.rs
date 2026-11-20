@@ -1474,6 +1474,20 @@ fn check_finite(
     declarations: &HyperDeclarations<'_>,
     cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
 ) -> Result<CheckedFiniteHyperClause, StageFailure<CheckRefusal>> {
+    // A model alias on a finite trace quantifier is refused before checking
+    // the selected profile, matching the hyper-clause refusal precedence.
+    earliest(
+        form.quantifiers
+            .iter()
+            .filter(|quantifier| quantifier.alias.is_some())
+            .map(|quantifier| {
+                Found::Hyper(HyperCause::QuantifierWithAlias {
+                    span: quantifier.span,
+                })
+            })
+            .collect(),
+    )?;
+
     let temporal = &declarations.temporal;
     let scope = temporal.scope;
     let profile =
@@ -1539,11 +1553,6 @@ fn check_finite(
     let mut finite_traces = BTreeMap::new();
     let mut body_parameters = Vec::new();
     for quantifier in &form.quantifiers {
-        if quantifier.alias.is_some() {
-            found.push(Found::Hyper(HyperCause::QuantifierWithAlias {
-                span: quantifier.span,
-            }));
-        }
         if !names.insert(quantifier.variable.name.clone()) {
             found.push(Found::Hyper(HyperCause::FiniteVariableRepeated {
                 name: quantifier.variable.name.clone(),
