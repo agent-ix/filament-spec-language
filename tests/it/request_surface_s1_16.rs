@@ -1252,7 +1252,6 @@ fn case_binders_match_across_the_source_and_package_routes() {
 /// selection returns the source route's atom.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-6")]
-#[ignore = "QSL-2726: a {file} selection carries no identity rows, so the package world has no model object or source union"]
 fn the_file_form_prints_the_source_routes_atoms() {
     let leaf = "holds(case Shape::Rect(c.versionNumber,2) { Empty: true; Rect(w, h): w+h<=4; Circle(r): r<=2; })";
     let (from_source, from_package) = both_routes_over(leaf, json!({"file": "package.json"}));

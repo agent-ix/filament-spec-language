@@ -615,6 +615,10 @@ pub(super) struct HandoffSelection {
 pub(super) struct RunPackageSelection {
     #[serde(default)]
     pub file: Option<String>,
+    /// FR-1039: the equality witness file beside `file`; read as a present
+    /// value so a non-string refuses naming `package.equality`.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub equality: Option<serde_json::Value>,
     #[serde(default)]
     pub directory: Option<String>,
     /// The exact source reference required when this package is exported.
