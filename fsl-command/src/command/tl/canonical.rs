@@ -29,6 +29,73 @@ pub(super) struct CanonicalRows {
     type_arguments: BTreeMap<String, String>,
 }
 
+impl CanonicalRows {
+    /// Build the declaration and function spellings a package-backed
+    /// expression needs from its FR-940 read projection and admitted world.
+    pub(super) fn from_projection(
+        projection: &fsl_package::ReaderProtocolProjection,
+        types: &filament_semantic_value::declaration::TypeEnvironment,
+    ) -> Result<Self, String> {
+        use filament_semantic_value::declaration::CompositeShape;
+
+        let expression = CheckedExpression::from_projection(projection)?;
+        let mut rows = Self::default();
+        for composite in types.composites() {
+            let key = composite.key();
+            rows.declarations
+                .insert(key.clone(), canonical_identity(&key)?);
+            match composite.shape() {
+                CompositeShape::Record(fields) => {
+                    rows.record_fields.insert(
+                        key,
+                        fields.iter().map(|field| field.name().to_owned()).collect(),
+                    );
+                }
+                CompositeShape::Union(members) => {
+                    rows.union_members.insert(
+                        key,
+                        members
+                            .iter()
+                            .map(|member| member.identifier().to_owned())
+                            .collect(),
+                    );
+                }
+                CompositeShape::Tuple(_) => {}
+            }
+        }
+        for node in &expression.nodes {
+            match &node.kind {
+                NodeKind::Call {
+                    function: function_index,
+                    ..
+                } => {
+                    let function = projection
+                        .function(*function_index)
+                        .ok_or_else(|| "reader call has its admitted function".to_owned())?;
+                    rows.functions
+                        .insert(*function_index, canonical_identity(function.node)?);
+                }
+                NodeKind::ImportedCall { callee, .. } => {
+                    rows.declarations
+                        .insert(callee.clone(), canonical_identity(callee)?);
+                }
+                NodeKind::Literal(CheckedLiteral(Value::Enum(member))) => {
+                    let owner = member.variant().owner().clone();
+                    rows.declarations
+                        .insert(owner.clone(), canonical_identity(&owner)?);
+                }
+                NodeKind::Field { field, .. } => {
+                    let declaration = field.declaration();
+                    rows.declarations
+                        .insert(declaration.clone(), canonical_identity(&declaration)?);
+                }
+                _ => {}
+            }
+        }
+        Ok(rows)
+    }
+}
+
 /// A checked expression arena with children remapped to its own indices.
 pub(super) struct CheckedExpression {
     nodes: Vec<ExpressionNode>,
@@ -80,6 +147,63 @@ impl CheckedExpression {
         Ok(Self { nodes, root })
     }
 
+    /// Normalize an FR-940 reader projection into the same arena used by the
+    /// source route. Reader node indices and source `NodeId`s are independent
+    /// of the printer, so both routes render the exact checked node forms
+    /// through one implementation.
+    pub(super) fn from_projection(
+        projection: &fsl_package::ReaderProtocolProjection,
+    ) -> Result<Self, String> {
+        let root = projection.root();
+        let mut pending = vec![(root, false)];
+        let mut visited = HashSet::new();
+        let mut postorder = Vec::new();
+        while let Some((index, exiting)) = pending.pop() {
+            if exiting {
+                postorder.push(index);
+                continue;
+            }
+            if !visited.insert(index) {
+                continue;
+            }
+            let children = projection
+                .children(index)
+                .ok_or_else(|| "reader projection children are retained".to_owned())?;
+            pending.push((index, true));
+            pending.extend(children.iter().rev().map(|child| (*child, false)));
+        }
+        let indices = postorder
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (*node, index))
+            .collect::<HashMap<_, _>>();
+        let nodes = postorder
+            .iter()
+            .map(|index| {
+                let kind = projection
+                    .kind(*index)
+                    .ok_or_else(|| "reader projection node is retained".to_owned())?
+                    .map_ref(
+                        |child| indices.get(child).copied().unwrap_or(usize::MAX),
+                        Clone::clone,
+                    );
+                let value_type = projection
+                    .value_type(*index)
+                    .ok_or_else(|| "reader projection type is retained".to_owned())?
+                    .clone();
+                Ok(ExpressionNode {
+                    kind,
+                    value_type,
+                    type_argument: None,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let root = *indices
+            .get(&projection.root())
+            .ok_or_else(|| "reader projection root is retained".to_owned())?;
+        Ok(Self { nodes, root })
+    }
+
     /// Render one checked condition using the FR-003 expression precedence
     /// rules and declaration keys held by the checked tree.
     ///
@@ -92,12 +216,28 @@ impl CheckedExpression {
         binders: &[String],
         rows: &CanonicalRows,
     ) -> Result<String, String> {
+        let binders = binders
+            .iter()
+            .enumerate()
+            .map(|(slot, name)| (slot, name.clone()))
+            .collect::<Vec<_>>();
+        self.render_with_slots(&binders, rows)
+    }
+
+    /// Render with the reader projection's explicit local-slot mapping.
+    /// Package projections retain local slots by their admitted binder rows,
+    /// which need not be dense in the clause's declaration order.
+    pub(super) fn render_with_slots(
+        &self,
+        binders: &[(usize, String)],
+        rows: &CanonicalRows,
+    ) -> Result<String, String> {
         let mut scopes = Vec::<Scope>::new();
         let mut root_env: Env = None;
-        for (slot, name) in binders.iter().enumerate() {
+        for (slot, name) in binders {
             scopes.push(Scope {
                 parent: root_env,
-                slot,
+                slot: *slot,
                 entry: Entry::Name(name.clone()),
             });
             root_env = Some(scopes.len() - 1);
@@ -515,6 +655,16 @@ impl Printer<'_> {
         let printed = match &node.kind {
             NodeKind::Literal(literal) => (literal_text(&literal.0, &rows.declarations)?, 10),
             NodeKind::Coerce(operand, _) => (child(*operand)?, child_prec(*operand)?),
+            // A bounded integer widened to `Integer` is the same value, so the
+            // conversion the checker inserts prints as its operand.
+            NodeKind::ConvertScalar(target, operand)
+                if matches!(
+                    (target.target(), &self.expression.nodes[*operand].value_type),
+                    (Some(ValueType::Integer), ValueType::Int(_))
+                ) =>
+            {
+                (child(*operand)?, child_prec(*operand)?)
+            }
             NodeKind::Local(slot) => {
                 let scope = self
                     .lookup(env, *slot)
@@ -959,6 +1109,20 @@ fn malformed(what: &str) -> String {
     format!("checked expression is malformed: {what}")
 }
 
+fn canonical_identity(key: &NodeKey) -> Result<String, String> {
+    let path = key
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text.to_owned()),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| "package declaration has a canonical text identity".to_owned())?;
+    Ok(format!("ix://{}/{}", key.package(), path.join("/")))
+}
+
 /// Build labels solely from the retained checked source conditions and their
 /// positional clause binders. Source slices are deliberately not involved.
 pub(super) fn source_labels(
@@ -986,6 +1150,23 @@ pub(super) fn source_labels(
                 .map(|label| (*atom, format!("holds({label})")))
         })
         .collect()
+}
+
+/// Build the canonical atom text from an FR-940 package clause-term view.
+/// Binder names and slot identities come only from the admitted package
+/// projection and clause form; the caller supplies the package-derived type
+/// rows used by the shared printer.
+pub(super) fn package_label(
+    term: &fsl_package::BareClauseTerm,
+    rows: &CanonicalRows,
+) -> Result<String, String> {
+    let slots = term
+        .named_binders()
+        .map(|(slot, name)| (slot, name.to_owned()))
+        .collect::<Vec<_>>();
+    CheckedExpression::from_projection(term.projection())?
+        .render_with_slots(&slots, rows)
+        .map(|label| format!("holds({label})"))
 }
 
 fn checked_children(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
@@ -1128,6 +1309,22 @@ mod tests {
             nodes,
             NodeKind::Literal(CheckedLiteral(Value::Float(IeeeValue::binary64(bits)))),
         )
+    }
+
+    /// FR-931 package projections retain their reader slot ids and map each
+    /// id to the admitted temporal-clause binder before rendering.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-13")]
+    fn reader_binder_slot_maps_to_the_clause_name() {
+        let mut nodes = Vec::new();
+        let root = ordinary(&mut nodes, NodeKind::Local(7));
+        let expression = CheckedExpression { nodes, root };
+        assert_eq!(
+            expression
+                .render_with_slots(&[(7, "clock".to_owned())], &CanonicalRows::default())
+                .unwrap(),
+            "clock"
+        );
     }
 
     /// The checker's FR-397 composition of `lesser < greater` (strict) or

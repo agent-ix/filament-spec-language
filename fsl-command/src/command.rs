@@ -770,6 +770,13 @@ pub enum RunCause {
         /// Why this member is invalid.
         reason: String,
     },
+    /// FR-1039: a member whose run builds states over the package's model
+    /// world, selected over a `{file}` package that carries no handoff rows.
+    #[error("invalid clause request member {member}: it needs a package selected as a directory")]
+    RequiresDirectory {
+        /// The wire member that needs the handoff rows.
+        member: String,
+    },
     /// Typed output serialization failed.
     #[error("cannot serialize native result: {0}")]
     Output(#[source] serde_json::Error),
@@ -1071,6 +1078,7 @@ impl RunCause {
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
             Self::ClauseRequest { .. }
+            | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
@@ -1289,6 +1297,7 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
+            | RunCause::RequiresDirectory { .. }
             | RunCause::IntegerDivisionLaw { .. }
             | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }

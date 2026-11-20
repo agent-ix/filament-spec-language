@@ -752,6 +752,21 @@ fn a_clause_function_body_carries_its_location_rows() {
             .all(|row| row["location"]["origin"] == function),
         "both rows belong to the clause function"
     );
+    let function_node = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("graph nodes")
+        .iter()
+        .find(|node| node["node_id"] == function["function"])
+        .expect("the rows' function node is emitted");
+    let clause = function_node["body"]["members"]
+        .as_array()
+        .and_then(|members| members.iter().find(|member| member["name"] == "clause"))
+        .map(|member| member["value"]["value"].clone());
+    assert_eq!(
+        clause,
+        Some(json!("precondition")),
+        "the rows locate a clause function: {function_node}"
+    );
 
     let refused_at = |wire: &Value| match CheckedPackageV2::read(
         &serde_json::to_vec(wire).unwrap(),

@@ -66,25 +66,7 @@ pub(super) fn declaration_has_ieee_literal(declaration: &HyperDeclaration) -> bo
             form.match_block
                 .as_ref()
                 .is_some_and(|block| block.expression.contains_ieee_literal())
-                || form.body.nodes().iter().any(|node| match node {
-                    fsl_forms::TemporalNodeForm::Holds { condition, .. } => {
-                        condition.expression.contains_ieee_literal()
-                    }
-                    fsl_forms::TemporalNodeForm::AggregateAtom(atom) => {
-                        atom.term
-                            .value
-                            .as_ref()
-                            .is_some_and(|value| value.expression.contains_ieee_literal())
-                            || atom
-                                .term
-                                .filter
-                                .as_ref()
-                                .is_some_and(|filter| filter.expression.contains_ieee_literal())
-                            || atom.threshold.expression.contains_ieee_literal()
-                    }
-                    fsl_forms::TemporalNodeForm::Constant { .. }
-                    | fsl_forms::TemporalNodeForm::Operator(_) => false,
-                })
+                || super::temporal_clause::nodes_have_ieee_literal(form.body.nodes())
         }
         HyperDeclaration::Finite(form) => form.body.expression.contains_ieee_literal(),
         HyperDeclaration::Relation(form) => form.body.expression.contains_ieee_literal(),

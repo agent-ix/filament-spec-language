@@ -218,6 +218,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 Value::String(path.clone()),
             )])),
         ),
+        RunCause::RequiresDirectory { member } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([
+                ("member".to_owned(), Value::String(member.clone())),
+                ("requires".to_owned(), Value::String("directory".to_owned())),
+            ])),
+        ),
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice

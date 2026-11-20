@@ -758,7 +758,7 @@ fn a_workload_reads_back_as_the_s3_record() {
 /// FSL FR-740: an enum-valued random parameter is emitted with an `enum`
 /// support literal typed at the enumeration and naming each case, and the
 /// strict reader admits it.
-#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("TC-2062")]
 #[test]
 fn an_enum_valued_random_parameter_is_emitted_and_read_back() {
     use super::variant_types::fixture;
@@ -801,7 +801,7 @@ fn an_enum_valued_random_parameter_is_emitted_and_read_back() {
 /// FSL FR-740: a Boolean-valued random parameter is emitted with `boolean`
 /// support literals `true` and `false` at their exact weights, and the strict
 /// reader admits it.
-#[trace("TC-2062", "FR-740-AC-1")]
+#[trace("TC-2062")]
 #[test]
 fn a_boolean_valued_random_parameter_is_emitted_and_read_back() {
     use super::abstraction::fixture;
