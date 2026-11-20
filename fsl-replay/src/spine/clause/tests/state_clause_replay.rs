@@ -1167,7 +1167,7 @@ fn public_witness_derivation_refuses_out_of_range_post_state_before_clause_truth
             crate::ReplayLimits::default(),
         )
         .expect_err("an out-of-range post value takes precedence over clause truth");
-        assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput);
+        assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput.as_str());
         assert_eq!(refusal.cause(), Some("invalid-value"));
         assert_eq!(
             refusal.pointer().as_deref(),

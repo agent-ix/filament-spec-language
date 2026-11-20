@@ -63,16 +63,14 @@ pub enum DerivationRefusal {
 
 impl DerivationRefusal {
     /// The catalog code for this refusal.
-    pub fn code(&self) -> Code {
+    pub fn code(&self) -> &str {
         match self {
-            Self::Replay(refusal) => refusal.code(),
-            Self::RangeViolation(_) | Self::NotRefuted => Code::InvalidRuntimeInput,
-            Self::Fault(_) => Code::RuntimeInvariant,
-            Self::Refused(refusal) => {
-                Code::from_code(&refusal.code).unwrap_or(Code::RuntimeInvariant)
-            }
-            Self::Exhausted => Code::ResourceExhausted,
-            Self::Undefined { .. } => Code::UndefinedExpression,
+            Self::Replay(refusal) => refusal.code().as_str(),
+            Self::RangeViolation(_) | Self::NotRefuted => Code::InvalidRuntimeInput.as_str(),
+            Self::Fault(_) => Code::RuntimeInvariant.as_str(),
+            Self::Refused(refusal) => &refusal.code,
+            Self::Exhausted => Code::ResourceExhausted.as_str(),
+            Self::Undefined { .. } => Code::UndefinedExpression.as_str(),
         }
     }
 
@@ -124,14 +122,21 @@ pub fn derive_state_clause_witness(
     }
 
     let report = prepared.check.report;
-    match report.disposition {
+    classify_clause_outcome(report.disposition, report.witness)
+}
+
+fn classify_clause_outcome(
+    disposition: ClauseDisposition,
+    witness: Option<SeparatingWitnessRecord>,
+) -> Result<Option<SeparatingWitnessRecord>, DerivationRefusal> {
+    match disposition {
         ClauseDisposition::Admit(failure)
         | ClauseDisposition::SnapshotAdmission { failure, .. } => {
             Err(DerivationRefusal::Replay(ReplayRefusal::Admission(failure)))
         }
         ClauseDisposition::EvaluateFault(fault) => Err(DerivationRefusal::Fault(fault)),
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(false))) => {
-            Ok(report.witness)
+            Ok(witness)
         }
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true))) => {
             Err(DerivationRefusal::NotRefuted)
@@ -177,6 +182,55 @@ pub fn derive_state_clause_witness(
         | ClauseDisposition::TemporalValuation(_) => Err(DerivationRefusal::Fault(
             InternalFault::new("replay", "clause-check-reports-admission-or-evaluation"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TC-3121: an evaluator invariant fault remains the typed internal
+    /// fault rather than becoming a missing witness or a replay refusal.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-8")]
+    #[test]
+    fn in_crate_fault_disposition_remains_a_derivation_fault() {
+        let fault = InternalFault::new("S6a", "checked-program-invariant");
+        let error = classify_clause_outcome(
+            ClauseDisposition::EvaluateFault(fault),
+            None,
+        )
+        .expect_err("an in-crate fault is a typed derivation refusal");
+        assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
+        assert!(matches!(error, DerivationRefusal::Fault(_)));
+    }
+
+    /// TC-3121: the undefined evaluator outcome keeps its native cause and
+    /// source expression location at the derivation boundary.
+    #[ix_trace_rs::trace("TC-3121", "FR-269-AC-7")]
+    #[test]
+    fn undefined_disposition_keeps_location_and_cause() {
+        let location = ExpressionLocation::at(
+            filament_semantic_value::location::ExpressionOwner::StateClause {
+                clause: "UndefinedDivision".to_owned(),
+                index: 0,
+            },
+            &[0],
+        );
+        let error = classify_clause_outcome(
+            ClauseDisposition::Evaluate(CallOutcome::Undefined {
+                reason: "division-by-zero",
+                location: Some(location.clone()),
+            }),
+            None,
+        )
+        .expect_err("an undefined evaluation has no witness");
+        assert_eq!(error.code(), Code::UndefinedExpression.as_str());
+        assert_eq!(error.cause(), Some("division-by-zero"));
+        assert!(matches!(
+            error,
+            DerivationRefusal::Undefined { expression, cause }
+                if expression == location && cause == "division-by-zero"
+        ));
     }
 }
 

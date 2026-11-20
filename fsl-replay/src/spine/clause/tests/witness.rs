@@ -144,17 +144,30 @@ fn witness_unit() -> Unit {
     unit_for(witness_unit_text(), config_version_domain_document())
 }
 
-fn tc_3121_unit() -> Unit {
-    let text = witness_unit_text()
+fn tc_3121_unit_text() -> String {
+    witness_unit_text()
         .lines()
         .filter(|line| {
             !line.starts_with("invariant ")
                 || line.starts_with("invariant AllBelow ")
+                || line.starts_with("invariant RefusedDomain ")
                 || line.starts_with("invariant MatchesParent ")
                 || line.starts_with("invariant AtLeastParent ")
         })
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+}
+
+fn tc_3121_unit() -> Unit {
+    unit_for(tc_3121_unit_text(), config_version_domain_document())
+}
+
+fn tc_3121_undefined_unit() -> Unit {
+    let mut text = tc_3121_unit_text();
+    text.push_str(
+        "\ninvariant UndefinedParent using v on Config::ConfigVersion at current { \
+         value(self.parent).versionNumber = 1 }\n",
+    );
     unit_for(text, config_version_domain_document())
 }
 
@@ -2060,10 +2073,91 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
         crate::ReplayLimits::default(),
     )
     .expect_err("AtLeastParent holds over the high snapshot");
-    assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput);
+    assert_eq!(refusal.code(), crate::Code::InvalidRuntimeInput.as_str());
     assert_eq!(refusal.cause(), Some("invalid-value"));
     assert_eq!(
         refusal.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+}
+
+/// FR-269-AC-7: evaluation refusals and an exhausted meter retain their
+/// catalog codes, causes and observation pointer at the public entry.
+#[trace("TC-3121", "FR-269-AC-7")]
+#[test]
+fn tc_3121_public_derivation_refused_and_exhausted_cases_keep_metadata() {
+    let unit = tc_3121_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "RefusedDomain",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    let refused = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the refusal envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("the RefusedDomain expression refuses during evaluation");
+    assert!(matches!(refused, crate::DerivationRefusal::Refused(_)));
+    assert_eq!(refused.code(), "integer_out_of_domain", "{refused:?}");
+    assert_eq!(refused.cause(), Some("outside-domain"), "{refused:?}");
+    assert_eq!(
+        refused.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+
+    let (mut wire, envelope) = replay_case(
+        &unit,
+        "MatchesParent",
+        Snapshot::High,
+        "mid",
+        None,
+        witness_source(),
+    );
+    wire.accounting_limits = default_accounting(0);
+    let exhausted = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the exhausted envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("the zero accounting budget exhausts evaluation");
+    assert!(matches!(exhausted, crate::DerivationRefusal::Exhausted));
+    assert_eq!(exhausted.code(), crate::Code::ResourceExhausted.as_str());
+    assert_eq!(exhausted.cause(), Some("insufficient-next-charge"));
+    assert_eq!(
+        exhausted.pointer().as_deref(),
+        Some("/family_payload/observation")
+    );
+}
+
+/// FR-269-AC-7: a genuine undefined evaluator result retains its reason and
+/// expression pointer through the public replay preparation path.
+#[trace("TC-3121", "FR-269-AC-7")]
+#[test]
+fn tc_3121_public_derivation_undefined_keeps_catalog_metadata() {
+    let unit = tc_3121_undefined_unit();
+    let (wire, envelope) = replay_case(
+        &unit,
+        "UndefinedParent",
+        Snapshot::Low,
+        "root",
+        None,
+        witness_source(),
+    );
+    let undefined = crate::derive_state_clause_witness(
+        wire,
+        &envelope.expect("the undefined envelope reconstructs"),
+        crate::ReplayLimits::default(),
+    )
+    .expect_err("division by zero is undefined");
+    assert!(matches!(undefined, crate::DerivationRefusal::Undefined { .. }));
+    assert_eq!(undefined.code(), crate::Code::UndefinedExpression.as_str());
+    assert_eq!(undefined.cause(), Some("division-by-zero"));
+    assert_eq!(
+        undefined.pointer().as_deref(),
         Some("/family_payload/observation")
     );
 }
