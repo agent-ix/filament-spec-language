@@ -26,7 +26,7 @@ fn strict_body_lookup_recovers_called_integer_and_uncalled_boolean_values() {
             "score",
             "ix://filament/native/Integer",
             "43",
-            CheckedLiteralValue::Integer(filament_exact::Integer::from(43)),
+            CheckedLiteralValue::Integer(filament_exact::Integer::from(43_i64)),
         ),
         (
             "ready",
