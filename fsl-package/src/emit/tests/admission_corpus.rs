@@ -953,6 +953,11 @@ fn families(package: &CheckedPackage) -> BTreeMap<CheckedNodeKind, Vec<CheckedNo
 /// fixture's domain package documents as
 /// evidence.
 fn read(emitted: &Emitted) -> Result<V2Read, StageFailure<V2ReadRefusal>> {
+    read_bytes(emitted, emitted.emission.package.bytes())
+}
+
+/// [`read`] over `bytes` in place of the emitted package bytes.
+fn read_bytes(emitted: &Emitted, bytes: &[u8]) -> Result<V2Read, StageFailure<V2ReadRefusal>> {
     let mut evidence = read_evidence(&emitted.emission);
     for document in &emitted.documents {
         evidence
@@ -960,7 +965,7 @@ fn read(emitted: &Emitted) -> Result<V2Read, StageFailure<V2ReadRefusal>> {
             .expect("a fresh evidence key");
     }
     read_checked_package_v2(
-        emitted.emission.package.bytes(),
+        bytes,
         library(),
         V2ReadLimits::fixture(),
         &evidence,
@@ -3233,6 +3238,39 @@ fn a_seq_row_lowers_over_its_bounds_with_literal_integer_ranges() {
             assert_eq!(member["value"]["term"], "literal", "{range}");
         }
     }
+}
+
+/// QSL-2729: the strict reader refuses a `seq` application that does not
+/// carry the seq identity over its bounds: the same bytes with the identity
+/// rewritten to `map`, and with an `integer_range` member rewritten to a
+/// reference, are each refused.
+#[test]
+fn a_seq_row_with_a_foreign_identity_or_range_body_is_refused() {
+    let rows = "population A::config_history from C::config_history;\n\
+         object A::ConfigVersion from C::ConfigVersion { versionNumber = \
+         if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber; }";
+    let (emitted, _) = emit_rows(rows, &[]);
+    assert!(read(&emitted).is_ok(), "the unmutated package reads");
+    let original: Value = serde_json::from_slice(emitted.emission.package.bytes()).unwrap();
+    let refused = |edit: &dyn Fn(&mut Value)| {
+        let mut wire = original.clone();
+        edit(&mut wire);
+        read_bytes(&emitted, &serde_json::to_vec(&wire).unwrap()).is_err()
+    };
+    assert!(refused(&|wire| {
+        for node in wire["semantic_graph"]["nodes"].as_array_mut().unwrap() {
+            if node["body"]["operation"]["identity"] == "filament.op.collection.seq" {
+                node["body"]["operation"]["identity"] = json!("filament.op.collection.map");
+            }
+        }
+    }));
+    assert!(refused(&|wire| {
+        for node in wire["semantic_graph"]["nodes"].as_array_mut().unwrap() {
+            if node["semantic_form"] == "integer_range" {
+                node["body"]["members"][0]["value"] = json!({"term": "reference", "target": node["node_id"]});
+            }
+        }
+    }));
 }
 
 /// FSpec FR-341 row binders (SR-1735002 FND-002): over an operation with a

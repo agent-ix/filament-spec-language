@@ -2035,11 +2035,8 @@ fn a_named_count_type_argument_prints_its_alias_key_on_both_routes() {
             format!("ix://{identity}/Small"),
         ),
     ] {
-        let leaf = "holds(forall(b in bags: count<Small>(x in deref(b).xs: x > 1) >= 1))";
-        let unit = declaring_low(
-            &format!("{declarations}\nobject Bag {{ xs: Sequence<Int[0, 9]>[0, 4]; population bags; }}"),
-            leaf,
-        );
+        let leaf = "holds(count<Small>(x in seq(i in 0 .. 3: i): x > 1) >= 1)";
+        let unit = declaring_low(declarations, leaf);
         let (from_source, from_package) =
             unit_both_routes(&unit, json!({"directory": "handoff"}));
         assert!(

@@ -71,13 +71,13 @@ impl ReaderProtocolProjection {
         self.nodes.get(index).map(|node| &node.kind)
     }
 
-    /// The selected exact type of an arena node.
     /// The declaration key of the alias the source wrote as the type argument
     /// of the application at `index`, when it wrote one.
     pub fn type_argument(&self, index: usize) -> Option<&str> {
         self.nodes.get(index)?.type_argument.as_deref()
     }
 
+    /// The selected exact type of an arena node.
     pub fn value_type(&self, index: usize) -> Option<&ValueType> {
         self.nodes.get(index).map(|node| &node.value_type)
     }
