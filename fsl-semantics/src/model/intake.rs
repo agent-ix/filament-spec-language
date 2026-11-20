@@ -1901,18 +1901,19 @@ fn decimal_schema_diagnostic(
         return false;
     }
     match member {
-        "scalar" | "unit" | "decimal" => true,
-        "constraints" => segments
-            .next()
-            .and_then(|index| index.parse::<usize>().ok())
-            .and_then(|index| {
-                type_value
-                    .get("constraints")
-                    .and_then(Value::as_array)
-                    .and_then(|constraints| constraints.get(index))
-            })
-            .and_then(|constraint| constraint.get("keyword"))
-            .is_some(),
+        "scalar" | "unit" | "decimal" => segments.next().is_none(),
+        "constraints" => {
+            let Some(index) = segments.next().and_then(|text| text.parse::<usize>().ok()) else {
+                return false;
+            };
+            let is_decimal_keyword = type_value
+                .get("constraints")
+                .and_then(Value::as_array)
+                .and_then(|constraints| constraints.get(index))
+                .and_then(|constraint| constraint.get("keyword"))
+                .is_some();
+            is_decimal_keyword && segments.next() == Some("keyword") && segments.next().is_none()
+        }
         _ => false,
     }
 }
