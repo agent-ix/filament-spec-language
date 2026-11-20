@@ -34,6 +34,28 @@ fn unit(identity: &str) -> String {
     )
 }
 
+fn assert_origin_sources(value: &serde_json::Value, source_identity: &str) {
+    match value {
+        serde_json::Value::Object(members) => {
+            for (key, value) in members {
+                if key == "origin" {
+                    assert_eq!(
+                        value["source"]["sourceIdentity"], source_identity,
+                        "{value}"
+                    );
+                }
+                assert_origin_sources(value, source_identity);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                assert_origin_sources(value, source_identity);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The unit's selections admitted against an input holding the model unit.
 fn selected_unit_declarations(
     identity: &str,
@@ -213,10 +235,7 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
     let packages = package_input_from_sources([&source]).expect("source compiles to input");
     let document: serde_json::Value =
         serde_json::from_slice(&packages["example/shop"]).expect("compiled document is JSON");
-    assert_eq!(
-        document["types"][0]["fields"][0]["origin"]["source"]["sourceIdentity"],
-        "ix://agent-ix/test:shop-model"
-    );
+    assert_origin_sources(&document, "ix://agent-ix/test:shop-model");
     let selected = unit("example/shop");
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "model-unit-source-intake"),
