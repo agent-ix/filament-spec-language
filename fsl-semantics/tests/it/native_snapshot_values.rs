@@ -2259,6 +2259,23 @@ fn reference_key(value: &Datum) -> String {
     held.object().as_str().to_owned()
 }
 
+/// The steps of a snapshot field refusal's document path below the field
+/// `field` itself, after checking that the path starts at
+/// `populations/<i>/objects/<j>/fields/<field>`.
+fn below_field<'p>(path: &'p [PathStep], field: &str) -> &'p [PathStep] {
+    match path {
+        [PathStep::Field(populations), PathStep::Index(_), PathStep::Field(objects), PathStep::Index(_), PathStep::Field(fields), PathStep::Field(name), rest @ ..]
+            if populations == "populations"
+                && objects == "objects"
+                && fields == "fields"
+                && name == field =>
+        {
+            rest
+        }
+        _ => panic!("{path:?} is not a path below the snapshot field {field}"),
+    }
+}
+
 /// The admission record of a refused outcome.
 fn record_of<T: Debug>(
     outcome: Result<T, AdmissionFailure>,
@@ -2737,7 +2754,7 @@ fn native_collection_quantity_spellings_share_a_member() {
         if unique {
             let record = record_of(result);
             assert_eq!(record.catalog.cause(), "duplicate-member");
-            assert_eq!(record.path, [PathStep::Index(1)]);
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
         } else {
             let closure = result.unwrap();
             let elements = elements_of(&replay.value(&closure, "reach"));
@@ -2792,18 +2809,24 @@ fn native_collection_document_members_follow_the_declared_kind() {
     ] {
         let mut parameters = retag_parameters();
         parameters[field] = value.clone();
-        for record in [
-            record_of(replay.admit(
-                &with(collection_fields(), field, value.clone()),
-                ObservationLimits::default(),
-            )),
-            record_of(replay.invoke(
-                "retag",
-                Selected::Postcondition,
-                parameters,
-                json!({"set":[]}),
-                ObservationLimits::default(),
-            )),
+        for (record, snapshot) in [
+            (
+                record_of(replay.admit(
+                    &with(collection_fields(), field, value.clone()),
+                    ObservationLimits::default(),
+                )),
+                true,
+            ),
+            (
+                record_of(replay.invoke(
+                    "retag",
+                    Selected::Postcondition,
+                    parameters,
+                    json!({"set":[]}),
+                    ObservationLimits::default(),
+                )),
+                false,
+            ),
         ] {
             assert_eq!(
                 record.catalog.code(),
@@ -2821,7 +2844,16 @@ fn native_collection_document_members_follow_the_declared_kind() {
                 member,
                 "{value}"
             );
-            assert!(record.path.is_empty(), "{value}: {:?}", record.path);
+            if snapshot {
+                // A snapshot field's document path ends at the named member.
+                let named: Vec<PathStep> = member
+                    .map(|member| PathStep::Field(member.to_owned()))
+                    .into_iter()
+                    .collect();
+                assert_eq!(below_field(&record.path, field), named, "{value}");
+            } else {
+                assert!(record.path.is_empty(), "{value}: {:?}", record.path);
+            }
         }
     }
     // A non-object element is still an entry for the bound check. Its
@@ -2848,7 +2880,7 @@ fn native_collection_document_members_follow_the_declared_kind() {
         ObservationLimits::default(),
     ));
     assert_eq!(invalid.catalog.cause(), "wrong-value-kind");
-    assert_eq!(invalid.path, [PathStep::Index(1)]);
+    assert_eq!(below_field(&invalid.path, "counts"), [PathStep::Index(1)]);
 }
 
 /// A native Duration is the quantity over the compiling unit's seconds.
@@ -2913,7 +2945,7 @@ fn native_collection_duration_uses_the_declared_second() {
         if unique {
             let record = record_of(result);
             assert_eq!(record.catalog.cause(), "duplicate-member");
-            assert_eq!(record.path, [PathStep::Index(1)]);
+            assert_eq!(below_field(&record.path, "reach"), [PathStep::Index(1)]);
         } else {
             let closure = result.unwrap();
             assert_eq!(elements_of(&replay.value(&closure, "reach")).len(), 2);

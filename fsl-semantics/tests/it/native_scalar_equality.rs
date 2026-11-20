@@ -474,7 +474,10 @@ fn bytes_and_json_object_name_their_native_types() {
         "filament.op.json_object.eq",
     ] {
         assert_eq!(
-            identities.iter().filter(|found| **found == identity).count(),
+            identities
+                .iter()
+                .filter(|found| **found == identity)
+                .count(),
             1,
             "{identity}: {identities:?}"
         );

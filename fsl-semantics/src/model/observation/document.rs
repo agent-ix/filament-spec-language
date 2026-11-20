@@ -3308,11 +3308,18 @@ pub(super) fn admit_population_values<'t>(
                                 PathStep::Field("fields".to_owned()),
                                 PathStep::Field(name.to_owned()),
                             ];
+                            // The steps inside the field (a collection
+                            // index, an option payload, a nested record
+                            // field or a magnitude) stay under the field.
+                            path.append(&mut record.path);
                             let member = record.fields.get("member").cloned();
                             let refusal_path = member.as_ref().map_or_else(
                                 || field_path.clone(),
                                 |member| {
-                                    path.push(PathStep::Field(member.clone()));
+                                    let named = PathStep::Field(member.clone());
+                                    if path.last() != Some(&named) {
+                                        path.push(named);
+                                    }
                                     format!("{field_path}/{}", json_pointer_segment(member))
                                 },
                             );
