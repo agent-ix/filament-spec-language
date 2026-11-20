@@ -2892,7 +2892,7 @@ fn package_input_from_formal_sources(
             )
             .map_err(|refusal| RunCause::ClauseRequest {
                 member: "models".to_owned(),
-                reason: refusal.to_string(),
+                reason: format!("{refusal:?}"),
             })?;
             fsl_semantics::model::intake::package_input_from_sources([(
                 selected_identity.as_str(),
