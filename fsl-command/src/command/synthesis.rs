@@ -750,7 +750,7 @@ fn run_package_synthesis(
             projected.satisfies(),
             projected.candidate_slot(),
             candidate,
-            meter.borrow_mut().as_mut(),
+            &mut *meter.borrow_mut(),
         ) {
             Ok(filament_exact::Value::Boolean(value)) => value,
             Ok(value) => {
@@ -767,7 +767,7 @@ fn run_package_synthesis(
             projected.satisfies(),
             projected.candidate_slot(),
             candidate,
-            meter.borrow_mut().as_mut(),
+            &mut *meter.borrow_mut(),
         ) {
             Ok(filament_exact::Value::Boolean(true)) => Ok(()),
             Ok(filament_exact::Value::Boolean(false)) => {
