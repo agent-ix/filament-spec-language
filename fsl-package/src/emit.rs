@@ -9347,6 +9347,28 @@ fn temporal_binding_rows(
     refs.sort_by(|left, right| {
         (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
     });
+    // A hybrid claim is a temporal clause node too (FR-447), and its
+    // declared name belongs to its claim occurrence like any clause's.
+    for site in graph.hybrid_claim_sites() {
+        let declaration = emitted_node_ids
+            .get(&site.identity)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        keyed_names.push((
+            site.identity.clone(),
+            filament_contract_model::TemporalClauseName {
+                declaration_region: declaration_region(
+                    source_map,
+                    &declaration,
+                    &claim_occurrence(site.claim.ordinal()),
+                    site.span,
+                )?,
+                declaration,
+                occurrence: site.claim.ordinal(),
+                name: site.name.as_str().into(),
+            },
+        ));
+    }
     keyed_names.sort_by(|(left_key, left), (right_key, right)| {
         (left_key, left.occurrence).cmp(&(right_key, right.occurrence))
     });
