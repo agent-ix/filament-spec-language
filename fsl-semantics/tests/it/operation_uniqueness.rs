@@ -254,3 +254,82 @@ fn operation_and_frame_order_do_not_change_the_selected_declarations() {
     };
     assert_eq!(operations(&forward[0]), operations(&reverse[0]));
 }
+
+#[trace("TC-1307", "FR-512-AC-6", "FR-512-AC-17")]
+#[test]
+fn an_explicit_redefinition_keeps_its_own_operation_identity() {
+    let parent = query("advance", json!([]));
+    let bytes = super::model_operations::add_sub_type(input(vec![parent]), &[]);
+    let mut document: Value = serde_json::from_slice(&bytes).expect("original model JSON");
+    let mut child = query("advance", json!([]));
+    child["identity"] = json!(format!("ix://{PACKAGE_IDENTITY}/Sub/advance"));
+    child["redefines"] = json!(key("advance"));
+    let types = document["types"].as_array_mut().expect("types");
+    types
+        .iter_mut()
+        .find(|node| node["identity"] == format!("ix://{PACKAGE_IDENTITY}/Sub"))
+        .expect("declared subtype")["operations"] = json!([child]);
+    let selected = admit(&serde_json::to_vec(&document).expect("model bytes"))
+        .expect("explicit operation redefinition admits");
+    let keys: Vec<_> = selected[0]
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::OperationMember(op) => Some(op.key.node.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(keys.contains(&key("advance").as_str()));
+    assert!(keys.contains(&format!("ix://{PACKAGE_IDENTITY}/Sub/advance").as_str()));
+}
+
+#[trace("TC-1307", "FR-512-AC-5", "FR-512-AC-16")]
+#[test]
+fn repeated_operation_name_preempts_the_second_operations_reserved_parameter() {
+    let first = query("advance", json!([]));
+    let mut second = query(
+        "other",
+        json!([operation_parameter("other", "result", INTEGER)]),
+    );
+    second["name"] = json!("advance");
+    refusal(
+        &input(vec![first, second]),
+        "ambiguous_declaration",
+        "ambiguous-name",
+        &key("other"),
+        "TypeDefinition.operations[1].name",
+    );
+}
+
+#[trace("TC-1307", "FR-512-AC-12", "FR-512-AC-14")]
+#[test]
+fn different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type() {
+    let field = key("versionNumber");
+    let object = format!("ix://{PACKAGE_IDENTITY}/ConfigVersion");
+    let mut op = query("advance", json!([]));
+    op["frame"] = json!({"modifies": [], "creates": [object.clone()], "deletes": [object.clone()]});
+    let selected = admit(&input(vec![op])).expect("creation and deletion are independent grants");
+    let effect = selected[0]
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(op) => Some(&op.effect),
+            _ => None,
+        })
+        .expect("operation");
+    assert_eq!(effect.creates[0].node, object);
+    assert_eq!(effect.deletes[0].node, object);
+    let mut op = query("advance", json!([]));
+    op["frame"] = json!({"modifies": [field.clone()], "modifies_receiver": [field], "creates": [], "deletes": []});
+    let refusal = admit(&input(vec![op])).expect_err("a field cannot have both write scopes");
+    let UnitIntakeCause::Refused(found) = refusal.cause else {
+        panic!("{refusal:?}");
+    };
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].code.as_str(), "invalid_model_binding");
+    assert_eq!(found[0].cause.as_str(), "conflicting-binding");
+}
