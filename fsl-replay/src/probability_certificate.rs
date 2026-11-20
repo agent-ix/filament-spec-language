@@ -493,7 +493,7 @@ pub fn region_probability_product_key(
         if corner.len() != clock_count + usize::from(deadline_values.is_some()) {
             return Err(ExactProbabilityGraphError::InvalidDigitalKey);
         }
-        model[1][1]
+        model[1]
             .as_array_mut()
             .ok_or(ExactProbabilityGraphError::InvalidDigitalKey)?
             .push(json!(corner));

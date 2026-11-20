@@ -579,7 +579,9 @@ fn run_timed_mean(
     };
     let scale = match crate::exact_probabilistic::timed_certificate_scale(&system, &timed, claim) {
         Ok(scale) => scale,
-        Err(refusal) => return build_refusal(refusal, subject),
+        Err(refusal) => {
+            return build_refusal(refusal, subject);
+        }
     };
     let built = match build_retaining_monitor(
         ProductRequest {
@@ -590,7 +592,9 @@ fn run_timed_mean(
         cancel,
     ) {
         Ok((built, _)) => built,
-        Err(refusal) => return build_refusal(refusal, subject),
+        Err(refusal) => {
+            return build_refusal(refusal, subject);
+        }
     };
     let ProbBuild::Built(product) = built else {
         return not_yet();
@@ -636,7 +640,9 @@ fn run_timed_mean(
                 subject,
             );
         }
-        Err(_) => return broken(),
+        Err(error) => {
+            return broken();
+        }
     };
     if solved
         .values
@@ -671,7 +677,9 @@ fn run_timed_mean(
         cancel,
     ) {
         Ok(certificate) => certificate,
-        Err(error) => return document_failure(error, subject),
+        Err(error) => {
+            return document_failure(error, subject);
+        }
     };
     let included = match mean_time_reachable_before_target(&product, &target) {
         Some(included) => included,
