@@ -1221,6 +1221,10 @@ impl RunError {
         &self,
         operation: fsl_replay::Operation,
     ) -> fsl_replay::OutcomeDocument {
+        self.refusal_document(operation).with_empty_analyze_members()
+    }
+
+    fn refusal_document(&self, operation: fsl_replay::Operation) -> fsl_replay::OutcomeDocument {
         use fsl_replay::{OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
         match &self.cause {

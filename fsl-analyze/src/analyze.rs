@@ -908,8 +908,13 @@ impl<T> std::ops::Deref for Spelled<T> {
 impl AnalyzeRefusal {
     /// The FR-286 `analyze` document of a whole-request refusal: the
     /// admission failure's category, one diagnostic with its catalog code and
-    /// cause, and no item.
+    /// cause, and no item, with the empty `aggregate` and `registry` FR-621
+    /// requires of every `analyze` document.
     pub fn document(&self) -> OutcomeDocument {
+        self.refusal_document().with_empty_analyze_members()
+    }
+
+    fn refusal_document(&self) -> OutcomeDocument {
         match self {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
