@@ -330,7 +330,10 @@ object Node { relationship next: Ghost [0, 1]; }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
         .expect_err("an undeclared relationship target is refused");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
@@ -361,7 +364,10 @@ object Node { }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
         .expect_err("duplicate object identities are refused");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
@@ -391,7 +397,10 @@ record Row { amount: Integer; operation update(); }
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
         .expect_err("FSpec does not admit operations on record value types");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
@@ -420,7 +429,10 @@ domain "filament/native/x";
         fsl_cst::Limits::default(),
     )
     .expect("source metadata admitted");
-    let diagnostics = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+    let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
+        &parsed,
+        ModelNormalizationLimits::default(),
+    )
         .expect_err("the native domain namespace is reserved");
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
