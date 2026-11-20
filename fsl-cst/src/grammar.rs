@@ -392,7 +392,7 @@ fn source_and_types(g: &mut Grammar) {
         P::DomainDeclaration,
         c(vec![
             r(P::DomainObject),
-            r(P::RecordDeclaration),
+            r(P::DomainRecordDeclaration),
             r(P::EnumDeclaration),
             r(P::TupleDeclaration),
             r(P::UnionDeclaration),
@@ -438,6 +438,16 @@ fn source_and_types(g: &mut Grammar) {
                 r(P::DomainOperation),
                 r(P::DomainInvariant),
             ])),
+            x("}"),
+        ]),
+    );
+    g.insert(
+        P::DomainRecordDeclaration,
+        s(vec![
+            x("record"),
+            type_ident(),
+            x("{"),
+            plus(c(vec![r(P::Field), r(P::DomainOperation)])),
             x("}"),
         ]),
     );

@@ -257,6 +257,25 @@ pub fn compile_model_unit(
                 populations.push(population);
                 index = next;
             }
+            Some("record") => {
+                if let Some(span) = record_operation_span(&tokens, index) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::UnsupportedConstruct,
+                        CompleteCause::DeclarationForm,
+                        span,
+                        "operations are not admitted on a record value type",
+                    )]);
+                }
+                let token = &tokens[index];
+                return Err(vec![diagnostic(
+                    parsed,
+                    CompleteCode::UnsupportedConstruct,
+                    CompleteCause::DeclarationForm,
+                    token.span,
+                    "record value types are not supported by model-unit compilation",
+                )]);
+            }
             Some(_) => {
                 let token = &tokens[index];
                 return Err(vec![diagnostic(
@@ -367,6 +386,29 @@ pub fn compile_model_unit(
         )]
     })?;
     Ok(CompiledModelUnit { identity, bytes })
+}
+
+fn record_operation_span(tokens: &[Token], mut index: usize) -> Option<Span> {
+    while tokens.get(index)?.text != "{" {
+        index += 1;
+    }
+    index += 1;
+    let mut depth = 1usize;
+    while let Some(token) = tokens.get(index) {
+        match token.text.as_str() {
+            "{" => depth += 1,
+            "}" => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return None;
+                }
+            }
+            "operation" if depth == 1 => return Some(token.span),
+            _ => {}
+        }
+        index += 1;
+    }
+    None
 }
 
 fn read_identity(tokens: &[Token], cursor: &mut usize) -> Option<String> {

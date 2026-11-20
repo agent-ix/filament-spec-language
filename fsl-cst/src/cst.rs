@@ -105,7 +105,7 @@ macro_rules! productions_impl {
 }
 
 productions! {
-    CompleteUnit, ModelUnit, DomainDeclaration, DomainObject, DomainField,
+    CompleteUnit, ModelUnit, DomainDeclaration, DomainObject, DomainRecordDeclaration, DomainField,
     DomainRelationship, DomainMultiplicity, DomainPopulation, DomainOperation,
     DomainContract, DomainInvariant, MapDeclaration, EventDeclaration,
     MachineDeclaration, TransitionDeclaration, ProcessDeclaration, StepDeclaration,

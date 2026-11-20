@@ -227,3 +227,30 @@ object Node { }
     assert_eq!(span.start.byte, second_name);
     assert_eq!(span.end.byte, second_name + "Node".len());
 }
+
+#[trace("FR-710-AC-4", "TC-1943")]
+#[test]
+fn an_operation_on_a_record_refuses_as_an_unsupported_construct() {
+    let source = r#"language "ix:native" edition "1-draft";
+domain "example/records";
+record Row { value: Integer; operation update(); }
+"#;
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "record-operation-model"),
+        "records.fsl",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source metadata admitted");
+    let [diagnostic] = compile_model_unit(&parsed, ModelNormalizationLimits::default())
+        .expect_err("FSpec does not admit operations on record value types");
+    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::UnsupportedConstruct);
+    assert_eq!(diagnostic.cause.as_str(), "declaration-form");
+    let span = parsed
+        .source()
+        .render(diagnostic.region.as_ref().expect("located refusal"))
+        .expect("source region renders");
+    let operation = source.find("operation").expect("operation token");
+    assert_eq!(span.start.byte, operation);
+    assert_eq!(span.end.byte, operation + "operation".len());
+}
