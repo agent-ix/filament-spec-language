@@ -319,8 +319,7 @@ fn admit(
         .iter()
         .filter(|delay| delay.operation().model() == claim.subject.alias.as_str())
     {
-        let admitted =
-            workload.is_some() && matches!(delay.distribution(), DelayDistribution::Discrete(_));
+        let admitted = matches!(delay.distribution(), DelayDistribution::Discrete(_));
         if !admitted {
             let operation = delay.operation();
             return Err(ProductRefusal::DelayDistribution {
@@ -1659,16 +1658,131 @@ impl<'c> Builder<'_, '_, 'c> {
         local: &Rc<Local>,
     ) -> Step<Vec<Planned>> {
         let mut planned = Vec::new();
-        self.running_delays(at, state, local, &mut planned)?;
         let enabled = self.enabled(local, &state.model, &state.clocks)?;
-        for action in enabled {
-            self.identity_edges(at, state, &action, one(), &mut planned)?;
+        if enabled
+            .iter()
+            .any(|action| self.given(&action.identity.operation).is_some())
+        {
+            self.every_discrete_moves(at, state, local, &enabled, &mut planned)?;
+        } else {
+            self.running_delays(at, state, local, &mut planned)?;
+            for action in enabled {
+                self.identity_edges(at, state, &action, one(), &mut planned)?;
+            }
         }
         if planned.is_empty() {
             self.time_locked.push(at);
         }
         self.decisions = true;
         Ok(planned)
+    }
+
+    /// Under every scheduler, given delays are drawn independently and the
+    /// scheduler chooses among identities tied at the least sampled delay.
+    /// Free-delay identities remain ordinary scheduler choices and are
+    /// handled by the running clock moves until a discrete race is admitted.
+    fn every_discrete_moves(
+        &mut self,
+        at: usize,
+        state: &DState,
+        local: &Rc<Local>,
+        enabled: &[Enabled],
+        planned: &mut Vec<Planned>,
+    ) -> Step<()> {
+        let trajectory = self.trajectory(state)?;
+        let windows = self.windows(&trajectory)?;
+        let mut racers = Vec::new();
+        for window in &windows {
+            let Some(support) = self.given(&window.identity.operation) else {
+                continue;
+            };
+            let support = support
+                .into_iter()
+                .map(|(delay, weight)| Ok((self.bound_units(&delay)?, weight)))
+                .collect::<Step<Vec<_>>>()?;
+            let inside = support
+                .into_iter()
+                .filter(|(delay, _)| window.contains(*delay, trajectory.states.len() as u64 - 1))
+                .collect::<Vec<_>>();
+            let total = inside
+                .iter()
+                .fold(zero(), |sum, (_, weight)| sum.add(weight));
+            if total.is_zero() {
+                continue;
+            }
+            let conditioned = inside
+                .into_iter()
+                .map(|(delay, weight)| {
+                    let probability = weight
+                        .div(&total)
+                        .ok_or_else(|| fault("conditioned-weights-sum"))?;
+                    Ok((delay, probability))
+                })
+                .collect::<Step<Vec<_>>>()?;
+            racers.push((window.identity.clone(), conditioned));
+        }
+        if racers.is_empty() {
+            self.running_delays(at, state, local, planned)?;
+            for action in enabled {
+                if self.given(&action.identity.operation).is_none() {
+                    self.identity_edges(at, state, action, one(), planned)?;
+                }
+            }
+            return Ok(());
+        }
+        for draw in Odometer::new(racers.iter().map(|(_, support)| support.len())) {
+            self.poll()?;
+            let mut probability = one();
+            let mut delays = Vec::with_capacity(racers.len());
+            for ((identity, support), index) in racers.iter().zip(&draw) {
+                let (delay, weight) = support
+                    .get(*index)
+                    .ok_or_else(|| fault("odometer-index-in-support"))?;
+                probability = probability.mul(weight);
+                delays.push((identity.clone(), *delay));
+            }
+            let least = delays
+                .iter()
+                .map(|(_, delay)| *delay)
+                .min()
+                .ok_or_else(|| fault("a-race-has-a-racer"))?;
+            let tied = delays
+                .iter()
+                .filter(|(_, delay)| *delay == least)
+                .map(|(identity, _)| identity.clone())
+                .collect::<Vec<_>>();
+            let index = usize::try_from(least).map_err(|_| fault("delay-count"))?;
+            let last = trajectory.states.len().saturating_sub(1);
+            let start = trajectory
+                .states
+                .get(index.min(last))
+                .cloned()
+                .ok_or_else(|| fault("race-delay-is-reachable"))?;
+            for first in 0..tied.len() {
+                let chosen = tied[first].clone();
+                let mut order = Vec::with_capacity(tied.len());
+                order.push(chosen.clone());
+                order.extend(
+                    tied.iter()
+                        .enumerate()
+                        .filter(|(position, _)| *position != first)
+                        .map(|(_, identity)| identity.clone()),
+                );
+                self.chain_edges(
+                    at,
+                    &start,
+                    &order,
+                    (probability.clone(), least == 0, least, &chosen),
+                    Edges { planned, scope: 0 },
+                )?;
+            }
+        }
+        for action in enabled {
+            if self.given(&action.identity.operation).is_none() {
+                self.identity_edges(at, state, action, one(), planned)?;
+            }
+        }
+        Ok(())
     }
 
     /// The edges of one enabled identity at `state`, scaled by `share`.
