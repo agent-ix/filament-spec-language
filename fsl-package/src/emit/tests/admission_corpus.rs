@@ -3282,7 +3282,7 @@ fn fairness_and_operation_rows_name_operation_anchors() {
 
 /// The step and `assume` rows read back with each `operation_anchor`
 /// resolved against its declaring type.
-#[trace("FR-375-AC-21", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
 fn operation_rows_read_back() {
     let (emitted, _) = emit_rows(
