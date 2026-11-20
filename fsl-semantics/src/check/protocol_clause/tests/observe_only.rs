@@ -11,8 +11,7 @@ fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
 }
 
-const ADVISE: &str =
-    "recommend Advise by R on M::Actor::op contracts [] as (r: Boolean) { true };";
+const ADVISE: &str = "recommend Advise by R on M::Actor::op contracts [] as (r: Boolean) { true };";
 
 /// FR-218-AC-45: an observe-only role and an observe-only `sequence` that
 /// read (`check`) and recommend both check, and a capture named `observe`
@@ -77,6 +76,10 @@ fn a_side_effect_under_observe_only_refuses() {
             .map(|(_, at)| at)
             .collect();
         assert_eq!(at, [TRIED], "{roles} {run}: {found:?}");
-        assert_eq!(found.len(), 1, "no refusal at the role or the control: {found:?}");
+        assert_eq!(
+            found.len(),
+            1,
+            "no refusal at the role or the control: {found:?}"
+        );
     }
 }

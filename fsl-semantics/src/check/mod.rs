@@ -235,9 +235,9 @@ pub use refinement::{
     StepRow, StepTarget, UnsupportedFeature,
 };
 pub use terminal::{
-    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
-    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
-    TerminalRefusal, terminal_predicate_site,
+    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
+    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
+    TerminalNode, TerminalRefusal,
 };
 mod type_form;
 mod type_invariant;
@@ -496,7 +496,6 @@ pub use field_refinement::RefinementObligation;
 pub use fsl_forms::{
     AccessOrdering, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector,
 };
-pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 pub use hybrid::{
     hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
@@ -505,6 +504,7 @@ pub use hybrid::{
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
     ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
 };
+pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
@@ -559,10 +559,10 @@ pub use refusal::{
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
-    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
-    state_graph_predicate_site,
-    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
+    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
+    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
+    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
+    StateGraphFamily, StateGraphForm, StatePredicate,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
@@ -1314,7 +1314,10 @@ impl DebugWith for CheckedGraph {
             .field("compositions", &compositions)
             .field("composition_lattice", &composition_lattice)
             .field("verification_plans", &verification_plans)
-            .field("verification_plan_domain_keys", &verification_plan_domain_keys)
+            .field(
+                "verification_plan_domain_keys",
+                &verification_plan_domain_keys,
+            )
             .field("temporal_subject_aliases", &temporal_subject_aliases)
             .field("predicate_names", &predicate_names)
             .field("protocols", &Seq(protocols, table))
@@ -1884,7 +1887,10 @@ fn verification_plan_cycle(
 /// references that do not require the completed clause graph; the graph
 /// itself is checked separately before clause assembly (FR-753/FSpec FR-192).
 fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> bool {
-    package.state_clauses.iter().any(|clause| clause.name == name)
+    package
+        .state_clauses
+        .iter()
+        .any(|clause| clause.name == name)
         || package
             .temporal_clauses
             .iter()
@@ -1897,18 +1903,24 @@ fn verification_plan_claim_exists(package: &PackageDeclarations, name: &str) -> 
             .hybrid_claims
             .iter()
             .any(|claim| claim.form.name.name == name)
-        || package.hyper_clauses.iter().any(|claim| claim.name() == name)
+        || package
+            .hyper_clauses
+            .iter()
+            .any(|claim| claim.name() == name)
         || package
             .refinements
             .iter()
             .any(|claim| claim.form.name.name == name)
-        || package.probabilistic.iter().any(|declaration| match declaration {
-            ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
-            ProbabilisticDeclaration::Random(_)
-            | ProbabilisticDeclaration::Reward(_)
-            | ProbabilisticDeclaration::Delay(_)
-            | ProbabilisticDeclaration::Workload(_) => false,
-        })
+        || package
+            .probabilistic
+            .iter()
+            .any(|declaration| match declaration {
+                ProbabilisticDeclaration::Claim(claim) => claim.name.name == name,
+                ProbabilisticDeclaration::Random(_)
+                | ProbabilisticDeclaration::Reward(_)
+                | ProbabilisticDeclaration::Delay(_)
+                | ProbabilisticDeclaration::Workload(_) => false,
+            })
 }
 
 fn verification_plan_refusal(
@@ -4007,9 +4019,9 @@ impl PackageDeclarations {
                 else {
                     refusals.push(CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(
-                            KeyFault::MissingAdmittedModel(alias.clone()),
-                        )),
+                        cause: CheckCause::InternalFault(Box::new(KeyFault::MissingAdmittedModel(
+                            alias.clone(),
+                        ))),
                     });
                     return Err(refusals);
                 };
@@ -5133,28 +5145,38 @@ impl PackageDeclarations {
         // them a state-graph claim, is refused at its name, naming both; the
         // later is the one that follows in source order.
         let mut named: Vec<(&str, fsl_foundation::Span, Option<usize>)> = Vec::new();
-        named.extend(
-            self.temporal_clauses
-                .iter()
-                .map(|temporal| (temporal.form.name.name.as_str(), temporal.form.name.span, None)),
-        );
+        named.extend(self.temporal_clauses.iter().map(|temporal| {
+            (
+                temporal.form.name.name.as_str(),
+                temporal.form.name.span,
+                None,
+            )
+        }));
         named.extend(
             state_clause_names
                 .iter()
                 .map(|(name, span)| (name.as_str(), *span, None)),
         );
-        named.extend(self.probabilistic.iter().filter_map(|declaration| match declaration {
-            ProbabilisticDeclaration::Claim(claim) => {
-                Some((claim.name.name.as_str(), claim.name.span, None))
-            }
-            _ => None,
-        }));
+        named.extend(
+            self.probabilistic
+                .iter()
+                .filter_map(|declaration| match declaration {
+                    ProbabilisticDeclaration::Claim(claim) => {
+                        Some((claim.name.name.as_str(), claim.name.span, None))
+                    }
+                    _ => None,
+                }),
+        );
         named.extend(
             self.state_graph_claims
                 .iter()
                 .enumerate()
                 .map(|(position, claim)| {
-                    (claim.form.name.name.as_str(), claim.form.name.span, Some(position))
+                    (
+                        claim.form.name.name.as_str(),
+                        claim.form.name.span,
+                        Some(position),
+                    )
                 }),
         );
         named.sort_by_key(|(_, span, _)| span.start);
@@ -8068,10 +8090,7 @@ impl PackageDeclarations {
                             .split_once("::")
                             .unwrap_or(("", step.domain.name.as_str()));
                         let object = Identifier::new(object.to_owned()).ok()?;
-                        model_objects
-                            .get(alias)?
-                            .get(&object)
-                            .cloned()
+                        model_objects.get(alias)?.get(&object).cloned()
                     })
                     .collect()
             })

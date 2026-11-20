@@ -29,7 +29,7 @@ use fsl_forms::{ExprId, ExprNode, Expression, ExpressionSpans, StepLabelForm};
 use fsl_foundation::Span;
 
 use crate::check::abstraction::OperationKey;
-use crate::check::check::{HyperTyping, NamedScope, Scope, StateContext, Typer, bind_parameters};
+use crate::check::check::{bind_parameters, HyperTyping, NamedScope, Scope, StateContext, Typer};
 use crate::check::facts::Definedness;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::observation::Observations;

@@ -3696,12 +3696,12 @@ impl CheckCause {
             },
             Self::DispatchLink(cause) => Some(cause.catalog),
             Self::RewardEvaluation(failure) => Some(failure.catalog),
-            Self::VerificationPlanInapplicableMethod { .. } => Some(
-                filament_semantic_value::catalog::CatalogCode::new(
+            Self::VerificationPlanInapplicableMethod { .. } => {
+                Some(filament_semantic_value::catalog::CatalogCode::new(
                     "invalid_capability",
                     "inapplicable-kind",
-                ),
-            ),
+                ))
+            }
             _ => Some(filament_semantic_value::catalog::CatalogCode::new(
                 self.code().as_str(),
                 self.cause()?,
