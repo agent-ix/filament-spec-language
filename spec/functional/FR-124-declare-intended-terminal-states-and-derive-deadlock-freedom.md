@@ -139,25 +139,21 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 - The deadlock classifier SHALL classify a state of a subject as
   **terminal** when no transition identity is enabled at it, which is when
   FR-120's successor relation gives it no successor (ADR-018 FA-2, DL-2).
-- The deadlock classifier SHALL read every `terminal` declaration the
-  subject's package carries (`ModelSystem::terminal_class` over the
-  package's terminal rows), on both routes. For a package that selects one
-  model identity these are exactly the declarations of every alias that
-  selects that identity (FSpec FR-366 "Several declarations").
+- The deadlock classifier SHALL read only the `terminal` declarations of
+  the model identities the subject reads, on both routes: for each such
+  identity, the declarations of every alias that selects it (FSpec FR-366
+  "Several declarations", FR-124-AC-11). It SHALL NOT consult a declaration
+  of an identity the subject does not read, whatever its form: another
+  model's predicate is not a predicate over the subject's state, and
+  another model's `terminal any` does not make the subject's terminal
+  state intended (as it does not opt the subject out of its item, "The
+  deadlock-freedom item" below).
 - For a package that selects several model identities, the request writer
   derives a deadlock-freedom item only for a subject that reads exactly one
   of them (FSpec FR-361-AC-17, FR-368-AC-22): a subject that reads several,
   or none, has no anchor, its deadlock-freedom item is settled `unsupported`
   with `unsupported_projection`/`unsupported-requested-capability` and no
-  request item, and the classifier is not applied to it. Where the
-  classifier is applied over such a package (a subject that reads one of
-  the identities, or a deadlock-freedom item built through the library
-  entry `deadlock_model_item` over a subject that reads several), it reads
-  the declarations of every identity the package selects, not only those
-  of the identities the subject reads, under the rules below: a declaration
-  on another identity that intends the state (its `terminal any`, or a
-  `when` predicate true at the state, a `self` predicate over no object of
-  its type included) makes the state intended.
+  request item, and the classifier is not applied to it through a request.
 - Each declaration reads a
   terminal state as intending it (`Any`, or `When(P)` with `P` `true` at
   the state's observation by FR-107), not intending it (`P` `false`),
@@ -220,7 +216,7 @@ when` and `terminal any` follow ADR-018 DL-1 and are illustrative.
 | FR-124-AC-9 | In a model with one object type `Counter` covered by two populations, `counters` and `archive`, `terminal Done using v on M when { self.value = 3 };` refuses `ambiguous_declaration`/`ambiguous-name` at `self`, naming `archive` and `counters`; the same predicate written `forall(c in M::counters : c.value = 3)` checks to `When`. In a model with `Counter` in `counters` and `archive` and `Gate` in `gates` (several object types), `self.value = 3` refuses `missing_declaration`/`missing-name` at `self`. | Test (TC-519) |
 | FR-124-AC-10 | In the AC-5 model with no operations and `terminal Done using v on M when { 3 mod (2 - self.value) = 1 or self.value = 3 };` (true at 0 and 3, false at 1, undefined at 2), universe `{c1, c2}`: with `c1.value = 2` and `c2.value = 1` the terminal state is deadlocked (one object false, one `Undefined`); with `c1.value = 2` and `c2.value = 3` it is neither intended nor deadlocked and the deadlock-freedom item settles `refuted` with cause `UndefinedEvaluation`; with `c1.value = 0` and `c2.value = 3` it is intended. | Test (TC-519) |
 | FR-124-AC-11 | On the source route and on the package route, with equal results. A unit selects one model identity under two aliases `M` and `N`; its one object `v` steps `l` from 0 to 1, so the state at `l = 1` is terminal; `q(x)` is `6 mod x`. `terminal Done using v on M when { q(1 - self.l) = 0 };` (undefined at `l = 1`) with `terminal Stop using v on N when { true };` checks (no `ambiguous-name`), the package carries two terminal nodes on the one model node, and the item settles `proved`, also with `Done` on `N` and `Stop` on `M`. `Done` on `M` with `terminal Stop using v on N when { false };` settles `refuted`, `UndefinedEvaluation`, naming `Done`'s terminal key (the identity, `Done`'s ordinal in terminal node key order) with label `M`; with the placements swapped it names the same key with label `N`. `Done` with `terminal Halt using v on N any;` writes no deadlock-freedom item. Swapping the two `model` lines or the two declarations leaves the semantic graph (node ids and bodies), the terminal rows and every report equal. Over FR-380-AC-7's model with no operations (population `PM` bounded `[1]`, universe `{a, b}`, so the initial state is terminal and every read of `M::PM` is refused `cardinality_out_of_bound`/`above-maximum` by the kernel), selected by `M` and `N`: `terminal Done using v on M when { exists(p in M::PM : true) };` with `terminal Stop using v on N when { false };` settles `inconclusive`, `undecided-successor`, naming `Done`'s key, and with `Stop` written `when { true }` settles `proved`. A subject that reads both identities of a unit whose aliases select two, `test/vault` and `test/vault-other`, gets no deadlock-freedom request item (`unsupported`, FSpec FR-368-AC-22) whatever its declarations (FR-124-AC-12). `terminal Done using v on M when { true };` alone intends every terminal state on both routes. | Test (TC-519) |
-| FR-124-AC-12 | On the source route and on the package route, with equal results. The unit selects `test/vault` as `V` and `test/vault-other` as `N`; each has one object `v` that steps `l` from 0 to 1, so the state with both at `l = 1` is terminal; `q(x)` is `6 mod x`. A request whose subject reads both identities (universes over both `vaults` populations) writes no deadlock-freedom request item and settles it `unsupported`, `unsupported_projection`/`unsupported-requested-capability`, whatever the declarations. The deadlock-freedom item built through `deadlock_model_item` over that subject reads both identities' declarations: with `terminal Done using v on V when { q(1 - self.l) = 0 };` (undefined at `l = 1`) and `terminal Stop using v on N when { false };` the terminal state is neither intended nor deadlocked and the item settles `refuted`, `UndefinedEvaluation`, naming `Done`'s key (`test/vault`, 0); with `Done` and `terminal Halt using v on N any;` the terminal state is intended; with `terminal Halt using v on V any;` and `Done` on `N` it is intended; with `Stop` on `N` alone it is deadlocked. A request whose subject reads `test/vault` only, with `Done` on `V` and `Halt` on `N`, writes a deadlock-freedom item (`Halt` is not the subject's own `terminal any`), and that item's terminal states are intended by `Halt`. | Test (TC-519) |
+| FR-124-AC-12 | On the source route and on the package route, with equal results. The unit selects `test/vault` as `V` and `test/vault-other` as `N`; each has one object `v` that steps `l` from 0 to 1 and is then terminal; `q(x)` is `6 mod x`. A request whose subject reads `test/vault` only (a universe over its `vaults` population alone), with `terminal Stop using v on V when { false };` and `terminal Halt using v on N any;`, writes one deadlock-freedom item (`Halt` is not the subject's own `terminal any`), and the subject's terminal state at `l = 1` is deadlocked, not intended on account of `Halt`: the item settles `refuted` with a deadlock counterexample ending at `l = 1`. With `V` declaring no `terminal` and `Halt` on `N` the result is the same; with `terminal Halt using v on V any;` the request writes no deadlock-freedom item; with `terminal Done using v on N when { q(1 - self.l) = 0 };` (undefined at `l = 1`) beside `Stop` on `V`, the item settles `refuted` with the deadlock counterexample and no `UndefinedEvaluation`, since `Done` is never consulted. A request whose subject reads both identities writes no deadlock-freedom request item and settles it `unsupported`, `unsupported_projection`/`unsupported-requested-capability`, whatever the declarations. The deadlock-freedom item built through `deadlock_model_item` over the subject that reads both identities reads both identities' declarations: with `Done` on `V` and `terminal Stop using v on N when { false };` it settles `refuted`, `UndefinedEvaluation`, naming `Done`'s key (`test/vault`, 0). | Test (TC-519) |
 
 ## Dependencies
 

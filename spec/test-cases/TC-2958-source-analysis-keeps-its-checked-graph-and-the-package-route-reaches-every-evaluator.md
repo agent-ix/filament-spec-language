@@ -13,7 +13,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21 and FR-940-AC-22: a source run whose compiled package the strict reader refuses on read-back or at a replay settles as the reader's typed refusal.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21 and FR-940-AC-22: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
 
 ## Test Procedure
 
@@ -31,7 +31,7 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
    (FR-940-AC-16) through the `package` selection; check its certificate.
 5. Analyze the Counter program over source with a binding whose `packages`
    leave out `test/counter`, and again with it supplied.
-6. Analyze `AtMostTwo` and `ReachThree` over source with the replay's
+6. Analyze `Bounded` with `AtMostTwo`, and `ReachThree`, over source with the replay's
    `ReplayPackage` byte ceiling below the emission's length, and again with a
    test-only emitter that fails at the replay's emission.
 
@@ -51,6 +51,7 @@ Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
 - Step 5: `missing_import`/`missing-selection` naming `test/counter`, `details.path`
   under `/semantic_graph/nodes/`, `items` `[]`, `last_stage` `S4`, exit 20,
   never `runtime_invariant`; with the package supplied, exit 0.
-- Step 6: `resource_exhausted`, category incomplete, exit 22, never
-  `package-emission`; with the failing emitter, the item settles `failed` with
+- Step 6: the replaying item `inconclusive`, `replay_refused` carrying
+  `resource_exhausted`, never `package-emission`; `Bounded` `proved`; no
+  whole-run refusal; with the failing emitter, the item settles `failed` with
   `analyze`/`package-emission`.

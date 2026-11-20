@@ -56,13 +56,14 @@ exactly when every counter is at 3, and `terminal any`.
     and `N` with the kernel-refused `Done` and `Stop` `when { false }`, then
     `when { true }`; the two-identity unit; then `when { true }` alone.
 11. On both routes, over the two-identity vault unit (`V` on `test/vault`,
-    `N` on `test/vault-other`): write the request of a subject that reads
-    both identities; build the deadlock-freedom item through
-    `deadlock_model_item` over that subject with undefined `Done` on `V` and
-    `Stop` `when { false }` on `N`, with `Done` and `Halt` `any` on `N`, with
-    `Halt` on `V` and `Done` on `N`, and with `Stop` on `N` alone; write the
-    request of a subject that reads `test/vault` only with `Done` on `V` and
-    `Halt` on `N`.
+    `N` on `test/vault-other`): write and run the request of a subject that
+    reads `test/vault` only with `Stop` `when { false }` on `V` and `Halt`
+    `any` on `N`, then with no declaration on `V` and `Halt` on `N`, then
+    with `Halt` `any` on `V`, then with `Stop` on `V` and the undefined
+    `Done` on `N`; write the request of a subject that reads both
+    identities; build the deadlock-freedom item through
+    `deadlock_model_item` over that subject with undefined `Done` on `V`
+    and `Stop` `when { false }` on `N`.
 
 Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
 
@@ -100,9 +101,12 @@ Tag the tests `#[trace("TC-519", "FR-124-AC-n")]`.
   `inconclusive`, `undecided-successor`, naming `Done`'s key; with
   `when { true }`: `proved`. Two identities: `unsupported`, no request item.
   `when { true }` alone: every terminal state intended.
-- Step 11: both routes agree. Subject over both identities: `unsupported`,
+- Step 11: both routes agree. Subject over `test/vault` only: one
+  deadlock-freedom item, `refuted` with a deadlock counterexample ending at
+  `l = 1` (not intended on account of `N`'s `Halt`); the same without a
+  declaration on `V`; no item with `Halt` on `V`; `refuted` with the deadlock
+  counterexample and no `UndefinedEvaluation` with `Done` on `N`. Subject
+  over both identities: `unsupported`,
   `unsupported_projection`/`unsupported-requested-capability`, no request
   item. Library item: `refuted`, `UndefinedEvaluation`, naming
-  (`test/vault`, 0); intended; intended; deadlocked. Subject over
-  `test/vault` only: one deadlock-freedom item whose terminal states are
-  intended.
+  (`test/vault`, 0).
