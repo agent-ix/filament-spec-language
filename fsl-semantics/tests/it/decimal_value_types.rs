@@ -6,11 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
+use filament_exact::{DecimalType, IllTypedCause, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckedGraph, IllTypedCause, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -456,7 +456,7 @@ fn meter_fields(put: (&str, Value)) -> Value {
 fn admit_meter(
     checked: &Checked,
     fields: Value,
-) -> Result<(), (String, BTreeMap<String, String>)> {
+) -> Result<(), (String, BTreeMap<&'static str, String>)> {
     let reference = DocumentRef {
         authority: "test".to_owned(),
         identity: "decimal-current".to_owned(),
