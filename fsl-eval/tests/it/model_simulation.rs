@@ -3035,13 +3035,14 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
     assert_eq!(record.catalog.code(), "invalid_runtime_input");
     assert_eq!(record.catalog.cause(), "duplicate-member");
     assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("levels")
+    );
+    assert_eq!(
         record.fields.get("earlier-index").map(String::as_str),
         Some("0")
     );
-    assert_eq!(
-        record.path,
-        vec![PathStep::Field("levels".to_owned()), PathStep::Index(1)]
-    );
+    assert_eq!(record.path, vec![PathStep::Index(1)]);
     let duplicate_nan = float_snapshot(
         &mut world,
         "duplicate-nan",
@@ -3063,13 +3064,14 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
     assert_eq!(record.catalog.code(), "invalid_runtime_input");
     assert_eq!(record.catalog.cause(), "duplicate-member");
     assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("levels")
+    );
+    assert_eq!(
         record.fields.get("earlier-index").map(String::as_str),
         Some("0")
     );
-    assert_eq!(
-        record.path,
-        vec![PathStep::Field("levels".to_owned()), PathStep::Index(1)]
-    );
+    assert_eq!(record.path, vec![PathStep::Index(1)]);
 }
 
 /// FR-106-AC-57: a large unique Float set is admitted through the canonical
