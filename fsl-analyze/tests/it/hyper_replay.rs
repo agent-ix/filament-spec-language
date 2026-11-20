@@ -26,6 +26,8 @@ use crate::hyper_world::{
     busy_of, high, low, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS,
 };
 
+mod certificate_boundary_cases;
+
 /// The counterexample of `world`'s run.
 fn refuted(world: &World) -> HyperCounterexample {
     match world

@@ -42,6 +42,8 @@ use crate::counter::{
 };
 use crate::fill::tcb_01_event_position_selection;
 
+mod certificate_boundary_cases;
+
 const GUARDED: &str = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
                        post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
 
