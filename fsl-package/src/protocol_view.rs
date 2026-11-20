@@ -1631,8 +1631,8 @@ pub enum ControlBody<'n> {
     Effect {
         /// The attempt this operation affects.
         attempt: &'n CheckedNodeId,
-        /// The result binder, when the operation declares one.
-        binder: Option<&'n CheckedNodeId>,
+        /// The result binder.
+        binder: &'n CheckedNodeId,
         /// The optional constraint expression node.
         constraint: Option<&'n CheckedNodeId>,
     },
@@ -1714,13 +1714,11 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
         },
         ControlOperation::Effect => ControlBody::Effect {
             attempt: single(node, "of")?,
-            binder: optional(node, "binder")?
-                .map(|term| reference(term).ok_or_else(|| malformed(&node.node_id, "binder")))
-                .transpose()?,
+            binder: single(node, "binder")?,
             constraint: Some(single(node, "constraint")?),
         },
         ControlOperation::Check => ControlBody::Check {
-            constraint: Some(single(node, "constraint")?),
+            constraint: Some(single(node, "condition")?),
         },
         ControlOperation::Fence => ControlBody::Fence {
             ordering: optional_ordering(node, "ordering")?

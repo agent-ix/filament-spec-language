@@ -12,7 +12,7 @@ use filament_contract_model::{
 use fsl_semantics::check::{CheckedProtocol, EdgeKind as InEdge, Port as InPort};
 
 use super::protocol_requirements::fixture_w::{
-    document, tc134_clock, tc134_selections, tc134_source, TIMED_PROFILES_W,
+    document, tc134_clock, tc134_selections, tc134_source, TIMED_PROFILES_W, W,
 };
 use super::*;
 use crate::protocol_view::{
@@ -49,6 +49,8 @@ struct Fixture {
     admitted: Box<CheckedPackageV2>,
     /// FSL's I2 read of the same bytes.
     fsl_read: Arc<CheckedPackageV2>,
+    /// The selected identity rows of the emitted package.
+    identity_rows: crate::ReadIdentityRows,
     protocol: CheckedProtocol,
     activation_rows: Vec<filament_contract_model::CheckedProtocolActivationRow>,
 }
@@ -101,10 +103,17 @@ fn fixture_over(text: &str) -> Fixture {
     else {
         panic!("FSL's I2 reader admits the package");
     };
+    let identity_rows = emission
+        .identity_rows(
+            &fsl_read,
+            &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
+        )
+        .expect("final identity rows");
     Fixture {
         wire: wire(&emission),
         admitted,
         fsl_read,
+        identity_rows,
         protocol,
         activation_rows,
     }
@@ -1163,25 +1172,40 @@ fn an_interval_channel_needs_no_temporal_profile_and_reads_no_clock() {
 #[trace("FR-519", "TC-1314")]
 #[test]
 fn the_execution_view_reads_attempt_facts_from_package_nodes() {
-    let source = tc134_source().replace("parallel Shipments {", "parallel Shipments memory tso {");
+    // The compensation clause carries a clock reference the package reader does
+    // not yet admit, and this test reads no compensation.
+    let start = W
+        .find("  compensate Refund")
+        .expect("the compensation clause");
+    let end = W.find("  terminal any;").expect("the terminal clause");
+    let source = format!("{}{}", &W[..start], &W[end..])
+        .replace("parallel Shipments {", "parallel Shipments memory tso {");
     let fixture = fixture_over(&source);
     let package = &fixture.admitted;
     let execution = protocol_execution_view(package, &clause(package).node_id).unwrap();
-    let via_analysis_view =
-        crate::AnalysisView::protocol_execution_named(&fixture.fsl_read, "OrderFlow")
-            .unwrap()
-            .expect("AnalysisView resolves the declared protocol name");
+    let bare = crate::BarePackage::new(&fixture.fsl_read)
+        .with_supply(
+            crate::BareSupply {
+                identities: &fixture.identity_rows,
+                equality: None,
+            },
+            &mut crate::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("the fixture budget admits the supply");
+    let via_analysis_view = crate::AnalysisView::protocol_execution_named(&bare, "OrderFlow")
+        .unwrap()
+        .expect("AnalysisView resolves the declared protocol name");
     assert_eq!(
         via_analysis_view.protocol.clause(),
         execution.protocol.clause()
     );
     assert_eq!(
-        node(package, execution.protocol.over()).semantic_form,
+        &*node(package, execution.protocol.over()).semantic_form,
         "parameter"
     );
-    assert_eq!(execution.finish.node.semantic_form, "obligation");
+    assert_eq!(&*execution.finish.node.semantic_form, "obligation");
     assert_eq!(
-        node(package, execution.finish.binder).semantic_form,
+        &*node(package, execution.finish.binder).semantic_form,
         "parameter"
     );
     assert!(execution.finish.constraint.is_some());
@@ -1201,27 +1225,24 @@ fn the_execution_view_reads_attempt_facts_from_package_nodes() {
     else {
         panic!("an attempt has its checked package form");
     };
-    assert_eq!(name(package, role), path(&["OrderFlow", "role", "Orders"]));
-    assert!(node(package, operation).semantic_form == "operation_anchor");
-    let operation = fixture
-        .fsl_read
+    assert_eq!(name(package, role), path(&["OrderFlow", "role", "Payments"]));
+    assert_eq!(&*node(package, operation).semantic_form, "operation_anchor");
+    let operation = bare
         .protocol_operation(operation)
         .expect("the attempt anchor resolves through the package identity rows");
     let selected_role = execution
         .roles
         .iter()
-        .find(|candidate| candidate.node.node_id == *role)
+        .find(|candidate| &candidate.node.node_id == *role)
         .expect("the attempt role belongs to the protocol");
     assert_eq!(
-        fixture
-            .fsl_read
-            .protocol_role_model(selected_role.model)
+        bare.protocol_role_model(selected_role.model)
             .expect("the static role model resolves through package identity rows"),
         operation.declaring
     );
     assert!(!operation.operation.is_empty());
     assert!(!contracts.is_empty());
-    assert!(node(package, binder).semantic_form == "parameter");
+    assert_eq!(&*node(package, binder).semantic_form, "parameter");
     assert_eq!(*ordering, None);
     assert!(execution.controls.iter().any(|control| {
         control.operation == ControlOperation::Parallel
