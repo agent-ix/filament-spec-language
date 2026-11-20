@@ -36,7 +36,7 @@ fn check(source: &str) -> Result<(), FrontEndFailure> {
 #[test]
 fn value_generator_output_parses_and_checks() {
     prop::run(
-        "typed expressions",
+        "value_generator_output_parses_and_checks",
         prop::config(1000),
         &value::expressions(),
         |input| {
@@ -83,7 +83,7 @@ fn grammar_unit_generator_covers_every_production() {
 #[test]
 fn near_miss_generator_output_is_refused() {
     prop::run(
-        "near misses",
+        "near_miss_generator_output_is_refused",
         prop::config(256),
         &prop::near_miss::near_misses(),
         |input| {
@@ -128,7 +128,7 @@ fn near_miss_generator_output_is_refused() {
 #[test]
 fn model_generator_models_are_enumerable() {
     prop::run(
-        "small models",
+        "model_generator_models_are_enumerable",
         prop::config(256),
         &prop::model::small_models(),
         |input| {
@@ -157,7 +157,7 @@ fn model_generator_models_are_enumerable() {
 #[test]
 fn trace_generator_respects_profile() {
     prop::run(
-        "proposition traces",
+        "trace_generator_respects_profile",
         prop::config(256),
         &prop::trace::traces(),
         |input| {
@@ -190,7 +190,7 @@ fn trace_generator_respects_profile() {
 #[test]
 fn package_generator_emits_checked_units() {
     prop::run(
-        "package inputs",
+        "package_generator_emits_checked_units",
         prop::config(256),
         &prop::unit::package_units(),
         |input| {
