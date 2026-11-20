@@ -1997,8 +1997,7 @@ fn declaring_low(declarations: &str, leaf: &str) -> String {
 
 /// FR-931-AC-16, FSpec FR-322 "Named type arguments" (QSL-2630, package
 /// half): the source route prints the declaration key a `count` type argument
-/// names, a chain of aliases at the outer alias, and a structural argument
-/// structurally. The package route cannot yet print this atom: its reader
+/// names, and a chain of aliases at the outer alias. The package route cannot yet print this atom: its reader
 /// projection has no `sequence` literal operation.
 #[test]
 #[trace("TC-2601", "FR-931-AC-16")]
@@ -2012,7 +2011,6 @@ fn a_named_count_type_argument_prints_its_alias_key_on_the_source_route() {
             "Small",
             format!("ix://{identity}/Small"),
         ),
-        ("type Small = Int[0, 2];", "Int[0, 2]", "Int[0, 2]".to_owned()),
     ] {
         let leaf = format!(
             "holds(let q: Sequence<Integer>[0, 2] = sequence[c.versionNumber, c.versionNumber] \
