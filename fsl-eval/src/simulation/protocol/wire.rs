@@ -89,7 +89,7 @@ pub fn over_reference(
     protocol: &str,
     over: &ModelInstance,
 ) -> Option<ObjectReference> {
-    let input = simulation.input;
+    let input = simulation.input.clone();
     let evaluator = input.evaluator;
     let model = ModelSystem::new(simulation).ok()?;
     if let Some(protocol) = evaluator.protocol(protocol) {
