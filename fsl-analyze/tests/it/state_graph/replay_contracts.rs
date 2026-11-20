@@ -2,8 +2,10 @@
 //! Returned state-graph evidence admitted and replayed through the public facade.
 
 use super::*;
-use fsl_replay::model_check::replay::ModelTraceRefusal;
-use fsl_replay::{GraphEvidence, GraphReplaySettlement, ReplayLimits, ReplayRefusal, WitnessPath};
+use fsl_replay::{
+    GraphEvidence, GraphReplaySettlement, ModelTraceRefusal, ReplayLimits, ReplayRefusal,
+    WitnessPath,
+};
 
 fn returned(starts: &[Vec<i64>], sampled: bool) -> (World, ModelInstance, Vec<GraphWitness>) {
     let world = config_world_over("", REACHES_TWO, &["a"], starts);
