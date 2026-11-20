@@ -156,8 +156,18 @@ pub enum Expr {
     },
     /// Arithmetic addition with integer operands.
     Add(Box<Expr>, Box<Expr>),
+    /// Arithmetic subtraction with integer operands.
+    Subtract(Box<Expr>, Box<Expr>),
+    /// Arithmetic multiplication with integer operands.
+    Multiply(Box<Expr>, Box<Expr>),
+    /// Integer ordering comparison.
+    Less(Box<Expr>, Box<Expr>),
     /// Boolean conjunction.
     And(Box<Expr>, Box<Expr>),
+    /// Boolean disjunction.
+    Or(Box<Expr>, Box<Expr>),
+    /// Boolean negation.
+    Not(Box<Expr>),
     /// Equality of two values in the same domain.
     Equal(Box<Expr>, Box<Expr>),
     /// Universal aggregate over a finite collection.
@@ -212,7 +222,12 @@ impl Expr {
                 )
             }
             Self::Add(left, right) => format!("({} + {})", left.source(), right.source()),
+            Self::Subtract(left, right) => format!("({} - {})", left.source(), right.source()),
+            Self::Multiply(left, right) => format!("({} * {})", left.source(), right.source()),
+            Self::Less(left, right) => format!("({} < {})", left.source(), right.source()),
             Self::And(left, right) => format!("({} and {})", left.source(), right.source()),
+            Self::Or(left, right) => format!("({} or {})", left.source(), right.source()),
+            Self::Not(value) => format!("not ({})", value.source()),
             Self::Equal(left, right) => format!("({} = {})", left.source(), right.source()),
             Self::ForAll {
                 binder,
@@ -353,21 +368,34 @@ pub fn expressions() -> BoxedStrategy<TypedExpression> {
             expression,
         }
     });
-    let integers = (-20i64..=20).prop_map(|literal| TypedExpression {
-        parameters: vec![("x".into(), Type::Integer)],
-        result: Type::Integer,
-        expression: Expr::Add(
-            Box::new(Expr::Parameter("x".into())),
-            Box::new(Expr::Integer(literal)),
-        ),
+    let integers = (-20i64..=20, 0u8..4).prop_map(|(literal, operation)| {
+        let left = Box::new(Expr::Parameter("x".into()));
+        let right = Box::new(Expr::Integer(literal));
+        let (result, expression) = match operation {
+            0 => (Type::Integer, Expr::Add(left, right)),
+            1 => (Type::Integer, Expr::Subtract(left, right)),
+            2 => (Type::Integer, Expr::Multiply(left, right)),
+            _ => (Type::Boolean, Expr::Less(left, right)),
+        };
+        TypedExpression {
+            parameters: vec![("x".into(), Type::Integer)],
+            result,
+            expression,
+        }
     });
-    let booleans = proptest::bool::ANY.prop_map(|literal| TypedExpression {
-        parameters: vec![("x".into(), Type::Boolean)],
-        result: Type::Boolean,
-        expression: Expr::And(
-            Box::new(Expr::Parameter("x".into())),
-            Box::new(Expr::Boolean(literal)),
-        ),
+    let booleans = (proptest::bool::ANY, 0u8..3).prop_map(|(literal, operation)| {
+        let left = Box::new(Expr::Parameter("x".into()));
+        let right = Box::new(Expr::Boolean(literal));
+        let expression = match operation {
+            0 => Expr::And(left, right),
+            1 => Expr::Or(left, right),
+            _ => Expr::Not(left),
+        };
+        TypedExpression {
+            parameters: vec![("x".into(), Type::Boolean)],
+            result: Type::Boolean,
+            expression,
+        }
     });
     let aggregates = (
         proptest::sample::select(vec![
