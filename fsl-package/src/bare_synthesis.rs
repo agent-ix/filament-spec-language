@@ -16,6 +16,8 @@ use crate::reader_protocol_projection::{BareWalker, ReaderProtocolProjection};
 /// The optional objective of an admitted value synthesis.
 pub struct BareSynthesisObjective {
     direction: String,
+    text: String,
+    is_candidate: bool,
     expression: ReaderProtocolProjection,
 }
 
@@ -23,6 +25,17 @@ impl BareSynthesisObjective {
     /// The checked objective direction (`minimize` or `maximize`).
     pub fn direction(&self) -> &str {
         &self.direction
+    }
+
+    /// The authored objective expression's source spelling.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether the objective is exactly the candidate binder, so the
+    /// candidate's own value order is the cost order.
+    pub fn is_candidate(&self) -> bool {
+        self.is_candidate
     }
 
     /// The checked objective expression, projected for the shared evaluator.
@@ -153,7 +166,8 @@ impl BarePackage<'_> {
             )));
         }
         let objective = parse_objective(&node.body)
-            .map(|(direction, root)| {
+            .map(|(direction, text, root)| {
+                let is_candidate = root == candidate_id;
                 let root_key = graph
                     .key(root)
                     .map_err(|_| fault("bare-package-has-structural-keys"))?;
@@ -170,6 +184,8 @@ impl BarePackage<'_> {
                 }
                 Ok(BareSynthesisObjective {
                     direction: direction.to_owned(),
+                    text: text.to_owned(),
+                    is_candidate,
                     expression,
                 })
             })
@@ -182,6 +198,26 @@ impl BarePackage<'_> {
             objective,
         })
     }
+}
+
+/// Whether the `synthesis_request` node `declaration` names a model object
+/// type as its grammar, which makes it a plan synthesis rather than a value
+/// synthesis (FR-1037).
+pub fn is_plan_synthesis(package: &CheckedPackageV2, declaration: &CheckedNodeId) -> bool {
+    let nodes = &package.resolved_graph().nodes;
+    let Some(grammar) = nodes
+        .iter()
+        .find(|node| &node.node_id == declaration)
+        .and_then(|node| binding(&node.body, "grammar"))
+        .and_then(reference)
+    else {
+        return false;
+    };
+    nodes.iter().any(|node| {
+        &node.node_id == grammar
+            && node.node_tag.as_ref() == "model"
+            && node.semantic_form.as_ref() == "object_type"
+    })
 }
 
 fn binding<'a>(term: &'a CheckedTerm, name: &str) -> Option<&'a CheckedTerm> {
@@ -210,7 +246,7 @@ fn integer_binding(term: &CheckedTerm, name: &str) -> Option<Integer> {
         })
 }
 
-fn parse_objective(term: &CheckedTerm) -> Option<(&str, &CheckedNodeId)> {
+fn parse_objective(term: &CheckedTerm) -> Option<(&str, &str, &CheckedNodeId)> {
     let objective = binding(term, "objective")?;
     let direction = binding(objective, "direction")?
         .literal_read()
@@ -218,8 +254,14 @@ fn parse_objective(term: &CheckedTerm) -> Option<(&str, &CheckedNodeId)> {
             filament_contract_model::CheckedLiteralValue::Text(value) => Some(value),
             _ => None,
         })?;
+    let text = binding(objective, "text")?
+        .literal_read()
+        .and_then(|literal| match literal.value {
+            filament_contract_model::CheckedLiteralValue::Text(value) => Some(value),
+            _ => None,
+        })?;
     let root = binding(objective, "root").and_then(reference)?;
-    Some((direction, root))
+    Some((direction, text, root))
 }
 
 fn malformed(package: &CheckedPackageV2, declaration: &CheckedNodeId) -> BareSelectionFailure {

@@ -48,7 +48,7 @@ mod bare_units;
 #[cfg(feature = "std")]
 mod bare_world;
 #[cfg(feature = "std")]
-pub use bare_synthesis::{BareSynthesis, BareSynthesisObjective};
+pub use bare_synthesis::{BareSynthesis, BareSynthesisObjective, is_plan_synthesis};
 mod checked;
 #[cfg(feature = "std")]
 mod checked_v2;

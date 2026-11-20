@@ -616,6 +616,32 @@ fn pick_finds_validates_exhausts_and_optimizes() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["visited"], 4, "{optimal}");
+    let maximal = synth(pick("Pick >= 3", "maximize Pick"));
+    assert_eq!(
+        maximal["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "9"}),
+        "{maximal}"
+    );
+    assert_eq!(maximal["synthesis"]["optimal"], true, "{maximal}");
+}
+
+/// FR-1037: a plan synthesis selected through the `synthesis` member is
+/// refused as not yet routed to the planner; the value enumerator never
+/// reports a verdict for it.
+#[test]
+#[trace("TC-3017", "FR-1037-AC-1")]
+fn a_plan_synthesis_is_refused_not_enumerated() {
+    let unit = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ true }};\n"
+    );
+    let (exit, value) = run(&unit, true, ("synthesis", json!({"declaration": "Reach"})));
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "unsupported_construct", "{value}");
+    assert_eq!(value["cause"], "not-yet-implemented", "{value}");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-194-AC-10: a search stopped by its work limit is `incomplete`

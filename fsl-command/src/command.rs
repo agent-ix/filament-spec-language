@@ -765,6 +765,19 @@ pub enum RunCause {
         /// Why the member is refused.
         reason: String,
     },
+    /// FR-1037: a `synthesis` member the request reader refuses, with the
+    /// FSpec FR-823 catalog code and FR-805 cause apart from the message.
+    #[error("invalid synthesis request member {path}: {cause}: {reason}")]
+    SynthesisRequest {
+        /// The JSON pointer of the member at fault.
+        path: String,
+        /// The catalog code of the refusal.
+        code: Code,
+        /// The FR-805 cause.
+        cause: &'static str,
+        /// Why the member is refused.
+        reason: String,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -1095,6 +1108,7 @@ impl RunCause {
             | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::ExportRequest { .. } | Self::PlanRequest { .. } => Code::InvalidRuntimeInput,
+            Self::SynthesisRequest { code, .. } => *code,
             Self::Output(_) | Self::ClauseOutput(_) | Self::ExportOutput { .. } => {
                 Code::OutputFailure
             }
@@ -1300,7 +1314,8 @@ impl RunError {
                 self.outcome_message(),
             )]),
             RunCause::ExportRequest { path, cause, .. }
-            | RunCause::PlanRequest { path, cause, .. } => {
+            | RunCause::PlanRequest { path, cause, .. }
+            | RunCause::SynthesisRequest { path, cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         Some(*cause),

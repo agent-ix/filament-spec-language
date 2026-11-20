@@ -141,6 +141,11 @@ pub(super) fn prepare(
             "source_package is only selected with package export",
         ));
     }
+    if request.clause.is_some() && package.file.is_some() {
+        return Err(RunCause::RequiresDirectory {
+            member: "clause".to_owned(),
+        });
+    }
     for (present, member) in [
         (request.clause.is_some(), "clause"),
         (request.items.is_some(), "items"),

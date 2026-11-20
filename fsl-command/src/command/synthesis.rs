@@ -2,6 +2,7 @@
 //! FR-754: bounded candidate enumeration for value synthesis.
 
 use filament_exact::{Integer, IntegerInterval, ValueType};
+use fsl_foundation::Code;
 use serde::Serialize;
 use serde_json::Value;
 use std::path::Path;
@@ -29,6 +30,77 @@ impl Default for SearchLimits {
     }
 }
 
+impl SearchLimits {
+    fn deadline_passed(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    /// The limit that stops the run once `work` units are spent, before any
+    /// further evaluation.
+    fn work_stop(&self, work: u64) -> Option<StopCause> {
+        if let Some(maximum) = self.max_work.filter(|maximum| work >= *maximum) {
+            return Some(StopCause::Work(maximum));
+        }
+        self.deadline_passed().then_some(StopCause::Deadline)
+    }
+
+    /// The limit that stops the search before the next candidate is evaluated.
+    fn stop_before(&self, visited: u64, work: u64) -> Option<StopCause> {
+        if let Some(maximum) = self.max_candidates.filter(|maximum| visited >= *maximum) {
+            return Some(StopCause::Candidates(maximum));
+        }
+        self.work_stop(work)
+    }
+}
+
+/// Why a bounded run stopped before it finished.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum StopCause {
+    /// `synthesis.max_candidates` candidates were enumerated.
+    Candidates(u64),
+    /// `synthesis.max_work` evaluations were spent.
+    Work(u64),
+    /// The request deadline passed.
+    Deadline,
+    /// A counter of the request's `accounting` meter ran out.
+    Accounting { limit: &'static str, value: u64 },
+}
+
+impl StopCause {
+    /// FSpec FR-823's `cause` member: FR-801's `limit-reached` or the deadline.
+    fn into_value(self) -> Value {
+        let limit_reached = |limit: &str, value: u64, setting: String| {
+            serde_json::json!({
+                "kind": "limit-reached",
+                "limit": limit,
+                "value": value,
+                "setting": setting,
+            })
+        };
+        match self {
+            Self::Candidates(value) => limit_reached(
+                "max_candidates",
+                value,
+                "synthesis.max_candidates".to_owned(),
+            ),
+            Self::Work(value) => limit_reached("max_work", value, "synthesis.max_work".to_owned()),
+            Self::Deadline => serde_json::json!({"kind": "deadline"}),
+            Self::Accounting { limit, value } => {
+                limit_reached(limit, value, format!("accounting.{limit}"))
+            }
+        }
+    }
+}
+
+/// What stopped one evaluation.
+pub(super) enum Halt {
+    /// A limit stopped the run: it reports `incomplete` with this cause.
+    Stop(StopCause),
+    /// The request cannot be run: it is refused.
+    Refuse(super::RunCause),
+}
+
 /// The disposition of a bounded integer search.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum SearchDisposition {
@@ -37,7 +109,7 @@ pub(super) enum SearchDisposition {
     /// Every value in the finite domain was visited without a match.
     NoCandidate,
     /// A request limit stopped the search before its finite domain was done.
-    Incomplete { cause: &'static str, value: u64 },
+    Incomplete(StopCause),
 }
 
 /// One bounded integer search result, including the number of visited values.
@@ -180,198 +252,380 @@ impl SynthesisOutcomeDocument {
     }
 }
 
-/// Enumerate a closed integer interval in ascending value order and evaluate
-/// each value once. The evaluator is the caller's native checked-expression
-/// path; limits stop before the next candidate is evaluated.
-pub(super) fn search_integer_domain(
-    domain: &IntegerInterval,
-    limits: SearchLimits,
-    mut satisfies: impl FnMut(&Integer) -> bool,
-) -> SearchResult {
-    let lower = domain.lower().clone();
-    let upper = domain.upper().clone();
-    let mut candidate = lower;
-    let mut visited = 0_u64;
+/// FSpec FR-194's objective direction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Direction {
+    Minimize,
+    Maximize,
+}
 
-    loop {
-        if candidate > upper {
-            return SearchResult {
-                disposition: SearchDisposition::NoCandidate,
-                visited,
-                work: visited,
-            };
+impl Direction {
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "minimize" => Some(Self::Minimize),
+            "maximize" => Some(Self::Maximize),
+            _ => None,
         }
-        if limits
-            .max_candidates
-            .is_some_and(|maximum| visited >= maximum)
-        {
-            return SearchResult {
-                disposition: SearchDisposition::Incomplete {
-                    cause: "synthesis.max_candidates",
-                    value: limits.max_candidates.expect("limit was checked"),
-                },
-                visited,
-                work: visited,
-            };
-        }
-        if limits.max_work.is_some_and(|maximum| visited >= maximum) {
-            return SearchResult {
-                disposition: SearchDisposition::Incomplete {
-                    cause: "synthesis.max_work",
-                    value: limits.max_work.expect("limit was checked"),
-                },
-                visited,
-                work: visited,
-            };
-        }
-        if limits
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            return SearchResult {
-                disposition: SearchDisposition::Incomplete {
-                    cause: "deadline_ms",
-                    value: 0,
-                },
-                visited,
-                work: visited,
-            };
-        }
+    }
 
-        visited = visited.saturating_add(1);
-        let accepted = satisfies(&candidate);
-        if limits
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            return SearchResult {
-                disposition: SearchDisposition::Incomplete {
-                    cause: "deadline_ms",
-                    value: 0,
-                },
-                visited,
-                work: visited,
-            };
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimize => "minimize",
+            Self::Maximize => "maximize",
         }
-        if accepted {
-            return SearchResult {
-                disposition: SearchDisposition::Candidate(candidate),
-                visited,
-                work: visited,
-            };
-        }
-        candidate = candidate.add(&Integer::one());
     }
 }
 
-/// Run the integer candidate loop and encode its FR-823 result without
-/// coupling the search helper to request selection or package admission.
-pub(super) fn search_integer_outcome(
-    package: &str,
-    declaration: &str,
-    node: Value,
-    domain: &IntegerInterval,
+/// The authored objective of a value synthesis.
+pub(super) struct ObjectiveSpec<'a> {
+    pub(super) direction: Direction,
+    /// The objective expression's source spelling (`objective.text`).
+    pub(super) text: &'a str,
+    /// Whether the objective is the candidate itself, so the candidate's own
+    /// value order is the cost order and no objective is evaluated to rank.
+    pub(super) is_candidate: bool,
+}
+
+/// The two evaluations of a checked value synthesis on one candidate.
+pub(super) trait CandidateEvaluator {
+    /// The `satisfies` block's value.
+    fn block(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt>;
+    /// The objective expression's value.
+    fn objective(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt>;
+}
+
+/// The domain values in ascending order.
+fn ascending(domain: &IntegerInterval) -> Box<dyn Iterator<Item = Integer> + '_> {
+    let upper = domain.upper().clone();
+    Box::new(
+        std::iter::successors(Some(domain.lower().clone()), move |value| {
+            Some(value.add(&Integer::one()))
+        })
+        .take_while(move |value| *value <= upper),
+    )
+}
+
+/// The domain values in descending order.
+fn descending(domain: &IntegerInterval) -> Box<dyn Iterator<Item = Integer> + '_> {
+    let lower = domain.lower().clone();
+    Box::new(
+        std::iter::successors(Some(domain.upper().clone()), move |value| {
+            Some(value.sub(&Integer::one()))
+        })
+        .take_while(move |value| *value >= lower),
+    )
+}
+
+/// Visit `order` and evaluate each value once, stopping at the first value the
+/// caller's native checked-expression path accepts. `spent` is the work already
+/// consumed before the first candidate. Limits stop before the next candidate
+/// is evaluated.
+pub(super) fn search_integer_domain(
+    order: impl IntoIterator<Item = Integer>,
     limits: SearchLimits,
-    mut satisfies: impl FnMut(&Integer) -> bool,
-    mut validate: impl FnMut(&Integer) -> Result<(), Value>,
+    spent: u64,
+    mut satisfies: impl FnMut(&Integer) -> Result<bool, Halt>,
+) -> Result<SearchResult, super::RunCause> {
+    let mut visited = 0_u64;
+    let result = |disposition, visited: u64| -> Result<SearchResult, super::RunCause> {
+        Ok(SearchResult {
+            disposition,
+            visited,
+            work: spent.saturating_add(visited),
+        })
+    };
+    for candidate in order {
+        if let Some(cause) = limits.stop_before(visited, spent.saturating_add(visited)) {
+            return result(SearchDisposition::Incomplete(cause), visited);
+        }
+        visited = visited.saturating_add(1);
+        let accepted = match satisfies(&candidate) {
+            Ok(accepted) => accepted,
+            Err(Halt::Stop(cause)) => return result(SearchDisposition::Incomplete(cause), visited),
+            Err(Halt::Refuse(refusal)) => return Err(refusal),
+        };
+        if limits.deadline_passed() {
+            return result(SearchDisposition::Incomplete(StopCause::Deadline), visited);
+        }
+        if accepted {
+            return result(SearchDisposition::Candidate(candidate), visited);
+        }
+    }
+    result(SearchDisposition::NoCandidate, visited)
+}
+
+/// A domain value with the objective value that ranks it.
+struct Ranked {
+    candidate: Integer,
+    key: Integer,
+}
+
+/// The domain in FSpec FR-194's cost order, or the limit that stopped the
+/// ranking after `work` objective evaluations.
+enum Ranking {
+    Ordered(Vec<Ranked>),
+    Stopped { cause: StopCause, work: u64 },
+}
+
+/// Evaluate the objective on every domain value and order the values by it:
+/// nondecreasing for `minimize`, nonincreasing for `maximize`, ties by the
+/// canonical value order. Each evaluation is one unit of work and one
+/// enumerated candidate.
+fn rank_by_objective(
+    domain: &IntegerInterval,
+    direction: Direction,
+    limits: SearchLimits,
+    evaluator: &mut impl CandidateEvaluator,
+) -> Result<Ranking, super::RunCause> {
+    let mut ranked = Vec::new();
+    for candidate in ascending(domain) {
+        let done = u64::try_from(ranked.len()).unwrap_or(u64::MAX);
+        if let Some(cause) = limits.stop_before(done, done) {
+            return Ok(Ranking::Stopped { cause, work: done });
+        }
+        match evaluator.objective(&candidate) {
+            Ok(filament_exact::Value::Integer(key)) => ranked.push(Ranked { candidate, key }),
+            Ok(other) => {
+                return Err(not_routed(
+                    "/request/synthesis/objective",
+                    format!(
+                        "ranking candidates by the objective value {other:?} is not implemented yet"
+                    ),
+                ));
+            }
+            Err(Halt::Stop(cause)) => {
+                return Ok(Ranking::Stopped {
+                    cause,
+                    work: done.saturating_add(1),
+                });
+            }
+            Err(Halt::Refuse(refusal)) => return Err(refusal),
+        }
+    }
+    ranked.sort_by(|left, right| match direction {
+        Direction::Minimize => left.key.cmp(&right.key),
+        Direction::Maximize => right.key.cmp(&left.key),
+    });
+    Ok(Ranking::Ordered(ranked))
+}
+
+/// One value synthesis to run, whichever route read it.
+pub(super) struct ValueRun<'a> {
+    pub(super) package: &'a str,
+    pub(super) declaration: &'a str,
+    pub(super) node: Value,
+    pub(super) domain: &'a IntegerInterval,
+    pub(super) limits: SearchLimits,
+    pub(super) objective: Option<ObjectiveSpec<'a>>,
+}
+
+/// An `incomplete` best candidate whose independent check did not run.
+fn unchecked(
+    mut document: SynthesisOutcomeDocument,
+    cause: StopCause,
 ) -> (SynthesisOutcomeDocument, u8) {
-    let max_candidates = limits.max_candidates.unwrap_or(DEFAULT_MAX_CANDIDATES);
-    let max_work = limits.max_work.unwrap_or(DEFAULT_MAX_WORK);
-    let result = search_integer_domain(domain, limits, &mut satisfies);
+    document.status = "incomplete".to_owned();
+    document.check = Some("unchecked".to_owned());
+    document.optimal = Some(false);
+    document = document.with_cause(cause.into_value());
+    (document, 22)
+}
+
+/// Run the bounded search in cost order through `searcher`, check the reported
+/// candidate through `checker`, and finish FSpec FR-823's outcome document and
+/// exit code. Both the source and the package route end here, so one request
+/// has one outcome whichever route read it. `checker` is a different
+/// evaluation of the declaration than `searcher`, so a candidate is `validated`
+/// only when two evaluations agree on it.
+pub(super) fn run_value_synthesis(
+    run: ValueRun<'_>,
+    searcher: &mut impl CandidateEvaluator,
+    checker: &mut impl CandidateEvaluator,
+) -> super::Result<(SynthesisOutcomeDocument, u8)> {
+    let limits = run.limits;
     let mut document = SynthesisOutcomeDocument::new(
-        package,
-        declaration,
+        run.package,
+        run.declaration,
         "",
-        result.visited,
-        result.work,
-        max_candidates,
-        max_work,
+        0,
+        0,
+        limits.max_candidates.unwrap_or(DEFAULT_MAX_CANDIDATES),
+        limits.max_work.unwrap_or(DEFAULT_MAX_WORK),
     );
-    let exit = match result.disposition {
-        SearchDisposition::Candidate(value) => {
-            document.status = "candidate".to_owned();
-            document.candidate = Some(integer_value(&value));
-            document.lineage = Some(Lineage {
-                node,
-                index: result.visited.saturating_sub(1),
-                symmetry: "identity".to_owned(),
-                synthesizer: "filament.synthesis.enumerate/v1",
-                checker: "filament.native.value-validity/v1",
-            });
-            if let Some(maximum) = limits.max_work.filter(|maximum| result.work >= *maximum) {
-                document.status = "incomplete".to_owned();
-                document.check = Some("unchecked".to_owned());
-                document.optimal = Some(false);
-                document = document.with_cause(serde_json::json!({
-                    "kind": "limit-reached",
-                    "limit": "max_work",
-                    "value": maximum,
-                    "setting": "synthesis.max_work"
-                }));
-                return (document, 22);
-            }
-            if limits
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline)
-            {
-                document.status = "incomplete".to_owned();
-                document.check = Some("unchecked".to_owned());
-                document.optimal = Some(false);
-                document = document.with_cause(serde_json::json!({"kind": "deadline"}));
-                return (document, 22);
-            }
-            let validation = validate(&value);
-            document.explored.work = document.explored.work.saturating_add(1);
-            if limits
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline)
-            {
-                document.status = "incomplete".to_owned();
-                document.check = Some("unchecked".to_owned());
-                document.optimal = Some(false);
-                document = document.with_cause(serde_json::json!({"kind": "deadline"}));
-                return (document, 22);
-            }
-            match validation {
-                Ok(()) => {
-                    document.check = Some("validated".to_owned());
-                    0
-                }
-                Err(counterexample) => {
-                    document.check = Some("rejected".to_owned());
-                    document = document.with_counterexample(counterexample);
-                    30
+    let ranked = match &run.objective {
+        Some(objective) if !objective.is_candidate => {
+            match rank_by_objective(run.domain, objective.direction, limits, searcher)? {
+                Ranking::Ordered(ranked) => ranked,
+                Ranking::Stopped { cause, work } => {
+                    document.explored.work = work;
+                    document.status = "incomplete".to_owned();
+                    document = document.with_cause(cause.into_value());
+                    return Ok((document, 22));
                 }
             }
         }
+        _ => Vec::new(),
+    };
+    let spent = u64::try_from(ranked.len()).unwrap_or(u64::MAX);
+    let order: Box<dyn Iterator<Item = Integer> + '_> = match &run.objective {
+        Some(objective) if !objective.is_candidate => {
+            Box::new(ranked.iter().map(|entry| entry.candidate.clone()))
+        }
+        Some(ObjectiveSpec {
+            direction: Direction::Maximize,
+            ..
+        }) => descending(run.domain),
+        _ => ascending(run.domain),
+    };
+    let result = search_integer_domain(order, limits, spent, |candidate| {
+        match searcher.block(candidate)? {
+            filament_exact::Value::Boolean(holds) => Ok(holds),
+            other => Err(Halt::Refuse(refused(
+                "/request/synthesis",
+                format!("satisfies expression returned {other:?}"),
+            ))),
+        }
+    })?;
+    document.explored.visited = result.visited;
+    document.explored.work = result.work;
+    let value = match result.disposition {
         SearchDisposition::NoCandidate => {
             document.status = "no-candidate".to_owned();
-            10
+            return Ok((document, 10));
         }
-        SearchDisposition::Incomplete { cause, value } => {
+        SearchDisposition::Incomplete(cause) => {
             document.status = "incomplete".to_owned();
-            document = if cause == "deadline_ms" {
-                document.with_cause(serde_json::json!({"kind": "deadline"}))
-            } else {
-                let setting = cause;
-                let limit = setting
-                    .strip_prefix("synthesis.")
-                    .expect("a synthesis search limit");
-                document.with_cause(serde_json::json!({
-                    "kind": "limit-reached",
-                    "limit": limit,
-                    "value": value,
-                    "setting": setting,
-                }))
-            };
-            22
+            document = document.with_cause(cause.into_value());
+            return Ok((document, 22));
         }
+        SearchDisposition::Candidate(value) => value,
     };
-    (document, exit)
+    document.status = "candidate".to_owned();
+    document.candidate = Some(integer_value(&value));
+    document.lineage = Some(Lineage {
+        node: run.node,
+        index: result.visited.saturating_sub(1),
+        symmetry: "identity".to_owned(),
+        synthesizer: "filament.synthesis.enumerate/v1",
+        checker: "filament.native.value-validity/v1",
+    });
+    let searched_objective = run.objective.as_ref().map(|_| {
+        ranked
+            .iter()
+            .find(|entry| entry.candidate == value)
+            .map_or_else(|| value.clone(), |entry| entry.key.clone())
+    });
+    if let (Some(objective), Some(key)) = (&run.objective, &searched_objective) {
+        document = document.with_objective(serde_json::json!({
+            "direction": objective.direction.as_str(),
+            "expression": objective.text,
+            "value": integer_value(key),
+        }));
+    }
+    if limits.deadline_passed() {
+        return Ok(unchecked(document, StopCause::Deadline));
+    }
+    let verdict = match check_candidate(checker, &value, searched_objective.as_ref()) {
+        Ok(verdict) => verdict,
+        Err(cause) => return Ok(unchecked(document, cause)),
+    };
+    if limits.deadline_passed() {
+        return Ok(unchecked(document, StopCause::Deadline));
+    }
+    match verdict {
+        Verdict::Agrees => {
+            document.check = Some("validated".to_owned());
+            if run.objective.is_some() {
+                document.optimal = Some(true);
+            }
+            Ok((document, 0))
+        }
+        Verdict::Disagrees(record) => {
+            document.check = Some("rejected".to_owned());
+            document = document.with_counterexample(record);
+            Ok((document, 30))
+        }
+    }
+}
+
+/// What the independent check found.
+enum Verdict {
+    /// The checker's evaluation agrees with the search's on every value.
+    Agrees,
+    /// The two evaluations differ; the record holds both values.
+    Disagrees(Value),
+}
+
+/// Evaluate the `satisfies` block, and the objective when the search ranked by
+/// one, on `candidate` through `checker` and compare with what the search
+/// found. A limit stopping the checker is the only `Err`: an undefined or
+/// failing checker evaluation is a disagreement with the search's defined one.
+fn check_candidate(
+    checker: &mut impl CandidateEvaluator,
+    candidate: &Integer,
+    searched_objective: Option<&Integer>,
+) -> Result<Verdict, StopCause> {
+    let defined = |evaluated: Result<filament_exact::Value, Halt>| match evaluated {
+        Ok(value) => Ok(Ok(value)),
+        Err(Halt::Stop(cause)) => Err(cause),
+        Err(Halt::Refuse(refusal)) => Ok(Err(refusal.to_string())),
+    };
+    let block = defined(checker.block(candidate))?;
+    let objective = searched_objective
+        .map(|_| defined(checker.objective(candidate)))
+        .transpose()?;
+    let holds = matches!(block, Ok(filament_exact::Value::Boolean(true)));
+    let same_objective = match (searched_objective, &objective) {
+        (None, _) => true,
+        (Some(searched), Some(Ok(filament_exact::Value::Integer(checked)))) => searched == checked,
+        (Some(_), _) => false,
+    };
+    if holds && same_objective {
+        return Ok(Verdict::Agrees);
+    }
+    let seen = |evaluated: &Result<filament_exact::Value, String>| match evaluated {
+        Ok(filament_exact::Value::Integer(value)) => integer_value(value),
+        Ok(filament_exact::Value::Boolean(holds)) => serde_json::json!(holds),
+        Ok(other) => serde_json::json!({"value": format!("{other:?}")}),
+        Err(fault) => serde_json::json!({"undefined": fault}),
+    };
+    Ok(Verdict::Disagrees(serde_json::json!({
+        "kind": "checker-disagrees",
+        "search": {
+            "satisfies": true,
+            "objective": searched_objective.map(integer_value),
+        },
+        "checker": {
+            "satisfies": seen(&block),
+            "objective": objective.as_ref().map(seen),
+        },
+    })))
 }
 
 fn integer_value(value: &Integer) -> Value {
     serde_json::json!({"type": "integer", "value": value.to_string()})
+}
+
+/// One evaluation's value, or the limit or fault that stopped it.
+fn completed(
+    evaluation: Result<filament_eval::FamilyOutcome<filament_exact::Value>, String>,
+) -> Result<filament_exact::Value, Halt> {
+    match evaluation {
+        Err(fault) => Err(Halt::Refuse(refused("/request/synthesis", fault))),
+        Ok(filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value))) => {
+            Ok(value)
+        }
+        Ok(filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Incomplete(
+            incomplete,
+        ))) => Err(Halt::Stop(StopCause::Accounting {
+            limit: incomplete.limit_kind.as_str(),
+            value: incomplete.limit,
+        })),
+        Ok(outcome) => Err(Halt::Refuse(refused(
+            "/request/synthesis",
+            format!("checked synthesis expression did not complete: {outcome:?}"),
+        ))),
+    }
 }
 
 struct Selection {
@@ -411,12 +665,7 @@ pub(super) fn run_bytes(
         return run_package_synthesis(directory, &request, &selection, run_limits.dependent_bytes)
             .map(Some);
     }
-    if request.call.is_some() || request.clause.is_some() || request.items.is_some() {
-        return Err(refused(
-            "/request/synthesis",
-            "is mutually exclusive with call, clause and items",
-        ));
-    }
+    exclusive_member(&request)?;
     if request.integer_division.is_some()
         || request.libraries.iter().any(|library| {
             library.integer_division.is_some() || library.refinement_internals.is_some()
@@ -491,7 +740,15 @@ pub(super) fn run_bytes(
         points: Default::default(),
         temporal_selections: Vec::new(),
     })
-    .map_err(|error| refused("/request/synthesis", error.to_string()))?;
+    .map_err(|error| match error {
+        crate::emit_checked_v2::Error::Producer(producer) => match *producer {
+            fsl_replay::ReplayRefusal::Recompile { refusal, .. } => {
+                super::spine_run_failure(&source, library_sources.iter(), *refusal)
+            }
+            other => refused("/request/synthesis", other.to_string()),
+        },
+        other => refused("/request/synthesis", other.to_string()),
+    })?;
     let mut model_documents = std::collections::BTreeMap::new();
     for (selection, model) in request.models.iter().zip(&model_sources) {
         model_documents.insert(
@@ -499,10 +756,12 @@ pub(super) fn run_bytes(
             model.source().text().as_bytes().to_vec(),
         );
     }
+    let read_limits =
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
     let admitted = fsl_package::admit_checked_package(
         compiled.emitted.package().bytes(),
         &model_documents,
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+        read_limits,
     )
     .map_err(|failure| {
         refused(
@@ -521,7 +780,10 @@ pub(super) fn run_bytes(
                     == Some(claim.declaration_region.start)
                 && u64::try_from(synthesis.span().end).ok() == Some(claim.declaration_region.end)
         })
-        .ok_or_else(|| refused("/request/synthesis/declaration", "missing-name"))?;
+        .ok_or_else(|| missing_name("the declaration is not a checked synthesis"))?;
+    if matches!(checked.grammar(), ValueType::Reference(_)) {
+        return Err(plan_not_routed());
+    }
     let ValueType::Int(domain) = checked.domain() else {
         return Err(refused(
             "/request/synthesis/declaration",
@@ -535,131 +797,60 @@ pub(super) fn run_bytes(
         ));
     }
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
-    let checked_package = compiled.checked.package();
-    let mut meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
-        &selection.accounting,
-    )));
-    let mut evaluation_error = None;
-    let mut validation_error = None;
-    let (mut outcome, exit_code) = search_integer_outcome(
-        &package_name,
-        claim.name.as_ref(),
-        node,
-        domain,
-        selection.limits,
-        |candidate| match evaluate_integer_body(
-            checked_package,
-            checked.satisfies(),
-            candidate,
-            &mut meter.borrow_mut(),
-        ) {
-            Ok(filament_exact::Value::Boolean(value)) => value,
-            Ok(value) => {
-                evaluation_error = Some(format!("satisfies expression returned {value:?}"));
-                false
-            }
-            Err(error) => {
-                evaluation_error = Some(error);
-                false
-            }
-        },
-        |candidate| {
-            if candidate >= domain.lower() && candidate <= domain.upper() {
-                match evaluate_integer_body(
-                    checked_package,
-                    checked.satisfies(),
-                    candidate,
-                    &mut meter.borrow_mut(),
-                ) {
-                    Ok(filament_exact::Value::Boolean(true)) => Ok(()),
-                    Ok(filament_exact::Value::Boolean(false)) => {
-                        Err(serde_json::json!({"kind": "candidate-rejected"}))
-                    }
-                    Ok(value) => {
-                        validation_error = Some(format!(
-                            "satisfies expression returned {value:?} during candidate validation"
-                        ));
-                        Err(serde_json::json!({"kind": "candidate-validation-failed"}))
-                    }
-                    Err(error) => {
-                        validation_error = Some(error);
-                        Err(serde_json::json!({"kind": "candidate-validation-failed"}))
-                    }
-                }
-            } else {
-                Err(serde_json::json!({"kind": "candidate-outside-domain"}))
-            }
-        },
+    let objective = match checked.objective_direction() {
+        None => None,
+        Some(name) => Some(ObjectiveSpec {
+            direction: Direction::parse(name)
+                .ok_or_else(|| refused("/request/synthesis/objective", "unknown direction"))?,
+            text: checked.objective_source().unwrap_or(""),
+            is_candidate: checked.objective_is_candidate(),
+        }),
+    };
+    let identities = fsl_package::ReadIdentityRows::of_rows(
+        &admitted,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
     );
-    if let Some(error) = evaluation_error {
-        return Err(refused("/request/synthesis", error));
-    }
-    if let Some(error) = validation_error {
-        return Err(refused("/request/synthesis", error));
-    }
-    if exit_code == 0 {
-        if let Some(objective) = checked.objective() {
-            let work_exhausted = selection
-                .limits
-                .max_work
-                .filter(|maximum| outcome.explored.work >= *maximum);
-            let deadline_expired = selection
-                .limits
-                .deadline
-                .is_some_and(|deadline| Instant::now() >= deadline);
-            if work_exhausted.is_some() || deadline_expired {
-                outcome.status = "incomplete".to_owned();
-                outcome.optimal = Some(false);
-                outcome.cause = Some(match work_exhausted {
-                    Some(maximum) => serde_json::json!({
-                        "kind": "limit-reached",
-                        "limit": "max_work",
-                        "value": maximum,
-                        "setting": "synthesis.max_work"
-                    }),
-                    None => serde_json::json!({"kind": "deadline"}),
-                });
-                return Ok(Some(super::RunResult {
-                    exit_code: 22,
-                    value: super::output::NativeResult::synthesis_document(serde_json::json!({
-                        "synthesis": outcome.into_value()
-                    })),
-                    outcome: None,
-                    requirements: None,
-                    sources: crate::Sources::from_sources(intake.sources.iter().cloned()),
-                }));
-            }
-            let candidate = outcome
-                .candidate
-                .as_ref()
-                .and_then(|value| value.get("value"))
-                .and_then(Value::as_str)
-                .and_then(|value| value.parse::<Integer>().ok())
-                .ok_or_else(|| {
-                    refused(
-                        "/request/synthesis",
-                        "objective candidate is not an integer",
-                    )
-                })?;
-            let value =
-                evaluate_integer_body(checked_package, objective, &candidate, meter.get_mut())
-                    .map_err(|error| refused("/request/synthesis", error))?;
-            outcome.explored.work = outcome.explored.work.saturating_add(1);
-            outcome.optimal = Some(checked.objective_is_candidate());
-            let filament_exact::Value::Integer(value) = value else {
-                return Err(refused(
-                    "/request/synthesis/objective",
-                    "integer synthesis objective returned a non-integer",
-                ));
-            };
-            outcome = outcome.with_objective(serde_json::json!({
-                "direction": checked.objective_direction(),
-                "expression": checked.objective_source().unwrap_or(""),
-                "value": integer_value(&value),
-            }));
-        }
-    }
-    let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+    let mut budget = read_limits.native_join_limits().budget();
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .map_err(|failure| {
+            refused(
+                "/request/synthesis",
+                format!("package admission: {failure:?}"),
+            )
+        })?;
+    let (check_world, check_projected) = read_value_synthesis(&bare, &claim.declaration)?;
+    let mut searcher = SourceEvaluator {
+        package: compiled.checked.package(),
+        checked,
+        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+    };
+    let mut checker = PackageEvaluator {
+        world: &check_world,
+        projected: &check_projected,
+        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+    };
+    let (outcome, exit_code) = run_value_synthesis(
+        ValueRun {
+            package: &package_name,
+            declaration: claim.name.as_ref(),
+            node,
+            domain,
+            limits: selection.limits,
+            objective,
+        },
+        &mut searcher,
+        &mut checker,
+    )?;
     Ok(Some(super::RunResult {
         exit_code,
         value: super::output::NativeResult::synthesis_document(serde_json::json!({
@@ -667,8 +858,50 @@ pub(super) fn run_bytes(
         })),
         outcome: None,
         requirements: None,
-        sources,
+        sources: crate::Sources::from_sources(intake.sources.iter().cloned()),
     }))
+}
+
+/// The source route's evaluations over the checked package.
+struct SourceEvaluator<'a> {
+    package: &'a fsl_package::CheckedPackage,
+    checked: &'a fsl_semantics::check::CheckedSynthesis,
+    meter: filament_exact::Meter,
+}
+
+impl SourceEvaluator<'_> {
+    fn evaluate(
+        &mut self,
+        body: &fsl_semantics::check::CheckedBody,
+        candidate: &Integer,
+    ) -> Result<filament_exact::Value, Halt> {
+        completed(
+            fsl_eval::value::evaluate_protocol_slot(
+                self.package,
+                body,
+                vec![Some(filament_exact::Value::Integer(candidate.clone()))],
+                &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                &mut self.meter,
+            )
+            .map(|evaluation| evaluation.outcome)
+            .map_err(|fault| format!("checked synthesis expression fault: {fault:?}")),
+        )
+    }
+}
+
+impl CandidateEvaluator for SourceEvaluator<'_> {
+    fn block(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+        let body = self.checked.satisfies();
+        self.evaluate(body, candidate)
+    }
+
+    fn objective(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+        let body = self
+            .checked
+            .objective()
+            .ok_or_else(|| Halt::Refuse(refused("/request/synthesis/objective", "no objective")))?;
+        self.evaluate(body, candidate)
+    }
 }
 
 fn run_package_synthesis(
@@ -677,12 +910,7 @@ fn run_package_synthesis(
     selection: &Selection,
     dependent_bytes: usize,
 ) -> super::Result<super::RunResult> {
-    if request.call.is_some() || request.clause.is_some() || request.items.is_some() {
-        return Err(refused(
-            "/request/synthesis",
-            "is mutually exclusive with call, clause and items",
-        ));
-    }
+    exclusive_member(request)?;
     if !request.extensions.is_empty() {
         return Err(refused(
             "/request/extensions",
@@ -721,107 +949,44 @@ fn run_package_synthesis(
             )
         })?;
     let claim = select_claim(&admitted.package, selection.declaration.as_deref())?;
-    let projected = bare
-        .project_value_synthesis(&claim.declaration)
-        .map_err(|failure| {
-            refused(
-                "/request/synthesis",
-                format!("checked synthesis read: {failure:?}"),
-            )
-        })?;
-    let world = bare
-        .world()
-        .map_err(|failure| refused("/request/synthesis", format!("package world: {failure:?}")))?;
+    if fsl_package::is_plan_synthesis(&admitted.package, &claim.declaration) {
+        return Err(plan_not_routed());
+    }
+    let (world, projected) = read_value_synthesis(&bare, &claim.declaration)?;
+    let (check_world, check_projected) = read_value_synthesis(&bare, &claim.declaration)?;
     let package_name = admitted.package.name().to_owned();
     let node = serde_json::to_value(&claim.declaration).map_err(super::RunCause::Output)?;
-    let mut meter = std::cell::RefCell::new(filament_exact::Meter::new(super::call_accounting(
-        &selection.accounting,
-    )));
-    let mut evaluation_error = None;
-    let mut validation_error = None;
-    let (mut outcome, exit_code) = search_integer_outcome(
-        &package_name,
-        claim.name.as_ref(),
-        node,
-        projected.domain(),
-        selection.limits,
-        |candidate| match evaluate_bare_synthesis(
-            &world,
-            projected.satisfies(),
-            projected.candidate_slot(),
-            candidate,
-            &mut *meter.borrow_mut(),
-        ) {
-            Ok(filament_exact::Value::Boolean(value)) => value,
-            Ok(value) => {
-                evaluation_error = Some(format!("satisfies expression returned {value:?}"));
-                false
-            }
-            Err(error) => {
-                evaluation_error = Some(error);
-                false
-            }
+    let objective = match projected.objective() {
+        None => None,
+        Some(objective) => Some(ObjectiveSpec {
+            direction: Direction::parse(objective.direction())
+                .ok_or_else(|| refused("/request/synthesis/objective", "unknown direction"))?,
+            text: objective.text(),
+            is_candidate: objective.is_candidate(),
+        }),
+    };
+    let mut searcher = PackageEvaluator {
+        world: &world,
+        projected: &projected,
+        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+    };
+    let mut checker = PackageEvaluator {
+        world: &check_world,
+        projected: &check_projected,
+        meter: filament_exact::Meter::new(super::call_accounting(&selection.accounting)),
+    };
+    let (outcome, exit_code) = run_value_synthesis(
+        ValueRun {
+            package: &package_name,
+            declaration: claim.name.as_ref(),
+            node,
+            domain: projected.domain(),
+            limits: selection.limits,
+            objective,
         },
-        |candidate| match evaluate_bare_synthesis(
-            &world,
-            projected.satisfies(),
-            projected.candidate_slot(),
-            candidate,
-            &mut *meter.borrow_mut(),
-        ) {
-            Ok(filament_exact::Value::Boolean(true)) => Ok(()),
-            Ok(filament_exact::Value::Boolean(false)) => {
-                Err(serde_json::json!({"kind": "candidate-rejected"}))
-            }
-            Ok(value) => {
-                validation_error = Some(format!("satisfies expression returned {value:?}"));
-                Err(serde_json::json!({"kind": "candidate-validation-failed"}))
-            }
-            Err(error) => {
-                validation_error = Some(error);
-                Err(serde_json::json!({"kind": "candidate-validation-failed"}))
-            }
-        },
-    );
-    if let Some(error) = evaluation_error.or(validation_error) {
-        return Err(refused("/request/synthesis", error));
-    }
-    if exit_code == 0 {
-        if let Some(objective) = projected.objective() {
-            let candidate = outcome
-                .candidate
-                .as_ref()
-                .and_then(|value| value.get("value"))
-                .and_then(Value::as_str)
-                .and_then(|value| value.parse::<Integer>().ok())
-                .ok_or_else(|| {
-                    refused(
-                        "/request/synthesis",
-                        "objective candidate is not an integer",
-                    )
-                })?;
-            let value = evaluate_bare_synthesis(
-                &world,
-                objective.expression(),
-                projected.candidate_slot(),
-                &candidate,
-                meter.get_mut(),
-            )
-            .map_err(|error| refused("/request/synthesis/objective", error))?;
-            outcome.explored.work = outcome.explored.work.saturating_add(1);
-            outcome.optimal = Some(true);
-            let filament_exact::Value::Integer(value) = value else {
-                return Err(refused(
-                    "/request/synthesis/objective",
-                    "integer synthesis objective returned a non-integer",
-                ));
-            };
-            outcome = outcome.with_objective(serde_json::json!({
-                "direction": objective.direction(),
-                "value": integer_value(&value),
-            }));
-        }
-    }
+        &mut searcher,
+        &mut checker,
+    )?;
     Ok(super::RunResult {
         exit_code,
         value: super::output::NativeResult::synthesis_document(serde_json::json!({
@@ -833,71 +998,107 @@ fn run_package_synthesis(
     })
 }
 
-fn evaluate_bare_synthesis(
-    world: &fsl_package::BareWorld,
-    expression: &fsl_package::ReaderProtocolProjection,
-    slot: usize,
-    candidate: &Integer,
-    meter: &mut filament_exact::Meter,
-) -> std::result::Result<filament_exact::Value, String> {
-    let frame_size = expression.frame_slots().max(slot.saturating_add(1));
-    let mut frame = vec![None; frame_size];
-    frame[slot] = Some(filament_exact::Value::Integer(candidate.clone()));
-    let evaluation = fsl_eval::bare::evaluate_bare_expression(world, expression, frame, meter)
-        .map_err(|fault| format!("checked synthesis expression fault: {fault:?}"))?;
-    match evaluation.outcome {
-        filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value)) => {
-            Ok(value)
-        }
-        outcome => Err(format!(
-            "checked synthesis expression did not complete: {outcome:?}"
-        )),
+/// A strict read of one value synthesis, ready to evaluate.
+fn read_value_synthesis(
+    bare: &fsl_package::BarePackage<'_>,
+    declaration: &filament_contract_model::CheckedNodeId,
+) -> super::Result<(fsl_package::BareWorld, fsl_package::BareSynthesis)> {
+    let projected = bare
+        .project_value_synthesis(declaration)
+        .map_err(|failure| {
+            refused(
+                "/request/synthesis",
+                format!("checked synthesis read: {failure:?}"),
+            )
+        })?;
+    let world = bare
+        .world()
+        .map_err(|failure| refused("/request/synthesis", format!("package world: {failure:?}")))?;
+    Ok((world, projected))
+}
+
+/// The package route's evaluations over the admitted package's world.
+struct PackageEvaluator<'a> {
+    world: &'a fsl_package::BareWorld,
+    projected: &'a fsl_package::BareSynthesis,
+    meter: filament_exact::Meter,
+}
+
+impl PackageEvaluator<'_> {
+    fn evaluate(
+        &mut self,
+        expression: &fsl_package::ReaderProtocolProjection,
+        candidate: &Integer,
+    ) -> Result<filament_exact::Value, Halt> {
+        let slot = self.projected.candidate_slot();
+        let mut frame = vec![None; expression.frame_slots().max(slot.saturating_add(1))];
+        frame[slot] = Some(filament_exact::Value::Integer(candidate.clone()));
+        completed(
+            fsl_eval::bare::evaluate_bare_expression(
+                self.world,
+                expression,
+                frame,
+                &mut self.meter,
+            )
+            .map(|evaluation| evaluation.outcome)
+            .map_err(|fault| format!("checked synthesis expression fault: {fault:?}")),
+        )
+    }
+}
+
+impl CandidateEvaluator for PackageEvaluator<'_> {
+    fn block(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+        let projected = self.projected;
+        self.evaluate(projected.satisfies(), candidate)
+    }
+
+    fn objective(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+        let projected = self.projected;
+        let objective = projected
+            .objective()
+            .ok_or_else(|| Halt::Refuse(refused("/request/synthesis/objective", "no objective")))?;
+        self.evaluate(objective.expression(), candidate)
     }
 }
 
 fn read_selection(member: Value) -> super::Result<Selection> {
     let Some(object) = member.as_object() else {
-        return Err(refused("/request/synthesis", "expected an object"));
+        return Err(wrong_kind("/request/synthesis", "an object"));
     };
     if let Some(key) = object
         .keys()
         .find(|key| !["declaration", "limits", "accounting", "deadline_ms"].contains(&key.as_str()))
     {
-        return Err(refused(
-            &format!("/request/synthesis/{key}"),
-            "unknown-member",
-        ));
+        return Err(unknown_member(&format!("/request/synthesis/{key}")));
     }
     let declaration = match object.get("declaration") {
         None => None,
         Some(Value::String(name)) if !name.is_empty() => Some(name.clone()),
-        Some(_) => {
-            return Err(refused(
+        Some(Value::String(_)) => {
+            return Err(invalid_value(
                 "/request/synthesis/declaration",
                 "expected a non-empty name",
             ));
         }
+        Some(_) => return Err(wrong_kind("/request/synthesis/declaration", "a name")),
     };
     let mut limits = SearchLimits::default();
     if let Some(value) = object.get("limits") {
         let Some(object) = value.as_object() else {
-            return Err(refused("/request/synthesis/limits", "expected an object"));
+            return Err(wrong_kind("/request/synthesis/limits", "an object"));
         };
         if let Some(key) = object
             .keys()
             .find(|key| !["max_candidates", "max_work"].contains(&key.as_str()))
         {
-            return Err(refused(
-                &format!("/request/synthesis/limits/{key}"),
-                "unknown-member",
-            ));
+            return Err(unknown_member(&format!("/request/synthesis/limits/{key}")));
         }
-        limits.max_candidates = Some(
-            read_limit(object, "max_candidates", DEFAULT_MAX_CANDIDATES)?
-                .unwrap_or(DEFAULT_MAX_CANDIDATES),
-        );
-        limits.max_work =
-            Some(read_limit(object, "max_work", DEFAULT_MAX_WORK)?.unwrap_or(DEFAULT_MAX_WORK));
+        limits.max_candidates = Some(read_limit(
+            object,
+            "max_candidates",
+            DEFAULT_MAX_CANDIDATES,
+        )?);
+        limits.max_work = Some(read_limit(object, "max_work", DEFAULT_MAX_WORK)?);
     }
     let accounting = object
         .get("accounting")
@@ -905,7 +1106,7 @@ fn read_selection(member: Value) -> super::Result<Selection> {
         .map(serde_json::from_value)
         .transpose()
         .map_err(|error| {
-            refused(
+            invalid_value(
                 "/request/synthesis/accounting",
                 format!("invalid accounting object: {error}"),
             )
@@ -913,16 +1114,17 @@ fn read_selection(member: Value) -> super::Result<Selection> {
         .unwrap_or_default();
     let deadline_ms = match object.get("deadline_ms") {
         None => None,
-        Some(value) => value
-            .as_u64()
-            .filter(|value| *value <= 9_007_199_254_740_991)
-            .map(Some)
-            .ok_or_else(|| {
-                refused(
-                    "/request/synthesis/deadline_ms",
-                    "expected an integer from 0 to 9007199254740991",
-                )
-            })?,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|value| *value <= 9_007_199_254_740_991)
+                .ok_or_else(|| {
+                    invalid_value(
+                        "/request/synthesis/deadline_ms",
+                        "expected an integer from 0 to 9007199254740991",
+                    )
+                })?,
+        ),
     };
     Ok(Selection {
         declaration,
@@ -936,19 +1138,15 @@ fn read_limit(
     object: &serde_json::Map<String, Value>,
     name: &str,
     default: u64,
-) -> super::Result<Option<u64>> {
+) -> super::Result<u64> {
+    let pointer = format!("/request/synthesis/limits/{name}");
     match object.get(name) {
-        None => Ok(Some(default)),
-        Some(value) => value
-            .as_u64()
-            .filter(|value| *value > 0)
-            .map(Some)
-            .ok_or_else(|| {
-                refused(
-                    &format!("/request/synthesis/limits/{name}"),
-                    "expected a positive integer",
-                )
-            }),
+        None => Ok(default),
+        Some(value) => match value.as_u64() {
+            Some(0) => Err(invalid_value(&pointer, "expected a positive integer")),
+            Some(limit) => Ok(limit),
+            None => Err(wrong_kind(&pointer, "a positive integer")),
+        },
     }
 }
 
@@ -996,7 +1194,7 @@ fn select_claim_rows<'p>(
         Some(name) => {
             let path: Vec<_> = name.split("::").collect();
             if path.iter().any(|segment| segment.is_empty()) {
-                return Err(refused("/request/synthesis/declaration", "missing-name"));
+                return Err(missing_name("the declaration name has an empty segment"));
             }
             let matching: Vec<_> = rows
                 .iter()
@@ -1014,43 +1212,34 @@ fn select_claim_rows<'p>(
                 .collect();
             match unique_declarations(&matching).as_slice() {
                 [row] => *row,
-                [] => return Err(refused("/request/synthesis/declaration", "missing-name")),
-                _ => return Err(refused("/request/synthesis/declaration", "ambiguous-name")),
+                [] => return Err(missing_name("no synthesis declaration has this name")),
+                _ => {
+                    return Err(request_refusal(
+                        Code::AmbiguousDeclaration,
+                        "ambiguous-name",
+                        "/request/synthesis/declaration",
+                        "the name matches more than one synthesis declaration",
+                    ));
+                }
             }
         }
         None => match unique_declarations(&rows).as_slice() {
             [row] => *row,
-            [] => return Err(refused("/request/synthesis/declaration", "missing-name")),
-            _ => return Err(refused("/request/synthesis/declaration", "missing-member")),
+            [] => return Err(missing_name("the package holds no synthesis declaration")),
+            _ => {
+                return Err(request_refusal(
+                    Code::InvalidRuntimeInput,
+                    "missing-member",
+                    "/request/synthesis/declaration",
+                    "the package holds several synthesis declarations; name one",
+                ));
+            }
         },
     };
     Ok(selected)
 }
 
-fn evaluate_integer_body(
-    package: &fsl_package::CheckedPackage,
-    body: &fsl_semantics::check::CheckedBody,
-    candidate: &Integer,
-    meter: &mut filament_exact::Meter,
-) -> Result<filament_exact::Value, String> {
-    let evaluation = fsl_eval::value::evaluate_protocol_slot(
-        package,
-        body,
-        vec![Some(filament_exact::Value::Integer(candidate.clone()))],
-        &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        meter,
-    )
-    .map_err(|fault| format!("checked synthesis expression fault: {fault:?}"))?;
-    match evaluation.outcome {
-        filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(value)) => {
-            Ok(value)
-        }
-        outcome => Err(format!(
-            "checked synthesis expression did not complete: {outcome:?}"
-        )),
-    }
-}
-
+/// A refusal of the synthesis run that has no catalogued cause of its own.
 fn refused(member: &str, reason: impl Into<String>) -> super::RunCause {
     super::RunCause::ClauseRequest {
         member: "synthesis".to_owned(),
@@ -1058,11 +1247,91 @@ fn refused(member: &str, reason: impl Into<String>) -> super::RunCause {
     }
 }
 
+/// A `synthesis` member refusal with its catalog code and FR-805 cause.
+fn request_refusal(
+    code: Code,
+    cause: &'static str,
+    pointer: &str,
+    reason: impl Into<String>,
+) -> super::RunCause {
+    super::RunCause::SynthesisRequest {
+        path: pointer.to_owned(),
+        code,
+        cause,
+        reason: reason.into(),
+    }
+}
+
+fn unknown_member(pointer: &str) -> super::RunCause {
+    request_refusal(
+        Code::InvalidRuntimeInput,
+        "unknown-member",
+        pointer,
+        "the member is not admitted here",
+    )
+}
+
+fn wrong_kind(pointer: &str, expected: &str) -> super::RunCause {
+    request_refusal(
+        Code::InvalidRuntimeInput,
+        "wrong-value-kind",
+        pointer,
+        format!("expected {expected}"),
+    )
+}
+
+fn invalid_value(pointer: &str, reason: impl Into<String>) -> super::RunCause {
+    request_refusal(Code::InvalidRuntimeInput, "invalid-value", pointer, reason)
+}
+
+fn missing_name(reason: &str) -> super::RunCause {
+    request_refusal(
+        Code::MissingDeclaration,
+        "missing-name",
+        "/request/synthesis/declaration",
+        reason,
+    )
+}
+
+/// A plan synthesis is selected through this member too, but the planner is
+/// not behind it yet; it never runs through the value enumerator.
+fn plan_not_routed() -> super::RunCause {
+    not_routed(
+        "/request/synthesis/declaration",
+        "a plan synthesis is not routed to the planner yet",
+    )
+}
+
+fn not_routed(pointer: &str, reason: impl Into<String>) -> super::RunCause {
+    request_refusal(
+        Code::UnsupportedConstruct,
+        "not-yet-implemented",
+        pointer,
+        reason,
+    )
+}
+
+/// FR-1037: the `synthesis` member is the request's only run member.
+fn exclusive_member(request: &super::wire::Request) -> super::Result<()> {
+    if request.call.is_some()
+        || request.clause.is_some()
+        || request.items.is_some()
+        || request.tl_lowering.is_some()
+    {
+        return Err(refused(
+            "/request/synthesis",
+            "is mutually exclusive with call, clause, items and tl_lowering",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_MAX_WORK, SearchDisposition, SearchLimits, SynthesisOutcomeDocument,
-        search_integer_domain, select_claim_rows,
+        ascending, run_value_synthesis, search_integer_domain, select_claim_rows,
+        CandidateEvaluator, Direction, Halt, ObjectiveSpec, SearchDisposition, SearchLimits,
+        SearchResult, StopCause, SynthesisOutcomeDocument, ValueRun,
     };
     use filament_exact::{Integer, IntegerInterval};
     use ix_trace_rs::trace;
@@ -1101,6 +1370,7 @@ mod tests {
         let b = claim_row("B");
         let ambiguous = select_claim_rows([&a, &b].into_iter(), Some("Pick"))
             .expect_err("two matching declarations are ambiguous");
+        assert_eq!(ambiguous.code(), fsl_foundation::Code::AmbiguousDeclaration);
         assert!(format!("{ambiguous:?}").contains("ambiguous-name"));
 
         let selected = select_claim_rows([&a, &b].into_iter(), Some("A::Pick"))
@@ -1115,11 +1385,19 @@ mod tests {
         );
     }
 
+    fn search(
+        limits: SearchLimits,
+        satisfies: impl FnMut(&Integer) -> Result<bool, Halt>,
+    ) -> SearchResult {
+        search_integer_domain(ascending(&digit_domain()), limits, 0, satisfies)
+            .expect("the search is not refused")
+    }
+
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
     fn visits_values_through_the_first_satisfying_integer() {
-        let result = search_integer_domain(&digit_domain(), SearchLimits::default(), |value| {
-            value == &Integer::from(7_i64)
+        let result = search(SearchLimits::default(), |value| {
+            Ok(value == &Integer::from(7_i64))
         });
         assert_eq!(
             result.disposition,
@@ -1131,7 +1409,7 @@ mod tests {
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
     fn exhausts_a_finite_integer_domain_before_reporting_no_candidate() {
-        let result = search_integer_domain(&digit_domain(), SearchLimits::default(), |_| false);
+        let result = search(SearchLimits::default(), |_| Ok(false));
         assert_eq!(result.disposition, SearchDisposition::NoCandidate);
         assert_eq!(result.visited, 10);
     }
@@ -1139,21 +1417,17 @@ mod tests {
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
     fn request_limits_stop_before_evaluating_the_next_value() {
-        let result = search_integer_domain(
-            &digit_domain(),
+        let result = search(
             SearchLimits {
                 max_candidates: Some(3),
                 max_work: None,
                 deadline: None,
             },
-            |_| false,
+            |_| Ok(false),
         );
         assert_eq!(
             result.disposition,
-            SearchDisposition::Incomplete {
-                cause: "synthesis.max_candidates",
-                value: 3
-            }
+            SearchDisposition::Incomplete(StopCause::Candidates(3))
         );
         assert_eq!(result.visited, 3);
     }
@@ -1163,8 +1437,7 @@ mod tests {
     #[test]
     #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
     fn elapsed_deadline_stops_before_the_first_candidate() {
-        let result = search_integer_domain(
-            &digit_domain(),
+        let result = search(
             SearchLimits {
                 deadline: Some(std::time::Instant::now() - std::time::Duration::from_millis(1)),
                 ..SearchLimits::default()
@@ -1173,10 +1446,7 @@ mod tests {
         );
         assert_eq!(
             result.disposition,
-            SearchDisposition::Incomplete {
-                cause: "deadline_ms",
-                value: 0,
-            }
+            SearchDisposition::Incomplete(StopCause::Deadline)
         );
         assert_eq!(result.visited, 0);
         assert_eq!(result.work, 0);
@@ -1187,67 +1457,203 @@ mod tests {
     #[test]
     #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
     fn deadline_expiring_during_evaluation_reports_consumed_work() {
-        let result = search_integer_domain(
-            &digit_domain(),
+        let result = search(
             SearchLimits {
                 deadline: Some(std::time::Instant::now() + std::time::Duration::from_millis(1)),
                 ..SearchLimits::default()
             },
             |_| {
                 std::thread::sleep(std::time::Duration::from_millis(10));
-                true
+                Ok(true)
             },
         );
         assert_eq!(
             result.disposition,
-            SearchDisposition::Incomplete {
-                cause: "deadline_ms",
-                value: 0,
-            }
+            SearchDisposition::Incomplete(StopCause::Deadline)
         );
         assert_eq!(result.visited, 1);
         assert_eq!(result.work, 1);
     }
 
+    /// An evaluator over small integers: the block and the objective are
+    /// plain functions of the candidate.
+    #[derive(Clone, Copy)]
+    struct Fake {
+        block: fn(i64) -> bool,
+        objective: fn(i64) -> i64,
+        meter_stop_at: Option<i64>,
+    }
+
+    fn number(candidate: &Integer) -> i64 {
+        candidate.to_string().parse().expect("a small integer")
+    }
+
+    impl CandidateEvaluator for Fake {
+        fn block(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+            if self.meter_stop_at == Some(number(candidate)) {
+                return Err(Halt::Stop(StopCause::Accounting {
+                    limit: "work_units",
+                    value: 5,
+                }));
+            }
+            let block = self.block;
+            Ok(filament_exact::Value::Boolean(block(number(candidate))))
+        }
+
+        fn objective(&mut self, candidate: &Integer) -> Result<filament_exact::Value, Halt> {
+            let objective = self.objective;
+            Ok(filament_exact::Value::Integer(Integer::from(objective(
+                number(candidate),
+            ))))
+        }
+    }
+
+    fn pick(block: fn(i64) -> bool, objective: fn(i64) -> i64, meter_stop_at: Option<i64>) -> Fake {
+        Fake {
+            block,
+            objective,
+            meter_stop_at,
+        }
+    }
+
+    /// Run `Pick` with `searcher` finding and `checker` checking.
+    fn run_checked(
+        limits: SearchLimits,
+        direction: Option<(Direction, bool)>,
+        searcher: &mut Fake,
+        checker: &mut Fake,
+    ) -> (Value, u8) {
+        let domain = digit_domain();
+        let (document, exit) = run_value_synthesis(
+            ValueRun {
+                package: "pkg",
+                declaration: "Pick",
+                node: serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
+                domain: &domain,
+                limits,
+                objective: direction.map(|(direction, is_candidate)| ObjectiveSpec {
+                    direction,
+                    text: "Pick",
+                    is_candidate,
+                }),
+            },
+            searcher,
+            checker,
+        )
+        .expect("the run is not refused");
+        (document.into_value(), exit)
+    }
+
+    /// Run `Pick` with a checker that evaluates exactly as the searcher does.
+    fn run_pick(
+        limits: SearchLimits,
+        direction: Option<(Direction, bool)>,
+        evaluator: &mut Fake,
+    ) -> (Value, u8) {
+        let mut checker = Fake {
+            meter_stop_at: None,
+            ..*evaluator
+        };
+        run_checked(limits, direction, evaluator, &mut checker)
+    }
+
+    fn limited(max_work: u64) -> SearchLimits {
+        SearchLimits {
+            max_work: Some(max_work),
+            ..SearchLimits::default()
+        }
+    }
+
+    /// FSpec FR-194-AC-7: `minimize` takes the first satisfying value in
+    /// nondecreasing order and `maximize` the first in nonincreasing order.
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
-    fn search_outcome_carries_typed_candidate_and_limit_cause() {
-        let (candidate, exit) = super::search_integer_outcome(
-            "pkg",
-            "Pick",
-            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
-            &digit_domain(),
+    #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
+    fn the_objective_orders_the_search() {
+        let mut evaluator = pick(|c| c >= 3, |c| c, None);
+        let (minimum, exit) = run_pick(
             SearchLimits::default(),
-            |value| value == &Integer::from(7_i64),
-            |_| Ok(()),
+            Some((Direction::Minimize, true)),
+            &mut evaluator,
         );
         assert_eq!(exit, 0);
-        let candidate = candidate.into_value();
+        assert_eq!(minimum["candidate"]["value"], "3");
+        assert_eq!(minimum["explored"]["visited"], 4);
+        assert_eq!(minimum["explored"]["work"], 4);
+        assert_eq!(minimum["optimal"], true);
+        assert_eq!(minimum["objective"]["value"]["value"], "3");
+        let (maximum, exit) = run_pick(
+            SearchLimits::default(),
+            Some((Direction::Maximize, true)),
+            &mut evaluator,
+        );
+        assert_eq!(exit, 0);
+        assert_eq!(maximum["candidate"]["value"], "9");
+        assert_eq!(maximum["explored"]["visited"], 1);
+        assert_eq!(maximum["lineage"]["index"], 0);
+        assert_eq!(maximum["optimal"], true);
+        assert_eq!(maximum["objective"]["direction"], "maximize");
+        assert_eq!(maximum["objective"]["expression"], "Pick");
+        assert_eq!(maximum["objective"]["value"]["value"], "9");
+    }
+
+    /// FSpec FR-194: an objective that is not the candidate ranks every value
+    /// by it, ties broken by the canonical value order.
+    #[test]
+    #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
+    fn a_computed_objective_ranks_the_domain_with_ties_by_value() {
+        let mut evaluator = pick(|c| c >= 7, |c| (c - 5) * (c - 5), None);
+        let (minimum, exit) = run_pick(
+            SearchLimits::default(),
+            Some((Direction::Minimize, false)),
+            &mut evaluator,
+        );
+        assert_eq!(exit, 0);
+        // The order is 5, 4, 6, 3, 7: 7 is the fifth value and costs 4.
+        assert_eq!(minimum["candidate"]["value"], "7");
+        assert_eq!(minimum["explored"]["visited"], 5);
+        assert_eq!(minimum["lineage"]["index"], 4);
+        assert_eq!(minimum["objective"]["value"]["value"], "4");
+        assert_eq!(minimum["explored"]["work"], 15);
+        let (maximum, exit) = run_pick(
+            SearchLimits::default(),
+            Some((Direction::Maximize, false)),
+            &mut evaluator,
+        );
+        assert_eq!(exit, 0);
+        // The order is 0, 1, 9, 2, 8, ...: 9 is the third value and costs 16.
+        assert_eq!(maximum["candidate"]["value"], "9");
+        assert_eq!(maximum["explored"]["visited"], 3);
+        assert_eq!(maximum["objective"]["value"]["value"], "16");
+        assert_eq!(maximum["optimal"], true);
+    }
+
+    #[test]
+    #[trace("TC-2104", "FR-754-AC-3")]
+    fn outcome_carries_typed_candidate_and_limit_cause() {
+        let mut evaluator = pick(|c| c == 7, |c| c, None);
+        let (candidate, exit) = run_pick(SearchLimits::default(), None, &mut evaluator);
+        assert_eq!(exit, 0);
         assert_eq!(candidate["status"], "candidate");
         assert_eq!(
             candidate["candidate"],
             serde_json::json!({"type": "integer", "value": "7"})
         );
         assert_eq!(candidate["check"], "validated");
-        assert_eq!(candidate["explored"]["work"], 9);
+        assert_eq!(candidate["explored"]["work"], 8);
         assert_eq!(candidate["lineage"]["index"], 7);
         assert_eq!(candidate["lineage"]["symmetry"], "identity");
+        assert_eq!(candidate["optimal"], Value::Null);
 
-        let (limited, exit) = super::search_integer_outcome(
-            "pkg",
-            "Pick",
-            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
-            &digit_domain(),
+        let (limited, exit) = run_pick(
             SearchLimits {
                 max_candidates: Some(3),
-                max_work: Some(DEFAULT_MAX_WORK),
-                deadline: None,
+                ..SearchLimits::default()
             },
-            |_| false,
-            |_| Ok(()),
+            None,
+            &mut pick(|_| false, |c| c, None),
         );
         assert_eq!(exit, 22);
-        let limited = limited.into_value();
         assert_eq!(limited["status"], "incomplete");
         assert_eq!(limited["explored"]["visited"], 3);
         assert_eq!(limited["explored"]["work"], 3);
@@ -1260,33 +1666,113 @@ mod tests {
         );
     }
 
-    /// FR-754-AC-3: native candidate validation consumes one unit of work.
+    /// FSpec FR-823: the independent check runs under the request's
+    /// `accounting`, not under the search limits, so a work limit spent on the
+    /// last candidate still leaves it `validated`.
     #[test]
     #[trace("TC-2104", "FR-754-AC-3")]
-    fn candidate_is_unchecked_when_work_limit_cannot_cover_validation() {
-        let mut validation_called = false;
-        let (candidate, exit) = super::search_integer_outcome(
-            "pkg",
-            "Pick",
-            serde_json::json!({"package": "pkg", "path": ["Pick"], "ordinal": 0}),
-            &digit_domain(),
-            SearchLimits {
-                max_candidates: None,
-                max_work: Some(8),
-                deadline: None,
-            },
-            |value| value == &Integer::from(7_i64),
-            |_| {
-                validation_called = true;
-                Ok(())
-            },
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
+    fn the_check_is_not_charged_to_the_search_work_limit() {
+        let mut evaluator = pick(|c| c == 7, |c| c, None);
+        let (outcome, exit) = run_pick(
+            limited(8),
+            Some((Direction::Minimize, true)),
+            &mut evaluator,
+        );
+        assert_eq!(exit, 0);
+        assert_eq!(outcome["status"], "candidate");
+        assert_eq!(outcome["check"], "validated");
+        assert_eq!(outcome["explored"]["work"], 8);
+        assert_eq!(outcome["objective"]["value"]["value"], "7");
+        let (stopped, exit) = run_pick(limited(7), None, &mut evaluator);
+        assert_eq!(exit, 22);
+        assert_eq!(stopped["status"], "incomplete");
+        assert_eq!(stopped["candidate"], Value::Null);
+    }
+
+    /// FSpec FR-823: a checker that disagrees with the search rejects the
+    /// candidate with both evaluations in the record, exit 30.
+    #[test]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-1")]
+    fn a_checker_that_disagrees_rejects_the_candidate() {
+        let mut searcher = pick(|c| c >= 3, |c| c, None);
+        let mut checker = pick(|c| c >= 4, |c| c, None);
+        let (outcome, exit) =
+            run_checked(SearchLimits::default(), None, &mut searcher, &mut checker);
+        assert_eq!(exit, 30);
+        assert_eq!(outcome["status"], "candidate");
+        assert_eq!(outcome["check"], "rejected");
+        assert_eq!(outcome["optimal"], Value::Null);
+        assert_eq!(
+            outcome["counterexample"],
+            serde_json::json!({
+                "kind": "checker-disagrees",
+                "search": {"satisfies": true, "objective": null},
+                "checker": {"satisfies": false, "objective": null},
+            })
+        );
+        let mut checker = pick(|c| c >= 3, |c| c + 1, None);
+        let (outcome, exit) = run_checked(
+            SearchLimits::default(),
+            Some((Direction::Minimize, true)),
+            &mut searcher,
+            &mut checker,
+        );
+        assert_eq!(exit, 30);
+        assert_eq!(outcome["check"], "rejected");
+        assert_eq!(
+            outcome["counterexample"]["search"]["objective"]["value"],
+            "3"
+        );
+        assert_eq!(
+            outcome["counterexample"]["checker"]["objective"]["value"],
+            "4"
+        );
+        assert_eq!(outcome["counterexample"]["checker"]["satisfies"], true);
+    }
+
+    /// FSpec FR-823: a limit stopping the checker leaves the best candidate
+    /// `unchecked` and the result `incomplete`.
+    #[test]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
+    fn a_checker_stop_leaves_the_candidate_unchecked() {
+        let mut searcher = pick(|c| c == 7, |c| c, None);
+        let mut checker = pick(|c| c == 7, |c| c, Some(7));
+        let (outcome, exit) = run_checked(
+            SearchLimits::default(),
+            Some((Direction::Minimize, true)),
+            &mut searcher,
+            &mut checker,
         );
         assert_eq!(exit, 22);
-        assert!(!validation_called);
-        let candidate = candidate.into_value();
-        assert_eq!(candidate["status"], "incomplete");
-        assert_eq!(candidate["check"], "unchecked");
-        assert_eq!(candidate["explored"]["work"], 8);
+        assert_eq!(outcome["status"], "incomplete");
+        assert_eq!(outcome["check"], "unchecked");
+        assert_eq!(outcome["optimal"], false);
+        assert_eq!(outcome["objective"]["value"]["value"], "7");
+        assert_eq!(outcome["cause"]["setting"], "accounting.work_units");
+    }
+
+    /// FSpec FR-823: a meter limit reached while evaluating a candidate is an
+    /// `incomplete` result naming the accounting counter, not a refusal.
+    #[test]
+    #[trace("FSpec-TC-2038", "FSpec-FR-823-AC-2")]
+    fn an_accounting_stop_reports_incomplete_with_its_counter() {
+        let (outcome, exit) = run_pick(
+            SearchLimits::default(),
+            None,
+            &mut pick(|c| c == 7, |c| c, Some(2)),
+        );
+        assert_eq!(exit, 22);
+        assert_eq!(outcome["status"], "incomplete");
+        assert_eq!(outcome["candidate"], Value::Null);
+        assert_eq!(outcome["explored"]["visited"], 3);
+        assert_eq!(
+            outcome["cause"],
+            serde_json::json!({
+                "kind": "limit-reached", "limit": "work_units", "value": 5,
+                "setting": "accounting.work_units"
+            })
+        );
     }
 
     #[test]

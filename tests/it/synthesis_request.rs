@@ -40,6 +40,21 @@ fn package(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) ->
     serde_json::from_slice(emission.package().bytes()).expect("a JSON package")
 }
 
+/// The emitted package bytes of `unit`.
+fn package_bytes(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) -> Vec<u8> {
+    emitted(
+        SourceIdentity::new("test", "synthesis-request"),
+        "unit.native",
+        unit.as_bytes(),
+        packages,
+        &DependencyInput::default(),
+    )
+    .unwrap_or_else(|refusal| panic!("the unit compiles and emits: {refusal:?}"))
+    .package()
+    .bytes()
+    .to_vec()
+}
+
 /// The package's `claim`/`synthesis_request` nodes.
 fn synthesis_nodes(wire: &Value) -> Vec<&Value> {
     wire["semantic_graph"]["nodes"]
@@ -97,6 +112,30 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
         binding(node, "domain")["value"],
         "{node}"
     );
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let target = |name: &str| {
+        let reference = &binding(node, name)["value"]["target"];
+        nodes
+            .iter()
+            .find(|candidate| &candidate["node_id"] == reference)
+            .unwrap_or_else(|| panic!("{name} resolves: {node}"))
+    };
+    assert_eq!(
+        target("grammar")["node_id"]["path"],
+        json!(["Digit"]),
+        "{node}"
+    );
+    assert_eq!(
+        target("domain")["node_id"]["path"],
+        json!(["Digit"]),
+        "{node}"
+    );
+    assert_eq!(target("candidate")["node_tag"], "parameter", "{node}");
+    assert_eq!(
+        target("candidate")["node_id"]["path"],
+        json!(["Pick"]),
+        "{node}"
+    );
     assert_eq!(
         binding(node, "objective")["value"]["members"],
         json!([]),
@@ -121,7 +160,8 @@ fn a_value_synthesis_is_one_synthesis_request_node() {
 }
 
 /// FR-1036-AC-2: a plan synthesis's node names the object type as `grammar`
-/// and the length range as `domain`.
+/// and the length range as `domain`, types its candidate by the object type,
+/// and the strict reader reads the declaration back as a plan synthesis.
 #[test]
 #[trace("TC-3016", "FR-1036-AC-2")]
 fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
@@ -130,14 +170,13 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("the spine model admits");
-    let wire = package(
-        &format!(
-            "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
-             synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
-             satisfies {{ true }};\n"
-        ),
-        &packages,
+    let unit = format!(
+        "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
+         synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
+         satisfies {{ Reach.length >= 1 }};\n"
     );
+    let bytes = package_bytes(&unit, &packages);
+    let wire: Value = serde_json::from_slice(&bytes).expect("a JSON package");
     let node = synthesis_nodes(&wire)[0];
     let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
     let target = |name: &str| {
@@ -150,6 +189,45 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     assert_eq!(target("grammar")["node_tag"], "model", "{node}");
     assert_eq!(target("grammar")["semantic_form"], "object_type", "{node}");
     assert_eq!(target("domain")["semantic_form"], "integer_range", "{node}");
+    let candidate = target("candidate");
+    assert_eq!(candidate["node_tag"], "parameter", "{candidate}");
+    assert_eq!(
+        candidate["node_id"]["path"],
+        json!(["Reach"]),
+        "{candidate}"
+    );
+    assert!(
+        candidate
+            .to_string()
+            .contains(&binding(node, "grammar")["value"]["target"].to_string()),
+        "the candidate is typed by the object type: {candidate}"
+    );
+    assert!(
+        !binding(node, "satisfies")["value"].is_null(),
+        "the block is a node: {node}"
+    );
+    assert_eq!(
+        binding(node, "objective")["value"]["members"],
+        json!([]),
+        "{node}"
+    );
+
+    let admitted = fsl_package::admit_checked_package(
+        &bytes,
+        &packages,
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
+    )
+    .expect("the reader admits the package");
+    let row = admitted
+        .claim_names()
+        .unwrap_or_default()
+        .iter()
+        .find(|row| row.name.as_ref() == "Reach")
+        .expect("Reach has a claim-name row");
+    assert!(
+        fsl_package::is_plan_synthesis(&admitted, &row.declaration),
+        "the reader reads the object type as the grammar"
+    );
 }
 
 // ---- FR-1037: the run request's `synthesis` member ----------------------
@@ -162,10 +240,18 @@ fn source(file: &str) -> Value {
 /// Runs `unit` through the command adapter with `synthesis` as the
 /// request's `synthesis` member, returning its exit code and document.
 fn run(unit: &str, synthesis: Value) -> (u8, Value) {
+    run_with(unit, json!({"synthesis": synthesis}))
+}
+
+/// Runs `unit` with `members` added to the request beside its program.
+fn run_with(unit: &str, members: Value) -> (u8, Value) {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    let request = json!({"format": "native-run/1", "request": {
-        "models": [], "program": {"source": source("unit.native")}, "synthesis": synthesis}});
+    let mut request = json!({"format": "native-run/1", "request": {
+        "models": [], "program": {"source": source("unit.native")}}});
+    for (name, member) in members.as_object().unwrap() {
+        request["request"][name] = member.clone();
+    }
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
@@ -226,7 +312,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{found}"
     );
     assert_eq!(outcome["explored"]["visited"], 8, "{found}");
-    assert_eq!(outcome["explored"]["work"], 9, "{found}");
+    assert_eq!(outcome["explored"]["work"], 8, "{found}");
     assert_eq!(outcome["lineage"]["index"], 7, "{found}");
     let (exit, none) = run(
         &pick("Pick * Pick = 50", ""),
@@ -246,7 +332,7 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         "{optimal}"
     );
     assert_eq!(optimal["synthesis"]["optimal"], true, "{optimal}");
-    assert_eq!(optimal["synthesis"]["explored"]["work"], 6, "{optimal}");
+    assert_eq!(optimal["synthesis"]["explored"]["work"], 4, "{optimal}");
     assert_eq!(
         optimal["synthesis"]["objective"]["direction"], "minimize",
         "{optimal}"
@@ -261,32 +347,37 @@ fn the_synthesis_member_writes_the_synthesis_outcome() {
         json!({"type": "integer", "value": "3"}),
         "{optimal}"
     );
-    let (exit, limited_objective) = run(
+    let (exit, maximum) = run(
+        &pick("Pick >= 3", "maximize Pick"),
+        json!({"declaration": "Pick"}),
+    );
+    assert_eq!(exit, 0, "{maximum}");
+    assert_eq!(
+        maximum["synthesis"]["candidate"],
+        json!({"type": "integer", "value": "9"}),
+        "{maximum}"
+    );
+    assert_eq!(maximum["synthesis"]["optimal"], true, "{maximum}");
+    assert_eq!(maximum["synthesis"]["explored"]["visited"], 1, "{maximum}");
+    assert_eq!(maximum["synthesis"]["lineage"]["index"], 0, "{maximum}");
+    let (exit, last_unit) = run(
         &pick("Pick >= 3", "minimize Pick"),
         json!({"declaration": "Pick", "limits": {"max_work": 4}}),
     );
+    assert_eq!(exit, 0, "the check is not charged to max_work: {last_unit}");
+    assert_eq!(last_unit["synthesis"]["check"], "validated", "{last_unit}");
+    assert_eq!(last_unit["synthesis"]["explored"]["work"], 4, "{last_unit}");
+    let (exit, limited_objective) = run(
+        &pick("Pick >= 3", "minimize Pick"),
+        json!({"declaration": "Pick", "limits": {"max_work": 3}}),
+    );
     assert_eq!(exit, 22, "{limited_objective}");
     assert_eq!(limited_objective["synthesis"]["status"], "incomplete");
-    assert_eq!(limited_objective["synthesis"]["check"], "unchecked");
-    assert_eq!(limited_objective["synthesis"]["optimal"], false);
-    assert_eq!(limited_objective["synthesis"]["candidate"]["value"], "3");
-    assert_eq!(limited_objective["synthesis"]["explored"]["work"], 4);
-    let (exit, validated_without_objective) = run(
-        &pick("Pick >= 3", "minimize Pick"),
-        json!({"declaration": "Pick", "limits": {"max_work": 5}}),
-    );
-    assert_eq!(exit, 22, "{validated_without_objective}");
-    assert_eq!(
-        validated_without_objective["synthesis"]["status"],
-        "incomplete"
-    );
-    assert_eq!(
-        validated_without_objective["synthesis"]["check"],
-        "validated"
-    );
-    assert_eq!(
-        validated_without_objective["synthesis"]["explored"]["work"],
-        5
+    assert_eq!(limited_objective["synthesis"]["candidate"], Value::Null);
+    assert_eq!(limited_objective["synthesis"]["explored"]["work"], 3);
+    names(
+        &limited_objective["synthesis"]["cause"],
+        "synthesis.max_work",
     );
     let (exit, limited) = run(
         &pick("Pick * Pick = 50", ""),
@@ -328,48 +419,77 @@ fn the_synthesis_member_selects_one_declaration_or_refuses() {
     );
     let with_predicate =
         format!("{only}predicate Positive using v (x: Digit): Boolean {{ x >= 0 }}\n");
-    for (unit, synthesis, cause, pointer) in [
+    for (unit, synthesis, code, cause, pointer) in [
         (
             two.clone(),
             json!({}),
+            "invalid_runtime_input",
             "missing-member",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             only.clone(),
             json!({"declaration": "Nope"}),
+            "missing_declaration",
             "missing-name",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             with_predicate,
             json!({"declaration": "Positive"}),
+            "missing_declaration",
             "missing-name",
-            "/synthesis/declaration",
+            "/request/synthesis/declaration",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "initial": "snapshot.json"}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/initial",
+            "/request/synthesis/initial",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "limits": {"work": 1}}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/limits/work",
+            "/request/synthesis/limits/work",
+        ),
+        (
+            only.clone(),
+            json!({"declaration": "Pick", "limits": {"max_work": 0}}),
+            "invalid_runtime_input",
+            "invalid-value",
+            "/request/synthesis/limits/max_work",
         ),
         (
             only.clone(),
             json!({"declaration": "Pick", "engines": []}),
+            "invalid_runtime_input",
             "unknown-member",
-            "/synthesis/engines",
+            "/request/synthesis/engines",
         ),
     ] {
         let (exit, value) = run(&unit, synthesis);
         assert_eq!(exit, 20, "{value}");
-        names(&value, cause);
-        names(&value, pointer);
+        assert_eq!(value["code"], code, "{value}");
+        assert_eq!(value["cause"], cause, "{value}");
+        assert_eq!(value["details"]["path"], pointer, "{value}");
         assert!(value["synthesis"].get("status").is_none(), "{value}");
     }
+}
+
+/// FR-1037: the `synthesis` member is the request's only run member, so a
+/// `tl_lowering` beside it refuses instead of being ignored.
+#[test]
+#[trace("TC-3017", "FR-1037-AC-2")]
+fn a_synthesis_beside_another_run_member_refuses() {
+    let (exit, value) = run_with(
+        &pick("Pick * Pick = 49", ""),
+        json!({"synthesis": {"declaration": "Pick"}, "tl_lowering": {}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    names(&value, "mutually exclusive");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }

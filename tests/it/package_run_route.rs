@@ -153,10 +153,84 @@ fn a_package_run_selects_its_form_by_the_member() {
                 "observations": {}}}),
     );
     assert_eq!(exit, 20, "{value}");
-    names(
-        &value,
-        "running this member over a selected checked package is not implemented yet",
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"member": "clause", "requires": "directory"}),
+        "{value}"
     );
+}
+
+/// The outcome without the package name, which the source route derives from
+/// the program's identity and the package route reads from the package.
+fn without_package_name(mut value: Value) -> Value {
+    value["synthesis"]["package"] = Value::Null;
+    value["synthesis"]["lineage"]["node"]["package"] = Value::Null;
+    value
+}
+
+/// FR-1039-AC-2: the outcome over a package equals the outcome of the same
+/// request over the source the package was compiled from, with and without
+/// an objective, and over a limit that stops the search.
+#[test]
+#[trace("TC-3019", "FR-1039-AC-2")]
+fn a_package_synthesis_outcome_equals_the_source_outcome() {
+    let pick = |block: &str, objective: &str| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             type Digit = Int[0, 9];\n\
+             synthesis Pick using v grammar Digit domain Digit {objective} \
+             satisfies {{ {block} }};\n"
+        )
+    };
+    for (unit, synthesis) in [
+        (pick("Pick * Pick = 49", ""), json!({"declaration": "Pick"})),
+        (
+            pick("Pick >= 3", "minimize Pick"),
+            json!({"declaration": "Pick"}),
+        ),
+        (
+            pick("Pick >= 3", "maximize Pick"),
+            json!({"declaration": "Pick"}),
+        ),
+        (
+            pick("Pick >= 7", "maximize Pick * (9 - Pick)"),
+            json!({"declaration": "Pick"}),
+        ),
+        (
+            pick("Pick * Pick = 50", ""),
+            json!({"declaration": "Pick", "limits": {"max_candidates": 3}}),
+        ),
+        (
+            pick("Pick >= 3", "minimize Pick"),
+            json!({"declaration": "Pick", "limits": {"max_work": 2}}),
+        ),
+    ] {
+        let from_source = tempfile::tempdir().unwrap();
+        std::fs::write(from_source.path().join("unit.native"), &unit).unwrap();
+        let (source_exit, source_value) = run(
+            from_source.path(),
+            json!({"models": [], "program": {"source": source("unit.native")},
+                "synthesis": synthesis}),
+        );
+        let packaged = tempfile::tempdir().unwrap();
+        compile(packaged.path(), &unit, json!({}));
+        let (package_exit, package_value) = run(
+            packaged.path(),
+            json!({"models": [], "package": {"directory": "handoff"}, "synthesis": synthesis}),
+        );
+        assert_eq!(
+            source_exit, package_exit,
+            "{unit}: {source_value} {package_value}"
+        );
+        assert_eq!(
+            without_package_name(source_value),
+            without_package_name(package_value),
+            "{unit}"
+        );
+    }
 }
 
 /// FR-1039-AC-3: a missing file, a non-v2 document, a package the reader
