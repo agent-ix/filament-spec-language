@@ -957,6 +957,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
+                note: None,
                 family: PendingFamily::Derived,
                 node: None,
             }));
