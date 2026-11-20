@@ -1000,6 +1000,67 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+#[trace("TC-3064", "FR-680-AC-9")]
+#[test]
+fn two_path_guard_corpus() {
+    let directory = corpus_root().join("collections");
+    let mut stems = vec!["fact-guard-sum-2var".to_owned()];
+    for entry in std::fs::read_dir(&directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "native")
+        {
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            if stem.starts_with("fact-guard-2path-") {
+                stems.push(stem.to_owned());
+            }
+        }
+    }
+    assert_eq!(stems.len(), 23);
+    for stem in stems {
+        let expected: Expectation = serde_json::from_slice(
+            &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+        )
+        .unwrap();
+        let program = directory.join(format!("{stem}.native"));
+        let actual = execute(&program, &expected).unwrap();
+        assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+    }
+}
+
+#[trace("TC-3064", "FR-680-AC-9")]
+#[test]
+fn two_path_guard_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = include_bytes!("../corpus/collections/fact-guard-sum-2var.native");
+    std::fs::write(directory.path().join("program.native"), source).unwrap();
+    for (x, y, expected) in [(4, 5, "9"), (6, 5, "0")] {
+        let request = json!({"format":"native-run/1", "request": {
+            "models": [],
+            "program": {"source": {
+                "file": "program.native", "authority": "agent-ix",
+                "identity": "test:two-path-guard", "document": "TwoPathGuard",
+                "formal_revision": 1
+            }},
+            "call": {"function": "f", "arguments": [
+                {"parameter": "x", "value": x},
+                {"parameter": "y", "value": y}
+            ]}
+        }});
+        let request_path = directory.path().join("request.json");
+        std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let output = crate::command_harness::run_file(&request_path);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value["outcome"],
+            json!({"kind": "completed", "value": {"integer": expected}}),
+            "x={x}, y={y}: {value}"
+        );
+    }
+}
+
 #[test]
 #[trace("FR-650-AC-1", "FR-650-AC-3", "FR-650-AC-11")]
 fn corpus_collection_call_values() {

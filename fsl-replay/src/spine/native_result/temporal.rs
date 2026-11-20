@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -57,6 +57,7 @@ fn undefined_cause(reason: &str) -> Option<TemporalUndefinedCause> {
         Undefined::NoneValue,
         Undefined::NoElement,
         Undefined::SumOutOfDomain,
+        Undefined::MalformedNumber,
     ]
     .into_iter()
     .find(|undefined| crate::spine::kernel_undefined_reason(undefined.clone()) == reason)
@@ -120,12 +121,12 @@ pub(crate) enum TemporalWire {
     },
     WindowLimitReached {
         limit: &'static str,
-        value: u64,
+        value: String,
         setting: &'static str,
     },
     ProgressLimitReached {
         limit: &'static str,
-        value: u64,
+        value: String,
         setting: &'static str,
     },
     ProgressContradicted {
@@ -293,7 +294,7 @@ pub(crate) fn replay_outcome_wire(outcome: &TemporalOutcome) -> Result<Value, Ca
         TemporalOutcome::Incomplete(_) => TemporalWire::Incomplete,
         TemporalOutcome::WindowLimitReached(reached) => TemporalWire::WindowLimitReached {
             limit: MAX_WINDOW_VALUES,
-            value: reached.limit,
+            value: reached.limit.to_string(),
             setting: reached.setting,
         },
     };
@@ -659,7 +660,7 @@ pub(super) fn verdict_wire(
         } => (
             TemporalWire::WindowLimitReached {
                 limit,
-                value: *value,
+                value: value.to_string(),
                 setting,
             },
             Some(Outcome::Incomplete {
@@ -669,7 +670,7 @@ pub(super) fn verdict_wire(
         TemporalVerdict::ProgressLimitReached(reached) => (
             TemporalWire::ProgressLimitReached {
                 limit: reached.limit,
-                value: reached.value,
+                value: reached.value.to_string(),
                 setting: reached.setting,
             },
             None,
@@ -796,6 +797,7 @@ pub enum TemporalRecord {
         /// The limit's name.
         limit: String,
         /// The limit's value in the run.
+        #[serde(deserialize_with = "limit_value")]
         value: u64,
         /// The setting that raises it.
         setting: String,
@@ -805,6 +807,7 @@ pub enum TemporalRecord {
         /// The limit's name.
         limit: String,
         /// The capacity in the run.
+        #[serde(deserialize_with = "limit_value")]
         value: u64,
         /// The setting that raises it.
         setting: String,
@@ -819,6 +822,12 @@ pub enum TemporalRecord {
         retained: ProgressValueRead,
         /// The asserted value.
         asserted: ProgressValueRead,
+    },
+    /// A refused `holds` condition at a trace position; the outcome carries
+    /// its FR-100 refusal record.
+    ConditionRefused {
+        /// The condition's trace position.
+        position: u64,
     },
     /// The evaluator refused the supplied trace.
     TraceRefused {
@@ -1014,6 +1023,7 @@ impl TemporalRecord {
     /// The typed verdict a verdict row restores, equal to the one written.
     /// `None` for `progress-contradicted` and `trace-refused` (see
     /// [`Self::contradiction`] and [`Self::trace_refusal`]) and for
+    /// `condition-refused`, whose outcome carries the refusal record, and
     /// `incomplete`, whose FR-100 outcome carries the limit kind only, not
     /// the budget's counters. A family undefined cause restores with an
     /// empty `fields`: the outcome carries its reason only.
@@ -1081,7 +1091,10 @@ impl TemporalRecord {
                     },
                 })
             }
-            Self::Incomplete {} | Self::ProgressContradicted { .. } | Self::TraceRefused { .. } => {
+            Self::Incomplete {}
+            | Self::ProgressContradicted { .. }
+            | Self::ConditionRefused { .. }
+            | Self::TraceRefused { .. } => {
                 return None;
             }
         })
@@ -1120,6 +1133,7 @@ impl TemporalRecord {
             Self::WindowLimitReached { .. } => "window-limit-reached",
             Self::ProgressLimitReached { .. } => "progress-limit-reached",
             Self::ProgressContradicted { .. } => "progress-contradicted",
+            Self::ConditionRefused { .. } => "condition-refused",
             Self::TraceRefused { .. } => "trace-refused",
         }
     }
@@ -1406,6 +1420,21 @@ where
     Option::<T>::deserialize(decoder)
 }
 
+/// A limit value is a canonical unsigned decimal string, not a JSON number.
+fn limit_value<'de, D>(decoder: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(decoder)?;
+    let parsed = value.parse::<u64>().map_err(serde::de::Error::custom)?;
+    if parsed.to_string() != value {
+        return Err(serde::de::Error::custom(
+            "expected a canonical unsigned decimal",
+        ));
+    }
+    Ok(parsed)
+}
+
 /// Read `disposition.temporal`: select the row by its `kind`, then read the
 /// row's other members as one closed object, naming any failing member by
 /// its path.
@@ -1428,9 +1457,12 @@ pub(super) fn decode(value: &serde_json::Value) -> Result<TemporalRecord, Native
     serde_path_to_error::deserialize(tagged).map_err(|error| {
         let path = error.path().to_string();
         // The first segment is the row's kind, which selected the variant.
-        let member = path
-            .split_once('.')
-            .map_or_else(String::new, |(_, rest)| format!(".{rest}"));
+        let member = if path == "." {
+            ".kind".to_owned()
+        } else {
+            path.split_once('.')
+                .map_or_else(String::new, |(_, rest)| format!(".{rest}"))
+        };
         NativeRunReadError::MalformedMember {
             member: format!("disposition.temporal{member}"),
             source: error.into_inner(),
@@ -1808,6 +1840,39 @@ pub(super) fn validate_temporal(
                 .collect();
             refused(record.catalog.code(), record.catalog.cause(), Some(&fields))?;
             unavailable(Category::Refusal)
+        }
+        TemporalRecord::ConditionRefused { .. } => {
+            let Some(OutcomeRead::Refused { code, .. }) = outcome else {
+                return Err(invalid(
+                    "disposition.outcome",
+                    "condition refusal needs its FR-100 record",
+                ));
+            };
+            let category = match super::catalog_category(code) {
+                Some("refusal") => Category::Refusal,
+                Some("unsupported") => Category::Unsupported,
+                Some("incomplete") => Category::Incomplete,
+                _ => {
+                    return Err(invalid(
+                        "disposition.outcome.code",
+                        "expected a refusal catalog code",
+                    ));
+                }
+            };
+            if value.category != category {
+                return Err(invalid(
+                    "disposition.category",
+                    "category disagrees with outcome catalog code",
+                ));
+            }
+            if value.truth.is_some() {
+                return Err(invalid(
+                    "disposition.truth",
+                    "a condition refusal carries no truth",
+                ));
+            }
+            super::validate_disposition(value)?;
+            unavailable(category)
         }
         TemporalRecord::TraceRefused {
             variant,

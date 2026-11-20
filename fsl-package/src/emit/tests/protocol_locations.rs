@@ -965,8 +965,11 @@ fn the_reader_projects_a_conditional_slot_root() {
     );
 }
 
-/// Nested let binders occupy distinct reader frame slots (FR-390-AC-42).
+/// Nested let binders occupy distinct reader frame slots (FR-390-AC-42) and the
+/// reader-backed read gives each its declared name, the parameter node `name`
+/// (FR-400-AC-13).
 #[trace("TC-1070", "FR-390-AC-42")]
+#[trace("TC-3039", "FR-400-AC-13")]
 #[test]
 fn the_reader_projects_nested_let_binders_into_distinct_slots() {
     let source = e_c_with_let(true).replace(
@@ -985,6 +988,7 @@ fn the_reader_projects_nested_let_binders_into_distinct_slots() {
             };
             let Some(filament_checked::node::NodeKind::Let {
                 slot: outer_slot,
+                name: outer_name,
                 body: inner,
                 ..
             }) = projection.kind(projection.root())
@@ -992,12 +996,13 @@ fn the_reader_projects_nested_let_binders_into_distinct_slots() {
                 panic!("the outer let is the projected root");
             };
             let Some(filament_checked::node::NodeKind::Let {
-                slot: inner_slot, ..
+                slot: inner_slot, name: inner_name, ..
             }) = projection.kind(*inner)
             else {
                 panic!("the inner let is projected in the outer body");
             };
             assert_eq!(*inner_slot, *outer_slot + 1);
+            assert_eq!((outer_name.as_str(), inner_name.as_str()), ("c", "d"));
             assert_eq!(projection.frame_slots(), *inner_slot + 1);
         },
     );

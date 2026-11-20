@@ -551,7 +551,7 @@ impl FamilyContract for StateModelFamily {
                             }
                             refusal
                         })?;
-                    if operation.parameters.len() != *arity {
+                    if *arity < operation.required_arity || *arity > operation.parameters.len() {
                         return Err(mismatch(location));
                     }
                     Checked::Operation(index)
@@ -614,9 +614,77 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::check::DispatchOperation;
     use crate::check::family::fixtures::{empty_scope, root_location};
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
+
+    fn check_dispatch_arity(arity: usize) -> Result<Checked, CheckRefusal> {
+        let mut scope = empty_scope();
+        let receiver = filament_exact::EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("acme", "ix://acme/Order"),
+        );
+        scope.dispatch_operations.push(DispatchOperation {
+            receiver_type: receiver.clone(),
+            member: "note".to_owned(),
+            parameters: vec![
+                ValueType::Integer,
+                ValueType::option(ValueType::Integer),
+            ],
+            required_arity: 1,
+            result: ValueType::Boolean,
+            selected_operation_owner: receiver.clone(),
+            selected_operation: "note".to_owned(),
+            table: 0,
+        });
+        let mut meter = filament_exact::Meter::new(crate::check::SCALAR_LIMITS_UNLIMITED);
+        let mut diagnostics = DiagnosticSink::default();
+        let mut scopes = ScopeStack::default();
+        let mut context = CheckContext::new(
+            &scope,
+            StageLimits {
+                input_bytes: 123,
+                node_count: 37,
+            },
+            &mut meter,
+            &mut diagnostics,
+            &mut scopes,
+        );
+        StateModelFamily::check(
+            &Request {
+                form: Form::DispatchOperation {
+                    receiver_type: ValueType::Reference(receiver),
+                    member: "note".to_owned(),
+                    arity,
+                },
+                location: root_location(),
+            },
+            &mut context,
+        )
+        .map(|checked| checked.into_value())
+        .map_err(|failure| match failure {
+            fsl_foundation::diagnostic::StageFailure::Refused(refusal) => refusal,
+            failure => panic!("dispatch arity check stopped unexpectedly: {failure:?}"),
+        })
+    }
+
+    #[trace("FR-103-AC-12", "FSpec-FR-151-AC-20")]
+    #[test]
+    fn dispatch_calls_may_omit_only_a_trailing_optional_parameter() {
+        assert!(matches!(check_dispatch_arity(1), Ok(Checked::Operation(0))));
+        assert!(matches!(check_dispatch_arity(2), Ok(Checked::Operation(0))));
+        for arity in [0, 3] {
+            let Err(refusal) = check_dispatch_arity(arity) else {
+                panic!("invalid arity {arity} must be refused");
+            };
+            assert!(matches!(
+                &refusal.cause,
+                CheckCause::StateModel(model)
+                    if model.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+            ), "arity {arity} was refused as {:?}", refusal.cause);
+        }
+    }
 
     #[trace("FR-300-AC-1")]
     #[test]
@@ -669,9 +737,11 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "existing diagnostic");
         assert_eq!(entries[1].scope, "enclosing");
-        assert!(entries[1]
-            .message
-            .contains("node limit=37, meter admissions=3"));
+        assert!(
+            entries[1]
+                .message
+                .contains("node limit=37, meter admissions=3")
+        );
         assert_eq!(scopes.path(), "enclosing");
     }
 

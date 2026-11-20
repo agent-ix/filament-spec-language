@@ -296,10 +296,17 @@ impl<'a> CaseBuilder<'a> {
     }
 
     /// Record the checked arm of a resolved head.
-    pub(crate) fn arm(&mut self, member: usize, binders: Vec<Slot>, body: NodeId) {
+    pub(crate) fn arm(
+        &mut self,
+        member: usize,
+        binders: Vec<Slot>,
+        names: Vec<String>,
+        body: NodeId,
+    ) {
         self.arms.push(CaseArm::<NodeId> {
             member,
             binders,
+            names,
             body,
         });
     }

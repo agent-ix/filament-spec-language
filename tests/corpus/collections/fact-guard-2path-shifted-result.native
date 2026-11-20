@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function narrow using v(x: Int[0,9]): Integer pure { x }
+function f using v(x: Int[0,9],y: Int[0,9],z: Int[0,9]): Integer pure { if x + y <= 9 then narrow(x + y + 1) else 0 }

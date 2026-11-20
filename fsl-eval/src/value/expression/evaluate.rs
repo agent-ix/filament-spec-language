@@ -1631,6 +1631,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             slot,
             source,
             body,
+            ..
         } = quantifier.kind()
         else {
             return Err(fault());
@@ -2546,7 +2547,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return Ok(());
             }
             NodeKind::Local(slot) => return self.eval_local(*slot),
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 self.tasks.push(Task::Eval(node.at(*body)));
                 self.tasks.push(Task::Bind(*slot));
                 self.tasks.push(Task::Eval(node.at(*value)));

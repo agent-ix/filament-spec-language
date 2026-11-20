@@ -364,6 +364,26 @@ pub fn check_operation_redefinition(
         {
             let display_index = i + 1; // parameter 0 is the receiver, never checked here.
 
+            if let Err(incomplete) = charge_axis(meter) {
+                return ConformanceCheckOutcome::Incomplete(incomplete);
+            }
+            if dp.presence == filament_exact::Presence::Optional
+                && rp.presence == filament_exact::Presence::Required
+            {
+                failures.push(AxisFailure {
+                    axis: "parameter-presence",
+                    code: Code::IllTyped,
+                    cause: ModelRefusalCause::VarianceParameter {
+                        index: display_index,
+                        declared: rp.value_type.clone(),
+                        redefined: dp.value_type.clone(),
+                    },
+                    detail: format!(
+                        "parameter {display_index}: a required parameter cannot redefine an optional parameter"
+                    ),
+                });
+            }
+
             if let Err(incomplete) = charge_type_axis(index, &dp.value_type, meter) {
                 return ConformanceCheckOutcome::Incomplete(incomplete);
             }

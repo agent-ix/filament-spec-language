@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::ObjectEnvironment;
 use crate::model::operation::OperationDeclaration;
@@ -4152,13 +4152,23 @@ pub(super) fn admit_parameters(
     parameters: &[(String, SnapshotValue)],
 ) -> Result<Vec<(String, Value)>, AdmissionFailure> {
     let mut admitted = Vec::with_capacity(operation.parameters().len());
-    for (name, value_type) in operation.parameters() {
-        let raw = raw_field(parameters, name).ok_or_else(|| {
-            refuse(
+    for (position, (name, value_type)) in operation.parameters().iter().enumerate() {
+        let Some(raw) = raw_field(parameters, name) else {
+            if operation.parameter_is_optional(position) {
+                let filament_exact::ValueType::Option(payload) = value_type else {
+                    return Err(fault("optional-operation-parameter-is-an-option"));
+                };
+                admitted.push((
+                    name.clone(),
+                    filament_exact::OptionValue::none((**payload).clone()),
+                ));
+                continue;
+            }
+            return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "missing-member")
                     .with("field", name.clone()),
-            )
-        })?;
+            ));
+        };
         if !field_kind_matches(raw, value_type) {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
@@ -4295,6 +4305,8 @@ pub fn unit_id_named(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::domain_package::OperationEffect;
+    use filament_exact::ValueType;
     use ix_trace_rs::trace;
 
     /// The value form `text` spells, read as the admission reads it.
@@ -4333,6 +4345,37 @@ mod tests {
         collect_references(&SnapshotValue::absent(), &mut found);
         collect_references(&SnapshotValue::integer("1"), &mut found);
         assert!(found.is_empty());
+    }
+
+    #[trace("FSpec-FR-151-AC-21")]
+    #[test]
+    fn omitted_optional_parameter_is_the_same_value_as_explicit_absent() {
+        let operation = OperationDeclaration::new(
+            "sample",
+            vec![("maybe".to_owned(), ValueType::option(ValueType::Integer))],
+            None,
+            OperationEffect::default(),
+        )
+        .with_optional_parameters(&[true]);
+        let types = TypeEnvironment::new([], []).expect("an empty environment admits");
+        let mut omitted_references = References::over(&[], &types, &[]);
+        let omitted = admit_parameters(&mut omitted_references, &operation, &[])
+            .expect("an optional argument may be omitted");
+        let mut explicit_references = References::over(&[], &types, &[]);
+        let explicit = admit_parameters(
+            &mut explicit_references,
+            &operation,
+            &[("maybe".to_owned(), snapshot(r#"{"absent":{}}"#))],
+        )
+        .expect("an explicit absent optional argument admits");
+        let [(omitted_name, omitted_value)] = omitted.as_slice() else {
+            panic!("the optional parameter is materialized at full arity");
+        };
+        let [(explicit_name, explicit_value)] = explicit.as_slice() else {
+            panic!("the explicit optional parameter is materialized at full arity");
+        };
+        assert_eq!(omitted_name, explicit_name);
+        assert_eq!(format!("{omitted_value:?}"), format!("{explicit_value:?}"));
     }
 
     fn reference(population: &str, key: &str) -> SnapshotValue {

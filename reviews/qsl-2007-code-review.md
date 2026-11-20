@@ -56,5 +56,11 @@ FND-001 remains open at the reviewed head. No fix-round head was supplied; no fi
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | still-open | Reproduced at pinned head 1937998d4619e0a3c2e8fc3af6a7bc083c59cf50. No fix-round head was supplied; this is the initial unresolved disposition, not verification of a coder fix. |
+| FND-001 | fixed | Fix commit efd45eed4f checks a known decimal literal's exact rational value against the target domain (fsl-semantics/src/check/facts/conversions.rs:50-64) while classification stays numeric.narrow; regression test fractional_decimal_proves_exact_rational_membership_and_retains_range_narrowing covers admit plus three refusals. |
 
+## New findings (disposition pass 2)
 
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | FR-093-AC-67's verification cell is a bare "Test" with no TC id, unlike AC-64..66 in the same table. | spec/functional/FR-093-lower-checked-value-expressions-to-fr-322-terms.md:1140 |
+| FND-003 | low | An unproved narrowing into Integer or Decimal[..] reports Obligation::Range with required = unbounded, so the refusal payload states no target bound; only the Int target carries its domain. | fsl-semantics/src/check/facts/conversions.rs:116-126 |

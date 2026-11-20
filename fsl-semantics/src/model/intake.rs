@@ -2706,10 +2706,21 @@ fn read_operation_parameter(
     // A `Clock` parameter is a place (FR-230 "Operation parameters").
     let value_type = read_value_type_ref(package, &ctx, type_ref, true)?;
     let multiplicity = ctx.multiplicity("multiplicity")?;
+    let presence = match ctx.str_field("presence")? {
+        "required" => Presence::Required,
+        "optional" => Presence::Optional,
+        other => {
+            return Err(ctx.malformed_in(
+                "presence",
+                format!("{other:?} is not required/optional, the only presences this reader recognizes"),
+            ))
+        }
+    };
     Ok(OperationParameterRecord {
         key: declaration_key(package, node),
         value_type,
         multiplicity,
+        presence,
     })
 }
 
@@ -7120,6 +7131,7 @@ mod tests {
             })
             .expect("the option-typed operation is read");
         assert_eq!(operation.parameters.len(), 1);
+        assert_eq!(operation.parameters[0].presence, Presence::Required);
         assert_eq!(
             operation.parameters[0].value_type,
             ValueTypeRef::Package(declaration_key(
@@ -7134,6 +7146,94 @@ mod tests {
                 "ix://acme/optionals/OptInt",
             )))
         );
+    }
+
+    #[trace("FR-056-AC-65", "FSpec-FR-154-AC-40")]
+    #[test]
+    fn operation_parameter_presence_is_required_and_rejects_unknown_values() {
+        let mut document = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        document["types"][1]["operations"][0]["params"][0]["typeRef"] =
+            serde_json::json!("ix://filament/native/Integer");
+        document["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let records = read_unvalidated(
+            "acme/optionals",
+            &parse_document(document.to_string().as_bytes()),
+        )
+        .expect("optional presence is read from the operation parameter");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters[0].presence == Presence::Optional
+        )));
+
+        let mut optional_option =
+            option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
+        optional_option["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let refusals = read_records(
+            "acme/optionals",
+            &parse_document(optional_option.to_string().as_bytes()),
+        )
+        .expect_err("optional presence cannot wrap an Option<T> parameter twice");
+        assert!(refusals.iter().any(|refusal| {
+            refusal.code == Code::InvalidModelBinding
+                && matches!(
+                    &refusal.cause,
+                    ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                        if node == "ix://acme/optionals/Holder/read/value"
+                            && *member == MemberPath::type_definition()
+                                .name("operations")
+                                .index(0)
+                                .name("params")
+                                .index(0)
+                                .name("presence")
+                )
+        }), "{refusals:?}");
+
+        let required_option = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        let records = read_records(
+            "acme/optionals",
+            &parse_document(required_option.to_string().as_bytes()),
+        )
+        .expect("a required Option<T> parameter is admitted");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters.len() == 1
+                    && operation.parameters[0].presence == Presence::Required
+                    && operation.parameters[0].value_type
+                        == ValueTypeRef::Package(declaration_key(
+                            "acme/optionals",
+                            "ix://acme/optionals/OptInt",
+                        ))
+        )), "{records:?}");
+
+        for invalid_presence in [serde_json::Value::Null, serde_json::json!("sometimes")] {
+            let mut invalid = option_wire_document(Some(serde_json::json!(
+                "ix://filament/native/Integer"
+            )));
+            invalid["types"][1]["operations"][0]["params"][0]["typeRef"] =
+                serde_json::json!("ix://filament/native/Integer");
+            invalid["types"][1]["operations"][0]["params"][0]["presence"] =
+                invalid_presence;
+            let refusals = read_unvalidated(
+                "acme/optionals",
+                &parse_document(invalid.to_string().as_bytes()),
+            )
+            .expect_err("unknown parameter presence refuses");
+            assert!(matches!(
+                &refusals[0].cause,
+                ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+                    if *member == MemberPath::from_document_location(
+                        "$.types[1].operations[0].params[0]",
+                    ).name("presence")
+            ));
+        }
     }
 
     #[trace("FSpec-FR-154-AC-41")]

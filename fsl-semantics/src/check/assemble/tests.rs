@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
-    AssemblyRefusal, TopologyFault, Unmapped,
+    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
+    model_field, model_operation, model_value_type,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -344,6 +344,7 @@ fn unresolved_model_unit_type_names_the_operation_parameter_path() {
                         ordered: false,
                         unique: false,
                     },
+                    presence: filament_exact::Presence::Required,
                 }],
                 result: None,
                 effect: OperationEffect::default(),
@@ -540,10 +541,12 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [AssemblyError {
+    let [
+        AssemblyError {
         cause: AssemblyCause::AliasCycle { edges },
         ..
-    }] = found.as_slice()
+        },
+    ] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -1057,10 +1060,12 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [AssemblyError {
+            let [
+                AssemblyError {
                 cause: AssemblyCause::DuplicateAlias { alias, spans },
                 ..
-            }] = refusal.errors.as_slice()
+                },
+            ] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -1979,11 +1984,20 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
         DomainPackageRecord::OperationMember(OperationMemberRecord {
             key: operation_key.clone(),
             owner: DeclarationKey::fixture("model.Holder"),
-            parameters: vec![OperationParameterRecord {
+            parameters: vec![
+                OperationParameterRecord {
                 key: parameter_key,
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),
-            }],
+                presence: filament_exact::Presence::Required,
+                },
+                OperationParameterRecord {
+                    key: DeclarationKey::fixture("model.Holder/read/maybe"),
+                    value_type: ValueTypeRef::Native(NativeValueType::Integer),
+                    multiplicity: mult(1, Some(1), false, true),
+                    presence: filament_exact::Presence::Optional,
+                },
+            ],
             result: Some(OperationResult {
                 value_type: ValueTypeRef::Package(option_key.clone()),
                 multiplicity: mult(1, Some(1), false, true),
@@ -2109,8 +2123,14 @@ fn option_type_projects_through_signature_alias_sequence_map_tuple_variant_unit_
         .0;
     assert_eq!(
         declaration.parameters(),
-        &[("value".to_owned(), ValueType::option(ValueType::Integer))]
+        &[
+            ("value".to_owned(), ValueType::option(ValueType::Integer)),
+            ("maybe".to_owned(), ValueType::option(ValueType::Integer)),
+        ]
     );
+    assert_eq!(declaration.required_arity(), 1);
+    assert!(!declaration.parameter_is_optional(0));
+    assert!(declaration.parameter_is_optional(1));
     assert_eq!(
         declaration.result(),
         Some(&ValueType::option(ValueType::Integer))
@@ -2842,10 +2862,12 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(found
+    assert!(
+        found
         .iter()
         .any(|error| error.cause == AssemblyCause::ZeroDenominator
-            && error.span == last(&text, "rational(1, 0)")));
+                && error.span == last(&text, "rational(1, 0)"))
+    );
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.
@@ -5633,7 +5655,9 @@ fn compound_quantity_types_keep_exact_canonical_identity_and_held_unit_metadata(
 #[test]
 fn compound_quantity_type_unknown_units_refuse_at_the_factor_even_at_zero_power() {
     for spelling in ["kg*ghost^2", "ghost^0", "Mass^0"] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<{spelling}>): Boolean pure {{ true }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<{spelling}>): Boolean pure {{ true }}"
+        );
         let (text, found) = errors(&source);
         let [error] = found.as_slice() else {
             panic!("one missing factor: {found:?}")
@@ -5662,7 +5686,9 @@ fn compound_quantity_type_exponents_obey_i128_without_narrowing() {
         i128::MAX.to_string(),
         "18446744073709551616".to_owned(),
     ] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Quantity<m^{exponent}> pure {{ q }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Quantity<m^{exponent}> pure {{ q }}"
+        );
         let package = assemble(&source).1.expect("i128 exponent assembles");
         let ValueType::Quantity(id) = &package.resolved_signatures.get(0).unwrap().0[0].1 else {
             panic!("quantity")
@@ -5685,7 +5711,9 @@ fn compound_quantity_type_exponents_obey_i128_without_narrowing() {
         "170141183460469231731687303715884105728",
         "-170141183460469231731687303715884105729",
     ] {
-        let source = format!("{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Boolean pure {{ true }}");
+        let source = format!(
+            "{COMPOUND_TYPE_UNITS} function f using v(q: Quantity<m^{exponent}>): Boolean pure {{ true }}"
+        );
         let (_, found) = errors(&source);
         assert!(
             matches!(&found[0].cause, AssemblyCause::IllFormedBounds(TypeFormFault::IntegerOutsideI128(outside)) if outside.site == crate::check::IntegerSite::UnitExponent && outside.value == exponent)

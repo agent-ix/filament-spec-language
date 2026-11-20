@@ -4649,7 +4649,9 @@ impl<'a> Lowering<'a> {
                     Operands::One(operand),
                 )
             }
-            NodeKind::Let { slot, value, body } => {
+            NodeKind::Let {
+                slot, value, body, ..
+            } => {
                 frames.push(LowerFrame::Let(Box::new(LetFrame {
                     node,
                     slot: *slot,
@@ -5504,6 +5506,7 @@ impl<'a> Lowering<'a> {
                 low,
                 high,
                 body,
+                ..
             } => {
                 frames.push(LowerFrame::Seq(Box::new(SeqFrame {
                     node,
@@ -5521,6 +5524,7 @@ impl<'a> Lowering<'a> {
                 slot,
                 source,
                 body,
+                ..
             } => {
                 let (operator, operation) = match visit {
                     Visit::Map => (
@@ -5649,6 +5653,7 @@ impl<'a> Lowering<'a> {
                     slot,
                     source,
                     body,
+                    ..
                 } = node.at(*operand).kind()
                 {
                     // FR-093: `flatMap`, and `flatten(map(..))`, is one
@@ -5684,6 +5689,7 @@ impl<'a> Lowering<'a> {
                 source,
                 step,
                 identity,
+                ..
             } => {
                 frames.push(LowerFrame::Fold(Box::new(FoldFrame {
                     node,

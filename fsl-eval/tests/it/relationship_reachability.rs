@@ -173,6 +173,7 @@ fn orders_package(shape: Shape, declarations: &str) -> CheckedPackage {
             parameters: vec![OperationParameterRecord {
                 key: key("Order/reroute/target"),
                 value_type: ValueTypeRef::Package(key("Order")),
+                presence: filament_exact::Presence::Required,
                 multiplicity: Multiplicity {
                     lower: 1,
                     upper: Some(1),

@@ -932,6 +932,8 @@ pub struct DispatchOperation {
     pub member: String,
     /// The declared parameter types, in order.
     pub parameters: Vec<ValueType>,
+    /// Minimum number of positional arguments accepted by this signature.
+    pub required_arity: usize,
     /// The declared result type.
     pub result: ValueType,
     /// The declaring model type selected for this operation family.
@@ -3199,6 +3201,22 @@ impl<'a> Typer<'a> {
         &self.slot_names
     }
 
+    /// The declared name of `slot` (FR-400 "Canonical read projections"). A slot
+    /// bound without a recorded name is an internal fault, never an empty name.
+    pub(crate) fn slot_name(&self, slot: Slot, location: &Location) -> Result<String, CheckRefusal> {
+        self.slot_names.get(slot).cloned().ok_or_else(|| {
+            refuse(
+                location,
+                CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "S3",
+                        "checked-binding-slot-has-a-declared-name",
+                    ),
+                ))),
+            )
+        })
+    }
+
     /// Seed this typing pass with the checked graph's retained compound
     /// units so an externally supplied frame can name one as a value type.
     pub(crate) fn include_formed_units(&mut self, formed: &FormedUnits) {
@@ -4165,7 +4183,7 @@ impl<'a> Typer<'a> {
             }
             let value_type = operand.value_type.clone();
             let value = this.push(operand);
-            let slot = this.fresh_slot("ieee_operand");
+            let slot = this.fresh_slot("#ieee_operand");
             bindings.push((slot, value));
             this.push(node(NodeKind::Local(slot), value_type, location))
         };
@@ -4229,7 +4247,12 @@ impl<'a> Typer<'a> {
         for (slot, value) in bindings.into_iter().rev() {
             let body = self.push(composed);
             composed = node(
-                NodeKind::Let { slot, value, body },
+                NodeKind::Let {
+                    slot,
+                    name: self.slot_name(slot, location)?,
+                    value,
+                    body,
+                },
                 ValueType::Boolean,
                 location,
             );
@@ -4238,11 +4261,12 @@ impl<'a> Typer<'a> {
     }
 
     /// A slot that no source name can read, for a value the checker binds
-    /// itself.
+    /// itself. Its declared name is the fixed text `name`, which begins with
+    /// `#` so no source identifier can take it (FR-397 "Operand binders").
     fn fresh_slot(&mut self, name: &str) -> Slot {
         let slot = self.slots;
         self.slots = self.slots.saturating_add(1);
-        self.slot_names.push(format!("{name}_{slot}"));
+        self.slot_names.push(name.to_owned());
         slot
     }
 
@@ -5776,6 +5800,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Map,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5801,6 +5826,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit: Visit::Filter,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },
@@ -5818,6 +5844,7 @@ impl<'a> Typer<'a> {
                     NodeKind::Query {
                         visit,
                         slot,
+                        name: self.slot_name(slot, location)?,
                         source: self.push(source),
                         body: self.push(body),
                     },

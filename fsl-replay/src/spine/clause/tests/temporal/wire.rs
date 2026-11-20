@@ -4,12 +4,12 @@
 //! `native-run-result/2` with its `disposition.temporal` row and read back
 //! by the strict reader; each edit the ACs list refuses naming the member.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 use crate::spine::{
-    read_native_run_result, write_clause_run_result, IndeterminateReasonRead, NativeRunResult,
-    TemporalIndeterminateReason, TemporalRecord,
+    IndeterminateReasonRead, NativeRunResult, TemporalIndeterminateReason, TemporalRecord,
+    read_native_run_result, write_clause_run_result,
 };
 
 fn document(report: &ClauseRunReport) -> Value {
@@ -567,7 +567,7 @@ fn finite_window_rows_round_trip_and_each_edit_refuses() {
         &json!({
             "kind": "progress-limit-reached",
             "limit": "node count",
-            "value": 4,
+            "value": "4",
             "setting": "progress.covered_positions",
         })
     );
@@ -736,7 +736,7 @@ fn insufficient_data_window_limit_and_family_undefined_rows_round_trip() {
         &json!({
             "kind": "window-limit-reached",
             "limit": "max_window_values",
-            "value": 2,
+            "value": "2",
             "setting": "monitor.max_window_values",
         })
     );

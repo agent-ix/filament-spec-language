@@ -400,6 +400,7 @@ fn operation_with(
                     ordered: false,
                     unique: true,
                 },
+                presence: filament_exact::Presence::Required,
             })
             .collect(),
         result: None,
