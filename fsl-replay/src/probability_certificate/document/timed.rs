@@ -1680,14 +1680,6 @@ fn enumerate_region_deadline(
             }
             Phase::Pending => {}
         }
-        if timed
-            .is_quiescent(current.timed.discrete())
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?
-        {
-            // Idle observation adds a distinct scheduler choice. This slice
-            // refuses it until the tail has a checker-owned product state.
-            return Err(ProbabilityDocumentError::Unsupported);
-        }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
             system,
