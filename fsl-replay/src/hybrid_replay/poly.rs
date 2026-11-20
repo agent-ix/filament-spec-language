@@ -37,6 +37,12 @@ pub(super) fn sign(value: &Rational) -> Ordering {
     }
 }
 
+/// The words-squared work of one rational operation on numbers of `words`
+/// words, with the fixed cost of the call: about 40 words squared.
+pub(crate) fn square_of_words(words: u64) -> u64 {
+    words.saturating_mul(words).saturating_add(40)
+}
+
 /// A polynomial in one variable with exact rational coefficients, lowest
 /// degree first, with no trailing zero coefficient.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,13 +88,38 @@ impl Poly {
         }
     }
 
-    /// The work of one arithmetic step on this polynomial: one unit per
-    /// coefficient plus one per 64 bits of its largest part.
+    /// The work of one arithmetic step on this polynomial: per coefficient,
+    /// the square of its words (a rational product or reduction costs the
+    /// product of its operands. words) plus the call itself.
     pub(crate) fn size(&self) -> u64 {
         self.0
             .iter()
-            .map(|c| 1 + c.max_part_bits() / 64)
+            .map(|c| square_of_words(1 + c.max_part_bits() / 64))
             .fold(0, u64::saturating_add)
+    }
+
+    /// The work of the Euclidean algorithm on `self` and `other`: a step
+    /// per pair of coefficients, on rationals that grow to the words of both
+    /// in every coefficient.
+    pub(crate) fn gcd_work(&self, other: &Self) -> u64 {
+        let steps = u64::try_from(self.0.len().saturating_mul(other.0.len())).unwrap_or(u64::MAX);
+        // The parts of the coefficients grow with each remainder step, to
+        // about the square of the length over eight times the words of both
+        // (measured on random polynomials of degree 8 to 48).
+        let length = u64::try_from(self.0.len().max(other.0.len())).unwrap_or(u64::MAX);
+        let grown = self
+            .words()
+            .saturating_add(other.words())
+            .saturating_mul(length.saturating_mul(length) / 8 + 1);
+        steps.saturating_mul(square_of_words(grown))
+    }
+
+    /// The work of evaluating this polynomial by Horner's rule at a rational
+    /// of `ends` words.
+    pub(crate) fn horner_work(&self, ends: u64) -> u64 {
+        let length = u64::try_from(self.0.len()).unwrap_or(u64::MAX);
+        let reach = self.words().saturating_add(length.saturating_mul(ends));
+        length.saturating_mul(square_of_words(reach))
     }
 
     /// The words of the largest coefficient part: one per 64 bits.
@@ -98,6 +129,37 @@ impl Poly {
             .map(|c| 1 + c.max_part_bits() / 64)
             .max()
             .unwrap_or(1)
+    }
+
+    /// A rational above the absolute value of every root (Cauchy's bound).
+    pub(crate) fn root_bound(&self) -> Rational {
+        let Some(lead) = self.lead() else {
+            return one();
+        };
+        let mut bound = zero();
+        for c in &self.0[..self.0.len() - 1] {
+            let ratio = c
+                .div(lead)
+                .unwrap_or_else(|| unreachable!("a leading coefficient is nonzero"));
+            let ratio = if ratio.numerator().is_negative() {
+                ratio.neg()
+            } else {
+                ratio
+            };
+            if ratio > bound {
+                bound = ratio;
+            }
+        }
+        bound.add(&one())
+    }
+
+    /// Every real root, ascending, charging each step before it is taken.
+    pub(crate) fn real_roots_by<E>(
+        &self,
+        charge: &mut dyn FnMut(u64) -> Result<(), E>,
+    ) -> Result<Vec<ExactReal>, E> {
+        let bound = self.root_bound();
+        self.roots_in_by(&bound.neg(), &bound, charge)
     }
 
     /// The remainder by a nonzero divisor.
@@ -335,38 +397,79 @@ impl Poly {
 
     /// Every distinct real root in the closed interval `[low, high]`,
     /// ascending; none for the zero polynomial, which the caller handles.
+    #[cfg(test)]
     pub(super) fn roots_in(&self, low: &Rational, high: &Rational) -> Vec<ExactReal> {
-        if self.is_zero() || low > high {
-            return Vec::new();
+        match self.roots_in_by(low, high, &mut |_| Ok::<(), std::convert::Infallible>(())) {
+            Ok(roots) => roots,
+            Err(never) => match never {},
         }
+    }
+
+    /// [`Self::roots_in`], charging each step by the size of its operands
+    /// before it is taken: the square-free part, the Sturm sequence, and the
+    /// evaluation of the sequence at both ends of every interval the search
+    /// splits.
+    pub(crate) fn roots_in_by<E>(
+        &self,
+        low: &Rational,
+        high: &Rational,
+        charge: &mut dyn FnMut(u64) -> Result<(), E>,
+    ) -> Result<Vec<ExactReal>, E> {
+        if self.is_zero() || low > high {
+            return Ok(Vec::new());
+        }
+        charge(self.gcd_work(self))?;
         let square_free = self.square_free();
         let mut roots = Vec::new();
         if square_free.eval(low).is_zero() {
             roots.push(ExactReal::Rational(low.clone()));
         }
-        if low < high {
-            square_free.isolate(low, high, &mut roots);
+        if low < high && square_free.degree().unwrap_or(0) > 0 {
+            // The Sturm sequence is built once for every interval the
+            // search splits.
+            charge(square_free.gcd_work(&square_free))?;
+            let sequence = square_free.sturm();
+            let mut found = Vec::new();
+            square_free.isolate(&sequence, low, high, &mut found, charge)?;
+            for root in found {
+                roots.push(root.rationalized(charge)?);
+            }
             if square_free.eval(high).is_zero() {
                 roots.push(ExactReal::Rational(high.clone()));
             }
         }
-        roots
+        Ok(roots)
     }
 
     /// Push the roots in `(a, b)`, ascending.
-    fn isolate(&self, a: &Rational, b: &Rational, roots: &mut Vec<ExactReal>) {
-        match self.roots_between(a, b) {
+    fn isolate<E>(
+        &self,
+        sequence: &[Self],
+        a: &Rational,
+        b: &Rational,
+        roots: &mut Vec<ExactReal>,
+        charge: &mut dyn FnMut(u64) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let ends = 1 + a.max_part_bits().max(b.max_part_bits()) / 64;
+        let mut work = 0_u64;
+        for p in sequence {
+            work = work.saturating_add(p.horner_work(ends));
+        }
+        // Every product of the evaluation is reduced by a gcd of its parts.
+        charge(work.saturating_mul(4))?;
+        match self.roots_between_by(sequence, a, b) {
             0 => {}
             1 => roots.push(self.single_root(a, b)),
             _ => {
                 let m = midpoint(a, b);
-                self.isolate(a, &m, roots);
+                self.isolate(sequence, a, &m, roots, charge)?;
                 if self.eval(&m).is_zero() {
                     roots.push(ExactReal::Rational(m.clone()));
                 }
-                self.isolate(&m, b, roots);
+                self.isolate(sequence, &m, b, roots, charge)?;
             }
         }
+        Ok(())
     }
 
     /// The one root in `(a, b)`.

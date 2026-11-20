@@ -29,14 +29,24 @@
 //! root isolation of a projected polynomial, every period of the past-reach
 //! ceiling, and at an algebraic activation instant every capture read and
 //! every evaluation of the atoms at an instant. A step that does arithmetic
-//! on polynomials is charged by the size of its operands (one word per
-//! coefficient and per 64 bits of its largest part, 16 words to the unit,
-//! each step at least one): the resultant with `tau`'s polynomial
+//! on polynomials is charged by the size of its operands (per coefficient the
+//! square of its words, 200 to the unit, each step at least one: a rational
+//! product costs the product of its operands' words, so a unit is about
+//! the same time on every path): the resultant with `tau`'s polynomial
 //! ([`super::super::poly2::eliminate`]) and the subresultants of
 //! [`super::super::poly2::projection`] by the determinant of each evaluation
 //! point and the interpolation, and every sign at `tau` (see
 //! [`super::super::section::Section`]) down to each bisection of `tau`'s
-//! isolating interval. The sorting of cuts is not charged.
+//! isolating interval. A root isolation ([`Poly::roots_in_by`]) is charged
+//! for its square-free part and Sturm sequence, whose coefficients grow with
+//! the square of the degree, and for the evaluation of the sequence at both
+//! ends of every interval it splits; comparing two algebraic cuts is charged
+//! by the gcd of their polynomials, once per cut already held for each new
+//! one and for the sort of every pass. The curve an instant of no value moves
+//! along is charged by its polynomial's size, each isolation of its roots at
+//! the activation instant and at every separator, the resultant that
+//! isolates its limit, and every refinement of that limit's interval and
+//! test of it for a rational.
 use std::cmp::Ordering;
 
 use filament_exact::Rational;
@@ -48,7 +58,7 @@ use super::super::eval::{
 use super::super::expand::{result_kind, Exp, ResultKind};
 use super::super::interval::Tri;
 use super::super::poly::Poly;
-use super::super::poly2::{eliminate, projection, Poly2};
+use super::super::poly2::{eliminate, projection, stationary, Poly2};
 use super::super::real::ExactReal;
 use super::super::section::{Sample, Section};
 use super::super::signal::{partition, Span, Timeline};
@@ -112,6 +122,10 @@ struct Atoms<'a, 'u, 'm> {
 }
 
 impl Evaluate for Atoms<'_, '_, '_> {
+    fn charge(&mut self, work: u64) -> Result<(), HybridReplayRefusal> {
+        self.section.charge_by(work)
+    }
+
     fn at(&mut self, at: &ExactReal) -> Result<(Vec<Ev>, Vec<Poly>), HybridReplayRefusal> {
         self.section.charge()?;
         let sample = Sample::of(at);
@@ -311,6 +325,30 @@ struct Outcome {
 /// One cell of a dwell's activation instants: the instant `low` when
 /// `point`, else the open interval `(low, high)`.
 type Cell = (ExactReal, ExactReal, bool);
+
+/// The work of comparing `root` with every one of `others`: two algebraic
+/// numbers are told apart by the gcd of their polynomials and bisection.
+fn comparison_work(root: &ExactReal, others: &[ExactReal]) -> u64 {
+    let ExactReal::Root(root) = root else {
+        return 1;
+    };
+    let own = Poly::new(root.coefficients().to_vec());
+    others
+        .iter()
+        .map(|other| match other {
+            ExactReal::Root(other) => own.gcd_work(&Poly::new(other.coefficients().to_vec())),
+            ExactReal::Rational(_) => 1,
+        })
+        .fold(1, u64::saturating_add)
+}
+
+/// What placing an expression with no value over a cell settles.
+enum Over {
+    /// The earliest expression with no value over the cell.
+    Record(Option<Box<Record>>),
+    /// The polynomials in `tau` whose roots cut the cell first.
+    Cuts(Vec<Poly>),
+}
 
 /// The activation instant an open cell was read at, and the polynomials the
 /// reading held.
@@ -807,7 +845,11 @@ impl<'a, 'c> Decider<'a, 'c> {
     /// when that is the same instant for every activation instant of the
     /// cell it is the record itself; when it moves with the activation
     /// instant `tau` along `x = tau + c` it is the cell's start shifted by
-    /// `c`, not attained. The instant is the root of a polynomial in
+    /// `c`, not attained; along any other root curve of a polynomial it is
+    /// the infimum of the curve over the cell, the lesser of its two limits at
+    /// the cell's ends (the curve is monotone between the roots of the
+    /// stationary polynomial, which cut the cell first, [`Over::Cuts`]), not
+    /// attained. The instant is the root of a polynomial in
     /// `(tau, x)` that the evaluation read (or the end of a dwell, which is
     /// the same for every `tau`), and no root of another read polynomial
     /// meets it inside the cell (the projection cuts the cell where two
@@ -815,14 +857,14 @@ impl<'a, 'c> Decider<'a, 'c> {
     fn over(
         &self,
         record: Option<Record>,
-        cell: &Cell,
-        tau: &Rational,
+        (cell, tau): (&Cell, &Rational),
         read: &[Poly2],
         segment: &ClaimSegment,
+        requested: &[Poly],
         meter: &mut HybridReplayMeter,
-    ) -> Result<Option<Record>, HybridReplayRefusal> {
+    ) -> Result<Over, HybridReplayRefusal> {
         let Some(mut record) = record else {
-            return Ok(None);
+            return Ok(Over::Record(None));
         };
         if matches!(
             record.locus.site,
@@ -830,7 +872,7 @@ impl<'a, 'c> Decider<'a, 'c> {
         ) {
             record.time = cell.0.clone();
             record.open = true;
-            return Ok(Some(record));
+            return Ok(Over::Record(Some(Box::new(record))));
         }
         let time = record.time.clone();
         let mut ends = self
@@ -839,8 +881,9 @@ impl<'a, 'c> Decider<'a, 'c> {
             .chain(std::iter::once(segment))
             .flat_map(|k| [&k.span.low, &k.span.high]);
         if ends.any(|end| *end == time) {
-            return Ok(Some(record));
+            return Ok(Over::Record(Some(Box::new(record))));
         }
+        let mut curved: Option<&Poly2> = None;
         for poly in read {
             meter.charge_by(poly.size().saturating_mul(time.size()))?;
             if (Instant { tau, t: &time }).sign(poly) != Ordering::Equal {
@@ -869,11 +912,12 @@ impl<'a, 'c> Decider<'a, 'c> {
                 }
             }
             if stationary {
-                return Ok(Some(record));
+                return Ok(Over::Record(Some(Box::new(record))));
             }
             // The instant moves along `x = tau + c`, `c` rational, when
             // `poly(tau, tau + c)` is zero.
             let Some(time) = time.as_rational() else {
+                curved = curved.or(Some(poly));
                 continue;
             };
             let shift = time.sub(tau);
@@ -891,10 +935,124 @@ impl<'a, 'c> Decider<'a, 'c> {
             if along.is_zero() {
                 record.time = cell.0.shifted(&shift);
                 record.open = true;
-                return Ok(Some(record));
+                return Ok(Over::Record(Some(Box::new(record))));
+            }
+            curved = curved.or(Some(poly));
+        }
+        // No read polynomial holds the instant: it moves along a curve.
+        let Some(poly) = curved else {
+            return Err(ExactGap::IllKindedTerm.into());
+        };
+        self.curve(record, cell, tau, poly, requested, meter)
+    }
+
+    /// `record`, an expression with no value at an instant that moves with
+    /// the activation instant along a root curve of `poly`, as the one
+    /// earliest over the open `cell`: the infimum of the instant, the lesser
+    /// of the limits of the curve at the cell's two ends, not attained.
+    ///
+    /// The curve is a root of the primitive squarefree part `g` of `poly`
+    /// without its vertical factors, in `x`. Its roots keep their number and
+    /// order across the cell (the projection of #3155), and it is monotone
+    /// where the resultant of `g` and its derivative in `tau` has no root, so
+    /// the first call asks the scan to cut there (`Over::Cuts`) and the next
+    /// takes the limits. The limit at an end `e` is the root of `g(e, .)` the
+    /// branch tends to: the branch is the one of the same rank among the real
+    /// roots of `g` at a rational activation instant so near `e` that none
+    /// of the rationals separating the roots of `g(e, .)` is crossed on the
+    /// way.
+    fn curve(
+        &self,
+        mut record: Record,
+        cell: &Cell,
+        tau: &Rational,
+        poly: &Poly2,
+        requested: &[Poly],
+        meter: &mut HybridReplayMeter,
+    ) -> Result<Over, HybridReplayRefusal> {
+        meter.charge_by(poly.size().saturating_mul(poly.size()))?;
+        let g = poly.primitive_t().without_vertical_factors().squarefree_x();
+        let critical = stationary(&g, &mut |work| meter.charge_by(work))?;
+        if critical.degree().is_some_and(|degree| degree > 0) && !requested.contains(&critical) {
+            return Ok(Over::Cuts(vec![critical]));
+        }
+        let rank = {
+            let here = g.at_t(tau);
+            here.real_roots_by(&mut |work| meter.charge_by(work))?
+                .iter()
+                .filter(|root| **root < record.time)
+                .count()
+        };
+        let start = self.limit(&g, &cell.0, true, cell, rank, meter)?;
+        let end = self.limit(&g, &cell.1, false, cell, rank, meter)?;
+        record.time = start.min(end);
+        record.open = true;
+        Ok(Over::Record(Some(Box::new(record))))
+    }
+
+    /// The limit of the `rank`th real root of `g` as the activation instant
+    /// tends to `end`, an end of the open `cell`, from above when `above`.
+    fn limit(
+        &self,
+        g: &Poly2,
+        end: &ExactReal,
+        above: bool,
+        cell: &Cell,
+        rank: usize,
+        meter: &mut HybridReplayMeter,
+    ) -> Result<ExactReal, HybridReplayRefusal> {
+        let minimal = match end {
+            ExactReal::Rational(q) => Poly::new(vec![q.neg(), one()]),
+            ExactReal::Root(root) => Poly::new(root.coefficients().to_vec()),
+        };
+        let section = Section::new(end, meter);
+        let roots = section.roots(g)?;
+        let separators = section.separators(&roots)?;
+        let (floor, ceiling) = (floor_bound(&cell.0), ceiling_bound(&cell.1));
+        // The activation instants no farther than the nearest of the
+        // rationals' crossings inside the cell.
+        let mut bound = if above {
+            cell.1.clone()
+        } else {
+            cell.0.clone()
+        };
+        for separator in &separators {
+            for crossing in g
+                .at_x(separator)
+                .roots_in_by(&floor, &ceiling, &mut |work| section.charge_by(work))?
+            {
+                let nearer = if above {
+                    crossing > *end && crossing < bound
+                } else {
+                    crossing < *end && crossing > bound
+                };
+                if nearer {
+                    bound = crossing;
+                }
             }
         }
-        Err(ExactGap::ActivationInfimum.into())
+        let near = if above {
+            end.between(&bound)
+        } else {
+            bound.between(end)
+        };
+        let at = g.at_t(&near);
+        let branch = at
+            .real_roots_by(&mut |work| section.charge_by(work))?
+            .into_iter()
+            .nth(rank);
+        let (Some(branch), false) = (branch, roots.is_empty()) else {
+            return Err(ExactGap::IllKindedTerm.into());
+        };
+        let Some(gap) = separators
+            .iter()
+            .position(|s| branch < ExactReal::Rational(s.clone()))
+            .and_then(|above| above.checked_sub(1))
+        else {
+            return Err(ExactGap::IllKindedTerm.into());
+        };
+        let eliminated = eliminate(&minimal, g, &mut |work| section.charge_by(work))?;
+        section.real_root(&roots[gap], &eliminated)
     }
 
     /// The cells of `span`, each decided, in order, once the cuts at the
@@ -907,10 +1065,17 @@ impl<'a, 'c> Decider<'a, 'c> {
         meter: &mut HybridReplayMeter,
     ) -> Result<Vec<(Cell, Outcome)>, HybridReplayRefusal> {
         let mut cuts: Vec<ExactReal> = Vec::new();
+        let mut requested: Vec<Poly> = Vec::new();
         let mut done: Vec<(Cell, Outcome, Reading)> = Vec::new();
         let (floor, ceiling) = (floor_bound(&span.low), ceiling_bound(&span.high));
         loop {
             meter.charge()?;
+            // Sorting the cuts compares each with about log-many others.
+            let sorting = cuts
+                .iter()
+                .map(|cut| comparison_work(cut, &cuts))
+                .fold(0, u64::saturating_add);
+            meter.charge_by(sorting)?;
             let mut results = Vec::new();
             let mut grew = false;
             for cell in partition(span, cuts.clone()) {
@@ -931,10 +1096,15 @@ impl<'a, 'c> Decider<'a, 'c> {
                 };
                 for poly in bounds {
                     meter.charge()?;
-                    for root in poly.roots_in(&floor, &ceiling) {
-                        if root > span.low && root < span.high && !cuts.contains(&root) {
-                            cuts.push(root);
-                            grew = true;
+                    let found =
+                        poly.roots_in_by(&floor, &ceiling, &mut |work| meter.charge_by(work))?;
+                    for root in found {
+                        if root > span.low && root < span.high {
+                            meter.charge_by(comparison_work(&root, &cuts))?;
+                            if !cuts.contains(&root) {
+                                cuts.push(root);
+                                grew = true;
+                            }
                         }
                     }
                 }
@@ -948,16 +1118,47 @@ impl<'a, 'c> Decider<'a, 'c> {
             if !grew {
                 // The cells are final: an expression with no value over an
                 // open one is placed only now, for a cell cut later may
-                // decide without it.
+                // decide without it. Placing one may ask for more cuts.
                 let mut cells = Vec::with_capacity(results.len());
+                let mut again = false;
                 for (cell, mut outcome, sample) in results {
                     if let Some((tau, read)) = sample {
-                        outcome.record =
-                            self.over(outcome.record, &cell, &tau, &read, segment, meter)?;
+                        match self.over(
+                            outcome.record,
+                            (&cell, &tau),
+                            &read,
+                            segment,
+                            &requested,
+                            meter,
+                        )? {
+                            Over::Record(record) => outcome.record = record.map(|found| *found),
+                            Over::Cuts(polys) => {
+                                again = true;
+                                for poly in polys {
+                                    meter.charge()?;
+                                    let found =
+                                        poly.roots_in_by(&floor, &ceiling, &mut |work| {
+                                            meter.charge_by(work)
+                                        })?;
+                                    for root in found {
+                                        if root > span.low && root < span.high {
+                                            meter.charge_by(comparison_work(&root, &cuts))?;
+                                            if !cuts.contains(&root) {
+                                                cuts.push(root);
+                                            }
+                                        }
+                                    }
+                                    requested.push(poly);
+                                }
+                                outcome.record = None;
+                            }
+                        }
                     }
                     cells.push((cell, outcome));
                 }
-                return Ok(cells);
+                if !again {
+                    return Ok(cells);
+                }
             }
         }
     }
