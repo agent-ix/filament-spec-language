@@ -1,4 +1,70 @@
+---
+type: reference
+---
 # Native diagnostic codes
+
+Native diagnostic codes identify why an FSL operation stopped. Use the code
+and phase to choose a correction, then use the source region or document
+pointer to locate the input. A refusal does not report that a rule is false.
+
+For source identity errors, supply both nonblank caller labels and a display
+path before parsing. For UTF-8 errors, correct the original bytes without
+renumbering their source positions. For syntax errors, correct the reported
+token or missing terminal; a diagnostic-list cut means more independent errors
+remain after the reported bound.
+
+An editor's `invalid_source_map` can mean a foreign node, an edit against
+another source, a mismatched request identity, overlapping edits or a range
+inside a UTF-8 character. Keep the node, request and edits bound to the source
+that produced them. Reparse the intended source before issuing a new request.
+
+For cancellation, begin a new uncancelled operation when the caller intends
+to continue. For a named budget, raise only that caller-selected ceiling when
+the work is intended and affordable. Neither result supplies predicate truth.
+
+For population input, bind the document to the selected model, supply a closed
+subtype environment and keep the selected count within its declared bound.
+Abstract types cannot have direct instances. A missing snapshot is incomplete
+evidence; a supplied snapshot with the wrong observation role is refused.
+Recorded creation and deletion lists must match the complete pre/post
+observations, and the operation's frame must separately authorize each change.
+A reference into a complete population must name a present object. An
+incomplete population cannot establish that an absent target is dangling.
+
+Extracted Markdown belongs to a clause run. Select one authored clause binding,
+keep the source package and extraction modes separate, and correct the semantic
+package named by retained Quire diagnostics. These request defects settle
+before compilation; they do not report the clause's truth.
+
+A clock requires dense time on its own source model. A random distribution
+requires positive exact weights. Correct either declaration at its reported
+locus. A sequence whose computed maximum exceeds the fixed representable bound
+needs a smaller declared range; raising a work budget cannot change that bound.
+Give each resolved operation at most one body, and supply a unique applicable
+body for every concrete subtype reached by a dispatched call. For an execution
+backend the caller has not supplied, supply that backend or explicitly choose
+an available one.
+
+Replay a counterexample against the clause and occurrence it names. A stale
+identity refuses before observation admission; replacing a missing snapshot
+cannot repair it. Regenerate the counterexample from the intended checked
+package. A definition closure must supply every required capability, even when
+each individual capability name is valid.
+
+Use the result-preserving emission entry when a graph retains protocol-local
+refusals. It retains those source errors and admits no unit package; the
+shorthand emission entry cannot discard them to produce a package.
+
+The producer tests use each stage's own typed cause: source tooling returns
+`CompleteCause`, bundle resolution returns `ResolutionCause`, and model
+admission retains its model or observation cause. A catalogue mapping alone
+does not establish that an input can reach a producer. Internal-fault codes
+describe a broken established invariant, rather than a supported way to refuse
+user input; an ordinary malformed document must retain its input-defect code.
+For example, observation admission reports an internal fault if the host loses
+the model package that its checked graph already selected. Restore the
+checked graph's exact model inputs; changing the observation cannot repair
+that host inconsistency.
 
 FR-010 exposes one native `Diagnostic` envelope with phase, code, exact caller
 source labels, display path, original span and explanatory message. `Display`
@@ -16,7 +82,7 @@ reused; prose may change without changing classification.
 | invalid-request | A closed command request has invalid JSON or fields. |
 | invalid-identifier | A selected command identifier fails its constructor. |
 | output-failure | A typed command result could not be serialized. |
-| unsupported_projection | A real, admitted capability this build does not implement yet: a checked-package/v2 emission path not yet built. |
+| unsupported_projection | The selected producer entry cannot supply a required checked-package/v2 projection, including the shorthand emitter when protocol-local refusals require result-preserving emission. |
 | invalid_projection_correspondence | Checked native correspondence could not be retained by the projection. |
 | extraction-requires-run | The source-only compile command does not admit extracted programs. |
 | extraction-package-conflict | Selected package bytes and extracted compilation were both requested. |
