@@ -57,7 +57,7 @@ fn grammar_unit_generator_covers_every_production() {
     let mut refused = Vec::new();
     for case in cases {
         let parsed = fsl_bench::parse::parse(&case.source).unwrap();
-        if !parsed.diagnostics().is_empty() {
+        if !parsed.is_admissible() {
             refused.push(format!(
                 "{:?}: {:?}\n{}",
                 case.target,
