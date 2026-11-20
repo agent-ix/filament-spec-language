@@ -1853,7 +1853,12 @@ fn digital_discrete_delay_choice(
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
 ) -> Result<(Vec<ProbabilityEdge>, u64), ProbabilityDocumentError> {
-    let mut outcomes = Vec::new();
+    let mut outcomes: Vec<(
+        u64,
+        Rational,
+        RegionState,
+        Option<fsl_eval::simulation::model::Action>,
+    )> = Vec::new();
     for (delay, weight) in support {
         poll(cancel)?;
         let ticks = time_units(&delay, scale).ok_or(ProbabilityDocumentError::Unsupported)?;
@@ -1863,6 +1868,10 @@ fn digital_discrete_delay_choice(
         else {
             continue;
         };
+        if state.phase != Phase::Pending {
+            outcomes.push((ticks, weight, state, None));
+            continue;
+        }
         let available = system
             .actions_with_cancel(state.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
@@ -1873,7 +1882,7 @@ fn digital_discrete_delay_choice(
         else {
             continue;
         };
-        outcomes.push((ticks, weight, state, action_at_delay.clone()));
+        outcomes.push((ticks, weight, state, Some(action_at_delay.clone())));
     }
     let total = outcomes
         .iter()
@@ -1887,6 +1896,21 @@ fn digital_discrete_delay_choice(
         let delay_probability = weight
             .div(&total)
             .ok_or(ProbabilityDocumentError::Unsupported)?;
+        let Some(action_at_delay) = action_at_delay else {
+            let target = digital_key(system, timed, binding, &delayed, caps, scale, deadline)?;
+            admit_region_state(target.clone(), delayed, reached, pending, limits, storage)?;
+            if let Some(edge) = choice.iter_mut().find(|edge| edge.target == target) {
+                edge.probability = edge.probability.add(&delay_probability);
+            } else {
+                choice.push(ProbabilityEdge {
+                    target,
+                    probability: delay_probability,
+                });
+            }
+            edges = edges.saturating_add(1);
+            charge_work(meter, cancel, 1)?;
+            continue;
+        };
         let clocked_steps = timed
             .steps(&delayed.timed)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
@@ -1996,14 +2020,14 @@ fn digital_state_after_delay(
             deadline,
             cancel,
         )?;
-        if phase != Phase::Pending {
-            return Ok(None);
-        }
         state = RegionState {
             timed: delayed,
             elapsed,
             phase,
         };
+        if state.phase != Phase::Pending {
+            return Ok(Some(state));
+        }
     }
     Ok(Some(state))
 }
