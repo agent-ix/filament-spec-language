@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -652,10 +652,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -719,6 +719,21 @@ fn mean_region_key(
             cap: *cap,
         });
     }
+    let mut coordinates = clocks
+        .iter()
+        .map(|clock| {
+            quire_canonical::to_vec(&clock.identity, quire_canonical::Limits::new(u64::MAX))
+                .map(|identity| (identity, clock.value.to_string()))
+                .map_err(|_| ProbabilityDocumentError::Unsupported)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    coordinates.sort_by(|left, right| left.0.cmp(&right.0));
+    let corner = Some(
+        coordinates
+            .into_iter()
+            .map(|(_, coordinate)| coordinate)
+            .collect(),
+    );
     crate::region_probability_product_key(crate::RegionProductKeyInput {
         binding,
         discrete,
@@ -731,8 +746,8 @@ fn mean_region_key(
         monitor: None,
         accumulator: None,
         pending: None,
-        kind: crate::RegionKeyKind::Region,
-        corner: None,
+        kind: crate::RegionKeyKind::BoundaryRegion,
+        corner,
     })
     .map_err(ProbabilityDocumentError::Graph)
 }

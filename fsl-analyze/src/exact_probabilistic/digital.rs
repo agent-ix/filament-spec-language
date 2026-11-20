@@ -1079,19 +1079,44 @@ impl<'c> Builder<'_, '_, 'c> {
                 pending: None,
             })
         } else {
+            let region_clocks = clocks
+                .into_iter()
+                .map(|clock| match clock {
+                    ClockKey::Region(clock) => Some(clock),
+                    ClockKey::Digital(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| fault("region-clock-key-is-present"))?;
+            let boundary_region = matches!(&self.form, Form::MeanTime { .. });
+            let corner = if boundary_region {
+                let mut coordinates = region_clocks
+                    .iter()
+                    .map(|clock| {
+                        quire_canonical::to_vec(
+                            &clock.identity,
+                            quire_canonical::Limits::new(u64::MAX),
+                        )
+                        .map(|identity| (identity, clock.value.to_string()))
+                        .map_err(|_| fault("boundary-region-corner-identity-encodes"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                coordinates.sort_by(|left, right| left.0.cmp(&right.0));
+                Some(
+                    coordinates
+                        .into_iter()
+                        .map(|(_, coordinate)| coordinate)
+                        .collect(),
+                )
+            } else {
+                None
+            };
             region_probability_product_key(RegionProductKeyInput {
                 binding,
                 discrete,
                 unit,
                 scale: self.base_scale,
                 subdivisions: self.subdivisions,
-                clocks: clocks
-                    .into_iter()
-                    .map(|clock| match clock {
-                        ClockKey::Region(clock) => clock,
-                        ClockKey::Digital(_) => unreachable!(),
-                    })
-                    .collect(),
+                clocks: region_clocks,
                 deadline: deadline.map(|deadline| match deadline {
                     DeadlineKey::Region(deadline) => deadline,
                     DeadlineKey::Digital(_) => unreachable!(),
@@ -1100,8 +1125,12 @@ impl<'c> Builder<'_, '_, 'c> {
                 monitor,
                 accumulator: None,
                 pending: None,
-                kind: RegionKeyKind::Region,
-                corner: None,
+                kind: if boundary_region {
+                    RegionKeyKind::BoundaryRegion
+                } else {
+                    RegionKeyKind::Region
+                },
+                corner,
             })
         }
         .map_err(|_| fault("certificate-timed-product-key-encodes"))?;
@@ -1429,11 +1458,9 @@ impl<'c> Builder<'_, '_, 'c> {
             if matches!(self.form, Form::MeanTime { .. }) {
                 let name = Identifier::new(ELAPSED_REWARD)
                     .map_err(|_| fault("elapsed-reward-identifier-is-valid"))?;
-                let magnitude = Rational::new(
-                    Integer::from(edge.elapsed_ticks),
-                    Integer::from(self.scale),
-                )
-                .map_err(|_| fault("elapsed-reward-scale-is-positive"))?;
+                let magnitude =
+                    Rational::new(Integer::from(edge.elapsed_ticks), Integer::from(self.scale))
+                        .map_err(|_| fault("elapsed-reward-scale-is-positive"))?;
                 let unit = filament_exact::UnitId::declared(self.timed.source().unit_node.clone());
                 rewards.push((name, Value::Quantity(Quantity::new(magnitude, unit))));
             }

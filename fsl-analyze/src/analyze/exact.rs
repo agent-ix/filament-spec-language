@@ -12,38 +12,39 @@ mod candidate;
 mod long_run;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    check_probability_certificate_document, claim_binding, probability_proof_document,
+    write_probability_certificate, write_probability_proof_document, ExactBinding,
+    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
-    probability_proof_document, write_probability_certificate, write_probability_proof_document,
+    TimedProbabilityRoute,
 };
-use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_replay::{
-    ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
-    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
-    replay_probabilistic_witness,
+    replay_probabilistic_witness, ProbabilisticCounterexample, ProbabilityWitnessError,
+    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
+    ReproducedProbabilityWitness,
 };
+use fsl_replay::{CertificateLocus, CertificateRule};
+use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{BROKEN, NOT_YET, admission};
+use super::items::{admission, BROKEN, NOT_YET};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective, build_retaining_monitor, decide_always, decide_bounded_event,
-    decide_expected_reward, decide_reachability, decide_until, manifest as en5,
-    settle_product_refusal,
+    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
+    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
+    FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
+    UnboundedObjective,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -449,8 +450,12 @@ fn mean_time_ranking(
             let Some(selected) = policy[index] else {
                 continue;
             };
-            let (_, lower) = choices.get(selected)?;
-            let lower = lower.iter().copied().min()?;
+            let Some((_, lower)) = choices.get(selected) else {
+                return None;
+            };
+            let Some(lower) = lower.iter().copied().min() else {
+                continue;
+            };
             ranks[index] = Some(lower.checked_add(1)?);
             changed = true;
         }
@@ -869,7 +874,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            BudgetedProductError, build_retaining_monitor_with_budget,
+            build_retaining_monitor_with_budget, BudgetedProductError,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -1603,7 +1608,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
+        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
