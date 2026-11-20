@@ -5529,7 +5529,7 @@ impl<'a> Lowering<'a> {
                     high_term: None,
                     bound: None,
                 })));
-                return Ok(LowerStep::Descend(node.at(*low)));
+                return self.seq_bound(node.at(*low));
             }
             NodeKind::Query {
                 visit,
@@ -6626,7 +6626,7 @@ impl<'a> Lowering<'a> {
                     frame.low_term = Some(term);
                     let high = frame.high;
                     frames.push(LowerFrame::Seq(frame));
-                    return Ok(LowerStep::Descend(high));
+                    return self.seq_bound(high);
                 }
                 if frame.high_term.is_none() {
                     let location = frame.node.location();
@@ -6931,6 +6931,22 @@ impl<'a> Lowering<'a> {
     /// enum member.
     fn literal(&mut self, node: CheckedNode<'_>, value: &Value) -> Result<LeafTerm, CheckRefusal> {
         self.literal_as(node, value, node.value_type(), None)
+    }
+
+    /// A `seq` bound (FSpec FR-322 `seq`): an integer literal is a literal
+    /// node typed at the one-value range `Int[v, v]`, since the reader takes
+    /// each bound's extremes from its `integer_range` type node; any other
+    /// bound lowers as the term it is.
+    fn seq_bound<'n>(&mut self, bound: CheckedNode<'n>) -> Result<LowerStep<'n>, CheckRefusal> {
+        if let NodeKind::Literal(CheckedLiteral(value @ Value::Integer(integer))) = bound.kind() {
+            let interval =
+                filament_exact::IntegerInterval::new(integer.clone(), integer.clone())
+                    .map_err(|_| refuse(bound.location(), CheckCause::UnrepresentableBound))?;
+            let term = self.literal_as(bound, value, &ValueType::Int(interval), None)?;
+            self.retain_checked_node(bound, &term);
+            return Ok(LowerStep::Lowered(term));
+        }
+        Ok(LowerStep::Descend(bound))
     }
 
     /// A reference literal's canonical typed leaf, retaining its decoded key
