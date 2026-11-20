@@ -1445,36 +1445,7 @@ fn root_admission_disagreement_is_a_failed_result_record() {
         }
     }
 
-    let clauses = "pre CanInc using v on M::Counter::inc { self.value + delta <= 5 }\n\
-                   post Inc using v on M::Counter::inc { self.value <= 5 }";
-    let op = operation(
-        "inc",
-        &[("delta", &ident("By"))],
-        None,
-        frame(&["value"], false, false),
-    );
-    let mut document: Json =
-        serde_json::from_slice(&counters_document(vec![op], false)).expect("fixture JSON");
-    let level = document["types"]
-        .as_array_mut()
-        .expect("types array")
-        .iter_mut()
-        .find(|ty| ty["identity"] == ident("Level"))
-        .expect("Level declaration");
-    *level = bound_type("Level", 5);
-    let mut by_type = bound_type("By", 6);
-    by_type["constraints"][0]["operands"]["value"] = json!("1");
-    document["types"]
-        .as_array_mut()
-        .expect("types array")
-        .push(by_type);
-    let mut world = build_world_document(
-        serde_json::to_vec(&document).expect("fixture serializes"),
-        clauses,
-        false,
-        false,
-    )
-    .expect("the model and contracts check");
+    let mut world = ac7_model_world();
     let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
     let identity = world
         .package
@@ -1525,6 +1496,37 @@ fn root_admission_disagreement_is_a_failed_result_record() {
         })
     );
     assert_eq!(result.counts.generated, 0);
+
+    let native_request = request.clone();
+    let first = fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &native_request,
+        &NativeAdmission,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("first AC-7 run");
+    let second = fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &native_request,
+        &NativeAdmission,
+        &filament_exact::Cancel::new(),
+    )
+    .expect("repeated AC-7 run");
+    assert_eq!(first.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(second.evidence, ModelBasedTestEvidence::Tested);
+    let record_bytes = |record: &fsl_eval::simulation::model::ModelBasedTestResult| {
+        format!(
+            "{:?}",
+            (
+                &record.provenance,
+                &record.checks,
+                &record.partitions,
+                &record.partition_coverage,
+            )
+        )
+        .into_bytes()
+    };
+    assert_eq!(record_bytes(&first), record_bytes(&second));
 }
 
 /// Text count-table work is charged before any caller-sized allocation.
@@ -1623,21 +1625,7 @@ fn text_domain_work_limits_settle_a_record_before_any_case() {
 #[trace("TC-3068", "FR-752-AC-11")]
 #[test]
 fn model_based_entry_refuses_missing_and_invalid_request_members() {
-    let by_type = ident("Level");
-    let mut world = world_with_level_bound(
-        vec![
-            operation(
-                "inc",
-                &[("by", &by_type)],
-                None,
-                frame(&["value"], false, false),
-            ),
-            operation("reset", &[], None, frame(&["value"], false, false)),
-            operation("jam", &[], None, frame(&["value"], false, false)),
-        ],
-        &format!("{INC}\n{RESET}\n{JAM}"),
-        6,
-    );
+    let mut world = ac7_model_world();
     let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
     let identity = world
         .package
@@ -1798,6 +1786,177 @@ fn model_based_entry_refuses_missing_and_invalid_request_members() {
         .member,
         "max_value_bits"
     );
+
+    let initial = world.start("s0", &[Obj("c1", 0, 0, None)]);
+    request.clause = Some(
+        world
+            .package
+            .graph()
+            .state_clause("Inc")
+            .expect("checked Inc postcondition")
+            .identity(),
+    );
+    request.subject = Some(ModelBasedTestSubject {
+        packages: &world.packages,
+        snapshots: &world.snapshots,
+        initial: vec![initial],
+        universes: universe(&["c1"]),
+    });
+    request.max_cases = 100;
+    request.max_trace_length = Some(8);
+    request.max_value_bits = None;
+    request.exploration = Limits::default()
+        .with_max_states(100)
+        .with_max_transitions(1_000);
+    let native_result = fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &request,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("native admission settles the AC-7 model");
+    assert_eq!(native_result.evidence, ModelBasedTestEvidence::Tested);
+    for refusal_value in [0_i64, 7_i64] {
+        let partition = native_result
+            .partitions
+            .iter()
+            .find(|partition| {
+                partition.path == [1, 0, 0]
+                    && partition.value == filament_exact::Integer::from(refusal_value)
+            })
+            .expect("AC-7 parameter refusal partition");
+        assert!(matches!(
+            partition.status,
+            Some(fsl_eval::simulation::model::ModelPartitionStatus::Refused { .. })
+        ));
+    }
+
+    request.exploration = Limits::default()
+        .with_max_states(1)
+        .with_max_transitions(1_000);
+    let limited_result = fsl_eval::simulation::model::run_model_based_test(
+        &world.package,
+        &request,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect("the coverage limit leaves the run tested");
+    assert_eq!(limited_result.evidence, ModelBasedTestEvidence::Tested);
+    assert_eq!(limited_result.limits.exploration.max_states, 1);
+    let by_six = limited_result
+        .partitions
+        .iter()
+        .find(|partition| {
+            partition.path == [1, 0, 0] && partition.value == filament_exact::Integer::from(6_i64)
+        })
+        .expect("by=6 partition");
+    assert_eq!(
+        by_six.status,
+        Some(
+            fsl_eval::simulation::model::ModelPartitionStatus::Uncovered {
+                reason: fsl_eval::simulation::model::ModelPartitionUncoveredReason::Undetermined {
+                    limit: "states".to_owned(),
+                    value: 1,
+                },
+                bounds: Vec::new(),
+            }
+        )
+    );
+    let jam = limited_result
+        .operations
+        .as_ref()
+        .expect("operation coverage record")
+        .iter()
+        .find(|entry| entry.operation.name == "jam")
+        .expect("jam coverage entry");
+    assert_eq!(
+        jam.status,
+        ModelOperationCoverageStatus::NotCovered {
+            reason: ModelOperationCoverageReason::Undetermined {
+                limit: fsl_eval::simulation::model::ModelOperationCoverageLimit::States,
+                value: 1,
+            },
+        }
+    );
+
+    let empty_world = world_with_level_bound(
+        vec![operation("observe", &[], None, frame(&[], false, false))],
+        "function HasValue using v(x: Reference<M::Counter>): Boolean pure { true }",
+        6,
+    );
+    let empty_clause = empty_world
+        .package
+        .graph()
+        .function_identity("HasValue")
+        .expect("checked empty-domain clause");
+    let empty_request = ModelBasedTestRequest {
+        clause: Some(empty_clause),
+        profile: sampler(),
+        seed: 7,
+        max_cases: 10,
+        max_trace_length: None,
+        max_value_bits: None,
+        subject: None,
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: UNLIMITED,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: Limits::default(),
+        position_limit: 10_000,
+    };
+    let refusal = fsl_eval::simulation::model::run_model_based_test(
+        &empty_world.package,
+        &empty_request,
+        &NativeAdmission,
+        &cancel,
+    )
+    .expect_err("an empty checked domain refuses before generation");
+    assert_eq!(refusal.member, "clause");
+    assert_eq!(refusal.cause, "invalid_model_binding/malformed-declaration");
+}
+
+fn ac7_model_world() -> World {
+    let clauses = "pre CanInc using v on M::Counter::inc { self.value + by <= 5 }\n\
+                   post Inc using v on M::Counter::inc { self.value <= 5 }\n\
+                   pre CanReset using v on M::Counter::reset { self.value = 5 }\n\
+                   post Reset using v on M::Counter::reset { self.value = 0 }\n\
+                   pre CanJam using v on M::Counter::jam { self.value > 5 }\n\
+                   post Jam using v on M::Counter::jam { self.value = 0 }";
+    let operations = vec![
+        operation(
+            "inc",
+            &[("by", &ident("By"))],
+            None,
+            frame(&["value"], false, false),
+        ),
+        operation("reset", &[], None, frame(&["value"], false, false)),
+        operation("jam", &[], None, frame(&["value"], false, false)),
+    ];
+    let mut document: Json =
+        serde_json::from_slice(&counters_document(operations, false)).expect("fixture JSON");
+    let level = document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .iter_mut()
+        .find(|ty| ty["identity"] == ident("Level"))
+        .expect("Level declaration");
+    *level = bound_type("Level", 5);
+    let mut by_type = bound_type("By", 6);
+    by_type["constraints"][0]["operands"]["value"] = json!("1");
+    document["types"]
+        .as_array_mut()
+        .expect("types array")
+        .push(by_type);
+    build_world_document(
+        serde_json::to_vec(&document).expect("fixture serializes"),
+        clauses,
+        false,
+        false,
+    )
+    .expect("the model and contracts check")
 }
 
 /// FR-752-AC-7 / FSpec FR-190-AC-16: an unrelated Jam postcondition records

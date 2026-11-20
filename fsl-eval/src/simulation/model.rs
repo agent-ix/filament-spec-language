@@ -31,10 +31,10 @@ pub use input::{
 };
 mod operation_coverage;
 pub use operation_coverage::{
-    model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
-    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
-    ModelOperationCoverageSummaryStatus,
+    ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,
+    ModelOperationCoverageLimit, ModelOperationCoverageLimits, ModelOperationCoverageReason,
+    ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus, model_operation_coverage,
 };
 mod model_based_test;
 pub use model_based_test::{
@@ -2975,7 +2975,7 @@ mod tests {
     }
 
     /// W75 section 3.3 orders Text partitions before refusal lengths.
-    #[trace("FSpec-TC-2102", "FR-752-AC-7")]
+    #[trace("TC-2102", "FR-752-AC-7")]
     #[test]
     fn text_boundary_partitions_follow_length_then_content_order() {
         let text_type = filament_exact::TextType::new(0, 2, filament_exact::TextProfile::Nfc)

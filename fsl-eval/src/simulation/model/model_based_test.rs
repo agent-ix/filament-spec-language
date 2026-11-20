@@ -3111,13 +3111,14 @@ fn shortest_partition_path(
                     value: transitions as u128,
                 });
             }
-            if visited.insert(successor.key.clone()) {
-                if visited.len() > limits.max_states {
+            if !visited.contains(&successor.key) {
+                if visited.len() >= limits.max_states {
                     return Ok(PathSearch::Undetermined {
                         limit: "states".to_owned(),
-                        value: visited.len() as u128,
+                        value: u128::try_from(limits.max_states).unwrap_or(u128::MAX),
                     });
                 }
+                visited.insert(successor.key.clone());
                 let mut steps = current.steps.clone();
                 let ordinal = expanded[..successor_index]
                     .iter()
