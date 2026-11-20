@@ -145,12 +145,28 @@ impl CheckedExpression {
         binders: &[String],
         rows: &CanonicalRows,
     ) -> Result<String, String> {
+        let binders = binders
+            .iter()
+            .enumerate()
+            .map(|(slot, name)| (slot, name.clone()))
+            .collect::<Vec<_>>();
+        self.render_with_slots(&binders, rows)
+    }
+
+    /// Render with the reader projection's explicit local-slot mapping.
+    /// Package projections retain local slots by their admitted binder rows,
+    /// which need not be dense in the clause's declaration order.
+    pub(super) fn render_with_slots(
+        &self,
+        binders: &[(usize, String)],
+        rows: &CanonicalRows,
+    ) -> Result<String, String> {
         let mut scopes = Vec::<Scope>::new();
         let mut root_env: Env = None;
-        for (slot, name) in binders.iter().enumerate() {
+        for (slot, name) in binders {
             scopes.push(Scope {
                 parent: root_env,
-                slot,
+                slot: *slot,
                 entry: Entry::Name(name.clone()),
             });
             root_env = Some(scopes.len() - 1);
@@ -1039,6 +1055,50 @@ pub(super) fn source_labels(
                 .map(|label| (*atom, format!("holds({label})")))
         })
         .collect()
+}
+
+/// Build the canonical atom text from an FR-940 package clause-term view.
+/// Binder names and slot identities come only from the admitted package
+/// projection and clause form; the caller supplies the package-derived type
+/// rows used by the shared printer.
+pub(super) fn package_label(
+    term: &fsl_package::BareClauseTerm,
+    over: &str,
+    trigger: Option<&str>,
+    captures: &[String],
+    rows: &CanonicalRows,
+) -> Result<String, String> {
+    use fsl_package::ClauseBinder;
+
+    let mut names = Vec::with_capacity(1 + usize::from(trigger.is_some()) + captures.len());
+    names.push(over.to_owned());
+    if let Some(trigger) = trigger {
+        names.push(trigger.to_owned());
+    }
+    names.extend(captures.iter().cloned());
+    let slots = term
+        .binders()
+        .iter()
+        .map(|(slot, binder)| {
+            let ordinal = match binder {
+                ClauseBinder::Over => 0,
+                ClauseBinder::Trigger => {
+                    if trigger.is_none() {
+                        return Err("reader projection trigger binder is retained".to_owned());
+                    }
+                    1
+                }
+                ClauseBinder::Capture(index) => 1 + usize::from(trigger.is_some()) + index,
+            };
+            let name = names
+                .get(ordinal)
+                .ok_or_else(|| "reader projection clause binder is retained".to_owned())?;
+            Ok((*slot, name.clone()))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    CheckedExpression::from_projection(term.projection())?
+        .render_with_slots(&slots, rows)
+        .map(|label| format!("holds({label})"))
 }
 
 fn checked_children(node: CheckedNode<'_>) -> Vec<CheckedNode<'_>> {
