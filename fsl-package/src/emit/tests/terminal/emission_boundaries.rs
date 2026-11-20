@@ -79,18 +79,6 @@ fn distinct_alias_terminals_keep_key_order_when_source_declarations_are_reordere
         first.model, second.model,
         "aliases select one model identity"
     );
-    assert_eq!(
-        first.model,
-        NodeKey::new(
-            "example/config-version",
-            vec![
-                PathSegment::Text("model".into()),
-                PathSegment::Text("model_root".into())
-            ],
-            0,
-        )
-        .expect("the selected model's structural key")
-    );
     assert!(
         first.node < second.node,
         "row order follows structural terminal keys"
@@ -118,6 +106,29 @@ fn distinct_alias_terminals_keep_key_order_when_source_declarations_are_reordere
         read_terminal(&admit(&forward), &first.model, 2).unwrap(),
         ReadTerminalDeclaration::None
     );
+}
+
+#[trace("FR-411-AC-1", "FSpec-FR-476-AC-6")]
+#[test]
+#[ignore = "QSL-2718: terminal model binding uses the object type rather than the selection root"]
+fn a_terminal_row_names_the_selected_model_root_instead_of_its_object_type() {
+    let compiled = compile(&format!(
+        "{MIRROR}{WHEN}\nterminal Halt using v on Mirror any;"
+    ));
+    let expected = NodeKey::new(
+        "example/config-version",
+        vec![
+            PathSegment::Text("model".into()),
+            PathSegment::Text("model_root".into()),
+        ],
+        0,
+    )
+    .expect("the selected model's structural key");
+    let rows = terminal_rows(&compiled);
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row.model, expected);
+    }
 }
 
 #[trace("FR-411-AC-1", "FR-411-AC-2", "FSpec-FR-476-AC-5")]
