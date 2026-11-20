@@ -276,7 +276,7 @@ fn inhabit(ty: &Type, choice: u8) -> Expr {
         Type::BoundedInt { lower, upper } => {
             Expr::Integer(lower + i64::from(choice) % (upper - lower + 1))
         }
-        Type::Boolean => Expr::Boolean(choice % 2 == 0),
+        Type::Boolean => Expr::Boolean(choice.is_multiple_of(2)),
         Type::Rational => Expr::Rational {
             numerator: i64::from(choice % 10),
             denominator: choice % 3 + 1,
@@ -295,7 +295,9 @@ fn inhabit(ty: &Type, choice: u8) -> Expr {
             )))),
         },
         Type::Record(member) => Expr::Record(Box::new(inhabit(member, choice))),
-        Type::Tuple(member) => Expr::Tuple(Box::new(inhabit(member, choice)), choice % 2 == 0),
+        Type::Tuple(member) => {
+            Expr::Tuple(Box::new(inhabit(member, choice)), choice.is_multiple_of(2))
+        }
         Type::Collection { kind, member } => Expr::Collection {
             kind: *kind,
             members: vec![inhabit(member, choice)],
@@ -334,7 +336,7 @@ impl TypedExpression {
     }
 }
 
-/// Scalar types with small, explicit domains.
+/// Scalar families with small explicit bounds on the bounded domains.
 pub fn scalar_types() -> BoxedStrategy<Type> {
     prop_oneof![
         Just(Type::Integer),
@@ -352,20 +354,28 @@ pub fn scalar_types() -> BoxedStrategy<Type> {
     .boxed()
 }
 
-/// Bounded compound domains; named compounds contain scalar leaves so names stay unique.
-pub fn types() -> BoxedStrategy<Type> {
+fn member_types() -> BoxedStrategy<Type> {
     prop_oneof![
         scalar_types(),
         scalar_types().prop_map(|ty| Type::Option(Box::new(ty))),
         scalar_types().prop_map(|ty| Type::Record(Box::new(ty))),
         scalar_types().prop_map(|ty| Type::Tuple(Box::new(ty))),
+    ]
+    .boxed()
+}
+
+/// Bounded compound domains, including collections of optional values, records
+/// and tuples. Named compounds have scalar leaves, preserving unique names.
+pub fn types() -> BoxedStrategy<Type> {
+    prop_oneof![
+        member_types(),
         (
             proptest::sample::select(vec![
                 CollectionKind::Sequence,
                 CollectionKind::Set,
                 CollectionKind::Bag
             ]),
-            scalar_types()
+            member_types()
         )
             .prop_map(|(kind, member)| Type::Collection {
                 kind,
