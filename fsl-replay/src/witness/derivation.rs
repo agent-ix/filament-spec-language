@@ -20,9 +20,9 @@ use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
 use crate::{
     bounds::ReplayLimits,
-    execute::prepare_state_clause,
+    execute::{prepare_state_clause, separation_refusal},
     result::SeparationRefusal,
-    spine::{CallOutcome, CallRefusal, CallValue, ClauseDisposition},
+    spine::{CallOutcome, CallValue, ClauseDisposition},
     ReplayRefusal, ReplayRequestWire, StateClauseCounterexample, WitnessEnvelope,
 };
 use fsl_foundation::Code;
@@ -195,11 +195,8 @@ mod tests {
     #[test]
     fn in_crate_fault_disposition_remains_a_derivation_fault() {
         let fault = InternalFault::new("S6a", "checked-program-invariant");
-        let error = classify_clause_outcome(
-            ClauseDisposition::EvaluateFault(fault),
-            None,
-        )
-        .expect_err("an in-crate fault is a typed derivation refusal");
+        let error = classify_clause_outcome(ClauseDisposition::EvaluateFault(fault), None)
+            .expect_err("an in-crate fault is a typed derivation refusal");
         assert_eq!(error.code(), Code::RuntimeInvariant.as_str());
         assert!(matches!(error, DerivationRefusal::Fault(_)));
     }
@@ -231,21 +228,6 @@ mod tests {
             DerivationRefusal::Undefined { expression, cause }
                 if expression == location && cause == "division-by-zero"
         ));
-    }
-}
-
-fn separation_refusal(refusal: CallRefusal) -> SeparationRefusal {
-    let (code, fields) = match refusal {
-        CallRefusal::Record { code, fields, .. } => (code, fields),
-        CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
-    };
-    SeparationRefusal {
-        code: code.code().to_owned(),
-        cause: code.cause().to_owned(),
-        fields: fields
-            .into_iter()
-            .map(|(name, value)| (name.to_owned(), value))
-            .collect(),
     }
 }
 
@@ -443,7 +425,11 @@ pub(crate) fn decisive_stop<'e>(
                     Connective::And | Connective::Implies => !left_value,
                     Connective::Or => left_value,
                 };
-                if stopped_on_left { left } else { right }
+                if stopped_on_left {
+                    left
+                } else {
+                    right
+                }
             }
             NodeKind::Query {
                 visit: Visit::Forall | Visit::Exists,

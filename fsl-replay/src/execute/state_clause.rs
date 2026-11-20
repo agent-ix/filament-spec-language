@@ -763,19 +763,26 @@ pub(crate) fn stopped_reason(
             cause: reason.to_owned(),
         }),
         CallOutcome::Refused(refusal) => {
-            let (code, fields) = match refusal {
-                CallRefusal::Record { code, fields, .. } => (code, fields),
-                CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
-            };
-            Some(SeparationReason::Refused(SeparationRefusal {
-                code: code.code().to_owned(),
-                cause: code.cause().to_owned(),
-                fields: fields
-                    .into_iter()
-                    .map(|(name, value)| (name.to_owned(), value))
-                    .collect(),
-            }))
+            Some(SeparationReason::Refused(separation_refusal(refusal)))
         }
         CallOutcome::Completed(_) => return Err(fault("stopped-evaluation-completes-no-value")),
     })
+}
+
+/// Convert one evaluated-call refusal to its public separation record.
+/// Shared by the separation check and the FR-269 derivation entry so both
+/// preserve the same code, cause and fields.
+pub(crate) fn separation_refusal(refusal: CallRefusal) -> SeparationRefusal {
+    let (code, fields) = match refusal {
+        CallRefusal::Record { code, fields, .. } => (code, fields),
+        CallRefusal::Family { code, .. } => (code, std::collections::BTreeMap::new()),
+    };
+    SeparationRefusal {
+        code: code.code().to_owned(),
+        cause: code.cause().to_owned(),
+        fields: fields
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect(),
+    }
 }
