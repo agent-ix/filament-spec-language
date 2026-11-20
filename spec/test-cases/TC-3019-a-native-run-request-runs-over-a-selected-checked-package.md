@@ -13,7 +13,7 @@ relationships:
 Verify that a package-only `native-run/1` request runs from the package's
 own records, never reads or compiles source, and refuses a package that
 cannot run with the code and locus stated. Scope: FR-1039-AC-1 to
-FR-1039-AC-5.
+FR-1039-AC-6.
 
 ## Test Procedure
 
@@ -36,6 +36,9 @@ FR-1039-AC-5.
    over RR-12's package with `requirements` `{}`; send a call of `g` whose
    `items` names a claim of `f`; remove the row of `f`'s `+` record from the
    package and run `f` again.
+6. Compile FR-931-AC-1's `Low` unit to a package file, remove the source, and
+   send the `tl_lowering` members of FR-1039-AC-6 over it; send the same
+   members over the source.
 
 ## Expected Results
 
@@ -56,3 +59,6 @@ FR-1039-AC-5.
   negotiation; the package without the row refuses at stage `request`, exit
   20, `invalid_package`/`invalid-value` at
   `/request/package/semantic_graph/nodes/{n}/body`, with no item settled.
+- Step 6: each `tl_lowering` record over the package equals the source
+  route's byte for byte; each refusal has the code, member and exit
+  FR-1039-AC-6 states; none is the not-implemented refusal.

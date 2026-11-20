@@ -13,7 +13,8 @@ relationships:
 Verify that the two-repository matrix binds an FSL test tagged `FSpec-<id>`
 or `ix://agent-ix/filament-specification/<id>` to the filament-specification
 artifact `<id>`, and never to the FSL artifact with the same bare id.
-Scope: NFR-140-AC-1 to NFR-140-AC-3.
+A bare id binds the artifact of the repository holding the test only.
+Scope: NFR-140-AC-1 to NFR-140-AC-4.
 
 ## Test Procedure
 
@@ -27,6 +28,13 @@ Scope: NFR-140-AC-1 to NFR-140-AC-3.
    filament-specification does not mint.
 3. Inspect FSL's traceability declaration; in a scratch copy remove the
    qualifier and rerun step 1.
+4. Over a two-repository corpus whose FSL and filament-specification members
+   both mint `FR-001-AC-1`, and only filament-specification mints
+   `FR-001-AC-3`, tag an FSL test and a filament-specification test bare
+   `FR-001-AC-1` and another FSL test bare `FR-001-AC-3`; build the matrix and
+   read both `FR-001-AC-1` rows, the `FR-001-AC-3` row and `untracked_symbols`.
+   Then read every filament-specification row of FSL's own two-repository
+   matrix (step 1) for FSL binders tagged with a bare id.
 
 ## Expected Results
 
@@ -37,4 +45,8 @@ Scope: NFR-140-AC-1 to NFR-140-AC-3.
   reported as unknown in filament-specification.
 - Step 3: the declaration names `FSpec-` and
   `agent-ix/filament-specification`; without it every `FSpec-` tag is
-  unresolved and binds no bare-id row.
+  reported in `untracked_symbols`, never as an unresolved qualified id, and
+  binds no row.
+- Step 4: each bare `FR-001-AC-1` tag binds only its own repository's row; the
+  FSL `FR-001-AC-3` tag binds no row and is in `untracked_symbols`; no
+  filament-specification row of FSL's matrix lists an FSL test by a bare id.
