@@ -2937,16 +2937,16 @@ fn a_quantity_reward_bound_is_spelled_at_the_reward_unit() {
 #[test]
 fn weighting_by_delay_is_the_delay_weighting_even_when_a_reward_is_named_delay() {
     let emitted = |weight: u32| {
-        let delay =
-            format!("delay ConfigVersion::attemptUpdate ~ discrete {{ 1 ms: 90, 3 ms: {weight} }};");
+        let delay = format!(
+            "delay ConfigVersion::attemptUpdate ~ discrete {{ 1 ms: 90, 3 ms: {weight} }};"
+        );
         let (document, checked) = timed_claims_check(&[
             "reward delay on ConfigVersion::attemptUpdate = 1;",
             &delay,
             "probabilistic D using tm on Config under Steady on origin \
              { long_run_fraction holds(true) weighted by delay >= 0.5 }",
         ]);
-        let package =
-            checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+        let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
         let (wire, read) = emit_and_read(&package, &document);
         assert!(matches!(read, Read::Verified { .. }), "{read:?}");
         wire

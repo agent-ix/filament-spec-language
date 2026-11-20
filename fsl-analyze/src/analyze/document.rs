@@ -967,6 +967,10 @@ impl ItemSelection {
     }
 }
 
+/// FR-741's default `min_cycles` of the regenerative method a long-run
+/// fraction defaults to.
+const DEFAULT_MIN_CYCLES: u64 = 100;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProbabilisticSelection {
@@ -982,6 +986,9 @@ struct ProbabilisticSelection {
     workers: Option<NonZeroU32>,
     #[serde(default)]
     timed_sampling: Option<TimedSamplingSelection>,
+    /// The evidence kind's engine budgets, read once the kind is known.
+    #[serde(default)]
+    limits: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -1012,9 +1019,103 @@ impl TimedSamplingSelection {
     }
 }
 
+/// FR-191's `StatisticalLimits` members of `probabilistic.limits` (FR-741):
+/// each a positive count, the published default when absent.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatisticalLimitsSelection {
+    #[serde(default)]
+    max_samples: Option<NonZeroU64>,
+    #[serde(default)]
+    max_draws: Option<NonZeroU64>,
+    #[serde(default)]
+    max_cycle_steps: Option<NonZeroU64>,
+}
+
+impl StatisticalLimitsSelection {
+    fn resolve(self) -> fsl_replay::statistical::StatisticalLimits {
+        let defaults = fsl_replay::statistical::StatisticalLimits::default();
+        fsl_replay::statistical::StatisticalLimits {
+            max_samples: self
+                .max_samples
+                .map_or(defaults.max_samples, NonZeroU64::get),
+            max_draws: self.max_draws.map_or(defaults.max_draws, NonZeroU64::get),
+            max_cycle_steps: self
+                .max_cycle_steps
+                .map_or(defaults.max_cycle_steps, NonZeroU64::get),
+        }
+    }
+}
+
+/// FR-203's `ExactProbLimits` members of `probabilistic.limits` (FR-741),
+/// in FSpec FR-411's flat spelling: the `model` members sit beside the
+/// solver members. Each is a positive count, the published default when
+/// absent.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExactLimitsSelection {
+    #[serde(default)]
+    max_states: Option<NonZeroU64>,
+    #[serde(default)]
+    max_transitions: Option<NonZeroU64>,
+    #[serde(default)]
+    max_automaton_states: Option<NonZeroU64>,
+    #[serde(default)]
+    max_iterations: Option<NonZeroU64>,
+    #[serde(default)]
+    precision_bits: Option<NonZeroU32>,
+    #[serde(default)]
+    max_precision_bits: Option<NonZeroU32>,
+    #[serde(default)]
+    max_rational_bits: Option<NonZeroU64>,
+    #[serde(default)]
+    max_policy_iterations: Option<NonZeroU64>,
+}
+
+impl ExactLimitsSelection {
+    fn resolve(self) -> Result<crate::exact_probabilistic::ExactProbLimits, ()> {
+        let mut limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let count = |value: NonZeroU64| usize::try_from(value.get()).map_err(|_| ());
+        if let Some(value) = self.max_states {
+            limits.model.limits.max_states = count(value)?;
+        }
+        if let Some(value) = self.max_transitions {
+            limits.model.limits.max_transitions = count(value)?;
+        }
+        if let Some(value) = self.max_automaton_states {
+            limits.model.max_automaton_states = value.get();
+        }
+        if let Some(value) = self.max_iterations {
+            limits.max_iterations = value.get();
+        }
+        if let Some(value) = self.precision_bits {
+            limits.precision_bits = value.get();
+        }
+        if let Some(value) = self.max_precision_bits {
+            limits.max_precision_bits = value.get();
+        }
+        if let Some(value) = self.max_rational_bits {
+            limits.max_rational_bits = value.get();
+        }
+        if let Some(value) = self.max_policy_iterations {
+            limits.max_policy_iterations = value.get();
+        }
+        if limits.precision_bits > limits.max_precision_bits {
+            return Err(());
+        }
+        Ok(limits)
+    }
+}
+
+/// FR-741's `probabilistic` request member as the item it negotiates: the
+/// evidence kind (`default_evidence` when absent), its method, seed and
+/// budgets, each absent member at its published default. `long_run` selects
+/// the default method of a long-run fraction, `regenerative` with
+/// `min_cycles` 100 (FR-190).
 fn probabilistic_item(
     value: &Value,
     default_evidence: EvidenceKind,
+    long_run: bool,
 ) -> Result<super::ProbabilisticItem, ()> {
     let selection: ProbabilisticSelection =
         serde_json::from_value(value.clone()).map_err(|_| ())?;
@@ -1032,17 +1133,19 @@ fn probabilistic_item(
             if selection.method.is_some() || selection.seed.is_some() || timed_sampling.is_some() {
                 return Err(());
             }
-            (
-                None,
-                None,
-                None,
-                super::ProbabilisticLimits::Exact(
-                    crate::exact_probabilistic::ExactProbLimits::default(),
-                ),
-            )
+            let limits = match selection.limits {
+                None => crate::exact_probabilistic::ExactProbLimits::default(),
+                Some(limits) => serde_json::from_value::<ExactLimitsSelection>(limits)
+                    .map_err(|_| ())?
+                    .resolve()?,
+            };
+            (None, None, None, super::ProbabilisticLimits::Exact(limits))
         }
         EvidenceKind::Statistical => {
             let method = match selection.method {
+                None if long_run => fsl_replay::statistical::StatisticalMethod::Regenerative {
+                    min_cycles: DEFAULT_MIN_CYCLES,
+                },
                 None => fsl_replay::statistical::StatisticalMethod::Okamoto,
                 Some(StatisticalMethodSelection { kind, min_cycles }) => match kind.as_str() {
                     "okamoto" if min_cycles.is_none() => {
@@ -1071,13 +1174,17 @@ fn probabilistic_item(
                 "filament.simulation.sampler/v1",
             )
             .map_err(|_| ())?;
+            let limits = match selection.limits {
+                None => fsl_replay::statistical::StatisticalLimits::default(),
+                Some(limits) => serde_json::from_value::<StatisticalLimitsSelection>(limits)
+                    .map_err(|_| ())?
+                    .resolve(),
+            };
             (
                 Some(method),
                 Some(seed),
                 Some(sampler),
-                super::ProbabilisticLimits::Statistical(
-                    fsl_replay::statistical::StatisticalLimits::default(),
-                ),
+                super::ProbabilisticLimits::Statistical(limits),
             )
         }
     };
@@ -1746,21 +1853,23 @@ fn resolve_one(
         return invalid_value(index, name, "probabilistic");
     }
     let probabilistic = if let Some(value) = &selection.probabilistic {
-        let default_evidence = package
+        let checked = package
             .graph()
             .probabilistic_model()
             .claims()
             .iter()
-            .find(|checked| checked.occurrence() == Some(&claim))
-            .map(|checked| {
-                if checked.exact_only() {
-                    EvidenceKind::Exact
-                } else {
-                    EvidenceKind::Statistical
-                }
-            })
-            .unwrap_or(EvidenceKind::Statistical);
-        match probabilistic_item(value, default_evidence) {
+            .find(|checked| checked.occurrence() == Some(&claim));
+        let default_evidence = match checked {
+            Some(checked) if checked.exact_only() => EvidenceKind::Exact,
+            _ => EvidenceKind::Statistical,
+        };
+        let long_run = checked.is_some_and(|checked| {
+            matches!(
+                checked.form,
+                fsl_semantics::check::ProbForm::LongRunFraction { .. }
+            )
+        });
+        match probabilistic_item(value, default_evidence, long_run) {
             Ok(item) => Some(item),
             Err(()) => return invalid_value(index, name, "probabilistic"),
         }
@@ -3229,6 +3338,26 @@ impl ClaimItem {
                 }
                 EvidenceKind::Exact => {}
             }
+            // FR-741: FSL writes every budget the caller left out, at its
+            // published default.
+            let limits = match probabilistic.limits {
+                super::ProbabilisticLimits::Statistical(limits) => json!({
+                    "max_samples": limits.max_samples,
+                    "max_draws": limits.max_draws,
+                    "max_cycle_steps": limits.max_cycle_steps,
+                }),
+                super::ProbabilisticLimits::Exact(limits) => json!({
+                    "max_states": limits.model.limits.max_states,
+                    "max_transitions": limits.model.limits.max_transitions,
+                    "max_automaton_states": limits.model.max_automaton_states,
+                    "max_iterations": limits.max_iterations,
+                    "precision_bits": limits.precision_bits,
+                    "max_precision_bits": limits.max_precision_bits,
+                    "max_rational_bits": limits.max_rational_bits,
+                    "max_policy_iterations": limits.max_policy_iterations,
+                }),
+            };
+            member.insert("limits".to_owned(), limits);
             item.insert("probabilistic".to_owned(), Value::Object(member));
         }
         Ok(Value::Object(item))

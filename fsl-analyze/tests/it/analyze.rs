@@ -17,22 +17,22 @@
 use filament_exact::{Cancel, CancelCause, Undefined};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
-    Aggregate, AggregateGap, AnalyzeItem, AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply,
-    DispositionKind, Engine, Engines, ItemForm, ItemOptions, NegotiatedItem, Payload,
-    ProbabilisticItem, ProbabilisticLimits, Settlement, analyze as analyze_request, analyze_items,
-    model_item,
+    analyze as analyze_request, analyze_items, model_item, Aggregate, AggregateGap, AnalyzeItem,
+    AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply, DispositionKind, Engine, Engines,
+    ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem, ProbabilisticLimits,
+    Settlement,
 };
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::{
-    CertificateRule, Certification, CounterexampleKind, IncompleteCause, InconclusiveCause,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement,
-    ModelTraceValue, ProofBasis, RunStats, TemporalCounterexample, TerminalValue,
-    UndefinedEvaluation, UndefinedLocus, UndefinedSite, settle_model_check,
+    settle_model_check, CertificateRule, Certification, CounterexampleKind, IncompleteCause,
+    InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
+    ModelTraceSettlement, ModelTraceValue, ProofBasis, RunStats, TemporalCounterexample,
+    TerminalValue, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
-use fsl_route::{Candidate, EvidenceKind, Mode, ProviderOrigin};
 use fsl_route::{request::ExtentClassification, routing::Disposition};
+use fsl_route::{Candidate, EvidenceKind, Mode, ProviderOrigin};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::trace;
 
@@ -303,13 +303,11 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
     };
     let record = only(analyze_items(
         &en1(),
-        vec![
-            model_item(
-                index(0),
-                invariant.model_item(&world, limits, |_| panic!("nothing to replay")),
-            )
-            .expect("a clause run"),
-        ],
+        vec![model_item(
+            index(0),
+            invariant.model_item(&world, limits, |_| panic!("nothing to replay")),
+        )
+        .expect("a clause run")],
         &Cancel::new(),
     ));
     assert_eq!(
@@ -324,15 +322,13 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
     cancel.cancel(CancelCause::Requested);
     let records = analyze_items(
         &en1(),
-        vec![
-            model_item(
-                index(0),
-                invariant.model_item(&world, ModelCheckLimits::default(), |_| {
-                    panic!("a cancelled item runs nothing")
-                }),
-            )
-            .expect("a clause run"),
-        ],
+        vec![model_item(
+            index(0),
+            invariant.model_item(&world, ModelCheckLimits::default(), |_| {
+                panic!("a cancelled item runs nothing")
+            }),
+        )
+        .expect("a clause run")],
         &cancel,
     );
     assert_eq!(
@@ -571,8 +567,8 @@ fn run_one_observed_service_item(
     item: &NegotiatedItem,
     limits: &AnalyzeLimits,
 ) -> (Vec<fsl_replay::TerminalRecord>, usize) {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     let charges = Arc::new(AtomicUsize::new(0));
     let observed_charges = Arc::clone(&charges);
@@ -731,8 +727,8 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
 fn provider_entry_refuses_undeclared_population_before_running_items_in_input_order() {
     use crate::prob_world::{self, World};
     use fsl_replay::{ProofRefusalCause, TerminalValue};
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     let claim = "probabilistic Two using ev on M over (s: M::Server) under Steady on origin \
          with alpha 0.01, beta 0.01, indifference 0.01 \

@@ -27,7 +27,7 @@ use fsl_semantics::check::{
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";

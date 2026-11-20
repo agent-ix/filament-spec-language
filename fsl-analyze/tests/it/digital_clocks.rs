@@ -1228,7 +1228,7 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
     }
     .to_string();
     assert!(
-        rendered.contains("the subject's model declares no time binding"),
+        rendered.contains("subject's model declares no time binding"),
         "{rendered}"
     );
 

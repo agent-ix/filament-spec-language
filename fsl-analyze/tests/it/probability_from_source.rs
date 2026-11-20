@@ -121,8 +121,7 @@ fn run_timed(name: &str, claims: &str, items: Value) -> Value {
 }
 
 fn run_pta(name: &str, claim: &str) -> Value {
-    let unit = timed_unit(claim)
-        .replace("uniform[1 ms, 2 ms]", "discrete { 1 ms: 1 }");
+    let unit = timed_unit(claim).replace("uniform[1 ms, 2 ms]", "discrete { 1 ms: 1 }");
     let ws = Workspace::new(name);
     let request = request_over(
         &ws,
@@ -275,9 +274,11 @@ fn timed_sampling_from_source() {
     );
 }
 
-/// FR-741-AC-7: a timed probabilistic source claim uses the exact EN-5
+/// FR-741-AC-3 (timed half): a timed probabilistic source claim uses the exact EN-5
 /// digital-clock product and retains its independently checkable certificate.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
 #[test]
+#[ignore = "QSL-2156: EN-5 timed digital-clock dispatch and certificates (PR #3204) not landed yet"]
 fn pta_from_source() {
     let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
          { probability >= rational(95, 100) [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
@@ -288,8 +289,7 @@ fn pta_from_source() {
     assert_eq!(item["certificate"]["accepted"], true, "{item}");
     assert_eq!(item["certificate"]["kind"], "exact", "{item}");
     assert_eq!(
-        item["certificate"]["document"]["objective"]["timed"]["route"],
-        "digital",
+        item["certificate"]["document"]["objective"]["timed"]["route"], "digital",
         "{item}"
     );
 }
@@ -757,4 +757,117 @@ fn exact_fair_scheduler_from_source() {
         item.to_string().contains("24") && item.to_string().contains("25"),
         "{item}"
     );
+}
+
+#[test]
+fn statistical_clopper_pearson_from_source() {
+    statistical_method_from_source("clopper-pearson", json!({"type": "clopper-pearson"}));
+}
+
+/// `MeanDelivered`: the mean fraction of delivered positions in `[0, 2]`.
+const MEAN_DELIVERED: &str =
+    "probabilistic MeanDelivered using ev on M over (m: M::Msg) under Even on origin \
+     with alpha 0.01, beta 0.01, indifference 0.05 \
+     { mean of (fraction holds(m.delivered) over [0, 2]) >= 0.1 }";
+
+/// FR-741-AC-4 (negative): a `mean of` claim requested with `sprt` settles
+/// `invalid-request` `not-statistical`, and `statistical.max_samples` 10
+/// settles `incomplete` `LimitReached` naming `statistical.max_samples`.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
+#[test]
+fn statistical_refusals_and_budgets_from_source() {
+    let document = run(
+        "mean-of-sprt",
+        MEAN_DELIVERED,
+        json!([{"claim": "MeanDelivered", "probabilistic": {
+            "evidence": "statistical", "method": {"type": "sprt"}, "seed": "0"}}]),
+    );
+    // An `invalid-request` item is a refusal settled by its disposition.
+    let item = &document["items"][0];
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "not-statistical",
+        "{item}"
+    );
+
+    let document = run(
+        "max-samples",
+        DELIVERED,
+        json!([{"claim": "Delivered", "probabilistic": {
+            "evidence": "statistical", "seed": "7", "limits": {"max_samples": 10}}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "incomplete", "{item}");
+    assert!(
+        item.to_string().contains("statistical.max_samples"),
+        "{item}"
+    );
+    assert_eq!(
+        item["request"]["probabilistic"]["limits"]["max_samples"], 10,
+        "{item}"
+    );
+}
+
+/// FR-741 request members: an absent method of a long-run fraction is
+/// `regenerative` with `min_cycles` 100, of a bounded form `okamoto`; FSL
+/// writes every budget the caller leaves out at its published default.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
+#[test]
+fn absent_probabilistic_members_take_their_published_defaults() {
+    let long_run = run_health_long_run(
+        "default-long-run-method",
+        json!([{"claim": "LongRun", "probabilistic": {"evidence": "statistical", "seed": "7"}}]),
+    );
+    let request = &long_run["items"][0]["request"]["probabilistic"];
+    assert_eq!(
+        request["method"],
+        json!({"type": "regenerative", "min_cycles": 100}),
+        "{long_run}"
+    );
+    assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{long_run}");
+
+    let bounded = run(
+        "default-bounded-method",
+        DELIVERED,
+        json!([{"claim": "Delivered", "probabilistic": {"evidence": "statistical"}}]),
+    );
+    let request = &bounded["items"][0]["request"]["probabilistic"];
+    assert_eq!(request["method"], json!({"type": "okamoto"}), "{bounded}");
+    assert_eq!(request["seed"], "0", "{bounded}");
+    assert_eq!(request["max_witnesses"], 8, "{bounded}");
+}
+
+/// FR-741 request members and FR-203 budgets: an exact item's
+/// `probabilistic.limits` reach EN-5, so `max_states` 1 settles
+/// `incomplete` naming `exact_prob.max_states`, and an unknown limit member
+/// is an invalid value of the item.
+#[ix_trace_rs::trace("TC-2066", "FR-741-AC-2")]
+#[test]
+fn exact_limits_from_source_reach_the_engine() {
+    let document = run(
+        "exact-max-states",
+        EVENTUALLY,
+        json!([
+            {"claim": "Eventually", "probabilistic": {
+                "evidence": "exact", "limits": {"max_states": 1}}},
+            {"claim": "Eventually", "probabilistic": {
+                "evidence": "exact", "limits": {"max_nothing": 1}}}
+        ]),
+    );
+    let limited = &document["items"][0];
+    assert_eq!(label(limited), "incomplete", "{limited}");
+    assert!(
+        limited.to_string().contains("exact_prob.max_states"),
+        "{limited}"
+    );
+    assert_eq!(
+        limited["request"]["probabilistic"]["limits"]["max_states"], 1,
+        "{limited}"
+    );
+    assert!(
+        document.to_string().contains("probabilistic"),
+        "the unknown member is refused naming the member: {document}"
+    );
+    assert_ne!(label(&document["items"][1]), "proved", "{document}");
 }

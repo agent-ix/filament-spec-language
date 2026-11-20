@@ -8,9 +8,9 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
-    AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, ClaimItem, ClaimRefusal, ClauseLimits,
+    analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, ClaimItem, ClaimRefusal, ClauseLimits,
     Counterexample, Engines, ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem,
-    ProbabilisticLimits, SourceProvision, TemporalItem, analyze,
+    ProbabilisticLimits, SourceProvision, TemporalItem,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_analyze::provider;
@@ -25,7 +25,7 @@ use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::model_world::{self, Clause, INFINITE, World};
+use crate::model_world::{self, Clause, World, INFINITE};
 use crate::prob_world;
 
 fn counter() -> World {
@@ -751,13 +751,11 @@ fn claim_construction_resolves_the_complete_checked_occurrence() {
         .next()
         .expect("producer-owned occurrence");
     let absent = OccurrenceKey::new(node, origin);
-    assert!(
-        !world
-            .package
-            .graph()
-            .occurrences()
-            .any(|(node, _, _)| node == *absent.node())
-    );
+    assert!(!world
+        .package
+        .graph()
+        .occurrences()
+        .any(|(node, _, _)| node == *absent.node()));
     assert!(matches!(build(absent), Err(ClaimRefusal::UnknownClaim)));
 }
 
@@ -795,7 +793,7 @@ fn a_provider_admission_failure_is_settled_by_disposition() {
 #[test]
 fn a_call_item_fault_is_settled_by_disposition() {
     use fsl_analyze::analyze::document::{
-        AnalyzeRun, CallItem, ResolvedItem, resolve_call_items, settle_run,
+        resolve_call_items, settle_run, AnalyzeRun, CallItem, ResolvedItem,
     };
     let world = counter();
     let engines = Engines::fsl().expect("the manifests register");
