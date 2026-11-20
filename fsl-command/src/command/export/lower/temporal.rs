@@ -596,7 +596,7 @@ pub(super) fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
             clause.position,
             Some(holds.clone()),
             format!(
-                "def {holds} (b : {behavior}) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
+                "def {holds} (b : Behaviour) ({binder} : List Nat) (i : Int) : Prop :=\n  {formula}"
             ),
             obligation,
         ));
