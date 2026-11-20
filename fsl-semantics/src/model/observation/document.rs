@@ -2568,11 +2568,11 @@ fn bound_refusal(
 
 /// The collection of type `collection` an array of already admitted
 /// `elements` forms, at the value path `path`. A set or ordered set holding
-/// an element equal to an earlier one, by the canonical key that FR-149 `=`
-/// agrees with, refuses `invalid_runtime_input`/`duplicate-member` at the
-/// later element, naming the earlier element's index, and is never
-/// deduplicated. A set and a bag are written in canonical key order whatever
-/// their array order; a sequence and an ordered set keep it.
+/// an element equal to an earlier one under collection membership refuses
+/// `invalid_runtime_input`/`duplicate-member` at the later element, naming
+/// the earlier element's index, and is never deduplicated. A set and a bag
+/// are written in membership-key order whatever their array order; a
+/// sequence and an ordered set keep it.
 fn form_collection_value(
     collection: &filament_exact::CollectionType,
     elements: Vec<Value>,
@@ -2582,47 +2582,26 @@ fn form_collection_value(
     let refuse =
         |cause: &'static str| admission_record(Code::InvalidRuntimeInput, cause).at(path.to_vec());
     if kind.is_unique() {
-        let mut order: Vec<usize> = (0..elements.len()).collect();
-        let mut unkeyed = false;
-        order.sort_by(
-            |left, right| match (elements.get(*left), elements.get(*right)) {
-                (Some(left), Some(right)) => filament_exact::compare_keys(left, right)
-                    .unwrap_or_else(|| {
-                        unkeyed = true;
-                        std::cmp::Ordering::Equal
-                    }),
-                _ => std::cmp::Ordering::Equal,
-            },
-        );
-        if unkeyed {
-            return Err(refuse("invalid-value"));
-        }
-        // Equal keys sit together, their indices ascending (the sort is
-        // stable): the first element of the array that equals an earlier one
-        // is the second of the group that reaches it first.
-        let mut duplicate: Option<(usize, usize)> = None;
-        for group in order.chunk_by(|left, right| {
-            matches!(
-                (elements.get(*left), elements.get(*right)),
-                (Some(left), Some(right))
-                    if filament_exact::compare_keys(left, right) == Some(std::cmp::Ordering::Equal)
-            )
-        }) {
-            if let [earlier, later, ..] = group {
-                match duplicate {
-                    Some((found, _)) if found <= *later => {}
-                    _ => duplicate = Some((*later, *earlier)),
+        let mut meter = filament_exact::Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS);
+        for later in 0..elements.len() {
+            for earlier in 0..later {
+                match filament_exact::member_equal(&elements[later], &elements[earlier], &mut meter)
+                {
+                    filament_exact::Outcome::Completed(true) => {
+                        let mut at = path.to_vec();
+                        at.push(PathStep::Index(later));
+                        return Err(
+                            admission_record(Code::InvalidRuntimeInput, "duplicate-member")
+                                .with("earlier-index", earlier.to_string())
+                                .at(at),
+                        );
+                    }
+                    filament_exact::Outcome::Completed(false) => {}
+                    filament_exact::Outcome::Refused(_) | filament_exact::Outcome::Incomplete(_) => {
+                        return Err(refuse("invalid-value"));
+                    }
                 }
             }
-        }
-        if let Some((later, earlier)) = duplicate {
-            let mut at = path.to_vec();
-            at.push(PathStep::Index(later));
-            return Err(
-                admission_record(Code::InvalidRuntimeInput, "duplicate-member")
-                    .with("earlier-index", earlier.to_string())
-                    .at(at),
-            );
         }
     }
     match kind {
