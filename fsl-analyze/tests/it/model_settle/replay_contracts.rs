@@ -118,7 +118,7 @@ fn a_returned_counterexample_rejects_a_different_real_post_state_as_content_mism
     ));
 }
 
-#[trace("FR-127-AC-1", "FR-127-AC-4", "FR-128-AC-6")]
+#[trace("FR-127-AC-1", "FR-128-AC-6")]
 #[test]
 fn returned_undefined_and_actual_state_limit_runs_settle_without_invented_outcomes() {
     let undefined = kernel_case(&with_terminal(TERMINAL_WHEN), DIVIDE, &[2]);
