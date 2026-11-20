@@ -44,6 +44,49 @@ fn run(world: &World) -> HyperOutcome {
         .expect("the run is not refused")
 }
 
+/// An unreachable asymmetric disjunct removes copy-swap eligibility without
+/// changing noninterference over the vault's Boolean-valued fields.
+#[trace("FR-176-AC-1")]
+#[test]
+fn an_unreachable_asymmetric_disjunct_keeps_truth_but_changes_proof_reduction() {
+    let asymmetric = format!(
+        "hyper Unswapped using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V {EQUAL_INPUTS} \
+         {{ always (holds(v.l @ a = v.l @ b) or holds(v.h @ a < 0)) }}"
+    );
+    for vault in [Vault::Secure, Vault::Leaky] {
+        let plain = World::new(vault, false, &STARTS, &asymmetric);
+        let symmetric = World::new(vault, false, &STARTS, &non_interference(EQUAL_INPUTS));
+        assert!(plain.clause.copy_group().classes.is_empty());
+        let unreduced = run(&plain);
+        let reduced = run(&symmetric);
+        match vault {
+            Vault::Secure => {
+                assert!(
+                    matches!(unreduced, HyperOutcome::Holds { .. }),
+                    "{unreduced:?}"
+                );
+                assert!(
+                    matches!(reduced, HyperOutcome::HoldsReduced { .. }),
+                    "{reduced:?}"
+                );
+            }
+            Vault::Leaky => {
+                for (world, outcome) in [(&plain, unreduced), (&symmetric, reduced)] {
+                    let witness = refuted(outcome);
+                    let a = positions(world, &witness, 0);
+                    let b = positions(world, &witness, 1);
+                    let position = usize::try_from(witness.trace_position)
+                        .expect("the small vault witness fits a host index");
+                    assert_ne!(a[position].1, b[position].1);
+                    assert!(a.iter().all(|(h, _)| *h >= 0));
+                }
+            }
+            _ => unreachable!("only the secure and leaky vaults are selected"),
+        }
+    }
+}
+
 /// The counterexample of a violated run.
 pub(crate) fn refuted(outcome: HyperOutcome) -> HyperCounterexample {
     match outcome {

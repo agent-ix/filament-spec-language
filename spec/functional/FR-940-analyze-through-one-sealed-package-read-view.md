@@ -651,6 +651,63 @@ hyper engines produce, and leaves S3 and S4 unchanged.
   `unsupported-requested-capability` at negotiation (FR-173) on both
   routes, because the classification reads the same form.
 
+### A refused read of the compiled package
+
+The source route reads the package it compiled through the same strict
+reader as the package route, so a package the reader refuses is a typed
+refusal of the run on both routes, never an internal failure of a later
+step.
+
+- While a `program` is selected, FSL SHALL read the compiled package's own
+  S4 emission back through the strict reader (`read_evaluation_package`)
+  once per run, before the subject binding is admitted and before any item
+  is negotiated, and every item of the run SHALL read that one admitted
+  read.
+- When the strict reader refuses that read-back, the run's outcome SHALL be
+  the reader's typed refusal and no item SHALL run: category the code's
+  category (FR-285: `invalid_package`, `missing_import` and
+  `ambiguous_declaration` are category refusal, exit `20`;
+  `resource_exhausted`, a reached read ceiling, is category incomplete,
+  exit `22`), one diagnostic whose `code` is the reader's code, whose
+  `cause` is the reader's cause tag (`null` where the reader names none, as
+  for a reached read ceiling) and whose `details` is `{"path": P}` with `P`
+  the reader's RFC 6901 pointer when it names one, `items` `[]` and
+  `last_stage` `S4` (FR-621 "Last stage"). The outcome SHALL NOT be
+  `runtime_invariant` or exit `30`.
+- The reader's refusal SHALL be coded as on the package route: a
+  `missing-selection` refusal is `missing_import` and names the domain
+  package identity the refused bytes hold at its pointer (in the
+  diagnostic's message and the typed refusal's identity); an
+  `ambiguous-name` refusal at a `/claim_names/` pointer is
+  `ambiguous_declaration` ("Claim names"); every other refusal of the
+  Contract IR reader is `invalid_package`, and a refusal FSL's v2 read view
+  raises itself keeps its own code (`unknown_wire` for an unsupported
+  version, `invalid_source_map`, a structural import refusal's library
+  code).
+- A package whose S4 emission does not complete has no read-back to refuse.
+  Its items settle as they settle without an emission, and the run is not
+  refused for it.
+- A replay of an item's counterexample or evidence (FR-128, FR-170, FR-217)
+  that reads the run's package bytes as a `ReplayPackage` (the emitted
+  bytes on the source route, the selected bytes on the package route) SHALL
+  bound that read by the run's `replay.input_bytes` (FR-255), and SHALL
+  treat a refusal of that read as a replay refusal of that item alone: the
+  item settles `inconclusive` with FR-281's cause `replay_refused` carrying
+  the reader's catalog code (`stage_limit_exceeded`/`input-bytes-exceeded`
+  naming `replay.input_bytes` (FR-255) for bytes above the replay read's
+  byte ceiling, `resource_exhausted` for an allocation it cannot make,
+  `invalid_package` otherwise), as FR-127's V-6 row for a replay refusal
+  that is no internal fault states. This holds for the evidence replay of a
+  proved state-graph item as for a counterexample replay: such an item
+  settles `inconclusive`, `replay_refused`, never `proved`. The run's other
+  items settle as they settle without it, and the run's category and exit
+  follow its items (FR-621 "Categories and exit"); the run is not refused.
+  The refusal SHALL NOT be written as the internal fault
+  `analyze`/`package-emission` or `analyze`/`package-bytes`.
+- Only a failed emission, at a replay, of a package the checker admitted
+  SHALL be the internal fault `analyze`/`package-emission`; the item
+  settles `failed` with it.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -675,6 +732,8 @@ hyper engines produce, and leaves S3 and S4 unchanged.
 | FR-940-AC-18 | AC-17's `package` request run after the unit's source file is overwritten with bytes that are not a native unit and the handoff directory's `sources/` is deleted settles `Equal` `proved` with the record of AC-17's source request; FR-163's checker run on that route accepts the certificate with no source present. | Test (TC-2958) |
 | FR-940-AC-19 | Test-only packages of AC-16's unit pass the strict reader, because it reads no slot node names or levels. Four variants change `Equal`: its slot node `slot_sc_sb` is renamed `slot_sc_sz` (`z` is declared by no Group); its slot node `slot_sc_sb` is written at level 0 in place of level 1, leaving two atom slot nodes at level 0 and none at level 1; the atom's `c.value` read is rewritten so its operand roots in both `slot_sc_sa` and `slot_sc_sb`; or a conjunct slot of the projection-aligned clause's `match` is renamed `opx_sa`. In each variant, `Equal` (or the projection-aligned clause in the last) settles `failed` with `MalformedNode` naming its `hyperproperty` node key and no verdict, while a sibling `Partner` item settles as in AC-17. The unmodified projection-aligned clause has one atom slot and one conjunct slot at level 0, and its item settles as in AC-17, so a level rule that does not separate atom slots from conjunct slots fails. A handoff directory whose package's `Equal` `body` binding references the atom's `expression` node, and one whose `quantifiers` Tuple is removed, each refuse the whole request at the request stage with the reader's code, cause and pointer (`ill_typed`/`operator-ineligible` at the `hyperproperty` node for the first), `items` `[]`, `last_stage` `null`, exit `20`, compiling no source. | Test (TC-3127) |
 | FR-940-AC-20 | AC-4's Counter unit, extended with a record field `pos` and a sequence field `log` and with the function `f`, declares six two-trace universal clauses under the infinite-trace profile. The first three use only forms S3 normalizes through: `Called`, `always holds(f(c.value @ a) = f(c.value @ b))` (call); `Selected`, `always holds(c.pos.x @ a = c.pos.x @ b)` (field select); and `Indexed`, `always holds(c.log[0] @ a = c.log[0] @ b)` (index). Each has the copy-group class `[a, b]` in S3's record and in the clause rebuilt from the package. A `program` request and a `package` request with copy-swap `symmetry` settle each `proved` with basis `reduced`, certification `certified` and equal certificates. `LetBound`, `always holds((let v = c.value @ a in v <= 3) and (let w = c.value @ b in w <= 3))`, and `CaseBound`, the same body with each conjunct a `case` over a union field, have an empty copy group in S3's record and in the rebuilt clause, and settle `proved` with basis `exhaustive` on both routes. `Converted`, `always holds(convert(c.value @ a) = convert(c.value @ b))` with an explicit rational conversion, has an empty copy group in S3's record and the class `[a, b]` in the rebuilt clause, and settles `proved` with basis `reduced` and equal certificates on both routes. A test-only package normal form that treats `filament.op.function.call` as opaque gives `Called` an empty copy group, so the comparison can fail. | Test (TC-3126) |
+| FR-940-AC-21 | The Counter unit, which selects the domain package `test/counter`, analyzed from source with a subject binding whose `packages` supply no document for `test/counter` and with no items, refuses the run with the strict reader's typed refusal before any item runs: code `missing_import`, cause `missing-selection`, the typed refusal's identity `test/counter`, `details.path` a pointer beginning `/semantic_graph/nodes/`, a message naming `test/counter`, category refusal, `items` `[]`, `last_stage` `S4`, exit `20`; the document is never `runtime_invariant` and never exit `30`. The same request with `test/counter` supplied is not refused and completes with category success, exit `0`. | Test (TC-2958) |
+| FR-940-AC-22 | AC-4's Counter request over source with the items `Bounded` and `AtMostTwo`, run with `replay.input_bytes` set below the length of the package's emission (the up-front read-back is bounded by `i2.input_bytes` and admits the package), settles `AtMostTwo` `inconclusive` with cause `replay_refused` carrying `stage_limit_exceeded`/`input-bytes-exceeded` naming `replay.input_bytes`, never `refuted`, never `failed` with `analyze`/`package-emission`, and settles `Bounded` `proved` as without the setting; the document's category and exit follow its items (category inconclusive, never `internal-failure` or exit `30`), it carries both items, and it is not a whole-run refusal. The same `package` request over AC-4's handoff directory with the same `replay.input_bytes` settles `AtMostTwo` the same way, never `failed` with `analyze`/`package-bytes`. With the same setting, the state-graph claim `ReachThree` of FR-940-AC-11, whose witness replay reads the package the same way, settles `inconclusive`, cause `replay_refused` carrying the same code, never `proved`, on both routes. The source request with a test-only emitter that fails at the replay's emission, over the package the checker admitted, settles `AtMostTwo` `failed` with the internal fault `analyze`/`package-emission`. | Test (TC-2958) |
 
 ## Dependencies
 
