@@ -89,15 +89,6 @@ pub(super) fn check(
     if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    if system
-        .input()
-        .probabilistic
-        .delays()
-        .iter()
-        .any(|delay| delay.operation().model() == claim.subject.alias.as_str())
-    {
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
     let binding = claim_binding(system, claim)
         .map_err(|_| ProbabilityDocumentError::Unsupported)?
         .map(|binding| binding.reference);
@@ -1006,34 +997,68 @@ fn enumerate_digital_deadline(
         {
             return Err(ProbabilityDocumentError::Unsupported);
         }
-        let mut choices = Vec::new();
-        if let Some((delayed_key, delayed)) = next_digital_delay(
-            system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
-        )? {
-            admit_region_state(
-                delayed_key.clone(),
-                delayed,
-                &mut reached,
-                &mut pending,
-                limits,
-                storage,
-            )?;
-            choices.push(vec![ProbabilityEdge {
-                target: delayed_key,
-                probability: one(),
-            }]);
-            edges = edges.saturating_add(1);
-            charge_work(meter, cancel, 1)?;
-        }
-        let clocked_steps = timed
-            .steps(&current.timed)
-            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         let actions = system
             .actions_with_cancel(current.timed.discrete(), cancel)
             .map_err(|_| ProbabilityDocumentError::Unsupported)?
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let given_actions = actions
+            .iter()
+            .filter(|action| discrete_delay(system, &action.identity.operation).is_some())
+            .count();
+        if given_actions > 1 {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        let mut choices = Vec::new();
+        if given_actions == 0 {
+            if let Some((delayed_key, delayed)) = next_digital_delay(
+                system, timed, predicate, binding, &current, &caps, key_scale, deadline, cancel,
+            )? {
+                admit_region_state(
+                    delayed_key.clone(),
+                    delayed,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                choices.push(vec![ProbabilityEdge {
+                    target: delayed_key,
+                    probability: one(),
+                }]);
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
+            }
+        }
+        let clocked_steps = timed
+            .steps(&current.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         for action in actions {
             charge_work(meter, cancel, 1)?;
+            if let Some(support) = discrete_delay(system, &action.identity.operation) {
+                let (choice, admitted_edges) = digital_discrete_delay_choice(
+                    system,
+                    timed,
+                    predicate,
+                    binding,
+                    &current,
+                    &action,
+                    support,
+                    &caps,
+                    key_scale,
+                    deadline,
+                    limits,
+                    cancel,
+                    meter,
+                    storage,
+                    &mut reached,
+                    &mut pending,
+                )?;
+                edges = edges.saturating_add(admitted_edges);
+                if !choice.is_empty() {
+                    choices.push(choice);
+                }
+                continue;
+            }
             let mut choice: Vec<ProbabilityEdge> = Vec::new();
             let mut enabled = true;
             for draw in action.draws {
@@ -1783,6 +1808,196 @@ fn next_digital_delay(
         state = reached;
     }
     Ok(None)
+}
+
+fn discrete_delay(system: &ModelSystem<'_>, operation: &str) -> Option<Vec<(Rational, Rational)>> {
+    system
+        .input()
+        .probabilistic
+        .delays()
+        .iter()
+        .find(|delay| {
+            let named = delay.operation();
+            system.operation_text(named.declaring(), named.name()) == Some(operation)
+        })
+        .and_then(|delay| match delay.distribution() {
+            fsl_semantics::check::DelayDistribution::Discrete(values) => Some(values.clone()),
+            _ => None,
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn digital_discrete_delay_choice(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    action: &fsl_eval::simulation::model::Action,
+    support: Vec<(Rational, Rational)>,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
+    pending: &mut VecDeque<ProbabilityProductKey>,
+) -> Result<(Vec<ProbabilityEdge>, u64), ProbabilityDocumentError> {
+    let mut outcomes = Vec::new();
+    for (delay, weight) in support {
+        poll(cancel)?;
+        let ticks = time_units(&delay, scale).ok_or(ProbabilityDocumentError::Unsupported)?;
+        let Some(state) = digital_state_after_delay(
+            system, timed, predicate, binding, current, caps, scale, deadline, ticks, cancel,
+        )?
+        else {
+            continue;
+        };
+        let available = system
+            .actions_with_cancel(state.timed.discrete(), cancel)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let Some(action_at_delay) = available
+            .iter()
+            .find(|candidate| candidate.identity == action.identity)
+        else {
+            continue;
+        };
+        outcomes.push((ticks, weight, state, action_at_delay.clone()));
+    }
+    let total = outcomes
+        .iter()
+        .fold(zero(), |sum, (_, weight, _, _)| sum.add(weight));
+    if total.is_zero() {
+        return Ok((Vec::new(), 0));
+    }
+    let mut choice = Vec::new();
+    let mut edges = 0_u64;
+    for (_, weight, delayed, action_at_delay) in outcomes {
+        let delay_probability = weight
+            .div(&total)
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        let clocked_steps = timed
+            .steps(&delayed.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        for draw in action_at_delay.draws {
+            if draw.successors.len() != 1 {
+                return Err(ProbabilityDocumentError::Unsupported);
+            }
+            let (transition, discrete_post) = &draw.successors[0];
+            let Some((_, timed_post)) = clocked_steps.iter().find(|(step, post)| {
+                step.transition() == transition
+                    && system
+                        .state_key(post.discrete())
+                        .ok()
+                        .zip(system.state_key(discrete_post).ok())
+                        .is_some_and(|(left, right)| left.0 == right.0)
+            }) else {
+                continue;
+            };
+            let post = TimedState::new(
+                timed_post.discrete().clone(),
+                ClockValuation::new(quantized_clocks(timed_post, caps, scale)?),
+            );
+            let phase = phase_at(
+                system,
+                predicate,
+                binding,
+                post.discrete(),
+                delayed.elapsed,
+                deadline,
+                cancel,
+            )?;
+            let reached_state = RegionState {
+                timed: post,
+                elapsed: delayed.elapsed,
+                phase,
+            };
+            let target = digital_key(
+                system,
+                timed,
+                binding,
+                &reached_state,
+                caps,
+                scale,
+                deadline,
+            )?;
+            admit_region_state(
+                target.clone(),
+                reached_state,
+                reached,
+                pending,
+                limits,
+                storage,
+            )?;
+            let probability = delay_probability.mul(&draw.probability);
+            if let Some(edge) = choice.iter_mut().find(|edge| edge.target == target) {
+                edge.probability = edge.probability.add(&probability);
+            } else {
+                choice.push(ProbabilityEdge {
+                    target,
+                    probability,
+                });
+            }
+            edges = edges.saturating_add(1);
+            charge_work(meter, cancel, 1)?;
+        }
+    }
+    Ok((choice, edges))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn digital_state_after_delay(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &RegionState,
+    caps: &[u64],
+    scale: u64,
+    deadline: u64,
+    ticks: u64,
+    cancel: &Cancel,
+) -> Result<Option<RegionState>, ProbabilityDocumentError> {
+    let delta = rational_units(1, scale)?;
+    let mut state = current.clone();
+    for _ in 0..ticks {
+        poll(cancel)?;
+        let Some(delayed) = timed
+            .delay(&state.timed, &delta)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        else {
+            return Ok(None);
+        };
+        let elapsed = state
+            .elapsed
+            .saturating_add(1)
+            .min(deadline.saturating_add(1));
+        let delayed = TimedState::new(
+            delayed.discrete().clone(),
+            ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
+        );
+        let phase = phase_at(
+            system,
+            predicate,
+            binding,
+            delayed.discrete(),
+            elapsed,
+            deadline,
+            cancel,
+        )?;
+        if phase != Phase::Pending {
+            return Ok(None);
+        }
+        state = RegionState {
+            timed: delayed,
+            elapsed,
+            phase,
+        };
+    }
+    Ok(Some(state))
 }
 
 fn next_region_delay(

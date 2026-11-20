@@ -80,7 +80,7 @@ pub(super) fn build<'s, 'a>(
         ProbScheduler::Every => None,
     };
     let form = Form::of(claim)?;
-    admit(system, package, claim, workload)?;
+    admit(system, package, claim)?;
     let (base_scale, subdivisions) = scale_of(system, &timed, claim, &form)?;
     let scale = base_scale
         .checked_mul(subdivisions)
@@ -312,7 +312,6 @@ fn admit(
     system: &ModelSystem<'_>,
     package: &fsl_package::CheckedPackage,
     claim: &CheckedProbabilisticClaim,
-    workload: Option<&Workload>,
 ) -> Result<(), ProductRefusal> {
     let delays = package.graph().probabilistic_model().delays();
     for delay in delays
