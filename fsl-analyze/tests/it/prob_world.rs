@@ -219,6 +219,7 @@ impl Model {
 /// A checked fixture model with its initial snapshot.
 pub(crate) struct World {
     pub(crate) package: CheckedPackage,
+    pub(crate) model_document: Vec<u8>,
     pub(crate) provision: fsl_analyze::analyze::SourceProvision,
     packages: fsl_semantics::model::intake::PackageInput,
     snapshots: fsl_semantics::model::observation::DocumentProvision,
@@ -538,6 +539,7 @@ impl World {
                 unit.as_bytes(),
             ),
             package: CheckedPackage::link(graph),
+            model_document: document,
             packages,
             snapshots,
             initial,

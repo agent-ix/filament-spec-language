@@ -5,6 +5,9 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use filament_contract_model::{
+    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
+};
 use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
 use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::exact_probabilistic::{
@@ -17,6 +20,7 @@ use fsl_analyze::exact_probabilistic::{
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_package::emit_checked;
 use fsl_replay::{ModelCheckLimit, ModelCheckLimits};
 use ix_trace_rs::trace;
 
@@ -24,6 +28,103 @@ use crate::prob_world::{self, World};
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
+}
+
+/// FR-740-AC-4 (TC-2062): S4 binds each claim's scheduler and probability
+/// distributions into the claim node path, and the strict reader admits them.
+#[trace("TC-2062", "FR-740-AC-4")]
+#[test]
+fn claims_emit_their_workload_and_random_parameter_operands() {
+    let world = World::new(&prob_world::service(
+        "workload Bursty on M { weight Server::request = 3; weight Server::attempt = 1; weight Server::reset = 1; }\n\
+         probabilistic SteadyClaim using ev on M under Steady on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+         probabilistic BurstyClaim using ev on M under Bursty on origin { probability >= 0.5 [ always[0,2] holds(true) ] }\n\
+         probabilistic AnyClaim using ev on M under every scheduler on origin { probability >= 0.5 [ always[0,2] holds(true) ] }",
+    ));
+    let emission = emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the service and claims");
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("emitted package JSON");
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes");
+    let node = |tag: &str, form: &str, name: &str| {
+        nodes
+            .iter()
+            .find(|node| {
+                node["node_tag"] == tag
+                    && node["semantic_form"] == form
+                    && node["declaration"]["qualified_name"]
+                        .as_array()
+                        .and_then(|parts| parts.last())
+                        .and_then(serde_json::Value::as_str)
+                        == Some(name)
+            })
+            .unwrap_or_else(|| panic!("missing {tag}/{form} node {name}"))
+    };
+    let workload = node("probabilistic", "workload", "Steady");
+    let bursty = node("probabilistic", "workload", "Bursty");
+    let random_d = node("probabilistic", "random_parameter", "d");
+    let random_ok = node("probabilistic", "random_parameter", "ok");
+    let steady_claim = node("claim", "probabilistic_claim", "SteadyClaim");
+    let bursty_claim = node("claim", "probabilistic_claim", "BurstyClaim");
+    let any_claim = node("claim", "probabilistic_claim", "AnyClaim");
+    let id_in =
+        |node: &serde_json::Value, haystack: &str| haystack.contains(&node["node_id"].to_string());
+    let steady_body = steady_claim["body"].to_string();
+    assert!(
+        id_in(workload, &steady_body),
+        "Steady claim scheduler/path: {steady_body}"
+    );
+    assert!(
+        id_in(random_d, &steady_body),
+        "Steady claim distribution/path: {steady_body}"
+    );
+    assert!(
+        id_in(random_ok, &steady_body),
+        "Steady claim distribution/path: {steady_body}"
+    );
+    let bursty_body = bursty_claim["body"].to_string();
+    assert!(
+        id_in(bursty, &bursty_body),
+        "Bursty claim scheduler/path: {bursty_body}"
+    );
+    assert!(
+        id_in(random_d, &bursty_body),
+        "Bursty claim distribution/path: {bursty_body}"
+    );
+    assert!(
+        id_in(random_ok, &bursty_body),
+        "Bursty claim distribution/path: {bursty_body}"
+    );
+    let any_body = any_claim["body"].to_string();
+    assert!(
+        !id_in(workload, &any_body),
+        "every-scheduler claim has no workload: {any_body}"
+    );
+    assert!(
+        !id_in(bursty, &any_body),
+        "every-scheduler claim has no workload: {any_body}"
+    );
+
+    let model_identity = serde_json::from_slice::<serde_json::Value>(&world.model_document)
+        .expect("model JSON")["package"]["identity"]
+        .as_str()
+        .expect("model package identity")
+        .to_owned();
+    let mut evidence = emission.evidence().clone();
+    evidence
+        .insert_domain_package_document(model_identity, world.model_document.as_slice())
+        .expect("the service model supplies strict-reader evidence");
+    let read = CheckedPackageV2::read(
+        emission.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    );
+    assert!(
+        matches!(read, CheckedPackageV2ReadResult::Admitted(_)),
+        "{read:?}"
+    );
 }
 
 fn dyadic(value: &fsl_analyze::exact_probabilistic::Dyadic) -> Rational {
