@@ -209,3 +209,84 @@ fn uncalled_wrong_arity_body_refuses_at_its_body() {
 fn void_operation_body_refuses_at_its_body() {
     assert_invalid_body("body voidValue using v on Config::ConfigVersion::touch() { 43 }\n");
 }
+
+#[trace("TC-1011", "FR-576-AC-2", "FR-576-AC-9")]
+#[test]
+fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
+    use filament_contract_model::ApplicationOperator;
+    let mut operation = query("ConfigVersion", "decideSize", None);
+    operation["params"] = json!([{
+        "identity": owner("ConfigVersion/decideSize/ready"), "name": "ready",
+        "typeRef": "ix://filament/native/Boolean", "presence": "required",
+        "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": operation["origin"].clone(),
+    }]);
+    let document = package(vec![operation], &[]);
+    let emission = emitted(
+        &document,
+        "body chooser using v on Config::ConfigVersion::decideSize(ready) { if ready then 31 else 47 }\n",
+    );
+    let checked = admitted(&document, &emission);
+    let row = checked
+        .operation_body_rows()
+        .expect("operation rows")
+        .iter()
+        .find(|row| row.operation.as_ref() == "decideSize")
+        .expect("declared operation");
+    let OperationBody::Function { node: id } = &row.body else {
+        panic!("conditional body function");
+    };
+    let graph = checked.resolved_graph();
+    let function = graph
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == id)
+        .expect("body lookup");
+    let CheckedTerm::Aggregate { members } = &function.body else {
+        panic!("function members");
+    };
+    let body = members
+        .iter()
+        .find_map(|member| match member {
+            CheckedTerm::Binding { name, value }
+                if matches!(name.kind(), CheckedBindingNameKind::Body) =>
+            {
+                Some(value.as_ref())
+            }
+            _ => None,
+        })
+        .expect("authored function body");
+    let CheckedTerm::Reference { target } = body else {
+        panic!("body reference");
+    };
+    let body = graph
+        .nodes
+        .iter()
+        .find(|node| &node.node_id == target)
+        .expect("conditional expression");
+    let CheckedTerm::Application {
+        operator,
+        arguments,
+        ..
+    } = &body.body
+    else {
+        panic!("a conditional cannot be replaced with a literal");
+    };
+    assert_eq!(*operator, ApplicationOperator::Conditional);
+    assert_eq!(arguments.len(), 3, "condition, then, else");
+    for (argument, expected) in arguments[1..].iter().zip([31_i64, 47_i64]) {
+        let CheckedTerm::Reference { target } = argument else {
+            panic!("branch expression reference");
+        };
+        let branch = graph
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == target)
+            .expect("branch expression");
+        assert_eq!(
+            branch.body.literal_read().expect("literal branch").value,
+            CheckedLiteralValue::Integer(filament_exact::Integer::from(expected))
+        );
+    }
+}
