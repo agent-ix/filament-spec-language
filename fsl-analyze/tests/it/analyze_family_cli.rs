@@ -871,44 +871,79 @@ pub(crate) fn ctl_request(ws: &Workspace, claims: &str, items: Value) -> std::pa
 /// clause whose two traces range over two models carries one clock row per
 /// trace, so it compiles, analyzes to a verdict and, when refuted, replays
 /// under the two rows' configurations; it is never `not-yet-implemented`.
+/// The engine test uses the existing two-alias Vault world; the separate
+/// ConfigVersion compile tests assert the exact S/N clock authority rows.
 #[trace("TC-2243", "FR-640-AC-12")]
 #[test]
-#[ignore = "QSL-2277: a hyper clause over two models under event-position is refused not-yet-implemented"]
 fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
-    let declaration = "hyper Saves using e over behaviours (v: V::Vault, w: N::Vault) \
-                       forall trace a of V forall trace b of N \
-                       { always[0,3] holds(v.l @ a = w.l @ b) }";
-    let (unit, model, other, snapshot) =
-        crate::hyper_world::two_model_request_files((1, 0), declaration);
-    let unit = unit.replace(
-        "profile p =",
-        "profile e = \"filament.temporal.event-position.false-extension/v1\";\nprofile p =",
+    use filament_exact::Cancel;
+    use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
+    use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::{
+        replay_hyper_trace_tuple, settle_hyper_check, HyperOutcome, HyperReplay, ModelCheckLimits,
+        TerminalValue,
+    };
+
+    let declaration = "hyper Saves using ep over behaviours (v: V::Vault, w: N::Vault) \
+         forall trace s of V forall trace n of N \
+         { always[0,3] holds(v.l @ s <= w.l @ n) }";
+    let world = crate::hyper_world::World::with_second_vaults(
+        crate::hyper_world::Vault::Secure,
+        &[("saving", (0, 1))],
+        &[("normal", (0, 0))],
+        declaration,
     );
-    let ws = Workspace::new("family-hyper-two-models");
-    ws.write("other.json", &other);
-    let mut models = request_members(None)["models"].clone();
-    models.as_array_mut().expect("models").push(
-        json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
-            "authority": "test", "identity": "vault-other-model", "document": "VaultOther",
-            "formal_revision": 1}}),
-    );
-    let run = analyze(&request_over(
-        &ws,
-        &unit,
-        &model,
-        &[snapshot],
-        json!({"models": models, "items": [{"claim": "Saves"}]}),
+    let limits = ModelCheckLimits::default();
+    let outcome = world
+        .run(limits, &Cancel::new())
+        .expect("the two-model hyper item runs");
+    let HyperOutcome::Violated { counterexample, .. } = &outcome else {
+        panic!("Saves is refuted by the initial model values: {outcome:?}");
+    };
+
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the subject admits");
+    let systems = vec![&system; world.clause.quantifiers().len()];
+    let letters = CheckedHyperLetters::new(&world.package, &world.clause, systems.clone())
+        .expect("the clause letters admit the subject");
+    let matcher = CheckedStepMatch::new(&world.package, &world.clause);
+    let instance = [
+        ParameterBinding {
+            parameter: "v".to_owned(),
+            instance: ModelInstance {
+                population: crate::hyper_world::key("vaults"),
+                key: "saving".to_owned(),
+            },
+        },
+        ParameterBinding {
+            parameter: "w".to_owned(),
+            instance: ModelInstance {
+                population: crate::hyper_world::other_key("vaults"),
+                key: "normal".to_owned(),
+            },
+        },
+    ];
+    let cancel = Cancel::new();
+    let replay = HyperReplay {
+        clause: &world.clause,
+        systems,
+        instance: &instance,
+        letters: &letters,
+        matcher: &matcher,
+        meter: crate::counter::UNLIMITED,
+        max_witness_set: limits.max_witness_set,
+        cancel: &cancel,
+    };
+    assert!(matches!(
+        replay_hyper_trace_tuple(&replay, counterexample),
+        Ok(fsl_replay::ModelTraceSettlement::Reproduced { .. })
     ));
-    let item = run.item(0);
-    assert_ne!(
-        item["record"]["diagnostic"]["cause"], "not-yet-implemented",
-        "{item}"
-    );
-    let verdict = label(&item);
-    assert!(matches!(verdict, "proved" | "refuted"), "{item}");
-    if verdict == "refuted" {
-        assert_eq!(item["replay"]["reproduced"], true, "{item}");
-    }
+    let record = settle_hyper_check(&outcome, &limits, &[], |counterexample| {
+        replay_hyper_trace_tuple(&replay, counterexample)
+    })
+    .expect("the replayed counterexample settles");
+    assert_eq!(record.value, TerminalValue::Refuted);
 }
 
 /// [`refinement_request`] with every item's `abstract_subject` removed, so

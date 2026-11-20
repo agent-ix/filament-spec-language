@@ -304,6 +304,7 @@ pub(crate) fn unit_text_with_functions(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile p = \"filament.protocol.finite-global/v1\";\n\
          model V = \"{PACKAGE}\";\n\
          {second}function Noop using v(): Boolean pure {{ true }}\n\
@@ -1211,27 +1212,4 @@ pub(crate) fn request_files(
     snapshot(&mut snapshots, "s0", &[(KEY, start)], None, None);
     let bytes = snapshots.into_values().next().expect("one snapshot");
     (text, document, bytes)
-}
-
-/// [`request_files`] over two models: the vault under `V` and again under
-/// `N` (`test/vault-other`), with the unit text, the two domain packages and
-/// the one initial snapshot holding vault `(h, l)` in each.
-pub(crate) fn two_model_request_files(
-    start: (i64, i64),
-    declaration: &str,
-) -> (String, Vec<u8>, Vec<u8>, Vec<u8>) {
-    let vault = Vault::Secure;
-    let document = document(vault.busy(), false);
-    let other = other_document(&document);
-    let text = unit_text(Some(&other), vault, false, &format!("{declaration}\n"));
-    let mut snapshots = fsl_semantics::model::observation::DocumentProvision::new();
-    snapshot(
-        &mut snapshots,
-        "s0",
-        &[(KEY, start)],
-        None,
-        Some(&[(KEY, start)]),
-    );
-    let bytes = snapshots.into_values().next().expect("one snapshot");
-    (text, document, other, bytes)
 }

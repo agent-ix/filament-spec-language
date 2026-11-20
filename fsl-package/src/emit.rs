@@ -35,11 +35,11 @@ use serde::Deserialize;
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
+use fsl_foundation::Code;
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
-use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -51,8 +51,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
-    ModelRole, NodeOwner, TemporalRole,
+    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
+    native_diagnostics_catalog,
 };
 use ix_trace_rs::string_edge;
 
@@ -233,12 +233,9 @@ pub enum EmitRefusal {
     /// program's clock-bearing declarations.
     #[error("{0}")]
     ClockSelection(Box<ClockSelectionRefusal>),
-    /// FR-640, FR-763: a clause whose quantified traces derive different clock
-    /// configurations from their models, which one binding row cannot carry
-    /// yet: an implementation gap, named by the clause.
-    #[error(
-        "a clause whose traces need different clock configurations is not supported yet (declaration {declaration})"
-    )]
+    /// FR-640: a model trace whose parameters do not identify one event
+    /// sequence authority, named by the clause.
+    #[error("a model trace's event sequence authority is ambiguous (declaration {declaration})")]
     PerTraceClockConfigurations {
         /// The clause's declared name.
         declaration: String,
@@ -406,10 +403,10 @@ pub enum EmitRefusal {
     },
 }
 
-/// One explicit clock configuration selected for an exact checked temporal
-/// declaration. The emitter obtains the clock name and structural
-/// declaration identity from the checked graph; this selection supplies only
-/// the independent typed clock configuration.
+/// One clock configuration selected for an exact checked temporal declaration
+/// or quantified hyper trace. The emitter obtains the clock name and
+/// structural declaration identity from the checked graph; this selection
+/// supplies only the independent typed clock configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemporalClockSelection {
     /// The exact source document containing the checked declaration.
@@ -423,6 +420,9 @@ pub struct TemporalClockSelection {
     /// `profile_selections` row names (FSpec FR-322 "Temporal clock
     /// bindings"); the wire carries no second copy.
     pub definition: filament_contract_model::CheckedArtifactRef,
+    /// The quantified hyper trace this model-derived selection serves.
+    /// Configurable clock-role selections are unscoped.
+    pub trace: Option<Box<str>>,
 }
 
 impl TemporalClockSelection {
@@ -437,6 +437,7 @@ impl TemporalClockSelection {
     ) -> Self {
         Self {
             definition: profile_definition(clock_profile(&clock)),
+            trace: None,
             source,
             declaration_span,
             clock,
@@ -876,9 +877,9 @@ impl TemporalRows {
 }
 
 /// The `temporal_bindings` rows (FR-050, FR-515) an emission wrote for the
-/// checked graph's clauses, keyed by the clause's [`NodeKey`] and claim
-/// occurrence ordinal, so a reader of the in-process package finds a
-/// declaration's row without the wire's node identities (FR-522
+/// checked graph's temporal clauses and hyper clauses. Rows are keyed by the
+/// clause's [`NodeKey`], claim occurrence and optional quantified trace, so a
+/// reader finds a declaration's row without wire node identities (FR-522
 /// "Authentication").
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TemporalBindingRows {
@@ -896,8 +897,8 @@ impl TemporalBindingRows {
         &self.declarations
     }
 
-    /// The row of `declaration`'s claim occurrence `occurrence`, `None` when
-    /// the lock selects no clock configuration for it.
+    /// The unscoped row of `declaration`'s claim occurrence `occurrence`,
+    /// `None` when it has only per-trace rows or no clock configuration.
     pub fn get(
         &self,
         declaration: &NodeKey,
@@ -905,7 +906,27 @@ impl TemporalBindingRows {
     ) -> Option<&filament_contract_model::TemporalBinding> {
         self.rows
             .iter()
-            .find(|(key, row)| key == declaration && row.occurrence == occurrence)
+            .find(|(key, row)| {
+                key == declaration && row.occurrence == occurrence && row.trace.is_none()
+            })
+            .map(|(_, row)| row)
+    }
+
+    /// The row of `declaration`'s claim occurrence `occurrence` for the
+    /// quantified `trace`, `None` when that trace has no clock row.
+    pub fn get_for_trace(
+        &self,
+        declaration: &NodeKey,
+        occurrence: u64,
+        trace: &str,
+    ) -> Option<&filament_contract_model::TemporalBinding> {
+        self.rows
+            .iter()
+            .find(|(key, row)| {
+                key == declaration
+                    && row.occurrence == occurrence
+                    && row.trace.as_deref() == Some(trace)
+            })
             .map(|(_, row)| row)
     }
 
@@ -8971,6 +8992,7 @@ fn temporal_binding_rows(
             selection.source.clone(),
             selection.declaration_span.start,
             selection.declaration_span.end,
+            selection.trace.clone(),
         );
         if selected.insert(key, selection).is_some() {
             return Err(EmitRefusal::DuplicateTemporalClockSelection {
@@ -9040,7 +9062,7 @@ fn temporal_binding_rows(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let source = region.source().clone();
         let span = clause.span();
-        let key = (source.clone(), span.start, span.end);
+        let key = (source.clone(), span.start, span.end, None);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
                 MissingClockKind::Other,
@@ -9111,29 +9133,39 @@ fn temporal_binding_rows(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let source = region.source().clone();
         let span = hyper.span();
-        let key = (source.clone(), span.start, span.end);
-        let Some(selection) = selected.remove(&key) else {
-            missing.push((
-                MissingClockKind::Other,
-                source,
-                span,
-                format!("bounded temporal rule `{}`", hyper.name()),
-            ));
-            continue;
-        };
-        check_selected_definition(&source, span, profile, selection)?;
-        let clock = &selection.clock;
         let clock_name =
             hyper_clock_name(graph, occurrence.node()).ok_or(EmitRefusal::SourceMapInvariant)?;
-        validate_temporal_clock(&source, span, clock_name, clock)?;
         // FSpec FR-322 "Hyper clause rows": the rows are keyed on the
         // `hyperproperty` node at its `claim` occurrence, one per quantifier
-        // in quantifier order, never on the body wrapper.
+        // in quantifier order, never on the body wrapper. Each trace selects
+        // its own clock configuration (FR-640).
         let declaration = emitted_node_ids
             .get(occurrence.node())
             .cloned()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         for quantifier in hyper.quantifiers() {
+            let key = (
+                source.clone(),
+                span.start,
+                span.end,
+                Some(Box::<str>::from(quantifier.variable.as_str())),
+            );
+            let Some(selection) = selected.remove(&key) else {
+                missing.push((
+                    MissingClockKind::Other,
+                    source.clone(),
+                    span,
+                    format!(
+                        "bounded temporal rule `{}` trace `{}`",
+                        hyper.name(),
+                        quantifier.variable
+                    ),
+                ));
+                continue;
+            };
+            check_selected_definition(&source, span, profile, selection)?;
+            let clock = &selection.clock;
+            validate_temporal_clock(&source, span, clock_name, clock)?;
             let row = filament_contract_model::TemporalBinding {
                 declaration: declaration.clone(),
                 occurrence: occurrence.origin().ordinal(),
@@ -9167,7 +9199,7 @@ fn temporal_binding_rows(
                 continue;
             }
             let span = awaited.span;
-            let key = (source.clone(), span.start, span.end);
+            let key = (source.clone(), span.start, span.end, None);
             let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
@@ -9248,7 +9280,7 @@ fn temporal_binding_rows(
                 continue;
             };
             let span = template.span;
-            let key = (source.clone(), span.start, span.end);
+            let key = (source.clone(), span.start, span.end, None);
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
                     MissingClockKind::CompensationTemplate,
@@ -9280,7 +9312,7 @@ fn temporal_binding_rows(
         }
     }
 
-    if let Some(((source_ref, start, end), _)) = selected.into_iter().next() {
+    if let Some(((source_ref, start, end, _trace), _)) = selected.into_iter().next() {
         return Err(EmitRefusal::SurplusTemporalClockSelection {
             source_ref,
             span: fsl_foundation::Span { start, end },

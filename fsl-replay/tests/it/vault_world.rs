@@ -121,7 +121,7 @@ pub(crate) fn key(suffix: &str) -> DeclarationKey {
 }
 
 /// The declaration `suffix` of the second model.
-fn other_key(suffix: &str) -> DeclarationKey {
+pub(crate) fn other_key(suffix: &str) -> DeclarationKey {
     DeclarationKey {
         package: OTHER.to_owned(),
         node: format!("ix://{OTHER}/{suffix}"),
@@ -364,6 +364,7 @@ fn unit_text(other: Option<&[u8]>, build: &Build<'_>, body: &str) -> String {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile ep = \"filament.temporal.event-position.false-extension/v1\";\n\
          model V = \"{PACKAGE}\";\n\
          {second}function Noop using v(): Boolean pure {{ true }}\n\
          post Step using v on V::Vault::step {{ {} }}\n{}\n{body}",

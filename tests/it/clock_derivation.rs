@@ -4,7 +4,7 @@
 //! one `clocks` member.
 use crate::command_harness::compile_file;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const MODEL: &[u8] = include_bytes!("../../examples/config-version/model.semantic-ir.json");
@@ -327,7 +327,6 @@ fn a_hyper_clause_over_one_model_derives_the_single_trace_authority() {
 /// traces derive the same configuration, and the clause compiles too.
 #[trace("TC-2243", "FR-640-AC-12", "FSpec-TC-1680", "FSpec-FR-322-AC-453")]
 #[test]
-#[ignore = "QSL-2277: a hyper clause over two models under event-position compiles with one clock row per trace, not implemented yet"]
 fn a_hyper_clause_over_two_models_binds_one_clock_per_trace() {
     let directory = tempfile::tempdir().unwrap();
     let unit = |identity: &str| {
@@ -383,6 +382,19 @@ fn a_hyper_clause_over_two_models_binds_one_clock_per_trace() {
         "{}",
         String::from_utf8_lossy(&sampled.stderr)
     );
+    let sampled_package: Value = serde_json::from_slice(&sampled.stdout).expect("package JSON");
+    let sampled_rows = find(&sampled_package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    let [saving, normal] = sampled_rows.as_slice() else {
+        panic!("fixed-sample also emits one binding row per trace: {sampled_rows:?}");
+    };
+    assert_eq!(saving["trace"], "s");
+    assert_eq!(normal["trace"], "n");
+    assert_eq!(saving["clock_name"], "model-steps");
+    assert_eq!(normal["clock_name"], "model-steps");
+    assert_eq!(saving["clock"]["kind"], "fixed_sample");
+    assert_eq!(saving["clock"], normal["clock"]);
 }
 
 /// FR-326-AC-4 (TC-836): a clause whose `using` alias selects the value

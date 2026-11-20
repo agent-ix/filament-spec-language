@@ -12,7 +12,7 @@ use fsl_semantics::check::{CheckCause, CheckRefusal, CheckingLimitKind, MatchPar
 use super::admission_corpus::config_version_unit;
 use super::*;
 use crate::checked_v2::{
-    clause_roots, hyper_roots, resolve_clause_root, resolve_hyper_root, HyperRootUnresolved,
+    HyperRootUnresolved, clause_roots, hyper_roots, resolve_clause_root, resolve_hyper_root,
 };
 
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
@@ -356,7 +356,13 @@ fn every_emitted_hyper_shape_is_admitted_by_the_i2_read() {
         ),
         unit(
             INFINITE,
-            &hyper("Receivers", "", "", "match { a.step.receiver = b.step.receiver }", READ_A_B),
+            &hyper(
+                "Receivers",
+                "",
+                "",
+                "match { a.step.receiver = b.step.receiver }",
+                READ_A_B,
+            ),
         ),
     ];
     for case in cases {
@@ -695,14 +701,18 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
                 hyper.profile()
                     == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
             })
-            .map(|hyper| {
-                crate::emit::TemporalClockSelection::new(
-                    graph.source().clone(),
-                    hyper.span(),
-                    filament_contract_model::ClockConfiguration::EventPosition {
-                        sequence_authority: "test-hyper-events".into(),
-                    },
-                )
+            .flat_map(|hyper| {
+                hyper.quantifiers().iter().map(|quantifier| {
+                    let mut selection = crate::emit::TemporalClockSelection::new(
+                        graph.source().clone(),
+                        hyper.span(),
+                        filament_contract_model::ClockConfiguration::EventPosition {
+                            sequence_authority: "test-hyper-events".into(),
+                        },
+                    );
+                    selection.trace = Some(quantifier.variable.as_str().into());
+                    selection
+                })
             }),
     );
     let clauses = graph.hyper_clauses().to_vec();
@@ -720,6 +730,66 @@ fn build(profile: &str, aliases: &[&str], declarations: &str) -> Built {
         wire,
         documents,
     }
+}
+
+/// FSpec FR-322-AC-453 / FR-640-AC-12: a hyperproperty's event-position
+/// rows are keyed by its node, occurrence and quantifier alias, and the I2
+/// reader rejects a row whose trace does not name that hyperproperty's group.
+#[trace("TC-483", "FSpec-FR-322-AC-453", "FR-640-AC-12")]
+#[test]
+fn hyper_clock_rows_are_trace_keyed_and_reader_rejects_an_unknown_trace() {
+    let declaration = "hyper Saves using t over behaviours \
+         (d: V::ConfigVersion, e: N::ConfigVersion) \
+         forall trace s of V forall trace n of N \
+         { always[0,3] holds(d.versionNumber @ s = e.versionNumber @ n) }";
+    let built = build(EVENT, &["V", "N"], declaration);
+    let rows = built.wire["temporal_bindings"]
+        .as_array()
+        .expect("temporal binding rows");
+    let hyper_id = &hyper_node(&built.wire)["node_id"];
+    assert_eq!(rows.len(), 2, "one row per quantified trace: {rows:?}");
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["trace"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["s", "n"]
+    );
+    assert!(rows.iter().all(|row| &row["declaration"] == hyper_id));
+    assert!(rows.iter().all(|row| row["clock_name"] == "model-steps"));
+    assert_eq!(
+        rows[0]["clock"]["sequence_authority"],
+        "test-hyper-events"
+    );
+    let package = admitted(&built);
+    assert_eq!(
+        package.temporal_bindings().expect("admitted rows"),
+        rows.iter()
+            .map(|row| serde_json::from_value(row.clone()).expect("binding row"))
+            .collect::<Vec<filament_contract_model::TemporalBinding>>()
+    );
+
+    let mut invalid_wire = built.wire.clone();
+    invalid_wire["temporal_bindings"][0]["trace"] = "unknown".into();
+    let invalid_bytes = crate::emit::tests::wire_bytes(&invalid_wire).expect("wire bytes");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in invalid_wire["lock"]["required_features"]
+        .as_array()
+        .unwrap()
+    {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("a fresh evidence key");
+    }
+    let refusal = crate::checked_v2::read_checked_package_v2(
+        &invalid_bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    assert!(refusal.is_err(), "the I2 reader refuses the unknown trace");
 }
 
 /// The refusals of the world, with the unit text.
@@ -760,10 +830,12 @@ fn admitted(built: &Built) -> std::sync::Arc<filament_contract_model::CheckedPac
 
 /// The text a not-emitted refusal's span covers in `text`.
 fn not_emitted_text<'t>(text: &'t str, refusals: &[CheckRefusal]) -> &'t str {
-    let [CheckRefusal {
-        cause: CheckCause::Temporal(cause),
-        ..
-    }] = refusals
+    let [
+        CheckRefusal {
+            cause: CheckCause::Temporal(cause),
+            ..
+        },
+    ] = refusals
     else {
         panic!("one temporal refusal: {refusals:?}");
     };
