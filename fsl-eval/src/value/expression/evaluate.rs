@@ -3657,13 +3657,72 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     };
                     Value::Quantity(Quantity::new(magnitude, unit_id))
                 } else {
+                    if matches!(target_type, ValueType::Integer)
+                        && source_type.admits(&value)
+                        && matches!(&value, Value::Rational(value) if !value.is_integer())
+                    {
+                        // Integer has no finite domain to put in an
+                        // IntegerOutOfDomain payload. Preserve the unmet
+                        // conversion obligation in the native refusal.
+                        return Err(Halt::Family(FamilyResult::Refused(Box::new(
+                            super::causes::NonintegralNarrowing,
+                        ))));
+                    }
                     let converted = operand_value(
                         self.world.types(),
                         operand,
                         &value,
                         &self.units,
                         self.meter,
-                    )?;
+                    )
+                    .map_err(|stop| {
+                        // Standalone narrowing can meet an unproved obligation
+                        // in Kernel mode. Equality's target-admission invariant
+                        // is instead the ordinary domain refusal here.
+                        use filament_exact::CheckedInvariantCause;
+                        let numeric_source = matches!(
+                            source_type,
+                            ValueType::Integer
+                                | ValueType::Int(_)
+                                | ValueType::Rational(_)
+                                | ValueType::Decimal(_)
+                        );
+                        let narrowing = numeric_source
+                            && !filament_semantic_value::declaration::admits_equality_conversion(
+                                source_type,
+                                target_type,
+                                &self.units,
+                            );
+                        match (&stop, target_type) {
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause:
+                                        CheckedInvariantCause::EqualityOperandTargetNotAdmitted
+                                        | CheckedInvariantCause::EqualityConversionShapeMismatch,
+                                }),
+                                ValueType::Int(target),
+                            ) if narrowing => Stop::Refused(Refusal::IntegerOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Rational(target),
+                            ) if narrowing => Stop::Refused(Refusal::RationalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            (
+                                Stop::Refused(Refusal::CheckedInvariant {
+                                    cause: CheckedInvariantCause::EqualityOperandTargetNotAdmitted,
+                                }),
+                                ValueType::Decimal(target),
+                            ) if narrowing => Stop::Refused(Refusal::DecimalOutOfDomain {
+                                target: Box::new(target.clone()),
+                            }),
+                            _ => stop,
+                        }
+                    })?;
                     // FSpec FR-322-AC-384: a bounded result checks the exact
                     // converted magnitude against both inclusive endpoints.
                     match (target_type, converted) {
