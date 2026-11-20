@@ -182,19 +182,39 @@ const BUMPS: &str = "pre Below using v on M::Counter::bump { self.v < 2 }\n\
 #[trace("FR-160-AC-4", "FR-161-AC-4")]
 #[test]
 fn fair_whole_symmetry_preserves_every_counterexample_member_and_replays() {
-    let case = counter_case(
-        "fair whole concrete witness",
+    let world = crate::reduction::cycle(
         true,
-        CYCLE,
-        Some("fair weak M::Counter::bump; always eventually holds(x.v = 2)"),
-        reaches_two,
+        &[[0, 0, 0]],
+        &[Clause {
+            profile: INFINITE,
+            formula: "fair weak M::Counter::bump; always eventually holds(x.v = 2)",
+        }],
     );
     let counterexample = |selection| {
-        let outcome = (case.run)(selection).expect("the request admits");
-        let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        let outcome = world
+            .run(
+                Some(0),
+                reaches_two(),
+                selection,
+                None,
+                ModelCheckLimits::default(),
+            )
+            .expect("the request admits");
+        let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
             panic!("expected a refutation, got {outcome:?}");
         };
-        *counterexample
+        let record = world.settle_clause(0, reaches_two(), &outcome);
+        assert_eq!(record.value, fsl_replay::TerminalValue::Refuted);
+        assert_eq!(record.label, fsl_replay::ResultLabel::Refuted);
+        assert_eq!(
+            record.basis,
+            fsl_replay::SettlementBasis::DecisiveCounterexample
+        );
+        assert_eq!(
+            record.counterexample.as_ref(),
+            Some(counterexample.as_ref())
+        );
+        counterexample.as_ref().clone()
     };
     let plain = counterexample(Reductions::default());
     let reduced = counterexample(Reductions {
@@ -204,7 +224,7 @@ fn fair_whole_symmetry_preserves_every_counterexample_member_and_replays() {
     assert_eq!(reduced, plain, "all concrete witness members must agree");
     for witness in [plain, reduced] {
         assert!(matches!(
-            (case.replay)(witness),
+            world.replay_clause(0, reaches_two(), witness),
             ModelTraceSettlement::Reproduced {
                 value: fsl_replay::ModelTraceValue::Truth(false),
                 ..

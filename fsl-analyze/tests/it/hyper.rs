@@ -76,7 +76,9 @@ fn an_unreachable_asymmetric_disjunct_keeps_truth_but_changes_proof_reduction() 
                     let witness = refuted(outcome);
                     let a = positions(world, &witness, 0);
                     let b = positions(world, &witness, 1);
-                    assert_ne!(a[witness.trace_position].1, b[witness.trace_position].1);
+                    let position = usize::try_from(witness.trace_position)
+                        .expect("the small vault witness fits a host index");
+                    assert_ne!(a[position].1, b[position].1);
                     assert!(a.iter().all(|(h, _)| *h >= 0));
                 }
             }
