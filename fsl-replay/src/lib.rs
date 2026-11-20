@@ -71,6 +71,29 @@ pub use model_check::digital_state_graph::{
 mod monitor_plan;
 mod object_environment;
 pub mod outcome;
+
+/// FR-286: the typed refusal pairs produced by replay and its spine.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
+    fsl_foundation::diagnostic::CatalogCode::new("foreign_reference", "foreign-universe"),
+    fsl_foundation::diagnostic::CatalogCode::new("ill_typed", "type-mismatch"),
+    fsl_foundation::diagnostic::CatalogCode::new("integer_out_of_domain", "outside-domain"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "not-statistical"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "absent-key"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "wrong-role-mapping"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "missing-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "unknown-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "max-automaton-states"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "not-markov"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "input-bytes-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+];
 pub mod planner;
 mod probability_certificate;
 mod product_action;

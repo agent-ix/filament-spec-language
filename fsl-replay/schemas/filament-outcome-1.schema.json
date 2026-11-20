@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:filament:outcome:1",
+  "title": "filament-outcome/1",
+  "type": "object",
+  "required": ["format", "operation", "last_stage", "category", "items", "diagnostics", "artifacts", "result"],
+  "properties": {
+    "format": {"const": "filament-outcome/1"},
+    "operation": {"enum": ["parse", "format", "select", "check", "check_fences", "package", "execute", "monitor", "analyze", "lower", "generate", "prove", "replay", "inspect", "render", "export"]},
+    "last_stage": {"type": ["string", "null"], "enum": ["S0", "S1", "S2", "I1", "S3", "S4", "S5", "S6a", "S6b", "S6c", "S7", "S8", null]},
+    "category": {"enum": ["success", "violation", "refusal", "unsupported", "incomplete", "inconclusive", "pending", "indeterminate", "undefined", "internal-failure"]},
+    "items": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "diagnostics": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
+    "artifacts": {"type": "array", "items": {"type": "object"}},
+    "result": {"oneOf": [{"type": "null"}, {"type": "object"}]},
+    "registry": {"type": "array", "items": {"type": "object"}},
+    "aggregate": {"$ref": "#/$defs/aggregate"}
+  },
+  "allOf": [
+    {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "then": {"required": ["aggregate", "registry"]}},
+    {"if": {"properties": {"operation": {"const": "execute"}}, "required": ["operation"]}, "then": {"properties": {"registry": {"type": "array"}}}},
+    {"if": {"properties": {"operation": {"not": {"enum": ["execute", "analyze"]}}}, "required": ["operation"]}, "then": {"not": {"required": ["registry"]}}},
+    {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "else": {"not": {"required": ["aggregate"]}}}
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "identity": {
+      "type": "object", "required": ["authority", "identity"],
+      "properties": {"authority": {"type": "string"}, "identity": {"type": "string"}},
+      "unevaluatedProperties": false
+    },
+    "position": {"type": "object", "required": ["byte", "line", "column"], "properties": {"byte": {"type": "integer", "minimum": 0}, "line": {"type": "integer", "minimum": 1}, "column": {"type": "integer", "minimum": 1}}, "unevaluatedProperties": false},
+    "span": {"type": "object", "required": ["start", "end"], "properties": {"start": {"$ref": "#/$defs/position"}, "end": {"$ref": "#/$defs/position"}}, "unevaluatedProperties": false},
+    "locus": {
+      "oneOf": [
+        {"type": "object", "required": ["kind", "source", "start", "end"], "properties": {"kind": {"const": "region"}, "source": {"$ref": "#/$defs/identity"}, "start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "unevaluatedProperties": false},
+        {"type": "object", "required": ["kind", "file", "span"], "properties": {"kind": {"const": "located"}, "file": {"type": "string"}, "span": {"$ref": "#/$defs/span"}}, "unevaluatedProperties": false},
+        {"type": "object", "required": ["kind", "occurrence"], "properties": {"kind": {"const": "occurrence"}, "occurrence": {"type": "string"}}, "unevaluatedProperties": false},
+        {"type": "object", "required": ["kind", "identity", "pointer"], "properties": {"kind": {"const": "artifact"}, "identity": {"$ref": "#/$defs/identity"}, "pointer": {"type": "string", "pattern": "^(|/([^~/]|~[01])*)+$"}}, "unevaluatedProperties": false},
+        {"type": "object", "required": ["kind", "document", "path", "pointer", "object", "member"], "properties": {"kind": {"const": "document"}, "document": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/identity"}]}, "path": {"type": ["string", "null"]}, "pointer": {"type": "string"}, "object": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/documentObject"}]}, "member": {"type": ["string", "null"]}}, "unevaluatedProperties": false}
+      ]
+    },
+    "documentObject": {"type": "object", "required": ["population", "key"], "properties": {"population": {"type": "string"}, "key": {"type": "string"}}, "unevaluatedProperties": false},
+    "diagnostic": {
+      "type": "object", "required": ["cause", "code", "details", "locus", "message"],
+      "properties": {
+        "cause": {"type": ["string", "null"]}, "code": {"type": "string"},
+        "construct": {"type": "string"}, "declaration": {"type": "string"},
+        "details": {"oneOf": [{"type": "null"}, {"type": "object", "minProperties": 1, "properties": {"function": {"type": "string"}, "position": {"type": "integer", "minimum": 0}, "path": {"type": "string"}, "parameter": {"type": "string"}, "model_identity": {"type": "string"}, "population": {"type": "object"}, "expected": {"type": "object"}, "member": {"type": "string"}, "type": {"type": "object"}, "required": {"type": "object"}, "supplied": {"type": "object"}, "stage": {"type": "string"}, "invariant": {"type": "string"}}, "unevaluatedProperties": false}]},
+        "hint": {"type": "string", "minLength": 1, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*\\.$"},
+        "label": {"enum": ["authority", "identity"]},
+        "locus": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/locus"}]}, "message": {"type": "string"},
+        "profile": {"type": "string"}, "text": {"type": "string"}
+      },
+      "unevaluatedProperties": false
+    },
+    "item": {"type": "object", "required": ["request_index", "result", "category"], "properties": {"request_index": {"type": "integer", "minimum": 0}, "result": {"type": "string"}, "category": {"type": "string"}}, "additionalProperties": true},
+    "aggregate": {"type": "object", "required": ["status", "gaps"], "properties": {"status": {"type": "string"}, "gaps": {"type": "array", "items": {"type": "object", "required": ["request_index", "reason", "result"], "properties": {"request_index": {"type": "integer"}, "reason": {"type": "string"}, "result": {"type": "string"}}, "unevaluatedProperties": false}}}, "unevaluatedProperties": false}
+  }
+}

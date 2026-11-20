@@ -26,8 +26,8 @@
 mod counterexample;
 pub mod hint;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -85,6 +85,9 @@ impl From<&FormatRefusal> for FormatOutcomeRefusal {
 
 /// The document's `format` member.
 pub const OUTCOME_FORMAT: &str = "filament-outcome/1";
+/// FR-286's published draft 2020-12 schema for `filament-outcome/1`.
+pub const OUTCOME_SCHEMA_1: &str =
+    include_str!("../schemas/filament-outcome-1.schema.json");
 
 /// The library operation that produced the document (ADR-029 LC-1).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -1837,6 +1840,7 @@ pub enum OutcomeLocus {
     },
 }
 
+/// The population and snapshot object key named by a document locus.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DocumentObjectLocus {
     /// The model population.
@@ -1850,9 +1854,6 @@ pub(crate) fn snapshot_admission_locus(
     document: &fsl_semantics::model::observation::DocumentRef,
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
-    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
-        return None;
-    }
     use filament_semantic_value::admission::PathStep;
     let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
         match step {
@@ -1888,6 +1889,14 @@ pub(crate) fn snapshot_admission_locus(
         object,
         member: record.fields.get("member").cloned(),
     })
+}
+
+fn pointer_member(pointer: &str) -> Option<String> {
+    let token = pointer.rsplit('/').next()?;
+    if token.is_empty() && pointer.is_empty() {
+        return None;
+    }
+    Some(token.replace("~1", "/").replace("~0", "~"))
 }
 
 impl From<&Locus> for OutcomeLocus {
@@ -1963,12 +1972,14 @@ impl OutcomeDiagnostic {
         locus: Option<OutcomeLocus>,
         message: impl Into<String>,
     ) -> Self {
+        let code = code.into();
+        let hint = Code::from_code(&code).and_then(|code| hint::hint_for(code, cause));
         Self {
             cause: cause.map(Into::into),
-            code: code.into(),
+            code,
             construct: None,
             declaration: None,
-            hint: None,
+            hint,
             label: None,
             locus,
             message: message.into(),
@@ -2318,7 +2329,7 @@ impl Serialize for OutcomeDocument {
 /// Why a document could not be written.
 #[derive(Debug, thiserror::Error)]
 #[error("the outcome document could not be encoded: {0}")]
-pub struct OutcomeWriteError(#[from] serde_json::Error);
+pub struct OutcomeWriteError(#[from] fsl_foundation::canonical_json::CanonicalJsonError);
 
 impl OutcomeDocument {
     /// This document with `last_stage` (FR-286): the greatest stage it entered.
@@ -2696,6 +2707,42 @@ impl OutcomeDocument {
 
     /// The document of a refused replay.
     pub fn from_replay_refusal(refusal: &ReplayRefusal) -> Self {
+        Self::from_replay_refusal_at(refusal, None)
+    }
+
+    /// The document of a refused replay, with the caller's request path when known.
+    pub fn from_replay_refusal_at(refusal: &ReplayRefusal, request_path: Option<&str>) -> Self {
+        Self::from_replay_refusal_with_context(refusal, request_path, None)
+    }
+
+    /// The document of a refused replay with its request path and package binding.
+    pub fn from_replay_refusal_with_context(
+        refusal: &ReplayRefusal,
+        request_path: Option<&str>,
+        artifact_identity: Option<&fsl_foundation::source::provenance::RawSourceRef>,
+    ) -> Self {
+        let locus = match refusal {
+            ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
+                refusal.pointer().map(|pointer| OutcomeLocus::Document {
+                    document: None,
+                    path: request_path.map(str::to_owned),
+                    member: pointer_member(&pointer),
+                    pointer: pointer.into_owned(),
+                    object: None,
+                })
+            }
+            ReplayRefusal::Package(_)
+            | ReplayRefusal::PackageSources(_)
+            | ReplayRefusal::DependencySources { .. }
+            | ReplayRefusal::DependencySelections(_) => artifact_identity
+                .and_then(|identity| refusal.pointer().map(|pointer| (identity, pointer)))
+                .map(|(identity, pointer)| OutcomeLocus::Artifact {
+                    identity: identity.clone(),
+                    pointer: pointer.into_owned(),
+                }),
+            ReplayRefusal::RefinementInternals { .. } => None,
+            _ => None,
+        };
         Self::new(
             Operation::Replay,
             replay_stage(refusal),
@@ -2704,19 +2751,7 @@ impl OutcomeDocument {
         .with_diagnostics(vec![OutcomeDiagnostic::new(
             refusal.cause(),
             refusal.code().as_str(),
-            match refusal {
-                ReplayRefusal::Package(_)
-                | ReplayRefusal::RefinementInternals { .. }
-                | ReplayRefusal::PackageSources(_)
-                | ReplayRefusal::DependencySources { .. }
-                | ReplayRefusal::DependencySelections(_)
-                | ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { .. }) => {
-                    refusal.pointer().map(|pointer| OutcomeLocus::Artifact {
-                        pointer: pointer.into_owned(),
-                    })
-                }
-                _ => None,
-            },
+            locus,
             refusal.to_string(),
         )])
     }
@@ -2907,7 +2942,7 @@ impl OutcomeDocument {
 
     /// The document's bytes: the same document gives the same bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, OutcomeWriteError> {
-        Ok(serde_json::to_vec(self)?)
+        Ok(fsl_foundation::canonical_json::encode(self)?)
     }
 }
 
@@ -3016,6 +3051,29 @@ mod tests {
 
     use super::*;
     use crate::identity::QualifiedName;
+
+    /// FR-286-AC-28: each diagnostic constructor attaches the exact catalog hint.
+    #[trace("TC-3112", "FR-286-AC-28")]
+    #[test]
+    fn outcome_diagnostic_construction_looks_up_hints_by_exact_pair() {
+        let typed = OutcomeDiagnostic::new(
+            Some("type-mismatch"),
+            Code::IllTyped.as_str(),
+            None,
+            "types differ",
+        );
+        assert_eq!(
+            typed.hint,
+            hint::hint_for(Code::IllTyped, Some("type-mismatch"))
+        );
+
+        let io = OutcomeDiagnostic::new(None, Code::IoError.as_str(), None, "cannot read file");
+        assert_eq!(io.hint, hint::hint_for(Code::IoError, None));
+
+        let generic =
+            OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
+        assert_eq!(generic.hint, None);
+    }
 
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
     #[trace("TC-931", "FR-255-AC-3")]

@@ -8,6 +8,7 @@
 //! fairness kernels [`fairness`] that the model checker and the certificate
 //! checkers share, and the self-composition product [`hyper`] they explore.
 //!
+
 //! This crate depends on layer 4 (`fsl-package`), layer 3 (`fsl-semantics`),
 //! F (`fsl-foundation`) and K (`filament-exact`). It never names the root crate
 //! or a SEAM module (the old `state` and `temporal` evaluators stay in the
@@ -269,6 +270,30 @@
 //! }
 //! ```
 //!
+
+/// FR-286: the typed refusal pairs produced by evaluation.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
+    fsl_foundation::diagnostic::CatalogCode::new("cardinality_out_of_bound", "above-maximum"),
+    fsl_foundation::diagnostic::CatalogCode::new("dangling_reference", "absent-target-in-complete-population"),
+    fsl_foundation::diagnostic::CatalogCode::new("foreign_reference", "foreign-universe"),
+    fsl_foundation::diagnostic::CatalogCode::new("incomplete_population", "incomplete-scope"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "wrong-value-kind"),
+    fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-nonzero"),
+    fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-presence"),
+    fsl_foundation::diagnostic::CatalogCode::new("undefined_expression", "unproved-range"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "collection-write-not-computed"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "allocation-failed"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("wrong_snapshot", "forbidden-pre-read"),
+    fsl_foundation::diagnostic::CatalogCode::new("wrong_snapshot", "wrong-anchor"),
+];
 
 pub mod automaton;
 pub mod bare;

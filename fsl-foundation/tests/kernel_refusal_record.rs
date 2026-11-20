@@ -12,6 +12,7 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_foundation::diagnostic::{catalog_category, category_of, kernel_refusal_record, Locus};
+use fsl_foundation::source::provenance::RawSourceRef;
 use ix_trace_rs::trace;
 
 fn int(value: i64) -> Integer {
@@ -83,6 +84,7 @@ fn a_bounded_quantity_refusal_renders_its_structural_target() {
                 expected(&format!("Quantity<{spelling}>[1/1, 2/1]"))
             );
             let result_locus = Locus::Artifact {
+                identity: RawSourceRef::new("test", "kernel-result").expect("artifact identity"),
                 pointer: "/result_type".parse().expect("result type pointer"),
             };
             let built = kernel_refusal_record(&refusal, Some(result_locus.clone()))

@@ -36,6 +36,8 @@ pub use quire_rs::semantic::embedded::CONTRACT_VERSION;
 /// Default original-document byte ceiling before extraction; a caller's
 /// [`Limits::source_bytes`] is used as given (NFR-001).
 pub const MAX_SOURCE_BYTES: usize = 1_048_576;
+/// FR-286: no refusal pairs are produced by this adapter crate.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[];
 /// Default original-document line ceiling, including the trailing empty
 /// line; a caller's [`Limits::lines`] is used as given (NFR-001).
 pub const MAX_LINES: usize = 4096;

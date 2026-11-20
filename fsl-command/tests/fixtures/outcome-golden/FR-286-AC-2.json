@@ -1,0 +1,1 @@
+{"artifacts":[],"category":"refusal","diagnostics":[{"cause":"type-mismatch","code":"ill_typed","details":null,"hint":"Give the expression a value of the required type.","locus":null,"message":"bad value"}],"format":"filament-outcome/1","items":[],"last_stage":null,"operation":"check","result":null}

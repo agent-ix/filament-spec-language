@@ -42,6 +42,52 @@ pub use lexer::{declared_edition, declared_language, DeclaredEdition, DeclaredLa
 /// The one edition the complete-V1 grammar admits (its `Header` rule).
 pub const EDITION: &str = "1-draft";
 
+/// FR-286: every typed cause this crate can report.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_syntax", "unexpected-token"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_syntax", "unexpected-end"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_syntax", "invalid-token"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_syntax", "diagnostic-list-cut"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_syntax", "invalid-escape"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "declaration-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_language", "unsupported-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_edition", "unsupported-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_profile", "unsupported-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_import", "missing-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("ambiguous_declaration", "ambiguous-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("ambiguous_declaration", "conflicting-authority"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_package", "duplicate-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_package", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_package", "definition-cycle"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_package", "feature-set-mismatch"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_required_feature", "unknown-feature"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_model_binding", "conflicting-binding"),
+    fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_projection_correspondence", "correspondence-loss"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_identifier", "selection-identity"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_identity", "blank-label"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_identity", "empty-path"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_map", "edit-predecessor"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_map", "foreign-node"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_map", "request-revision"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_source_map", "edit-ranges"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_utf8", "invalid_utf8"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "input-bytes-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "token-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "node-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "edge-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "occurrence-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "diagnostic-count-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "logical-storage-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("stage_limit_exceeded", "rational-bits-exceeded"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "input-bytes-exceeded"),
+];
+
 use filament_exact::Cancel;
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Source, SourceIdentity, Span};

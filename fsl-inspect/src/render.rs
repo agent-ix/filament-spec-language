@@ -423,6 +423,14 @@ fn outcome_text(
         {
             writer.unit(|| format!("  label: {label}\n"))?;
         }
+        if let Some(hint) = wire
+            .get("diagnostics")
+            .and_then(|items| items.get(index))
+            .and_then(|item| item.get("hint"))
+            .and_then(serde_json::Value::as_str)
+        {
+            writer.unit(|| format!("  hint: {hint}\n"))?;
+        }
     }
     for (index, item) in document.items().iter().enumerate() {
         writer.try_unit(|| {
@@ -2373,6 +2381,57 @@ mod tests {
         assert_eq!(
             text_of(&packaged, &RenderSources::from_sources([])),
             "package: success (exit 0) at S4\n"
+        );
+    }
+
+    /// FR-865-AC-8 (TC-3114): a catalog hint follows cause and label lines,
+    /// while a diagnostic without a hint has no hint line.
+    #[test]
+    #[trace("TC-3114", "FR-865-AC-8")]
+    fn text_outcome_writes_catalog_hints_and_omits_absent_hints() {
+        let hinted = OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            Some(fsl_replay::OutcomeStage::S3),
+            Category::Refusal,
+        )
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("type-mismatch"),
+            "ill_typed",
+            None,
+            "bad value",
+        )]);
+        let text = text_of(&hinted, &RenderSources::from_sources([]));
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.contains(&"  cause: type-mismatch"), "{text}");
+        assert!(
+            lines.contains(&"  hint: Give the expression a value of the required type."),
+            "{text}"
+        );
+        let cause = lines
+            .iter()
+            .position(|line| *line == "  cause: type-mismatch")
+            .expect("the cause is rendered");
+        assert_eq!(
+            lines.get(cause + 1),
+            Some(&"  hint: Give the expression a value of the required type."),
+            "{text}"
+        );
+
+        let unhinted = OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            None,
+            Category::Refusal,
+        )
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            None,
+            "invalid-request",
+            None,
+            "invalid request",
+        )]);
+        let text = text_of(&unhinted, &RenderSources::from_sources([]));
+        assert!(
+            !text.lines().any(|line| line.starts_with("  hint:")),
+            "{text}"
         );
     }
 

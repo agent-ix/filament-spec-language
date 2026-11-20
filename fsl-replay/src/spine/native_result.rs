@@ -4,10 +4,10 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use fsl_foundation::LocatedSpan;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
-use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
@@ -30,12 +30,12 @@ pub use protocol::{
     UnsupportedDiagnostic,
 };
 mod temporal;
-pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 pub use temporal::{
     ClosureRead, CounterexampleRead, DimensionRead, EffectiveIdRead, FairnessGranularityRead,
     FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead,
     ProgressValueRead, TemporalRecord, UndefinedLocusRead,
 };
+pub(crate) use temporal::{replay_locus_wire, replay_outcome_wire};
 
 /// Why a clause-run report could not be written as a canonical document.
 #[derive(Debug, thiserror::Error)]
@@ -1052,13 +1052,39 @@ pub enum RefusalLocusRead {
     },
     /// Pointer into an identified artifact.
     Artifact {
-        /// Artifact domain.
-        domain: String,
-        /// Artifact digest.
-        digest: String,
+        /// Artifact identity.
+        identity: SourceRefRead,
         /// Pointer within the artifact.
         pointer: String,
     },
+    /// A member in a JSON input document.
+    Document {
+        /// Document identity, present as null when the caller supplied none.
+        #[serde(default, deserialize_with = "present")]
+        document: Option<Option<SourceRefRead>>,
+        /// Caller path, present as null when the caller supplied none.
+        #[serde(default, deserialize_with = "present")]
+        path: Option<Option<String>>,
+        /// Pointer to the failing member or object holding a missing member.
+        pointer: String,
+        /// Object identity, present as null when no snapshot object applies.
+        #[serde(default, deserialize_with = "present")]
+        object: Option<Option<DocumentObjectRead>>,
+        /// Failing member, present as null when none is named.
+        #[serde(default, deserialize_with = "present")]
+        member: Option<Option<String>>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed read shape validates document loci")]
+/// Decoded snapshot object identity in a document locus.
+pub struct DocumentObjectRead {
+    /// Model population name.
+    pub population: String,
+    /// Object key within the population.
+    pub key: String,
 }
 
 #[derive(Deserialize)]
@@ -1462,6 +1488,11 @@ fn catalog_category(code: &str) -> Option<&'static str> {
 fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
     temporal::refuse_temporal_only_outcome(value.outcome.as_ref())?;
+    if let Some(refusal) = &value.refusal {
+        if let Some(locus) = &refusal.locus {
+            validate_refusal_locus(locus)?;
+        }
+    }
     if let Some(contract) = &value.operation_contract {
         let declaration = contract.operation.typed();
         let (kind, member) = match contract.kind {
@@ -1744,6 +1775,156 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
         }
     }
     Ok(())
+}
+
+fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadError> {
+    let invalid = || NativeRunReadError::Invalid {
+        member: "disposition.refusal.locus",
+        reason: "a closed refusal locus with an RFC 6901 pointer",
+    };
+    let valid_identity = |identity: &SourceRefRead| {
+        !identity.authority.trim().is_empty() && !identity.identity.trim().is_empty()
+    };
+    match value {
+        RefusalLocusRead::Artifact { identity, pointer } => {
+            if !valid_identity(identity)
+                || pointer
+                    .parse::<fsl_foundation::diagnostic::JsonPointer>()
+                    .is_err()
+            {
+                return Err(invalid());
+            }
+        }
+        RefusalLocusRead::Document {
+            document,
+            path,
+            pointer,
+            object,
+            member,
+        } => {
+            if document.is_none() || path.is_none() || object.is_none() || member.is_none() {
+                return Err(invalid());
+            }
+            if document
+                .as_ref()
+                .and_then(Option::as_ref)
+                .is_some_and(|identity| !valid_identity(identity))
+                || pointer
+                    .parse::<fsl_foundation::diagnostic::JsonPointer>()
+                    .is_err()
+            {
+                return Err(invalid());
+            }
+        }
+        RefusalLocusRead::Region { source, .. } => {
+            if !valid_identity(source) {
+                return Err(invalid());
+            }
+        }
+        RefusalLocusRead::Located { .. } | RefusalLocusRead::Occurrence { .. } => {}
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod refusal_locus_tests {
+    use super::{NativeRunResult, RefusalLocusRead, read_native_run_result};
+    use crate::outcome::{DocumentObjectLocus, OutcomeLocus};
+    use ix_trace_rs::trace;
+    use serde_json::{Value, json};
+
+    fn clause_document(locus: Value) -> Value {
+        json!({
+            "format": "native-run-result/2",
+            "basis": "unavailable",
+            "usage": {
+                "admission": {"document_bytes": 0, "objects": 0, "values": 0},
+                "evaluation_admissions": 0,
+                "evaluation_consumed": []
+            },
+            "axes": {
+                "activation": "unavailable",
+                "execution": null,
+                "truth": null,
+                "settlement": "unavailable"
+            },
+            "disposition": {
+                "stage": "admit",
+                "category": "refusal",
+                "refusal": {
+                    "code": "invalid_runtime_input",
+                    "cause": "missing-member",
+                    "fields": {"member": "version"},
+                    "locus": locus
+                }
+            }
+        })
+    }
+
+    #[trace("TC-3081", "FR-267-AC-25", "FR-267-AC-26")]
+    #[test]
+    fn native_result_reader_accepts_document_locus_and_rejects_missing_nullable_members() {
+        let locus = OutcomeLocus::Document {
+            document: None,
+            path: Some("request.json".to_owned()),
+            pointer: "/model/version".to_owned(),
+            object: Some(DocumentObjectLocus {
+                population: "orders".to_owned(),
+                key: "42".to_owned(),
+            }),
+            member: Some("version".to_owned()),
+        };
+        let document = clause_document(serde_json::to_value(locus).expect("locus serializes"));
+        let bytes = serde_json::to_vec(&document).expect("document serializes");
+        let NativeRunResult::Clause(record) = read_native_run_result(&bytes).expect("reads") else {
+            panic!("expected a clause-run record");
+        };
+        assert!(matches!(
+            record.refusal_locus(),
+            Some(RefusalLocusRead::Document {
+                document: Some(None),
+                path: Some(Some(path)),
+                pointer,
+                member: Some(Some(member)),
+                ..
+            }) if path == "request.json" && pointer == "/model/version" && member == "version"
+        ));
+
+        let mut malformed = document;
+        malformed["disposition"]["refusal"]["locus"]
+            .as_object_mut()
+            .expect("locus object")
+            .remove("member");
+        let bytes = serde_json::to_vec(&malformed).expect("document serializes");
+        assert!(read_native_run_result(&bytes).is_err());
+    }
+
+    #[trace("TC-3081", "FR-267-AC-26")]
+    #[test]
+    fn native_result_reader_accepts_artifact_identity_and_rejects_digest_shape() {
+        let artifact = json!({
+            "kind": "artifact",
+            "identity": {"authority": "test", "identity": "parent"},
+            "pointer": "/declarations/0"
+        });
+        let bytes = serde_json::to_vec(&clause_document(artifact)).expect("document serializes");
+        let NativeRunResult::Clause(record) = read_native_run_result(&bytes).expect("reads") else {
+            panic!("expected a clause-run record");
+        };
+        assert!(matches!(
+            record.refusal_locus(),
+            Some(RefusalLocusRead::Artifact { .. })
+        ));
+
+        let legacy = json!({
+            "kind": "artifact",
+            "domain": "agent-ix",
+            "digest": "00",
+            "pointer": "/declarations/0"
+        });
+        let bytes = serde_json::to_vec(&clause_document(legacy)).expect("document serializes");
+        assert!(read_native_run_result(&bytes).is_err());
+    }
 }
 
 /// FR-100's command refusal table fixes these rows' cause and detail shapes.

@@ -5,8 +5,8 @@ use super::{PackageMemberCause, ReplayRequestRefusal};
 use crate::identity::SourceRefWire;
 use filament_contract_model::CheckedRefinementInternal;
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
-    CheckedPackageIncomplete, CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageIncomplete,
+    CheckedPackageReadLimits, CheckedPackageRefusal, CheckedPackageV2, read_checked_package,
 };
 use quire_canonical::{Document, Node, NodeRef, ReadError};
 
@@ -65,6 +65,27 @@ impl ReplayPackage {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// The FR-001 identity of the package bytes, as bound by the first
+    /// source row in their lock. It supplies the artifact identity for any
+    /// later refusal while admitting these same bytes.
+    pub fn source_identity(&self) -> Option<fsl_foundation::source::provenance::RawSourceRef> {
+        let lock = member(self.document.root(), "lock")?;
+        let sources = member(lock, "sources")?;
+        let source = array(sources, "/package/lock/sources")
+            .ok()?
+            .into_iter()
+            .next()?;
+        let authority = member(source, "authority")?;
+        let identity = member(source, "identity")?;
+        let Node::String(authority) = authority.node() else {
+            return None;
+        };
+        let Node::String(identity) = identity.node() else {
+            return None;
+        };
+        fsl_foundation::source::provenance::RawSourceRef::new(authority, identity).ok()
     }
 
     /// Admit the complete original document using caller-supplied genuine

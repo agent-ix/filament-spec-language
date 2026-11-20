@@ -16,13 +16,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
+use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
 
 use super::{
-    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
-    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
-    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
+    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
+    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
+    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
 };
 
 /// What the writer needs of one plan.
@@ -343,9 +343,10 @@ pub fn emit_monitor_plan_over(
     limits: crate::checked_v2::V2ReadLimits,
     emit: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    let read = crate::checked_v2::read_checked_package_v2(
+    let read = crate::checked_v2::read_checked_package_v2_at(
         retained.package().bytes(),
         identity,
+        retained.artifact_identity().clone(),
         limits,
         evidence,
     )
@@ -1372,6 +1373,7 @@ fn finish(
     refresh_equality_membership(&mut rows.equality_fact_witness_rows, &nodes);
     Ok(Emission {
         package,
+        artifact_identity: retained.artifact_identity().clone(),
         omitted: rows.omitted,
         evidence: own_evidence(&lock),
         capability_report,

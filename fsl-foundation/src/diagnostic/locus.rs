@@ -196,6 +196,7 @@ mod tests {
             ))
         );
         let artifact = Locus::Artifact {
+            identity: RawSourceRef::new("test", "source-map").unwrap(),
             pointer: "/source_map/0".parse().unwrap(),
         };
         assert_eq!(artifact.to_string(), "artifact at `/source_map/0`");

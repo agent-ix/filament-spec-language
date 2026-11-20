@@ -21,6 +21,37 @@
 
 #![forbid(unsafe_code)]
 
+/// FR-286: the typed refusal pairs produced by analysis.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("cancelled", "caller-cancelled"),
+    fsl_foundation::diagnostic::CatalogCode::new("cardinality_out_of_bound", "above-maximum"),
+    fsl_foundation::diagnostic::CatalogCode::new("integer_out_of_domain", "outside-domain"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "duplicate-backend"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "inapplicable-kind"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "inconsistent-candidates"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "invalid-option-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "model-alias"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "not-statistical"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "unknown-claim"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_capability", "unknown-option"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_result", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "strict-clock-constraint"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "wrong-value-kind"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_import", "missing-selection"),
+    fsl_foundation::diagnostic::CatalogCode::new("missing_declaration", "missing-name"),
+    fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+    fsl_foundation::diagnostic::CatalogCode::new("runtime_invariant", "established-invariant-broken"),
+    fsl_foundation::diagnostic::CatalogCode::new("unavailable_observation", "missing-required-artifact"),
+    fsl_foundation::diagnostic::CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "missing-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "unknown-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "expression-form"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "wrong-role-mapping"),
+    fsl_foundation::diagnostic::CatalogCode::new("unsupported_projection", "unbounded-extent"),
+];
+
 pub mod analyze;
 pub mod claim_family;
 pub mod contract_check;

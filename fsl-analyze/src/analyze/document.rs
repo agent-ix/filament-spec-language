@@ -1182,7 +1182,10 @@ fn claim_occurrence(
         .iter()
         .find(|site| &site.identity == node)
     {
-        return Some(OccurrenceKey::new(site.identity.clone(), site.claim.clone()));
+        return Some(OccurrenceKey::new(
+            site.identity.clone(),
+            site.claim.clone(),
+        ));
     }
     if let Some(clause) = graph
         .state_clauses()
@@ -2863,6 +2866,13 @@ pub struct SettledRun {
     pub document: Value,
     /// The most severe item's FR-285 exit code; 0 with no item.
     pub exit_code: u8,
+}
+
+impl SettledRun {
+    /// The canonical RFC 8785 bytes of the FR-621 document.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
+        fsl_foundation::canonical_json::encode(&self.document)
+    }
 }
 
 /// Negotiate `run`'s items with `negotiate`, run them under `cancel`

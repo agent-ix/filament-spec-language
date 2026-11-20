@@ -21,3 +21,4 @@ mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;
 mod short_circuit_integer_division;
+mod wire_schema;

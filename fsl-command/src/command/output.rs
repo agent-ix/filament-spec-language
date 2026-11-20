@@ -16,6 +16,11 @@ use serde_json::Value;
 pub struct NativeResult(Value);
 
 impl NativeResult {
+    /// The native result document's canonical RFC 8785 bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, fsl_foundation::canonical_json::CanonicalJsonError> {
+        fsl_foundation::canonical_json::encode(&self.0)
+    }
+
     /// The FR-661 build inventory emitted by `version`.
     pub(super) fn version_document(document: Value) -> Self {
         Self(document)

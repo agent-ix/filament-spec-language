@@ -54,6 +54,12 @@ pub mod declaration;
 pub mod model_request;
 pub mod reductions;
 pub mod request;
+
+/// FR-286: the typed request-refusal pairs produced by routing.
+pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "unknown-member"),
+    fsl_foundation::diagnostic::CatalogCode::new("invalid_runtime_input", "invalid-value"),
+];
 pub mod routing;
 pub mod tie;
 
