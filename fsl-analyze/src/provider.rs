@@ -616,6 +616,35 @@ pub fn routed_item<'d>(
     ))
 }
 
+/// The FR-331 request item for an operation-contract claim, with candidates
+/// computed from the current provider registrations (FR-968).
+pub(crate) fn routed_contract_item<'d>(
+    package: &CheckedPackage,
+    registrations: impl IntoIterator<Item = &'d BackendDescriptor>,
+    index: RequestIndex,
+    claim: &OccurrenceKey,
+    named: Option<&BackendId>,
+) -> Option<RequirementItem> {
+    let mut registry = Registry::new();
+    for descriptor in registrations {
+        registry.register(descriptor.clone()).ok()?;
+    }
+    let extent = crate::analyze::document::boolean_value_clause_extent(package, claim)?;
+    let result_bound = package
+        .graph()
+        .semantic_graph()
+        .node(claim.node().clone())?
+        .semantic_type()?
+        .clone();
+    Some(RequirementItem::operation_contract_clause(
+        index,
+        claim.clone(),
+        &extent,
+        result_bound,
+        registry.candidates(Capability::OperationContract, named),
+    ))
+}
+
 /// What a provider item is settled from: the members its request is built
 /// from and the target its verdict is replayed at.
 pub struct ProviderItemInput<'a> {
@@ -642,7 +671,27 @@ pub(crate) struct ProviderWork<'a> {
     packages: &'a PackageInput,
     routed: Option<RequirementItem>,
     emit: EmitLimits,
-    selection: Result<ValueTarget<'a>, Selection>,
+    selection: ProviderSelection<'a>,
+}
+
+/// The selected target retained until an external provider's verdict settles.
+enum ProviderSelection<'a> {
+    Value(Result<ValueTarget<'a>, Selection>),
+    Contract(
+        Result<
+            fsl_replay::contract_check::ContractClaim,
+            fsl_replay::contract_check::ContractSelection,
+        >,
+    ),
+}
+
+impl ProviderSelection<'_> {
+    fn is_err(&self) -> bool {
+        match self {
+            Self::Value(selection) => selection.is_err(),
+            Self::Contract(selection) => selection.is_err(),
+        }
+    }
 }
 
 /// The `value-validity` item at `input.claim` that `backend`, an engine
@@ -671,6 +720,7 @@ pub(crate) fn provider_item_over<'a>(
     AnalyzeItem::new_with_provider(
         index,
         family,
+        Capability::ValueValidity,
         backend.as_str(),
         ProviderWork {
             package: input.package,
@@ -678,7 +728,40 @@ pub(crate) fn provider_item_over<'a>(
             packages: input.packages,
             routed: input.routed,
             emit: input.emit,
-            selection: input.selection,
+            selection: ProviderSelection::Value(input.selection),
+        },
+    )
+}
+
+/// An `operation-contract` item at `claim` for an external provider. The
+/// provider request is emitted only after negotiation (FR-968).
+pub(crate) fn contract_provider_item_over<'a>(
+    index: RequestIndex,
+    backend: &BackendId,
+    package: &'a CheckedPackage,
+    packages: &'a PackageInput,
+    routed: Option<RequirementItem>,
+    emit: EmitLimits,
+    selection: Result<
+        fsl_replay::contract_check::ContractClaim,
+        fsl_replay::contract_check::ContractSelection,
+    >,
+    shared: Option<Shared<'a>>,
+    claim: &OccurrenceKey,
+) -> AnalyzeItem<'a> {
+    let family = claim_family(package, ItemKind::Formula, claim);
+    AnalyzeItem::new_with_provider(
+        index,
+        family,
+        Capability::OperationContract,
+        backend.as_str(),
+        ProviderWork {
+            package,
+            shared,
+            packages,
+            routed,
+            emit,
+            selection: ProviderSelection::Contract(selection),
         },
     )
 }
@@ -892,14 +975,22 @@ pub(crate) fn finish(
     engine: &Engine,
 ) -> EngineReport {
     let target = match work.selection {
-        Ok(target) => target,
-        Err(Selection::NoForm) => return EngineReport::Refused(crate::value_check::invalid_input()),
-        Err(Selection::MissingNode) => {
-            return EngineReport::Refused(crate::value_check::incomplete_input());
+        ProviderSelection::Value(Ok(target)) => Some(target),
+        ProviderSelection::Value(Err(Selection::NoForm))
+        | ProviderSelection::Contract(Err(fsl_replay::contract_check::ContractSelection::NoForm)) =>
+        {
+            return EngineReport::Refused(crate::value_check::invalid_input());
         }
-        Err(Selection::Fault(fault)) => {
-            return EngineReport::Refused(Refusal::Failed(fault.catalog_code()));
-        }
+        ProviderSelection::Value(Err(Selection::MissingNode))
+        | ProviderSelection::Contract(Err(
+            fsl_replay::contract_check::ContractSelection::MissingNode
+            | fsl_replay::contract_check::ContractSelection::Unbound(_),
+        )) => return EngineReport::Refused(crate::value_check::incomplete_input()),
+        ProviderSelection::Value(Err(Selection::Fault(fault)))
+        | ProviderSelection::Contract(Err(fsl_replay::contract_check::ContractSelection::Fault(
+            fault,
+        ))) => return EngineReport::Refused(Refusal::Failed(fault.catalog_code())),
+        ProviderSelection::Contract(Ok(_)) => None,
     };
     let verdict = match settled {
         Some(Ok(verdict)) => verdict,
@@ -914,7 +1005,23 @@ pub(crate) fn finish(
         .max_cases()
         .unwrap_or(manifest::DEFAULT_MAX_CASES)
         .get();
-    report(&target, verdict, cancel, budget)
+    match target {
+        Some(target) => report(&target, verdict, cancel, budget),
+        None => match verdict {
+            ProviderVerdict::Proved => EngineReport::Provider(Box::new(ProviderReport::Proved)),
+            ProviderVerdict::Unknown => EngineReport::Provider(Box::new(ProviderReport::Unknown)),
+            ProviderVerdict::Failed { limit, cause } if limit.matches(cause) => {
+                EngineReport::Provider(Box::new(ProviderReport::Failed(cause)))
+            }
+            ProviderVerdict::Failed { .. } => EngineReport::Refused(Refusal::Failed(
+                InternalFault::new("external-provider", "limit-cause-mismatch").catalog_code(),
+            )),
+            ProviderVerdict::Refuted { .. } => EngineReport::Refused(Refusal::Failed(
+                InternalFault::new("external-provider", "contract-counterexample-unsupported")
+                    .catalog_code(),
+            )),
+        },
+    }
 }
 
 /// The provider's verdict as the arm's report: a counterexample is replayed

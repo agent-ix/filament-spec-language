@@ -847,6 +847,21 @@ impl RequirementItem {
         }
     }
 
+    /// The `operation-contract` item of a Boolean operation-clause occurrence
+    /// with no requirement record, carrying the clause's parameter extent and
+    /// result type and the candidates computed by the caller (FR-968).
+    pub fn operation_contract_clause(
+        index: RequestIndex,
+        occurrence: OccurrenceKey,
+        extent: &ClaimExtent,
+        result_bound: NodeKey,
+        candidates: CandidateOutcome,
+    ) -> Self {
+        let mut item = Self::value_clause(index, occurrence, extent, result_bound, candidates);
+        item.kind = Capability::OperationContract;
+        item
+    }
+
     /// This item at position `index` of the request it is sent in, every
     /// other member unchanged: an analyze item keeps its own request index
     /// when it is sent to a provider (FSpec FR-331 `request_index`, FR-635),
