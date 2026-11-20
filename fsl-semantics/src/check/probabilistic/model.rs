@@ -865,28 +865,41 @@ impl<'a> ProbabilisticInput<'a> {
         };
         let mut operations = Vec::new();
         if let Some(only) = only {
-            // A source-object workload weighs the type's effective view: what
-            // it declares or inherits, an ancestor's redefined operation
-            // hidden by the type's own.
+            // A source-object workload weighs the type's effective view: each
+            // operation it declares or inherits, an ancestor's redefined
+            // operation hidden by the type's own. A name several unrelated
+            // ancestors declare keeps every nearest declaration, as the type's
+            // instances carry each (FR-104 refuses only a written `Type::op`
+            // that names several).
             let Some(of) = self.object_types.get(only) else {
                 return operations;
             };
-            for (declaring, operation) in self
-                .scope
-                .operations()
-                .effective(self.scope.types(), of.clone())
-            {
-                let Some((artifact, _)) = objects
-                    .iter()
-                    .find(|(_, key)| self.object_types.get(*key) == Some(&declaring))
-                else {
-                    continue;
-                };
-                operations.push((
-                    declaring,
-                    operation.name(),
-                    format!("{}::{}", artifact.as_str(), operation.name()),
-                ));
+            let types = self.scope.types();
+            let reachable: Vec<(&Identifier, &EffectiveId)> = objects
+                .iter()
+                .filter_map(|(artifact, key)| Some((artifact, self.object_types.get(key)?)))
+                .filter(|(_, declaring)| types.conforms(of.clone(), (*declaring).clone()))
+                .collect();
+            for (artifact, declaring) in &reachable {
+                for operation in self.scope.operations().declared_by((*declaring).clone()) {
+                    let hidden = reachable.iter().any(|(_, other)| {
+                        other != declaring
+                            && types.conforms((*other).clone(), (*declaring).clone())
+                            && self
+                                .scope
+                                .operations()
+                                .declared_by((*other).clone())
+                                .iter()
+                                .any(|redefined| redefined.name() == operation.name())
+                    });
+                    if !hidden {
+                        operations.push((
+                            (*declaring).clone(),
+                            operation.name(),
+                            format!("{}::{}", artifact.as_str(), operation.name()),
+                        ));
+                    }
+                }
             }
             return operations;
         }
@@ -1488,6 +1501,9 @@ impl Pass<'_, '_> {
             });
         };
         let model = alias.as_str();
+        let weighable = only
+            .as_ref()
+            .map(|only| self.input.model_operations(model, Some(only)));
         let mut refusals: Vec<CheckRefusal> = Vec::new();
         let mut weighted: Vec<DeclarationKey> = Vec::new();
         let mut weights: Vec<(ProbabilisticOperation, Rational)> = Vec::new();
@@ -1504,13 +1520,10 @@ impl Pass<'_, '_> {
             );
             let operation = match self.input.operation(&written.operation, Some(model)) {
                 Ok((operation, _))
-                    if only.as_ref().is_none_or(|only| {
-                        self.input.model_operations(model, Some(only)).iter().any(
-                            |(declaring, name, _)| {
-                                *declaring == operation.declaring
-                                    && *name == operation.name.as_str()
-                            },
-                        )
+                    if weighable.as_ref().is_none_or(|weighable| {
+                        weighable.iter().any(|(declaring, name, _)| {
+                            *declaring == operation.declaring && *name == operation.name.as_str()
+                        })
                     }) =>
                 {
                     operation

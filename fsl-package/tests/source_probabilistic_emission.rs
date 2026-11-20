@@ -386,3 +386,56 @@ fn a_workload_on_a_source_subtype_weighs_a_redefined_operation_once() {
         );
     }
 }
+
+const DIAMOND: &str = "object B { n: Integer; operation x() modifies self.n; }\n\
+    object C { m: Integer; operation x() modifies self.m; }\n\
+    object D extends B, C { operation y() modifies self.n; }\n";
+
+/// A name two unrelated ancestors declare is carried by the subtype twice: a
+/// workload weighs and requires each declaration by its own spelling, and
+/// FR-104 refuses only the written `D::x`.
+#[trace("TC-3012", "FR-740-AC-6")]
+#[test]
+fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
+    let package = check(&format!(
+        "{DIAMOND}workload W on D {{ weight D::y = 1; weight B::x = 1; weight C::x = 1; }}\n"
+    ))
+    .unwrap_or_else(|refusals| panic!("S3 admits: {refusals:?}"));
+    let [workload] = package.graph().probabilistic_model().workloads() else {
+        panic!("one checked workload");
+    };
+    assert_eq!(workload.weights().len(), 3);
+
+    let Err(refusals) = check(&format!(
+        "{DIAMOND}workload W on D {{ weight D::y = 1; }}\n"
+    )) else {
+        panic!("a workload omitting both is refused");
+    };
+    let omitted: Vec<&str> = refusals
+        .iter()
+        .filter_map(|refusal| match &refusal.cause {
+            CheckCause::Probabilistic(cause) => match &**cause {
+                ProbabilisticCause::IncompleteWorkload { operation, .. } => {
+                    Some(operation.as_str())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(omitted, ["B::x", "C::x"], "{refusals:?}");
+
+    let Err(refusals) = check(&format!(
+        "{DIAMOND}workload W on D {{ weight D::y = 1; weight D::x = 1; }}\n"
+    )) else {
+        panic!("a written D::x is ambiguous");
+    };
+    assert!(
+        refusals.iter().any(|refusal| matches!(
+            &refusal.cause,
+            CheckCause::Probabilistic(cause)
+                if matches!(&**cause, ProbabilisticCause::AmbiguousOperation { name, .. } if name == "D::x")
+        )),
+        "{refusals:?}"
+    );
+}

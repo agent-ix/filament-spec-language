@@ -54,3 +54,4 @@ the remaining work will actually deliver for QSL-2045.
 | FND-002 | deferred | The ambiguity is recorded in the PR body ("Ambiguity for arch") and the coordinator is raising it with arch. It needs a spec ruling and cannot be fixed in this PR's code |
 | FND-003 | fixed | The PR body now says the QSL-2045 Boolean repro will still refuse at S4 (Boolean support is an IR reader limitation) and needs a separate owner |
 | FND-004 | fixed | Both ignore reasons are re-keyed to QSL-2463 with their current failure modes (`invalid_timed_model`; `MalformedClockPlace` until the #1082 pin). The wording of the first one is FND-005 |
+| FND-005 | fixed | The ignore reason now reads "QSL-2699: S3 refuses a delay on an untimed source model as invalid_timed_model, where FR-740-AC-5 states invalid_probabilistic_model/delay-on-untimed-model". It names a defect ticket and no longer mentions arch |
