@@ -103,7 +103,10 @@ pub use items::{
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 
-use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
+use crate::provider::{
+    ExternalProvider, ProviderOptions, ProviderRegistrationCause, ProviderRegistrationRefusal,
+    ProviderReport,
+};
 use crate::zone_check::ZoneCheckRecord;
 use crate::{contract_check, model_check, statistical, value_check, zone_check};
 
@@ -307,29 +310,43 @@ impl Engine {
         self.hybrid.as_deref()
     }
 
-    /// An engine that decides `value-validity` items with `provider`, a
-    /// registered decision procedure outside FSL (FR-281 "External provider
-    /// arm"). Its verdicts settle only as that section states: a `refuted`
-    /// verdict after its counterexample replays.
+    /// An engine that decides its advertised items with `provider`, a
+    /// registered decision procedure outside FSL (FR-968). A `refuted`
+    /// verdict settles only after the item's counterexample replay reproduces.
     ///
     /// # Errors
     ///
-    /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
-    /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called. `tool` is the provider's FSpec FR-331 tool record. The
+    /// [`ProviderRegistrationRefusal`] when `descriptor` advertises no
+    /// `(kind, mode)` pair, or advertises `value-validity` without the
+    /// `unbounded` mode; no engine is made and `provider` is never called.
+    /// `tool` is the provider's FSpec FR-331 tool record. The
     /// engine holds no limit: a run's FSpec FR-462 limits are the run's
     /// [`ProviderOptions`] (FR-964), which every request carries.
     pub fn external(
         descriptor: BackendDescriptor,
         tool: BackendTool,
         provider: Box<dyn ExternalProvider>,
-    ) -> Result<Self, NotUnbounded> {
-        let unbounded = descriptor
-            .advertises()
-            .any(|pair| pair == (Capability::ValueValidity, Mode::Unbounded));
-        if !unbounded {
-            return Err(NotUnbounded {
+    ) -> Result<Self, ProviderRegistrationRefusal> {
+        let advertised: Vec<_> = descriptor.advertises().collect();
+        let cause = if advertised.is_empty() {
+            Some(ProviderRegistrationCause::AbsentKind)
+        } else {
+            let value_validity_modes: Vec<_> = advertised
+                .iter()
+                .filter_map(|(kind, mode)| (*kind == Capability::ValueValidity).then_some(*mode))
+                .collect();
+            (!value_validity_modes.is_empty() && !value_validity_modes.contains(&Mode::Unbounded))
+                .then_some(ProviderRegistrationCause::ValueValidityNotUnbounded {
+                    modes: value_validity_modes
+                        .iter()
+                        .map(|mode| mode.to_wire().to_owned())
+                        .collect(),
+                })
+        };
+        if let Some(cause) = cause {
+            return Err(ProviderRegistrationRefusal {
                 backend: descriptor.id().clone(),
+                cause,
             });
         }
         Ok(Self {
