@@ -27,6 +27,7 @@ use serde_json::{json, Value as Json};
 
 #[path = "../../../fsl-semantics/tests/support/named_population.rs"]
 mod fixture;
+mod evaluator_closure_cases;
 
 use fixture::{checked, ident, key, PACKAGE};
 
@@ -644,6 +645,14 @@ fn holds_atom(
     unit: &Unit,
     objects: &fsl_semantics::model::object_environment::ObjectEnvironment,
 ) -> FamilyOutcome<Value> {
+    holds_atom_metered(unit, objects, &mut Meter::new(UNLIMITED))
+}
+
+fn holds_atom_metered(
+    unit: &Unit,
+    objects: &fsl_semantics::model::object_environment::ObjectEnvironment,
+    meter: &mut Meter,
+) -> FamilyOutcome<Value> {
     let [clause] = unit.graph().temporal_clauses() else {
         panic!("one temporal clause");
     };
@@ -667,7 +676,7 @@ fn holds_atom(
             Value::Reference(watcher),
             &[],
             objects,
-            &mut Meter::new(UNLIMITED),
+            meter,
         )
         .expect("the atom evaluates")
         .outcome
