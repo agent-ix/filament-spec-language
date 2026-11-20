@@ -400,8 +400,12 @@ fn mean_time_ranking(
     product: &ProbProduct,
     targets: &[bool],
     included: &[bool],
+    policy: &[Option<usize>],
 ) -> Option<Vec<(ProbabilityProductKey, u64)>> {
-    if targets.len() != product.states.len() || included.len() != product.states.len() {
+    if targets.len() != product.states.len()
+        || included.len() != product.states.len()
+        || policy.len() != product.states.len()
+    {
         return None;
     }
     let mut ranks = vec![None; product.states.len()];
@@ -442,13 +446,11 @@ fn mean_time_ranking(
                     }
                 }
             }
-            if choices.is_empty() || choices.iter().any(|(_, lower)| lower.is_empty()) {
+            let Some(selected) = policy[index] else {
                 continue;
-            }
-            let lower = choices
-                .iter()
-                .filter_map(|(_, ranks)| ranks.iter().copied().min())
-                .min()?;
+            };
+            let (_, lower) = choices.get(selected)?;
+            let lower = lower.iter().copied().min()?;
             ranks[index] = Some(lower.checked_add(1)?);
             changed = true;
         }
@@ -692,7 +694,7 @@ fn run_timed_mean(
         .collect::<Vec<_>>();
     targets.sort();
     targets.dedup();
-    let ranking = match mean_time_ranking(&product, &target, &included) {
+    let ranking = match mean_time_ranking(&product, &target, &included, &solved.policy) {
         Some(ranking) => ranking,
         None => return not_yet(),
     };
