@@ -137,19 +137,26 @@ pub enum ContractSelection {
 pub enum ContractSubject {
     /// An invariant clause.
     Invariant {
+        /// The selected invariant clause node.
         clause: NodeKey,
+        /// The object type whose state the clause observes.
         context: EffectiveId,
     },
     /// A precondition: its definedness under premises 1 to 3.
     Precondition {
+        /// The selected precondition clause node.
         clause: NodeKey,
+        /// The object type whose operation the clause constrains.
         context: EffectiveId,
     },
     /// A postcondition: its definedness under the pre-state and frame
     /// premises.
     Postcondition {
+        /// The selected postcondition clause node.
         clause: NodeKey,
+        /// The object type whose operation the clause constrains.
         context: EffectiveId,
+        /// The operation's declaring type and name.
         operation: (EffectiveId, String),
     },
     /// An operation's frame.
@@ -162,7 +169,9 @@ pub enum ContractSubject {
     StepRelation,
     /// A refinement's initial-state rule (ordinal 0) or step row `source`.
     Simulation {
+        /// The selected refinement index within the checked package.
         refinement: usize,
+        /// The selected step row, or `None` for the initial-state rule.
         row: Option<usize>,
     },
 }
