@@ -227,17 +227,20 @@ fn repeated_frame_entries_deduplicate_without_losing_distinct_entries() {
 #[trace("TC-1307", "FR-512-AC-17")]
 #[test]
 fn operation_and_frame_order_do_not_change_the_selected_declarations() {
-    let first = query(
+    let mut first = query(
         "advance",
         json!([operation_parameter("advance", "amount", INTEGER)]),
     );
+    first["frame"]["modifies"] = json!([key("parent"), key("versionNumber")]);
     let second = query(
         "inspect",
         json!([operation_parameter("inspect", "amount", INTEGER)]),
     );
-    let forward = admit(&input(vec![first.clone(), second.clone()]))
-        .expect("same parameter name in distinct operations admits");
-    let reverse = admit(&input(vec![second, first])).expect("reversed operations admit");
+    let forward_bytes = input(vec![first.clone(), second.clone()]);
+    let forward = admit(&forward_bytes).expect("same parameter name in distinct operations admits");
+    first["frame"]["modifies"] = json!([key("versionNumber"), key("parent")]);
+    let reverse_bytes = input(vec![second, first]);
+    let reverse = admit(&reverse_bytes).expect("reversed operations admit");
     let operations = |selected: &fsl_semantics::model::intake::SelectedModel| {
         selected
             .view
@@ -253,6 +256,11 @@ fn operation_and_frame_order_do_not_change_the_selected_declarations() {
             .collect::<Vec<_>>()
     };
     assert_eq!(operations(&forward[0]), operations(&reverse[0]));
+    let forward = super::model_operations::admit_and_assemble(&forward_bytes)
+        .expect("forward source unit assembles");
+    let reverse = super::model_operations::admit_and_assemble(&reverse_bytes)
+        .expect("reordered source unit assembles");
+    assert_eq!(forward, reverse);
 }
 
 #[trace("TC-1307", "FR-512-AC-6", "FR-512-AC-17")]
@@ -344,7 +352,6 @@ fn a_population_cannot_acquire_an_operations_member() {
     let UnitIntakeCause::Refused(found) = refused.cause else {
         panic!("{refused:?}");
     };
-    assert!(!found.is_empty());
     assert!(
         found
             .iter()
