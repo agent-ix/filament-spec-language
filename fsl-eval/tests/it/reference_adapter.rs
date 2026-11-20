@@ -169,7 +169,12 @@ struct RequestBody {
 }
 
 impl Body for RequestBody {
-    fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         self.transitions.fetch_add(1, Ordering::SeqCst);
         match input {
             Resume::Start(_) | Resume::Again => Ok(Transition::Call(filament_eval::ChildRequest {
@@ -194,7 +199,12 @@ impl BodyFactory for Constant {
 struct ConstantBody(i64);
 
 impl Body for ConstantBody {
-    fn resume(&mut self, _input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        _input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         Ok(Transition::Done(Evaluation::completed(int(self.0))))
     }
 }

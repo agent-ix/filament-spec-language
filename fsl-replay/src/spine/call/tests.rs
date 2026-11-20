@@ -1779,7 +1779,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
                 && fault.kernel_cause() == Some(cause)));
     }
 
-    // Kernel undefined: each of the five reasons.
+    // Kernel undefined: each of the seven reasons.
     for (reason, spelling) in [
         (Undefined::DivisionByZero, "division-by-zero"),
         (Undefined::IeeeNotFinite, "ieee-not-finite"),
@@ -1787,6 +1787,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
         (Undefined::NoneValue, "none-value"),
         (Undefined::NoElement, "no-element"),
         (Undefined::SumOutOfDomain, "sum-out-of-domain"),
+        (Undefined::MalformedNumber, "malformed-number"),
     ] {
         match convert(FamilyOutcome::Evaluated(Outcome::Undefined(reason))).unwrap() {
             CallOutcome::Undefined { reason, .. } => assert_eq!(reason, spelling),

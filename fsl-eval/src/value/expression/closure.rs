@@ -33,7 +33,7 @@ use std::collections::BTreeSet;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
-use filament_eval::{CheckedClosure, Evaluation, RequestRefusal, Signature, Transition};
+use filament_eval::{CheckedClosure, Evaluation, LiveContext, RequestRefusal, Signature, Transition};
 use filament_exact::{Meter, NodeKey, Value, ValueType};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
@@ -290,6 +290,7 @@ where
         &self,
         task: &mut Self::Task,
         delivered: Option<Evaluation>,
+        _context: &mut LiveContext,
         environment: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Transition, InternalFault> {

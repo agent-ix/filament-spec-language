@@ -6027,6 +6027,79 @@ fn append_model_roots<'a>(
     }
 }
 
+/// FR-322 / contract-ir model occurrence rule: each model-owned declaration
+/// node carries one generated occurrence at its selected model root region.
+/// Type references discovered while emitting a declaration do not create
+/// additional occurrences on that declaration node.
+fn normalize_model_declaration_occurrences(
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+) -> Result<(), EmitRefusal> {
+    let mut root_regions = BTreeMap::new();
+    for root in nodes.iter().filter(|node| {
+        node.node_tag.as_ref() == CheckedNodeTag::Model.as_wire()
+            && node.semantic_form.as_ref() == "model_root"
+            && matches!(node.owner.as_ref(), Some(CheckedNodeOwner::ModelRoot { .. }))
+    }) {
+        let Some(CheckedNodeOwner::ModelRoot { identity }) = root.owner.as_ref() else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let mut entries = source_map.iter().filter(|entry| {
+            entry.node_id == root.node_id
+                && entry.role == CheckedOccurrenceRole::Generated
+                && entry.ordinal == 0
+        });
+        let Some(entry) = entries.next() else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        if entries.next().is_some()
+            || root_regions.insert(identity.to_string(), entry.regions.clone()).is_some()
+        {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+    }
+
+    for node in nodes.iter_mut().filter(|node| {
+        matches!(node.node_tag.as_ref(), "model" | "relation")
+            && matches!(node.owner.as_ref(), Some(CheckedNodeOwner::Model { .. }))
+    }) {
+        let Some(CheckedNodeOwner::Model { identity, .. }) = node.owner.as_ref() else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let regions = root_regions
+            .get(identity.as_ref())
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        node.occurrences = vec![CheckedOccurrence {
+            role: CheckedOccurrenceRole::Generated,
+            ordinal: 0,
+        }];
+        let mut inserted = false;
+        source_map.retain_mut(|entry| {
+            if entry.node_id != node.node_id {
+                return true;
+            }
+            if inserted {
+                return false;
+            }
+            entry.role = CheckedOccurrenceRole::Generated;
+            entry.ordinal = 0;
+            entry.regions.clone_from(&regions);
+            inserted = true;
+            true
+        });
+        if !inserted {
+            source_map.push(CheckedSourceMapEntry {
+                node_id: node.node_id.clone(),
+                role: CheckedOccurrenceRole::Generated,
+                ordinal: 0,
+                regions,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The `model_root` node for one selection row, under the key the check
 /// derived (`CheckedGraph::model_roots`), the key a refinement over the model
 /// names.
@@ -7095,6 +7168,7 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     );
+    normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     let mut schedulability_claim_rows = append_schedulability_claims(
         ids,

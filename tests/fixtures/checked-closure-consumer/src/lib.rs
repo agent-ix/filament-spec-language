@@ -23,7 +23,12 @@ impl BodyFactory for Generated {
 }
 
 impl Body for GeneratedCall {
-    fn resume(&mut self, input: Resume, _meter: &mut Meter) -> Result<Transition, BodyFailure> {
+    fn resume(
+        &mut self,
+        input: Resume,
+        _context: &mut filament_eval::LiveContext,
+        _meter: &mut Meter,
+    ) -> Result<Transition, BodyFailure> {
         match input {
             Resume::Start(_) => Ok(Transition::Done(Evaluation {
                 outcome: FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(
