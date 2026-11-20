@@ -2834,6 +2834,13 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
     assert!(
         !nan_findings.iter().any(|finding| matches!(
             finding,
+            ModelFinding::InvariantUndetermined { clause, .. } if clause == "NotEqual"
+        )),
+        "NaN inequality must be determined: {nan_findings:?}"
+    );
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
             ModelFinding::InvariantViolated { clause, .. } if clause == "NotEqual"
         )),
         "numeric inequality of NaN is true: {nan_findings:?}"
@@ -2847,6 +2854,14 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
             "ordered comparison with NaN is false for {clause}: {nan_findings:?}"
         );
     }
+    assert!(
+        !nan_findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::InvariantUndetermined { clause, .. }
+                if clause == "Less" || clause == "LessEqual"
+        )),
+        "NaN ordered comparisons must be determined: {nan_findings:?}"
+    );
 
     let mut zero_world = float_world_with_body(comparisons, Vec::new());
     let plus_zero = float_snapshot(
@@ -2885,6 +2900,14 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
             assert!(
                 !findings.iter().any(|finding| matches!(
                     finding,
+                    ModelFinding::InvariantUndetermined { clause: found, .. }
+                        if found == clause
+                )),
+                "signed zero invariant {clause} is determined: {findings:?}"
+            );
+            assert!(
+                !findings.iter().any(|finding| matches!(
+                    finding,
                     ModelFinding::InvariantViolated { clause: found, .. } if found == clause
                 )),
                 "signed zero invariant {clause} holds: {findings:?}"
@@ -2899,6 +2922,14 @@ fn checked_float_field_graph_compares_nan_and_signed_zero() {
                 "signed zero invariant {clause} is false: {findings:?}"
             );
         }
+        assert!(
+            !findings.iter().any(|finding| matches!(
+                finding,
+                ModelFinding::InvariantUndetermined { clause, .. }
+                    if clause == "NotEqual" || clause == "Less"
+            )),
+            "signed zero comparisons are determined: {findings:?}"
+        );
         let Some(Value::Collection(levels)) = state.state().populations[&counters()]["c1"]
             .fields
             .get(&field("levels"))
@@ -2932,90 +2963,129 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
             "a",
             json!({"kind":"float64", "bits":"3FF0000000000000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "short",
             "a",
             json!({"kind":"float64", "bits":"3ff000000000000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "long",
             "a",
             json!({"kind":"float64", "bits":"03ff00000000000000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "bad-hex",
             "a",
             json!({"kind":"float64", "bits":"3ff000000000000g"}),
             "invalid-value",
+            "bits",
         ),
         (
             "prefixed",
             "a",
             json!({"kind":"float64", "bits":"0x3ff0000000000000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "short-width",
             "f32",
             json!({"kind":"float32", "bits":"3f80000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "wide-width",
             "f32",
             json!({"kind":"float32", "bits":"00003f8000000000"}),
             "invalid-value",
+            "bits",
         ),
         (
             "number",
             "a",
             json!({"kind":"float64", "bits":0}),
             "wrong-value-kind",
+            "bits",
         ),
-        ("missing", "a", json!({"kind":"float64"}), "missing-member"),
+        (
+            "missing",
+            "a",
+            json!({"kind":"float64"}),
+            "missing-member",
+            "bits",
+        ),
         (
             "extra",
             "a",
             json!({"kind":"float64", "bits":"3ff0000000000000", "value":"1"}),
             "unknown-member",
+            "value",
         ),
         (
             "bad-kind",
             "a",
             json!({"kind":"Float64", "bits":"3ff0000000000000"}),
             "invalid-value",
+            "kind",
         ),
         (
             "f32-in-f64",
             "a",
             json!({"kind":"float32", "bits":"3f800000"}),
             "wrong-value-kind",
+            "kind",
         ),
         (
             "f64-in-f32",
             "f32",
             json!({"kind":"float64", "bits":"3ff0000000000000"}),
             "wrong-value-kind",
+            "kind",
         ),
         (
             "float-in-integer",
             "value",
             json!({"kind":"float64", "bits":"3ff0000000000000"}),
             "wrong-value-kind",
+            "kind",
         ),
     ];
-    for (name, field, value, cause) in cases {
+    for (name, field, value, cause, member) in cases {
         let snapshot = float_snapshot(&mut world, name, json!({field: value}));
         let failure = model
             .admit_initial(&world.snapshots, &snapshot, ObservationLimits::default())
             .expect_err("the malformed Float snapshot refuses");
+        let AdmissionFailure::Refused(record) = failure else {
+            panic!("case {name} refuses with a diagnostic record");
+        };
+        assert_eq!(record.catalog.code(), "invalid_runtime_input", "case {name}");
+        assert_eq!(record.catalog.cause(), cause, "case {name}");
         assert_eq!(
-            refusal_of(Some(failure)),
-            (Code::InvalidRuntimeInput, cause),
-            "case {name}"
+            record.fields.get("member").map(String::as_str),
+            Some(member),
+            "case {name} identifies the malformed native member"
+        );
+        assert_eq!(
+            record.fields.get("field").map(String::as_str),
+            Some(field),
+            "case {name} identifies the declared field"
+        );
+        assert_eq!(
+            record.fields.get("path").map(String::as_str),
+            Some(format!("/populations/0/objects/0/fields/{field}").as_str()),
+            "case {name} identifies the snapshot field path"
+        );
+        assert_eq!(
+            record.path,
+            vec![PathStep::Field(field.to_owned())],
+            "case {name} identifies the typed field path"
         );
     }
     let duplicate = float_snapshot(
