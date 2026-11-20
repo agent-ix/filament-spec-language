@@ -8,7 +8,9 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::model::accounting::{LimitKind, Meter, ModelNormalizationLimits};
-use fsl_semantics::model::conformance::{self, ConformanceCheckOutcome, ConformanceOutcome};
+use fsl_semantics::model::conformance::{
+    self, ConformanceCheckOutcome, ConformanceOutcome, RedefinitionTargetOutcome,
+};
 use fsl_semantics::model::domain_package::{
     DeclaredSlot, DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord,
     Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
@@ -191,22 +193,26 @@ fn redefinition_requires_a_proper_ancestor_and_cycles_yield_no_view() {
             DomainPackageRecord::OperationMember(inherited.clone()),
             DomainPackageRecord::OperationMember(redefining.clone()),
         ]);
-        match normalize::normalize(&input, ModelNormalizationLimits::default()) {
-            NormalizeOutcome::Completed(view) => {
+        let index = ModelIndex::build(input);
+        match conformance::resolve_redefinition_target(
+            &index,
+            &key("Child/update"),
+            ModelNormalizationLimits::default().ancestor_steps,
+        )
+        .expect("small target-resolution query fits its ancestor budget")
+        {
+            RedefinitionTargetOutcome::Resolved(target) => {
                 assert!(inherited_parent, "unrelated owner must not redefine Base");
-                assert!(view
-                    .declarations()
-                    .iter()
-                    .any(|entry| entry.preimage.original == key("Child/update")));
+                assert_eq!(target, key("Base/update"));
             }
-            NormalizeOutcome::Refused(refusals) => {
+            RedefinitionTargetOutcome::Refused { cause, candidate } => {
                 assert!(!inherited_parent, "actual inherited target must resolve");
-                assert!(refusals.iter().any(|refusal| matches!(&refusal.cause,
+                assert_eq!(candidate, Some((key("Child/update"), key("Base/update"))));
+                assert!(matches!(&cause,
                     ModelRefusalCause::RedefinitionTarget { redefiners, target }
                     if redefiners == &[key("Child/update")] && target == &key("Base/update")
-                )));
+                ));
             }
-            other => panic!("small model must not exhaust limits: {other:?}"),
         }
     }
     let cycle = package(vec![object("Base", &["Child"]), object("Child", &["Base"])]);
