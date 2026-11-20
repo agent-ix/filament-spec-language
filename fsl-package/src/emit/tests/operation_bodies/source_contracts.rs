@@ -146,55 +146,67 @@ fn a_bodyless_void_operation_has_explicit_absence_beside_a_real_body() {
     );
 }
 
-#[trace("TC-1011", "FR-576-AC-2", "FR-576-AC-10")]
-#[test]
-fn uncalled_wrong_type_wrong_arity_and_void_bodies_refuse_before_emission() {
+fn assert_invalid_body(source: &str) {
     let mut void = query("ConfigVersion", "touch", None);
     void.as_object_mut().expect("operation").remove("returns");
     let document = package(vec![query("ConfigVersion", "score", None), void], &[]);
-    for source in [
-        "body wrongValue using v on Config::ConfigVersion::score() { true }\n",
-        "body wrongArity using v on Config::ConfigVersion::score(extra: Integer) { extra }\n",
-        "body voidValue using v on Config::ConfigVersion::touch() { 43 }\n",
-    ] {
-        let text = unit(source, &["Config"]);
-        let inputs = fsl_semantics::model::intake::package_input([document.as_slice()])
-            .expect("original model input");
-        let mut declarations =
-            assemble_with_models(text.as_bytes(), &inputs).expect("operation body forms assemble");
-        let regions = declarations.regions();
-        let checked = match declarations.link_dispatch(Default::default()) {
-            Ok(pending) => declarations
-                .check(
-                    CheckMode::Linked,
-                    CheckingLimits::default(),
-                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-                )
-                .map_err(|refusals| pending.report(refusals)),
-            Err(refusals) => Err(refusals),
-        };
-        let refusals = checked.expect_err("an unreachable invalid body must not reach emission");
-        assert!(!refusals.is_empty());
+    let text = unit(source, &["Config"]);
+    let inputs = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("original model input");
+    let mut declarations =
+        assemble_with_models(text.as_bytes(), &inputs).expect("operation body forms assemble");
+    let regions = declarations.regions();
+    let checked = match declarations.link_dispatch(Default::default()) {
+        Ok(pending) => declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .map_err(|refusals| pending.report(refusals)),
+        Err(refusals) => Err(refusals),
+    };
+    let refusals = checked.expect_err("an unreachable invalid body must not reach emission");
+    assert!(!refusals.is_empty());
+    assert!(
+        refusals
+            .iter()
+            .all(|refusal| refusal.cause.code().as_str() == "ill_typed"
+                && refusal.cause.cause() == Some("type-mismatch")),
+        "{refusals:?}"
+    );
+    let body_start = text.find("body ").expect("authored body declaration");
+    for refusal in &refusals {
+        let region = regions
+            .refusal_region(refusal)
+            .unwrap_or_else(|| panic!("located body refusal for {source:?}: {refusal:?}"));
+        let start = usize::try_from(region.start()).expect("region start");
+        let end = usize::try_from(region.end()).expect("region end");
         assert!(
-            refusals
-                .iter()
-                .all(|refusal| refusal.cause.code().as_str() == "ill_typed"
-                    && refusal.cause.cause() == Some("type-mismatch")),
-            "{refusals:?}"
+            start >= body_start && end <= body_start + source.trim_end().len(),
+            "refusal must name this body, not the model selection or whole unit: {refusal:?} at {}",
+            &text[start..end]
         );
-        let body_start = text.find("body ").expect("authored body declaration");
-        for refusal in &refusals {
-            let region = regions
-                .refusal_region(refusal)
-                .expect("located body refusal");
-            let start = usize::try_from(region.start()).expect("region start");
-            let end = usize::try_from(region.end()).expect("region end");
-            assert!(
-                start >= body_start && end <= body_start + source.trim_end().len(),
-                "refusal must name this body, not the model selection or whole unit: {refusal:?} at {}",
-                &text[start..end]
-            );
-            assert!(start < end);
-        }
+        assert!(start < end);
     }
+}
+
+#[trace("TC-1011", "FR-576-AC-2")]
+#[test]
+fn uncalled_wrong_type_body_refuses_at_its_body() {
+    assert_invalid_body("body wrongValue using v on Config::ConfigVersion::score() { true }\n");
+}
+
+#[trace("TC-1011", "FR-576-AC-2")]
+#[test]
+fn uncalled_wrong_arity_body_refuses_at_its_body() {
+    assert_invalid_body(
+        "body wrongArity using v on Config::ConfigVersion::score(extra: Integer) { extra }\n",
+    );
+}
+
+#[trace("TC-1011", "FR-576-AC-10")]
+#[test]
+fn void_operation_body_refuses_at_its_body() {
+    assert_invalid_body("body voidValue using v on Config::ConfigVersion::touch() { 43 }\n");
 }
