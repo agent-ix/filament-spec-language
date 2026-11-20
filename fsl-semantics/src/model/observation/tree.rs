@@ -221,8 +221,12 @@ pub(super) fn read_raw_value<E>(
         let collection = object
             .iter()
             .find(|(name, _)| collection_kind_of_tag(name).is_some());
-        if collection.is_some_and(|(_, payload)| count != 1 || payload.as_array().is_none())
-            || (count != 1 && !object.contains_key("kind"))
+        // A payload object (one with a `kind` member) is judged in the
+        // native payload order, never as a collection envelope.
+        let payload_object = object.contains_key("kind");
+        if (!payload_object
+            && collection.is_some_and(|(_, payload)| count != 1 || payload.as_array().is_none()))
+            || (count != 1 && !payload_object)
         {
             finished = Some(push(
                 &mut nodes,

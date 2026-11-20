@@ -109,11 +109,26 @@ fn refused_at_equality_conversion(declarations: &str) {
         Ok(_) => panic!("{declarations}: the equality conversion must be refused"),
     };
     assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
-    assert_eq!(
-        refusals[0].cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch),
-        "{declarations}"
+    // The checker keeps the operand types of the refused equality (QSL-2176);
+    // the refusal is still `ill_typed` with the cause `type-mismatch`.
+    assert!(
+        matches!(
+            &refusals[0].cause,
+            CheckCause::OperandTypeMismatch {
+                operator: fsl_forms::BinaryOperator::Equal,
+                left_type,
+                right_type,
+            } if matches!(**left_type, filament_exact::ValueType::Int(_))
+                && matches!(**right_type, filament_exact::ValueType::Float(_))
+        ),
+        "{declarations}: {:?}",
+        refusals[0].cause
     );
+    assert_eq!(
+        refusals[0].cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
+    assert_eq!(refusals[0].cause.cause(), Some("type-mismatch"));
     assert!(
         matches!(&refusals[0].location.origin,
             Origin::Body { function, .. } if function == "bad"),

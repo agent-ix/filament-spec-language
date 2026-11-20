@@ -525,3 +525,66 @@ fn native_collection_envelopes_keep_document_order_and_nested_paths() {
         assert_eq!(record.path, [PathStep::Index(0), PathStep::OptionValue]);
     }
 }
+
+/// The RFC 6901 pointer a refusal's steps below a field value fold to, the
+/// way the FR-663 refusal locus folds them.
+fn pointer_of(steps: &[PathStep]) -> String {
+    steps.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(name) => pointer.push_str(&format!("/{}", json_pointer_segment(name))),
+            PathStep::Index(index) => pointer.push_str(&format!("/{index}")),
+            PathStep::OptionValue => panic!("an option step is spelled `present`"),
+        }
+        pointer
+    })
+}
+
+/// The refusal of `object` at `slot`, and the document value its emitted
+/// pointer resolves to.
+fn located(object: serde_json::Value, slot: ValueType) -> (AdmissionRecord, serde_json::Value) {
+    let record = admitted(object.clone(), slot.clone()).unwrap_err();
+    let raw = snapshot(&object.to_string());
+    let steps = refusal_steps(raw.form(), &record);
+    let pointer = pointer_of(&steps);
+    let resolved = object
+        .pointer(&pointer)
+        .unwrap_or_else(|| panic!("{pointer} resolves in {object}"))
+        .clone();
+    (record, resolved)
+}
+
+/// FR-663 and FR-106: the pointer to a nested duplicate names the failing
+/// element, written as the document spells it (`/set/1`), and resolves to it.
+#[trace("TC-1171", "FR-106-AC-54")]
+#[test]
+fn a_nested_duplicate_pointer_resolves_to_the_second_element() {
+    let first = json!({"kind":"decimal","coefficient":"150","scale":"2"});
+    let second = json!({"kind":"decimal","coefficient":"15","scale":"1"});
+    let (record, resolved) = located(
+        json!({"set":[first.clone(), second.clone()]}),
+        collection(CollectionKind::Set, decimal_slot()),
+    );
+    assert_eq!(record.catalog.cause(), "duplicate-member");
+    assert_eq!(resolved, second);
+    let (_, resolved) = located(
+        json!({"present": {"set":[first.clone(), first.clone()]}}),
+        ValueType::Option(std::sync::Arc::new(collection(
+            CollectionKind::Set,
+            decimal_slot(),
+        ))),
+    );
+    assert_eq!(resolved, first);
+}
+
+/// FR-663 and FR-106: the pointer to a nested Decimal defect ends at the
+/// defective member of the element (`/set/0/scale`) and resolves to it.
+#[trace("TC-1171", "FR-106-AC-54")]
+#[test]
+fn a_nested_decimal_defect_pointer_resolves_to_the_member() {
+    let (record, resolved) = located(
+        json!({"set":[{"kind":"decimal","coefficient":"1","scale":"01"}]}),
+        collection(CollectionKind::Set, decimal_slot()),
+    );
+    assert_eq!(record.catalog.cause(), "invalid-value");
+    assert_eq!(resolved, json!("01"));
+}

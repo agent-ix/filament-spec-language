@@ -1883,20 +1883,27 @@ pub(crate) fn snapshot_admission_locus(
     path: Option<&str>,
 ) -> Option<OutcomeLocus> {
     use filament_semantic_value::admission::PathStep;
-    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
-        match step {
-            PathStep::Field(member) => {
-                pointer.push('/');
-                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+    // A nested missing member is named by the last step but absent from the
+    // document, so FR-663 locates it at the containing object.
+    let absent =
+        record.catalog.cause() == "missing-member" && !record.fields.contains_key("member");
+    let kept = record.path.len() - usize::from(absent && !record.path.is_empty());
+    let pointer = record.path[..kept]
+        .iter()
+        .fold(String::new(), |mut pointer, step| {
+            match step {
+                PathStep::Field(member) => {
+                    pointer.push('/');
+                    pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+                }
+                PathStep::Index(index) => {
+                    pointer.push('/');
+                    pointer.push_str(&index.to_string());
+                }
+                PathStep::OptionValue => {}
             }
-            PathStep::Index(index) => {
-                pointer.push('/');
-                pointer.push_str(&index.to_string());
-            }
-            PathStep::OptionValue => {}
-        }
-        pointer
-    });
+            pointer
+        });
     let identity = fsl_foundation::source::provenance::RawSourceRef::new(
         document.authority.clone(),
         document.identity.clone(),
@@ -4897,5 +4904,60 @@ mod tests {
             document["diagnostics"][0]["code"],
             "unimplemented_capability"
         );
+    }
+
+    /// FR-663 (TC-1746): the pointer of a snapshot refusal folds the typed
+    /// steps; a nested missing member is located at its containing object.
+    #[trace("FR-663-AC-3")]
+    #[test]
+    fn a_snapshot_locus_pointer_resolves_in_the_document() {
+        use filament_semantic_value::admission::{AdmissionRecord, PathStep};
+        let document = json!({"populations": [{"objects": [{"fields": {
+            "reach": {"set": [{"n": 1}, {"n": 1}]},
+            "total": {"record": {"type": "T", "fields": {"a": 1}}},
+        }}]}]});
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "current".to_owned(),
+        };
+        let field = |name: &str| PathStep::Field(name.to_owned());
+        let prefix = || {
+            vec![
+                field("populations"),
+                PathStep::Index(0),
+                field("objects"),
+                PathStep::Index(0),
+                field("fields"),
+            ]
+        };
+        let pointer_of = |cause: &'static str, below: Vec<PathStep>| {
+            let mut path = prefix();
+            path.extend(below);
+            let record = AdmissionRecord {
+                catalog: CatalogCode::new("invalid_runtime_input", cause),
+                fields: BTreeMap::new(),
+                path,
+                kernel: None,
+            };
+            match snapshot_admission_locus(&record, &reference, None) {
+                Some(OutcomeLocus::Document { pointer, .. }) => pointer,
+                other => panic!("a document locus, not {other:?}"),
+            }
+        };
+        let duplicate = pointer_of(
+            "duplicate-member",
+            vec![field("reach"), field("set"), PathStep::Index(1)],
+        );
+        assert_eq!(duplicate, "/populations/0/objects/0/fields/reach/set/1");
+        assert_eq!(document.pointer(&duplicate), Some(&json!({"n": 1})));
+        let missing = pointer_of(
+            "missing-member",
+            vec![field("total"), field("record"), field("fields"), field("b")],
+        );
+        assert_eq!(
+            missing,
+            "/populations/0/objects/0/fields/total/record/fields"
+        );
+        assert!(document.pointer(&missing).is_some());
     }
 }

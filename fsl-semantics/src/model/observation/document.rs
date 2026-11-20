@@ -3042,6 +3042,63 @@ fn json_pointer_segment(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
 }
 
+/// The typed steps below a field value, each written the way the document
+/// spells it, so a pointer folded from them resolves to the failing member
+/// (FR-663; FR-106 nested path): a collection tag before an element index,
+/// `present` for an option's value, and `record` then `fields` before a
+/// record's field name. Steps below a leaf (a magnitude, a payload member)
+/// are already document members and stay as they are.
+fn document_spelling(mut form: RawForm<'_>, steps: &[PathStep]) -> Vec<PathStep> {
+    let mut spelled = Vec::with_capacity(steps.len() * 2);
+    for step in steps {
+        match (form, step) {
+            (RawForm::Present(inner), PathStep::OptionValue) => {
+                spelled.push(PathStep::Field("present".to_owned()));
+                form = inner.form();
+            }
+            (RawForm::Collection(kind, items), PathStep::Index(index)) => {
+                spelled.push(PathStep::Field(collection_tag(kind).to_owned()));
+                spelled.push(PathStep::Index(*index));
+                form = items
+                    .iter()
+                    .nth(*index)
+                    .map_or(RawForm::NonObject, RawValue::form);
+            }
+            (RawForm::Record(record), PathStep::Field(name)) => {
+                spelled.push(PathStep::Field("record".to_owned()));
+                spelled.push(PathStep::Field("fields".to_owned()));
+                // A missing member keeps its name; FR-663 locates it at
+                // the `fields` object (the replay pointer drops it).
+                spelled.push(step.clone());
+                form = record
+                    .fields()
+                    .find(|(own, _)| own == name)
+                    .map_or(RawForm::NonObject, |(_, value)| value.form());
+            }
+            _ => {
+                spelled.push(step.clone());
+                form = RawForm::NonObject;
+            }
+        }
+    }
+    spelled
+}
+
+/// The steps below a snapshot field of a refusal raised inside its value, as
+/// the document spells them and ending at the named member: a missing member
+/// is absent from the document, so its pointer stays at the containing
+/// object (FR-663).
+fn refusal_steps(form: RawForm<'_>, record: &AdmissionRecord) -> Vec<PathStep> {
+    let mut steps = document_spelling(form, &record.path);
+    if let Some(member) = record.fields.get("member") {
+        let named = PathStep::Field(member.clone());
+        if record.catalog.cause() != "missing-member" && steps.last() != Some(&named) {
+            steps.push(named);
+        }
+    }
+    steps
+}
+
 /// The JSON pointer to an object's member in its source snapshot.
 fn snapshot_member_path(population: usize, object: usize, member: &str) -> String {
     format!(
@@ -3051,6 +3108,18 @@ fn snapshot_member_path(population: usize, object: usize, member: &str) -> Strin
 }
 
 /// The JSON pointer to an object's field value in its source snapshot.
+/// The typed document steps to an object's field value in its snapshot.
+fn snapshot_field_steps(population: usize, object: usize, field: &str) -> Vec<PathStep> {
+    vec![
+        PathStep::Field("populations".to_owned()),
+        PathStep::Index(population),
+        PathStep::Field("objects".to_owned()),
+        PathStep::Index(object),
+        PathStep::Field("fields".to_owned()),
+        PathStep::Field(field.to_owned()),
+    ]
+}
+
 fn snapshot_field_path(population: usize, object: usize, field: &str) -> String {
     format!(
         "/populations/{population}/objects/{object}/fields/{}",
@@ -3287,7 +3356,8 @@ pub(super) fn admit_population_values<'t>(
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            ),
+                            )
+                            .at(snapshot_field_steps(population_index, object_index, name)),
                     ));
                 }
                 let mut found = Vec::new();
@@ -3300,28 +3370,12 @@ pub(super) fn admit_population_values<'t>(
                         .map_err(|mut record| {
                             let field_path =
                                 snapshot_field_path(population_index, object_index, name);
-                            let mut path = vec![
-                                PathStep::Field("populations".to_owned()),
-                                PathStep::Index(population_index),
-                                PathStep::Field("objects".to_owned()),
-                                PathStep::Index(object_index),
-                                PathStep::Field("fields".to_owned()),
-                                PathStep::Field(name.to_owned()),
-                            ];
-                            // The steps inside the field (a collection
-                            // index, an option payload, a nested record
-                            // field or a magnitude) stay under the field.
-                            path.append(&mut record.path);
-                            let member = record.fields.get("member").cloned();
-                            let refusal_path = member.as_ref().map_or_else(
+                            let mut path =
+                                snapshot_field_steps(population_index, object_index, name);
+                            path.extend(refusal_steps(raw.form(), &record));
+                            let refusal_path = record.fields.get("member").map_or_else(
                                 || field_path.clone(),
-                                |member| {
-                                    let named = PathStep::Field(member.clone());
-                                    if path.last() != Some(&named) {
-                                        path.push(named);
-                                    }
-                                    format!("{field_path}/{}", json_pointer_segment(member))
-                                },
+                                |member| format!("{field_path}/{}", json_pointer_segment(member)),
                             );
                             record.path = path;
                             refuse(
@@ -3342,7 +3396,8 @@ pub(super) fn admit_population_values<'t>(
                                 .with(
                                     "path",
                                     snapshot_field_path(population_index, object_index, name),
-                                ),
+                                )
+                                .at(snapshot_field_steps(population_index, object_index, name)),
                         ));
                     }
                 }

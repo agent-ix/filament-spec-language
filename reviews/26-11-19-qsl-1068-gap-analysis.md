@@ -84,3 +84,4 @@ working directory was removed, preserving completed artifacts.
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | deferred | Report the installed CLI, command, exit status and omitted rows to the owner; no spec or tooling change was authorized for this ticket. |
+| FND-001 | rejected | Not a defect of this PR: the matrix omits FR-106-AC-62..69 because a blank line at spec/functional/FR-106-admit-snapshots-and-invocations.md:1309 on main splits the acceptance table, and that spec file is not in this diff; re-checked 2026-11-20 with quire 0.52.0 on main (rows still end at AC-61). The spec owner removes the blank line outside this PR. |
