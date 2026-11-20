@@ -7721,15 +7721,11 @@ fn source_object_rows(
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             members.push(SelectedSourceObjectMember {
                 name: name.into(),
-                type_node: Some(
-                    emitted
-                        .get(&target)
-                        .cloned()
-                        .ok_or(EmitRefusal::SourceMapInvariant)?,
-                ),
+                type_node: emitted
+                    .get(&target)
+                    .cloned()
+                    .ok_or(EmitRefusal::SourceMapInvariant)?,
                 optional,
-                member_type: None,
-                collections: Vec::new(),
             });
             member_facts.push(SourceObjectMemberFacts {
                 original_member_identity: original_member_identity.into(),
@@ -7810,79 +7806,6 @@ fn source_object_rows(
                         .ok_or(EmitRefusal::SourceMapInvariant)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let parameters = operation
-                .parameters
-                .iter()
-                .map(|parameter| {
-                    let name = parameter
-                        .key
-                        .node
-                        .strip_prefix(&parameter_prefix)
-                        .filter(|name| !name.is_empty() && !name.contains('/'))
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    let optional = parameter.multiplicity.lower == 0;
-                    if parameter.value_type
-                        == fsl_semantics::model::domain_package::ValueTypeRef::Clock
-                    {
-                        let mut collections = Vec::new();
-                        if parameter.multiplicity.lower != 1
-                            || parameter.multiplicity.upper != Some(1)
-                        {
-                            let kind = match (
-                                parameter.multiplicity.ordered,
-                                parameter.multiplicity.unique,
-                            ) {
-                                (true, _) => "sequence",
-                                (false, true) => "set",
-                                (false, false) => "bag",
-                            };
-                            collections.push(
-                                filament_contract_model::SelectedClockCollectionLayer {
-                                    kind: kind.into(),
-                                    minimum: parameter.multiplicity.lower.to_string().into(),
-                                    maximum: parameter.multiplicity.upper.map_or_else(
-                                        || "unbounded".into(),
-                                        |bound| bound.to_string().into(),
-                                    ),
-                                },
-                            );
-                        }
-                        return Ok(SelectedSourceObjectMember {
-                            name: name.into(),
-                            optional,
-                            type_node: None,
-                            member_type: Some("ix://filament/native/Clock".into()),
-                            collections,
-                        });
-                    }
-                    let type_node = match &parameter.value_type {
-                        fsl_semantics::model::domain_package::ValueTypeRef::Package(key) => {
-                            source_node_for_declaration(graph, key)
-                                .and_then(|node| emitted.get(&node.key()))
-                                .cloned()
-                        }
-                        fsl_semantics::model::domain_package::ValueTypeRef::Resolved(value) => {
-                            match value.as_ref() {
-                                filament_exact::ValueType::Composite(key) => {
-                                    emitted.get(key).cloned()
-                                }
-                                _ => None,
-                            }
-                        }
-                        fsl_semantics::model::domain_package::ValueTypeRef::Clock
-                        | fsl_semantics::model::domain_package::ValueTypeRef::Native(_)
-                        | fsl_semantics::model::domain_package::ValueTypeRef::Unit(_) => None,
-                    }
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    Ok(SelectedSourceObjectMember {
-                        name: name.into(),
-                        optional,
-                        type_node: Some(type_node),
-                        member_type: None,
-                        collections: Vec::new(),
-                    })
-                })
-                .collect::<Result<Vec<_>, EmitRefusal>>()?;
             operations.push(SourceObjectOperationFacts {
                 identity: identity.clone(),
                 query,
@@ -7891,7 +7814,6 @@ fn source_object_rows(
                 identity,
                 query,
                 clock_parameters,
-                parameters,
             });
         }
         rows.push((
