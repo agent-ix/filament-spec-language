@@ -49,7 +49,7 @@ fn fixture_request(directory: &Path, source: &str) -> CheckedHandoffRequest {
 }
 
 /// The handoff directory of `source`: its request, files and admitted package.
-fn handoff(
+pub(super) fn handoff(
     source: &str,
 ) -> (
     tempfile::TempDir,
