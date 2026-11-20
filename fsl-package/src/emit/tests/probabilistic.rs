@@ -2982,6 +2982,36 @@ fn a_quantity_reward_bound_is_spelled_at_the_reward_unit() {
     assert_ne!(id_for("5 ms"), id_for("6 ms"));
 }
 
+/// FSpec FR-640-AC-10: a timed P95 claim retains the model's delay node in
+/// its claim path while spelling the complete quantile form and its reward
+/// bound. The strict reader admits the emitted package.
+#[trace("TC-1288", "FR-498-AC-6")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-10")]
+#[test]
+fn a_timed_p95_claim_binds_delays_and_spells_its_quantile_form() {
+    let (document, checked) = timed_claims_check(&[
+        "delay ConfigVersion::attemptUpdate ~ discrete { 1 ms: 90, 3 ms: 10 };",
+        "reward duration on ConfigVersion::attemptUpdate = 2 ms;",
+        "probabilistic P95 using tm on Config under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 \
+         { quantile 0.95 of (accumulate duration from holds(true) until holds(true) within 10 ms) <= 5 ms }",
+    ]);
+    let package = checked.unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let (wire, read) = emit_and_read(&package, &document);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+
+    let delays = node_ids(&wire, "probabilistic", "delay_distribution");
+    let [delay] = delays.as_slice() else {
+        panic!("one delay distribution node");
+    };
+    let claim = claim_named(&wire, "P95");
+    assert_eq!(targets(binding(&claim["body"], "delays")), [delay.clone()]);
+    assert_eq!(
+        statement_spelling(&wire, "P95").join(" "),
+        "form kind quantile level rational 19/20 measure kind accumulate from <node> until <node> within quantity <node> 10 bound direction at_most value quantity <node> 5 over activation kind origin confidence alpha rational 1/100 beta rational 1/100 indifference rational 1/100"
+    );
+}
+
 /// FR-186 delay weighting is QSL-2551: a measure weighted by `delay` is a
 /// located refusal at the claim, never a weighting by a reward that happens
 /// to be named `delay`.
