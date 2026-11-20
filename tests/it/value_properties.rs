@@ -2,6 +2,8 @@
 //! Generated source properties over the real parser, checker and evaluator.
 //! Rejected source never supplies an evaluator package. Over-bound `count<N>`
 //! remains outside the admitted generator pending QSL-2003.
+//! P2 and near misses use Linked mode. P4's deliberately partial conversion
+//! functions use public Kernel admission before runtime refusal evaluation.
 
 use std::collections::BTreeMap;
 
@@ -11,10 +13,11 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_bench::prop::{self, near_miss, value};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckRefusal, Obligation, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use proptest::prelude::*;
+use proptest::prelude::{any, BoxedStrategy, Strategy, TestCaseError};
 use proptest::test_runner::{TestCaseResult, TestError, TestRunner};
+use proptest::{prop_assert, prop_assert_eq, prop_oneof};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Reference {
@@ -38,11 +41,7 @@ fn rational(numerator: i128, denominator: i128) -> Reference {
     Reference::Rational(numerator / divisor * sign, denominator / divisor * sign)
 }
 
-fn decimal(mut coefficient: i128, mut scale: u32) -> Reference {
-    while scale > 0 && coefficient % 10 == 0 {
-        coefficient /= 10;
-        scale -= 1;
-    }
+fn decimal(coefficient: i128, scale: u32) -> Reference {
     Reference::Decimal(coefficient, scale)
 }
 
@@ -209,6 +208,10 @@ struct Compiled {
 }
 
 fn compile(source: &str) -> Result<Compiled, CompileFailure> {
+    compile_mode(source, CheckMode::Linked)
+}
+
+fn compile_mode(source: &str, mode: CheckMode) -> Result<Compiled, CompileFailure> {
     let parsed = fsl_bench::parse::parse(source)
         .map_err(|error| CompileFailure::Source(format!("parse: {error:?}")))?;
     if !parsed.is_admissible() {
@@ -229,7 +232,7 @@ fn compile(source: &str) -> Result<Compiled, CompileFailure> {
     .map_err(|error| CompileFailure::Source(format!("assembly: {error:?}")))?;
     declarations
         .check(
-            CheckMode::Linked,
+            mode,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
@@ -674,7 +677,24 @@ fn rejected_near_miss(input: &near_miss::NearMiss) -> TestCaseResult {
     Ok(())
 }
 
-/// Provenance: QSL-2055 P4. Exact conversion and bound membership determine definedness.
+/// Provenance: QSL-2055 P4 boundary. Linked checking retains the range obligation.
+#[test]
+fn partial_conversion_keeps_the_linked_range_boundary() {
+    let source = format!("{}function f using v(x: Integer): Int[0, 3] pure {{ convert<Int[0, 3]>(x) }}\nfunction invoke using v(): Int[0, 3] pure {{ f(0) }}\n", value::VALUE_HEADER);
+    let refusals = match compile(&source) {
+        Err(CompileFailure::Check(refusals)) => refusals,
+        Err(other) => panic!("a checker range refusal, got {other:?}"),
+        Ok(_) => panic!("Linked mode must retain the unproved range obligation"),
+    };
+    assert_eq!(refusals.len(), 1);
+    let CheckCause::Unproved(Obligation::Range { required, .. }) = &refusals[0].cause else {
+        panic!("a range obligation, got {:?}", refusals[0]);
+    };
+    assert_eq!(required.lower, Some(filament_exact::Integer::from(0_i64)));
+    assert_eq!(required.upper, Some(filament_exact::Integer::from(3_i64)));
+}
+
+/// Provenance: QSL-2055 P4. Public Kernel evaluation observes partial conversions.
 #[ix_trace_rs::trace("FSpec-FR-140-AC-7")]
 #[test]
 fn p4_refusals_agree_with_the_reference() {
@@ -685,7 +705,7 @@ fn p4_refusals_agree_with_the_reference() {
             let source = format!("{}function f using v(x: Integer): Int[0, 3] pure {{ convert<Int[0, 3]>(x) }}\nfunction invoke using v(): Int[0, 3] pure {{ f({number}) }}\n", value::VALUE_HEADER);
             (source, (0..=3).contains(&number).then_some(Reference::Integer(i128::from(number))), "undefined_expression", "outside-domain")
         };
-        let package = compile(&source).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
+        let package = compile_mode(&source, CheckMode::Kernel).map_err(|error| TestCaseError::fail(format!("{error:?}\n{source}")))?;
         let result = call(&package);
         match (expected, result) {
             (Some(expected), Outcome::Completed(value)) => prop_assert!(agree(&expected, &actual(&value)), "{source}"),
@@ -745,12 +765,12 @@ fn aggregate_source(
         ),
         2 => (
             "Integer",
-            "reduce<Total>(a, x in xs: if a < x then a else x)",
+            "fold<Total>(a, x in xs: if a < x then a else x, identity: 5)",
             Reference::Integer(i128::from(*members.iter().min().unwrap())),
         ),
         3 => (
             "Integer",
-            "reduce<Total>(a, x in xs: if a > x then a else x)",
+            "fold<Total>(a, x in xs: if a > x then a else x, identity: -5)",
             Reference::Integer(i128::from(*members.iter().max().unwrap())),
         ),
         4 => (
