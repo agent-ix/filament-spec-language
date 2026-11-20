@@ -1395,7 +1395,7 @@ pub(super) fn lower_over_package(
             .map_err(|failure| {
                 RunCause::TlFault(format!("an atom has no reader projection: {failure:?}"))
             })?;
-        let rows = canonical::CanonicalRows::from_projection(term.projection(), None, &declared)
+        let rows = canonical::CanonicalRows::from_projection(term.projection(), &declared)
             .map_err(RunCause::TlFault)?;
         let label = canonical::package_label(&term, &rows).map_err(RunCause::TlFault)?;
         labels.insert(FormulaNodeId::from_arena_index(arena), label);

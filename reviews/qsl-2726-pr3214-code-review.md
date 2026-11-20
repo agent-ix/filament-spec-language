@@ -53,3 +53,21 @@ Ticket: QSL-2726. PR agent-ix/filament-spec-language#3214, head aaa5643860, base
 ## Verdict
 
 Not mergeable. FND-001 alone blocks merge: it deletes main's newest feature. FND-002 is behaviour claimed done that diverges from the source route.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | The `types` parameter of `CanonicalRows::from_projection` is now always `None` (its one caller passes `None`), so the world-composite loop is dead code. Fix: drop the parameter and the loop | fsl-command/src/command/tl/canonical.rs:35-66; fsl-command/src/command/tl.rs:1398 |
+
+## Dispositions
+
+Round 1, head 9e84cf3919 on main 5865aa2ffe.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `git diff origin/main...HEAD --stat` touches none of #3213's 17 files. The only line overlapping with #3202/#3210/#3153/#3215/#3217/#3219 is an import reorder that rustfmt 2021 produces |
+| FND-002 | fixed | One item per kind in Capability::ALL order, pre/post state clauses included, task-set claims after the other claims, then deadlock-freedom. Per the arch ruling, the families with no package record rows refuse typed instead of giving a different list: a kind-less claim (refinement, hyperproperty, probabilistic) and a schedulability claim go to `Pending(Declaration)`, and a protocol subject goes to `Pending(ProtocolSubject)` |
+| FND-003 | fixed | Order key is (position in `lock.sources`, start byte) |
+| FND-004 | fixed | No `bare.world()` remains on the print path. `project_holds_for_print` reads only the witness rows, and `from_projection` gets `None` |
+| FND-005 | still-open | The clock-parameter and tuple/union tags are fixed. But the retag removed `FR-569-AC-6` from the pre-existing `fixtures_s_s_r_and_s_p_emit_source_objects` (line 40), which does assert that AC. The new `a_source_operation_declares_its_effective_precondition_function` (line 1767) still carries `FR-569-AC-6`. Fix: restore the tag at line 40 and retag line 1767 (for example `FSpec-FR-322`, clause functions item 5, or TC-1408 alone) |

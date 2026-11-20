@@ -37,7 +37,7 @@ invariant Sized using P on Order at current { self.measure(0) >= 0 }
 ";
 
 /// S, S-R and S-P emit the source-owned object declarations.
-#[trace("TC-1408")]
+#[trace("FR-569-AC-6", "TC-1408")]
 #[test]
 fn fixtures_s_s_r_and_s_p_emit_source_objects() {
     let variants = [
@@ -1764,7 +1764,7 @@ fn a_source_tuple_and_union_clock_place_keep_the_source_spelling() {
 /// FSpec FR-322 item 5 (QSL-2726): a source operation whose only precondition
 /// is one term still declares its own effective-precondition clause function
 /// `[O, op, "effective_precondition"]`.
-#[trace("FR-569-AC-6", "TC-1408")]
+#[trace("TC-1408")]
 #[test]
 fn a_source_operation_declares_its_effective_precondition_function() {
     let text = format!("{HEADER}{S}");

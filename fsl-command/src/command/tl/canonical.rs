@@ -31,39 +31,13 @@ pub(super) struct CanonicalRows {
 
 impl CanonicalRows {
     /// Build the declaration and function spellings a package-backed
-    /// expression needs from its FR-940 read projection and admitted world.
+    /// expression needs from its FR-940 read projection and the package's declared composites.
     pub(super) fn from_projection(
         projection: &fsl_package::ReaderProtocolProjection,
-        types: Option<&filament_semantic_value::declaration::TypeEnvironment>,
         declared: &[fsl_package::DeclaredComposite],
     ) -> Result<Self, String> {
-        use filament_semantic_value::declaration::CompositeShape;
-
         let expression = CheckedExpression::from_projection(projection)?;
         let mut rows = Self::default();
-        for composite in types.into_iter().flat_map(|types| types.composites()) {
-            let key = composite.key();
-            rows.declarations
-                .insert(key.clone(), canonical_identity(&key)?);
-            match composite.shape() {
-                CompositeShape::Record(fields) => {
-                    rows.record_fields.insert(
-                        key,
-                        fields.iter().map(|field| field.name().to_owned()).collect(),
-                    );
-                }
-                CompositeShape::Union(members) => {
-                    rows.union_members.insert(
-                        key,
-                        members
-                            .iter()
-                            .map(|member| member.identifier().to_owned())
-                            .collect(),
-                    );
-                }
-                CompositeShape::Tuple(_) => {}
-            }
-        }
         // The names the package's own declaration nodes list, for a declaration
         // no identity row selects.
         for composite in declared {

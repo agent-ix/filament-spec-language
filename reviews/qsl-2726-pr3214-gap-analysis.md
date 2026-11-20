@@ -38,3 +38,13 @@ Ticket: QSL-2726. PR agent-ix/filament-spec-language#3214, head aaa5643860. Plan
 ## Verdict
 
 Gaps: FND-001 is a specified behaviour that is claimed done but only partly met. FND-002 and FND-003 inflate the matrix.
+
+## Dispositions
+
+Round 1, head 9e84cf3919.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The package defaults match the source for temporal, invariant, pre/post and state-graph claims (`package_default_items_equal_the_source_defaults_over_every_claim_form`). Task-set and other unrecorded families refuse typed (`package_default_items_equal_the_source_defaults`), per the arch ruling |
+| FND-002 | still-open | Same as code-review FND-005: line 1767 still claims FR-569-AC-6, and the correct tag was removed from line 40 |
+| FND-003 | fixed | The seq test carries only `TC-2601` and is ignored with the ruled reason (the FR-322 general binder-level rule governs; the gap is in the reader) |
