@@ -7169,6 +7169,48 @@ mod tests {
                 if operation.parameters[0].presence == Presence::Optional
         )));
 
+        let mut optional_option =
+            option_wire_document(Some(serde_json::json!("ix://filament/native/Integer")));
+        optional_option["types"][1]["operations"][0]["params"][0]["presence"] =
+            serde_json::json!("optional");
+        let refusals = read_records(
+            "acme/optionals",
+            &parse_document(optional_option.to_string().as_bytes()),
+        )
+        .expect_err("optional presence cannot wrap an Option<T> parameter twice");
+        assert!(refusals.iter().any(|refusal| {
+            refusal.code == Code::InvalidModelBinding
+                && matches!(
+                    &refusal.cause,
+                    ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
+                        if node == "ix://acme/optionals/Holder/read/value"
+                            && *member == MemberPath::new(MemberRoot::Operation)
+                                .name("params")
+                                .index(0)
+                                .name("presence")
+                )
+        }), "{refusals:?}");
+
+        let required_option = option_wire_document(Some(serde_json::json!(
+            "ix://filament/native/Integer"
+        )));
+        let records = read_records(
+            "acme/optionals",
+            &parse_document(required_option.to_string().as_bytes()),
+        )
+        .expect("a required Option<T> parameter is admitted");
+        assert!(records.iter().any(|record| matches!(
+            record,
+            DomainPackageRecord::OperationMember(operation)
+                if operation.parameters.len() == 1
+                    && operation.parameters[0].presence == Presence::Required
+                    && operation.parameters[0].value_type
+                        == ValueTypeRef::Package(declaration_key(
+                            "acme/optionals",
+                            "ix://acme/optionals/OptInt",
+                        ))
+        )), "{records:?}");
+
         for invalid_presence in [serde_json::Value::Null, serde_json::json!("sometimes")] {
             let mut invalid = option_wire_document(Some(serde_json::json!(
                 "ix://filament/native/Integer"

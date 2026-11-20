@@ -39,3 +39,10 @@ The repository-wide `quoin matrix` reports 1,216 untagged criteria and 257 crite
 - `FR-056-AC-65` — examined: "Over FSpec TC-2054's `test/refunds` package, intake admits `Order/note` with `firstApprover` `required` and `secondApprover` `optional`, and the type environment gives `firstApprover` `Reference<R::Staff>` and `secondApprover` `Option<Reference<R::Staff>>`. With `secondApprover`'s `presence` `\"maybe\"`, `null` or absent, intake refuses `invalid_model_binding`/`malformed-declaration` at `Order/note`, path `Operation.params[1].presence`; with `secondApprover` typed by the option value type `OptStaff` and presence `optional` it refuses the same pair at the same path; with `OptStaff` and presence `required` it admits `secondApprover` as `Option<Reference<R::Staff>>`."
 - `FR-103-AC-12` — examined: optional operation parameter clause checks, presence obligations, `deref` type refusal, implicit trailing omission lowering, and invalid arity/type refusals.
 - The other 1,214 untagged and 257 ignored-only criteria are counted in the matrix rollup; this PR review did not inspect their individual requirement/test semantics.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | `FR-056-AC-65` now has a matrix binder, but the intake test uses a native Integer parameter and does not exercise the specified optional Option-valued parameter refusal or required Option-valued parameter acceptance. |
+| FND-002 | still-open | `FR-103-AC-12` now has matrix binders and tests for option presence/value rules, but no test asserts that omitted and explicit-`absent` calls lower to equal checked nodes and term data as this criterion requires. |

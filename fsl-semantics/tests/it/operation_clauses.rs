@@ -55,13 +55,16 @@ fn check(
 fn check_optional_parameter_clause(
     clause: &str,
 ) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+    check_optional_parameter_clause_with_type(clause, "ix://filament/native/Integer")
+}
+
+fn check_optional_parameter_clause_with_type(
+    clause: &str,
+    type_ref: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
     let mut bump = operation(
         "bump",
-        json!([operation_parameter(
-            "bump",
-            "amount",
-            "ix://filament/native/Integer"
-        )]),
+        json!([operation_parameter("bump", "amount", type_ref)]),
         None,
         empty_frame(),
     );
@@ -228,4 +231,16 @@ fn deref_over_an_optional_parameter_refuses_type_mismatch() {
     );
     assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
     assert_eq!(refusal.location.path(), vec![0]);
+}
+
+/// FR-103-AC-12: after `value` establishes the reference, `deref` over an
+/// optional reference parameter checks under the same presence guard.
+#[trace("FR-103-AC-12")]
+#[test]
+fn deref_value_of_an_optional_reference_parameter_checks() {
+    check_optional_parameter_clause_with_type(
+        "present(amount) implies deref(value(amount)).versionNumber >= 0",
+        &format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"),
+    )
+    .expect("the guarded option value dereferences as a model reference");
 }

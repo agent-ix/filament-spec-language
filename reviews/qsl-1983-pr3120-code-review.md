@@ -34,3 +34,9 @@ Reviewed PR #3120 at frozen head `e1d35d0aa8b977b5b6de3c672fd5f65f5507e3d8`, inc
 ## Findings detail
 
 The new assembler wraps an optional parameter's value type in `Option<X>`, and the new test only checks dispatch arity and invocation admission. There is no test for `present(p)`, guarded `value(p)`, unguarded `value(p)` refusing `unproved-presence`, or `deref(p)` refusing `type-mismatch`, although these are explicit FR-103-AC-12 behaviors and are the core semantic consequence of this changed type construction. The checked-call test also does not assert the required omitted-versus-explicit-`absent` checked-node equality. Add focused tests for these cases before treating the clause semantics as reviewed evidence.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | New tests now cover `present`, guarded and unguarded `value`, and `deref` mismatch for an optional integer. They do not cover successful `deref(value(p))` for an optional reference parameter or assert that an omitted call and explicit `absent` call have equal checked nodes and term data. |
