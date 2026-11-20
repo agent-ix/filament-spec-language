@@ -132,6 +132,15 @@ impl ClauseEvaluation {
     pub fn comparison(&self, at: &Location) -> Option<&ComparisonReport> {
         self.trail.comparisons.get(at)
     }
+
+    /// FR-269 (TC-3121): when the evaluation stopped inside the body of a
+    /// function the clause called, the location of that call in the
+    /// clause, which is the clause expression whose evaluation ended there.
+    /// `None` when the evaluation completed or stopped on the clause's own
+    /// frame.
+    pub fn stopped_call(&self) -> Option<&Location> {
+        self.trail.stopped_call.as_ref()
+    }
 }
 
 /// FR-268: the claimed witness the separation check reads.
@@ -304,6 +313,10 @@ pub(crate) struct Trail {
     /// Each recorded collection or record beside its provenance; looked up
     /// by pointer identity, which a `let` binding or a stored copy keeps.
     located: Vec<(Value, Provenance)>,
+    /// The latest call the clause's own frame made into a function body.
+    open_call: Option<Location>,
+    /// The call of `open_call` when the evaluation stopped inside its body.
+    stopped_call: Option<Location>,
 }
 
 impl Trail {
@@ -323,7 +336,19 @@ impl Trail {
             stops: BTreeMap::new(),
             comparisons: BTreeMap::new(),
             located: Vec::new(),
+            open_call: None,
+            stopped_call: None,
         }
+    }
+
+    /// The clause's own frame entered a function body at the call `at`.
+    pub(crate) fn enter_call(&mut self, at: Option<&Location>) {
+        self.open_call = at.cloned();
+    }
+
+    /// The evaluation stopped inside the body the latest call entered.
+    pub(crate) fn stop_in_call(&mut self) {
+        self.stopped_call = self.open_call.clone();
     }
 
     /// Record a field or member selection at `at`, read at `path`.

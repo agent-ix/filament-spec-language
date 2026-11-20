@@ -201,6 +201,7 @@ pub fn replay_state_clause(
         documents: read_documents,
         observations,
         mut meter,
+        stopped_call: _,
     } = check;
 
     let fault = |invariant| {

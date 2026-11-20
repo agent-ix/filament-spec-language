@@ -10,18 +10,18 @@
 
 use super::frame::object;
 use super::frame_replay::{
-    Unit, config_version_unit, packet, unit_for, unit_for_with_function_modes, witness_source,
+    config_version_unit, packet, unit_for, unit_for_with_function_modes, witness_source, Unit,
 };
 use super::*;
-use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
+use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{Derived, derive_separating_witness};
+use crate::witness::{derive_separating_witness, Derived};
 use crate::{
-    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
-    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
-    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
-    WitnessFailure, WitnessSettlement, replay_state_clause,
+    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
+    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
+    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
+    WitnessEnvelope, WitnessFailure, WitnessSettlement,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -2188,6 +2188,34 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     let version_record = version_derive();
     let version_repeat = version_derive();
     assert_eq!(version_record, version_repeat);
+    // FR-266-AC-2: the first `=`'s operands, `child`'s converted post-call
+    // 4 then its pre-call 2 plus one, under the `and` and the first
+    // `implies`.
+    let version_equality = occurrence(&version_unit, "VersionAdvances", &[0, 1], Operator::Binary);
+    assert_eq!(
+        version_record.deciding_comparison,
+        Some(version_equality.clone())
+    );
+    let version_operands = version_record
+        .operands
+        .as_ref()
+        .expect("comparison operands");
+    assert!(crate::result::same_element(
+        &version_operands[0],
+        &integer(4)
+    ));
+    assert!(crate::result::same_element(
+        &version_operands[1],
+        &integer(3)
+    ));
+    assert_eq!(
+        version_record.decision_path,
+        Some(vec![
+            occurrence(&version_unit, "VersionAdvances", &[], Operator::Binary),
+            occurrence(&version_unit, "VersionAdvances", &[0], Operator::Binary),
+            version_equality,
+        ])
+    );
     let version_report = version_advances_clause_report(0, Some(2), 0, Some(4), "child", true);
     assert_eq!(version_report.witness.as_ref(), Some(&version_record));
     let version_bytes = crate::spine::write_clause_run_result(&version_report).unwrap();
@@ -2205,6 +2233,11 @@ fn tc_3121_public_derivation_matches_clause_run_and_replay_records() {
     )
     .unwrap();
     assert_eq!(witness_arm(&version_replay).record(), Some(&version_record));
+    // FR-269-AC-9: the no-record envelope settles the agreement.
+    assert_eq!(
+        witness_arm(&version_replay).settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
     assert_eq!(
         encoded(witness_arm(&version_replay).record().unwrap()),
         version_native_witness
@@ -2474,12 +2507,26 @@ fn tc_3121_public_derivation_refusals_keep_catalog_metadata() {
     let crate::DerivationRefusal::Undefined { expression, cause } = &first else {
         panic!("expected the public undefined refusal, got {first:?}");
     };
+    // TC-3121 row 5: the clause's domain call that ended undefined, not the
+    // `mod` inside `u`, with the body's cause.
     assert!(matches!(
         &expression.origin,
-        filament_semantic_value::location::ExpressionOwner::Body { function, .. }
-            if function == "u"
+        filament_semantic_value::location::ExpressionOwner::StateClause { clause, .. }
+            if clause == "UndefinedDomain"
     ));
     assert!(!expression.path().is_empty(), "{expression:?}");
+    let region = undefined_unit
+        .compiled
+        .package
+        .graph()
+        .region(expression)
+        .expect("the clause's call has a source region");
+    let start = usize::try_from(region.start()).unwrap();
+    let end = usize::try_from(region.end()).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&undefined_unit.bytes[start..end]).unwrap(),
+        "u(self.versionNumber)"
+    );
     assert_eq!(*cause, "division-by-zero");
     let crate::DerivationRefusal::Undefined {
         expression: repeated_expression,
@@ -3491,7 +3538,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
+        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({
