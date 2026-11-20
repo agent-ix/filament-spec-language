@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 pub(super) fn check(
     system: &ModelSystem<'_>,
@@ -42,8 +42,25 @@ pub(super) fn check(
     if objective.route != route
         || objective.unit != timed.source().unit_node
         || objective.scale != scale
-        || objective.form != TimedProbabilityForm::Deadline
     {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    if objective.form == TimedProbabilityForm::ExpectedElapsed {
+        return check_expected_elapsed(
+            system,
+            claim,
+            bytes,
+            document,
+            &timed,
+            route,
+            scale,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        );
+    }
+    if objective.form != TimedProbabilityForm::Deadline {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     let Some((bound, predicate)) = deadline_event(claim) else {
@@ -124,6 +141,699 @@ pub(super) fn check(
         accepted.document = Some(bytes.into());
     }
     Ok(checked)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_expected_elapsed(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    bytes: &[u8],
+    document: ProbabilityCertificateDocument,
+    timed: &TimedSystem<'_, '_>,
+    route: TimedProbabilityRoute,
+    scale: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let Some((bound, predicate)) = mean_time_query(claim) else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    if route != TimedProbabilityRoute::Region
+        || !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
+        || !claim.fairness.is_empty()
+        || document.cyclic_dtmc
+        || document.event.is_some()
+        || !document.failures.is_empty()
+        || document.reward.is_some()
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let optimization = match bound {
+        Bound::AtLeast(_) => ProbabilityObjective::Minimum,
+        Bound::AtMost(_) => ProbabilityObjective::Maximum,
+    };
+    if document.optimization != optimization {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let binding = claim_binding(system, claim)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        .map(|binding| binding.reference);
+    let (graph, costs) = enumerate_region_mean_time(
+        system,
+        timed,
+        claim,
+        binding.as_ref(),
+        predicate,
+        scale,
+        limits,
+        cancel,
+        meter,
+        storage,
+    )?;
+    if target_keys(&graph) != document.targets {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let checked = check_mean_time_values(
+        &graph,
+        &costs,
+        &document,
+        optimization,
+        &bound,
+        limits,
+        cancel,
+        meter,
+    )?;
+    match checked {
+        ExactProbabilityCertificateCheck::Accepted(mut accepted) => {
+            accepted.document = Some(bytes.into());
+            Ok(ExactProbabilityCertificateCheck::Accepted(accepted))
+        }
+        rejected => Ok(rejected),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_mean_time_values(
+    graph: &CheckerGraph,
+    costs: &BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>,
+    document: &ProbabilityCertificateDocument,
+    objective: ProbabilityObjective,
+    bound: &Bound,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let mut values = BTreeMap::new();
+    for row in &document.values {
+        poll(cancel)?;
+        check_scalar(&row.value, limits)?;
+        if row.value < zero() {
+            return Err(ProbabilityDocumentError::Malformed);
+        }
+        values.insert(row.state.clone(), row.value.clone());
+    }
+    if values.len() != graph.states.len()
+        || graph.states.keys().any(|key| !values.contains_key(key))
+    {
+        return Ok(rejected(
+            ProbabilityCertificateRule::Malformed,
+            graph.initial.clone(),
+        ));
+    }
+    let mut ranks = BTreeMap::new();
+    for (key, rank) in &document.ranking {
+        poll(cancel)?;
+        if !graph.states.contains_key(key) || ranks.insert(key.clone(), *rank).is_some() {
+            return Ok(rejected(
+                ProbabilityCertificateRule::RankMissing,
+                key.clone(),
+            ));
+        }
+    }
+    if ranks.len() != graph.states.len() {
+        let at = graph
+            .states
+            .keys()
+            .find(|key| !ranks.contains_key(*key))
+            .cloned()
+            .unwrap_or_else(|| graph.initial.clone());
+        return Ok(rejected(ProbabilityCertificateRule::RankMissing, at));
+    }
+    for (key, state) in &graph.states {
+        poll(cancel)?;
+        let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let action_costs = costs.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        if state.terminal == Some(true) {
+            if value != &zero() || *rank != 0 {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::RankBroken,
+                    key.clone(),
+                ));
+            }
+            continue;
+        }
+        if *rank == 0 || state.choices.is_empty() || action_costs.len() != state.choices.len() {
+            return Ok(rejected(
+                ProbabilityCertificateRule::RankBroken,
+                key.clone(),
+            ));
+        }
+        let mut best: Option<Rational> = None;
+        let mut progress = match objective {
+            ProbabilityObjective::Maximum => true,
+            ProbabilityObjective::Minimum => false,
+            ProbabilityObjective::Workload => return Err(ProbabilityDocumentError::Unsupported),
+        };
+        for (choice_index, choice) in state.choices.iter().enumerate() {
+            let edge_costs = action_costs
+                .get(choice_index)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            if edge_costs.len() != choice.len() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            let mut sum = zero();
+            let mut mass = zero();
+            let mut descends = false;
+            for (edge, cost) in choice.iter().zip(edge_costs) {
+                poll(cancel)?;
+                check_scalar(cost, limits)?;
+                let successor = values
+                    .get(&edge.target)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                let next_cost = arithmetic(
+                    filament_exact::RationalArithmetic::Add(cost, successor),
+                    meter,
+                    cancel,
+                )?;
+                let weighted = arithmetic(
+                    filament_exact::RationalArithmetic::Multiply(&edge.probability, &next_cost),
+                    meter,
+                    cancel,
+                )?;
+                sum = arithmetic(
+                    filament_exact::RationalArithmetic::Add(&sum, &weighted),
+                    meter,
+                    cancel,
+                )?;
+                mass = arithmetic(
+                    filament_exact::RationalArithmetic::Add(&mass, &edge.probability),
+                    meter,
+                    cancel,
+                )?;
+                if edge.probability > zero()
+                    && ranks
+                        .get(&edge.target)
+                        .is_some_and(|target_rank| target_rank < rank)
+                {
+                    descends = true;
+                }
+            }
+            if mass != one() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            best = Some(match best {
+                None => sum.clone(),
+                Some(previous) => match objective {
+                    ProbabilityObjective::Minimum => previous.min(sum.clone()),
+                    ProbabilityObjective::Maximum => previous.max(sum.clone()),
+                    ProbabilityObjective::Workload => unreachable!(),
+                },
+            });
+            match objective {
+                ProbabilityObjective::Maximum => progress &= descends,
+                ProbabilityObjective::Minimum if sum == *value => progress |= descends,
+                ProbabilityObjective::Minimum => {}
+                ProbabilityObjective::Workload => unreachable!(),
+            }
+        }
+        if best.as_ref() != Some(value) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                key.clone(),
+            ));
+        }
+        if !progress {
+            return Ok(rejected(
+                ProbabilityCertificateRule::RankBroken,
+                key.clone(),
+            ));
+        }
+    }
+    let initial = values
+        .get(&graph.initial)
+        .ok_or(ProbabilityDocumentError::Malformed)?;
+    check_scalar(
+        match bound {
+            Bound::AtLeast(value) | Bound::AtMost(value) => value,
+        },
+        limits,
+    )?;
+    let meets = match bound {
+        Bound::AtLeast(threshold) => initial >= threshold,
+        Bound::AtMost(threshold) => initial <= threshold,
+    };
+    if !meets {
+        return Ok(rejected(
+            ProbabilityCertificateRule::ThresholdMissed,
+            graph.initial.clone(),
+        ));
+    }
+    Ok(ExactProbabilityCertificateCheck::Accepted(
+        ExactProbabilityAcceptance {
+            value: initial.clone(),
+            side: match bound {
+                Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
+                Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
+            },
+            certificate: ExactProbabilityCertificate {
+                values: document.values.clone(),
+            },
+            document: None,
+        },
+    ))
+}
+
+fn mean_time_query(
+    claim: &CheckedProbabilisticClaim,
+) -> Option<(Bound, &fsl_semantics::check::CheckedPredicate)> {
+    let fsl_semantics::check::ProbForm::MeanTime { bound, until } = &claim.form else {
+        return None;
+    };
+    Some((bound.clone(), until))
+}
+
+fn zero() -> Rational {
+    Rational::from_integer(Integer::from(0_i64))
+}
+
+#[derive(Clone)]
+struct MeanRegionState {
+    timed: TimedState,
+    target: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enumerate_region_mean_time(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    claim: &CheckedProbabilisticClaim,
+    binding: Option<&filament_exact::ObjectReference>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    scale: u64,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<
+    (
+        CheckerGraph,
+        BTreeMap<ProbabilityProductKey, Vec<Vec<Rational>>>,
+    ),
+    ProbabilityDocumentError,
+> {
+    let (base_scale, subdivisions) = region_scale_parts(timed, claim, scale)?;
+    let mut caps = Vec::with_capacity(timed.places().len());
+    for place in timed.places() {
+        let mut largest = 0_u64;
+        for constraint in clock_constraints(timed)
+            .into_iter()
+            .filter(|constraint| constraint.clock() == place.clock())
+        {
+            largest = largest.max(
+                time_units(constraint.bound(), scale)
+                    .ok_or(ProbabilityDocumentError::Unsupported)?,
+            );
+        }
+        caps.push(
+            largest
+                .checked_add(1)
+                .ok_or(ProbabilityDocumentError::Unsupported)?,
+        );
+    }
+    let mut initial = timed.initial();
+    if initial.len() != 1 {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let initial = initial.pop().ok_or(ProbabilityDocumentError::Unsupported)?;
+    let first = MeanRegionState {
+        target: mean_target(system, predicate, binding, initial.discrete(), cancel)?,
+        timed: initial,
+    };
+    let first_key = mean_region_key(
+        system,
+        timed,
+        binding,
+        &first,
+        &caps,
+        base_scale,
+        subdivisions,
+        scale,
+    )?;
+    reserve_storage(
+        storage,
+        first_key
+            .as_bytes()
+            .len()
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, MeanRegionState)>()),
+        limits,
+    )?;
+    let mut pending = VecDeque::from([first_key.clone()]);
+    let mut reached = BTreeMap::from([(first_key.clone(), first)]);
+    let mut states = BTreeMap::new();
+    let mut costs = BTreeMap::new();
+    let mut edges = 0_u64;
+    while let Some(key) = pending.pop_front() {
+        charge_work(meter, cancel, 1)?;
+        poll(cancel)?;
+        let current = reached
+            .get(&key)
+            .cloned()
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        if current.target {
+            costs.insert(key.clone(), Vec::new());
+            insert_checker_state(
+                key,
+                CheckerState {
+                    terminal: Some(true),
+                    choices: Vec::new(),
+                },
+                &mut states,
+                storage,
+                limits,
+            )?;
+            continue;
+        }
+        if timed
+            .is_quiescent(current.timed.discrete())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        {
+            return Err(ProbabilityDocumentError::Unsupported);
+        }
+        let mut choices = Vec::new();
+        let mut choice_costs = Vec::new();
+        if let Some((delayed_key, delayed, delay_cost)) = next_mean_region_delay(
+            system,
+            timed,
+            predicate,
+            binding,
+            &current,
+            &caps,
+            base_scale,
+            subdivisions,
+            scale,
+            cancel,
+        )? {
+            admit_mean_region_state(
+                delayed_key.clone(),
+                delayed,
+                &mut reached,
+                &mut pending,
+                limits,
+                storage,
+            )?;
+            choices.push(vec![ProbabilityEdge {
+                target: delayed_key,
+                probability: one(),
+            }]);
+            choice_costs.push(vec![delay_cost]);
+            edges = edges.saturating_add(1);
+            charge_work(meter, cancel, 1)?;
+        }
+        let clocked_steps = timed
+            .steps(&current.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let actions = system
+            .actions_with_cancel(current.timed.discrete(), cancel)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        for action in actions {
+            charge_work(meter, cancel, 1)?;
+            let mut choice: Vec<ProbabilityEdge> = Vec::new();
+            let mut enabled = true;
+            for draw in action.draws {
+                if draw.successors.len() != 1 {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                }
+                let (transition, discrete_post) = &draw.successors[0];
+                let Some((_, timed_post)) = clocked_steps.iter().find(|(step, post)| {
+                    step.transition() == transition
+                        && system
+                            .state_key(post.discrete())
+                            .ok()
+                            .zip(system.state_key(discrete_post).ok())
+                            .is_some_and(|(left, right)| left.0 == right.0)
+                }) else {
+                    enabled = false;
+                    break;
+                };
+                let post = TimedState::new(
+                    timed_post.discrete().clone(),
+                    ClockValuation::new(quantized_clocks(timed_post, &caps, scale)?),
+                );
+                let target = MeanRegionState {
+                    target: mean_target(system, predicate, binding, post.discrete(), cancel)?,
+                    timed: post,
+                };
+                let target_key = mean_region_key(
+                    system,
+                    timed,
+                    binding,
+                    &target,
+                    &caps,
+                    base_scale,
+                    subdivisions,
+                    scale,
+                )?;
+                admit_mean_region_state(
+                    target_key.clone(),
+                    target,
+                    &mut reached,
+                    &mut pending,
+                    limits,
+                    storage,
+                )?;
+                if let Some(edge) = choice.iter_mut().find(|edge| edge.target == target_key) {
+                    edge.probability = edge.probability.add(&draw.probability);
+                } else {
+                    choice.push(ProbabilityEdge {
+                        target: target_key,
+                        probability: draw.probability.clone(),
+                    });
+                }
+                edges = edges.saturating_add(1);
+                charge_work(meter, cancel, 1)?;
+            }
+            if enabled && !choice.is_empty() {
+                choice_costs.push(vec![zero(); choice.len()]);
+                choices.push(choice);
+            }
+        }
+        if edges > u64::try_from(limits.edges).unwrap_or(u64::MAX) {
+            return Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::Edges,
+                bound: u64::try_from(limits.edges).unwrap_or(u64::MAX),
+                actual: edges,
+            });
+        }
+        insert_checker_state(
+            key.clone(),
+            CheckerState {
+                terminal: choices.is_empty().then_some(false),
+                choices,
+            },
+            &mut states,
+            storage,
+            limits,
+        )?;
+        costs.insert(key, choice_costs);
+    }
+    Ok((
+        CheckerGraph {
+            initial: first_key,
+            states,
+        },
+        costs,
+    ))
+}
+
+fn mean_target(
+    system: &ModelSystem<'_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &ModelSimState,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let readings = system
+        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    match readings.as_slice() {
+        [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
+        [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
+        [
+            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+            | fsl_eval::simulation::model::PredicateReading::Refused(_),
+        ] => Err(ProbabilityDocumentError::Unsupported),
+        _ => Err(ProbabilityDocumentError::Unsupported),
+    }
+}
+
+fn mean_region_key(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &MeanRegionState,
+    caps: &[u64],
+    base_scale: u64,
+    subdivisions: u64,
+    scale: u64,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    let (discrete_bytes, _) = system
+        .state_key(state.timed.discrete())
+        .map_err(ProbabilityDocumentError::KeyEncoding)?;
+    let discrete: JsonValue =
+        serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let binding: Option<JsonValue> = binding
+        .map(|reference| {
+            let text = fsl_eval::simulation::model::reference_canonical_text(reference)
+                .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+            serde_json::from_str(&text).map_err(|_| ProbabilityDocumentError::Malformed)
+        })
+        .transpose()?;
+    let unit = json!([
+        "declared",
+        fsl_foundation::node_wire::node_key_to_json(&timed.source().unit_node)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+    ]);
+    let mut clocks = Vec::with_capacity(timed.places().len());
+    for ((place, value), cap) in timed
+        .places()
+        .iter()
+        .zip(state.timed.clocks().values())
+        .zip(caps)
+    {
+        let field = timed
+            .model()
+            .clock(place.clock())
+            .ok_or(ProbabilityDocumentError::Unsupported)?;
+        let owner = field.owner();
+        let owner = owner.original();
+        let declaring = fsl_semantics::model::key::model_node_key(
+            owner.package(),
+            "model",
+            "object_type",
+            owner.node(),
+        )
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let declaring = fsl_foundation::node_wire::node_key_to_json(&declaring)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let receiver = fsl_eval::simulation::model::reference_canonical_text(place.object())
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+        let receiver: JsonValue =
+            serde_json::from_str(&receiver).map_err(|_| ProbabilityDocumentError::Malformed)?;
+        clocks.push(crate::RegionClockKey {
+            identity: json!([declaring, field.name(), receiver]),
+            value: time_units(value, scale).ok_or(ProbabilityDocumentError::Unsupported)?,
+            cap: *cap,
+        });
+    }
+    crate::region_probability_product_key(crate::RegionProductKeyInput {
+        binding,
+        discrete,
+        unit,
+        scale: base_scale,
+        subdivisions,
+        clocks,
+        deadline: None,
+        tail: crate::DigitalTail::Running,
+        monitor: None,
+        accumulator: None,
+        pending: None,
+        kind: crate::RegionKeyKind::Region,
+        corner: None,
+    })
+    .map_err(ProbabilityDocumentError::Graph)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn next_mean_region_delay(
+    system: &ModelSystem<'_>,
+    timed: &TimedSystem<'_, '_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    current: &MeanRegionState,
+    caps: &[u64],
+    base_scale: u64,
+    subdivisions: u64,
+    scale: u64,
+    cancel: &Cancel,
+) -> Result<Option<(ProbabilityProductKey, MeanRegionState, Rational)>, ProbabilityDocumentError> {
+    let current_key = mean_region_key(
+        system,
+        timed,
+        binding,
+        current,
+        caps,
+        base_scale,
+        subdivisions,
+        scale,
+    )?;
+    let delta = rational_units(1, scale)?;
+    let max_steps = caps
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(0)
+        .saturating_add(subdivisions.saturating_mul(2))
+        .saturating_add(1);
+    let mut state = current.timed.clone();
+    for elapsed in 1..=max_steps {
+        poll(cancel)?;
+        let Some(delayed) = timed
+            .delay(&state, &delta)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?
+        else {
+            return Ok(None);
+        };
+        let reached = MeanRegionState {
+            target: mean_target(system, predicate, binding, delayed.discrete(), cancel)?,
+            timed: TimedState::new(
+                delayed.discrete().clone(),
+                ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
+            ),
+        };
+        let key = mean_region_key(
+            system,
+            timed,
+            binding,
+            &reached,
+            caps,
+            base_scale,
+            subdivisions,
+            scale,
+        )?;
+        if key != current_key || elapsed == max_steps {
+            let cost = rational_units(elapsed, scale)?;
+            return Ok(Some((key, reached, cost)));
+        }
+        state = delayed;
+    }
+    Err(ProbabilityDocumentError::Unsupported)
+}
+
+fn admit_mean_region_state(
+    key: ProbabilityProductKey,
+    state: MeanRegionState,
+    reached: &mut BTreeMap<ProbabilityProductKey, MeanRegionState>,
+    pending: &mut VecDeque<ProbabilityProductKey>,
+    limits: ProbabilityDocumentLimits,
+    storage: &mut u64,
+) -> Result<(), ProbabilityDocumentError> {
+    if reached.contains_key(&key) {
+        return Ok(());
+    }
+    let required = u64::try_from(reached.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    if required > u64::try_from(limits.states).unwrap_or(u64::MAX) {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::States,
+            bound: u64::try_from(limits.states).unwrap_or(u64::MAX),
+            actual: required,
+        });
+    }
+    reserve_storage(
+        storage,
+        key.as_bytes()
+            .len()
+            .saturating_add(std::mem::size_of::<(ProbabilityProductKey, MeanRegionState)>()),
+        limits,
+    )?;
+    reached.insert(key.clone(), state);
+    pending.push_back(key);
+    Ok(())
 }
 
 fn deadline_event(
@@ -1315,6 +2025,12 @@ fn certificate_scale(
     } = &claim.form
     {
         denominators.push(horizon.denominator().as_big().clone());
+    }
+    if let fsl_semantics::check::ProbForm::MeanTime { bound, .. } = &claim.form {
+        let value = match bound {
+            Bound::AtLeast(value) | Bound::AtMost(value) => value,
+        };
+        denominators.push(value.denominator().as_big().clone());
     }
     for delay in system.input().probabilistic.delays() {
         if let fsl_semantics::check::DelayDistribution::Discrete(values) = delay.distribution() {
