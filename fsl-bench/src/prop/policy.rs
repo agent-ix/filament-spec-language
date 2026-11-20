@@ -42,7 +42,7 @@ impl SeedPersistence {
             .join(
                 Path::new(source.unwrap_or("properties.rs"))
                     .file_name()
-                    .unwrap_or_default(),
+                    .unwrap_or(std::ffi::OsStr::new("properties.rs")),
             )
             .with_extension("txt")
     }
@@ -121,10 +121,9 @@ pub fn config_with_overrides(
         rng_algorithm: RngAlgorithm::ChaCha,
         max_shrink_iters: 256,
         max_shrink_time: 0,
-        failure_persistence: Some(Box::new(SeedPersistence::new(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/proptest-regressions"
-        )))),
+        // Cargo runs each test binary in its owning package's directory.
+        // Consumers persist beside their own suites, not this crate.
+        failure_persistence: Some(Box::new(SeedPersistence::new("tests/proptest-regressions"))),
         ..Config::default()
     })
 }
