@@ -892,17 +892,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     ) -> Option<String> {
         let path = transition.node()?;
         let thread = transition.thread()?;
-        let control = self
+        let (node, control) = self
             .program
             .controls
-            .values()
-            .find(|control| control.text == path)?;
-        let clauses = self.program.related.get(&control.node)?;
+            .iter()
+            .find(|(_, control)| control.text == path)?;
+        let node = *node;
+        let clauses = self.program.related.get(&node)?;
         let instance = state.instances.get(&thread.instance)?;
         let observation = self.model.observation_of(&state.model).ok()?;
-        let mut frame = self.frame(instance, thread, control.node);
+        let mut frame = self.frame(instance, thread, node);
         if let (Some(slot), Some(record)) = (
-            self.program.binder_of.get(&control.node).copied(),
+            self.program.binder_of.get(&node).copied(),
             transition.binder_record(),
         ) {
             if let Some(entry) = frame.get_mut(slot) {
