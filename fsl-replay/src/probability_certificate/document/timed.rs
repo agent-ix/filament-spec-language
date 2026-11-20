@@ -1056,6 +1056,9 @@ fn enumerate_digital_deadline(
                 charge_work(meter, cancel, 1)?;
             }
         }
+        let clocked_steps = timed
+            .steps(&current.timed)
+            .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         for (action, given_choice) in actions.into_iter().zip(given_choices) {
             charge_work(meter, cancel, 1)?;
             if let Some(choice) = given_choice {
