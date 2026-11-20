@@ -1022,7 +1022,9 @@ const KERNEL_GUARDED: Vault = Vault::Custom(
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
 const KERNEL_DIV_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 1 div x }\n";
-const KERNEL_MOD_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 1 mod x }\n";
+/// A Kernel-checked remainder function callable from a Linked match body.
+pub(crate) const KERNEL_MOD_FUNCTION: &str =
+    "function q using v(x: Integer): Integer pure { 1 mod x }\n";
 
 /// `Opaque` over [`GUARDED`] with a `match` that confines `a` to `step(0)`.
 pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours (v: V::Vault) \
