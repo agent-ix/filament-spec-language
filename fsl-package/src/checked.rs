@@ -485,14 +485,39 @@ impl CheckedPackage {
     /// through `check` and linked, does compile and succeed.
     /// ```no_run
     /// use fsl_package::CheckedPackage;
+    /// use filament_exact::{NodeKey, PathSegment, Presence, ValueType};
     /// use fsl_semantics::check::PackageDeclarations;
     /// use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    /// use filament_semantic_value::declaration::{
+    ///     CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    /// };
     /// fn build(
     ///     source: fsl_foundation::source::provenance::RawSourceRef,
     /// ) -> CheckedPackage {
-    ///     let graph = PackageDeclarations::new(source, "test/package", fsl_foundation::IdentityLimits::default())
+    ///     let key = NodeKey::new(
+    ///         "test/package",
+    ///         vec![PathSegment::Text("Marker".to_owned())],
+    ///         0,
+    ///     )
+    ///     .expect("the fixture type has a structural key");
+    ///     let mut declarations =
+    ///         PackageDeclarations::new(source, "test/package", fsl_foundation::IdentityLimits::default());
+    ///     declarations.types = TypeEnvironment::new(
+    ///         [CompositeDeclaration::new(
+    ///             key,
+    ///             "Marker",
+    ///             CompositeShape::Record(vec![FieldDeclaration::new(
+    ///                 "ready",
+    ///                 ValueType::Boolean,
+    ///                 Presence::Required,
+    ///             )]),
+    ///         )],
+    ///         [],
+    ///     )
+    ///     .expect("the minimal type fixture is admitted");
+    ///     let graph = declarations
     ///         .check(CheckMode::Linked, CheckingLimits::default(), &fsl_semantics::check::test_support::ZeroRewardEvaluator)
-    ///         .expect("an empty package checks cleanly");
+    ///         .expect("the minimal package checks cleanly");
     ///     CheckedPackage::link(graph)
     /// }
     /// ```
