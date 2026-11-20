@@ -4,11 +4,10 @@
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
 use super::{AdmissionRecordExt, admission_record};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
-    from_admitted_slots, CollectionKind, CollectionType, FieldValue, Integer, NodeKey, ObjectId,
-    ObjectReference, PathSegment, UniverseId, Value, ValueType,
+    CollectionKind, FieldValue, Integer, ObjectId, ObjectReference, UniverseId, Value,
 };
 
 use fsl_foundation::diagnostic::Code;
@@ -2610,78 +2609,47 @@ fn form_collection_value(
     }
 }
 
-/// Find the first duplicate in input order by sorting shallow wrappers whose
-/// first slot is the member and whose second slot is its source index. The
-/// shared kernel's membership key orders float leaves by bits and keeps equal
-/// members adjacent, avoiding a quadratic scan even for large Float sets.
+/// Find the first duplicate in input order. Float membership uses its exact
+/// width and bit pattern as a hash key; other value families keep the shared
+/// kernel's membership relation.
 fn duplicate_member_indices(elements: &[Value]) -> Result<Option<(usize, usize)>, ()> {
-    if elements.len() < 2 {
+    if elements
+        .iter()
+        .all(|value| matches!(value, Value::Float(_)))
+    {
+        let mut first_indices = HashMap::with_capacity(elements.len());
+        for (index, value) in elements.iter().enumerate() {
+            let Value::Float(float) = value else {
+                return Err(());
+            };
+            let width = match float.width() {
+                filament_exact::IeeeWidth::Binary32 => 32,
+                filament_exact::IeeeWidth::Binary64 => 64,
+            };
+            let key = (width, float.bits());
+            if let Some(earlier) = first_indices.get(&key) {
+                return Ok(Some((*earlier, index)));
+            }
+            first_indices.insert(key, index);
+        }
         return Ok(None);
     }
-    let key = NodeKey::new(
-        "fsl:model-observation",
-        vec![PathSegment::Text("unique-member".to_owned())],
-        0,
-    )
-    .map_err(|_| ())?;
-    let wrappers = elements
-        .iter()
-        .enumerate()
-        .map(|(index, value)| {
-            let index = u64::try_from(index).map_err(|_| ())?;
-            Ok(from_admitted_slots(
-                key.clone(),
-                vec![
-                    FieldValue::Present(value.clone()),
-                    FieldValue::Present(Value::Integer(Integer::from(index))),
-                ]
-                .into_boxed_slice(),
-            ))
-        })
-        .collect::<Result<Vec<_>, ()>>()?;
-    let wrapper_type = CollectionType::new(CollectionKind::Set, ValueType::Composite(key), None);
+
     let mut meter = filament_exact::Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS);
-    let grouped = filament_exact::form_grouped(&wrapper_type, wrappers, &mut meter)
-        .completed()
-        .ok_or(())?;
-    let Value::Collection(grouped) = grouped else {
-        return Err(());
-    };
-    let mut duplicate = None;
-    for pair in grouped.elements().windows(2) {
-        let (Some((left, earlier)), Some((right, later))) =
-            (indexed_member(&pair[0]), indexed_member(&pair[1]))
-        else {
-            return Err(());
-        };
-        if later <= earlier {
-            return Err(());
-        }
-        match filament_exact::member_equal(left, right, &mut meter) {
-            filament_exact::Outcome::Completed(true) => {
-                if duplicate.map_or(true, |(_, previous_later)| later < previous_later) {
-                    duplicate = Some((earlier, later));
+    for later in 0..elements.len() {
+        for earlier in 0..later {
+            match filament_exact::member_equal(&elements[later], &elements[earlier], &mut meter) {
+                filament_exact::Outcome::Completed(true) => {
+                    return Ok(Some((earlier, later)));
                 }
+                filament_exact::Outcome::Completed(false) => {}
+                filament_exact::Outcome::Undefined(_)
+                | filament_exact::Outcome::Refused(_)
+                | filament_exact::Outcome::Incomplete(_) => return Err(()),
             }
-            filament_exact::Outcome::Completed(false) => {}
-            filament_exact::Outcome::Undefined(_)
-            | filament_exact::Outcome::Refused(_)
-            | filament_exact::Outcome::Incomplete(_) => return Err(()),
         }
     }
-    Ok(duplicate)
-}
-
-fn indexed_member(value: &Value) -> Option<(&Value, usize)> {
-    let Value::Composite(composite) = value else {
-        return None;
-    };
-    let [FieldValue::Present(member), FieldValue::Present(Value::Integer(index))] =
-        composite.slots()
-    else {
-        return None;
-    };
-    Some((member, usize::try_from(index.to_u64()?).ok()?))
+    Ok(None)
 }
 
 /// The declaration key of each selected record value type by its IR node
