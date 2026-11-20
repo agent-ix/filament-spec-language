@@ -2116,6 +2116,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let [CheckedTerm::Binding { name, value }, body] = arguments else {
                     return Err(fault("reader-let-has-binding-and-body").into());
                 };
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-let-binder-has-name").into());
+                };
                 let binder = self.binder_of(id, name.as_ref(), body)?;
                 let slot = self.next_slot(context, locals);
                 let value = self.project_argument(id, value, context, locals)?;
@@ -2397,6 +2402,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             {
                 let [source_term, CheckedTerm::Binding { name, value }] = arguments else {
                     return Err(fault("reader-collection-query-has-source-and-binder").into());
+                };
+                let filament_contract_model::CheckedBindingNameKind::Other(binder_name) =
+                    name.kind()
+                else {
+                    return Err(fault("reader-collection-query-binder-has-name").into());
                 };
                 let binder = self.binder_of(id, name.as_ref(), value)?;
                 let slot = self.next_slot(context, locals);
