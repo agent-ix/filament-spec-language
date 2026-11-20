@@ -194,18 +194,12 @@ impl<'a> PackageProtocolProgram<'a> {
         form: ProtocolExecutionView<'a>,
         memory: ResolvedMemory,
     ) -> Result<Self, PackageProgramRefusal> {
-        let package =
+        let _package =
             input
                 .admitted_package()
                 .ok_or_else(|| PackageProgramRefusal::UnknownProtocol {
                     name: form.name.clone(),
                 })?;
-        let package_nodes: BTreeMap<_, _> = package
-            .resolved_graph()
-            .nodes
-            .iter()
-            .map(|node| (node.node_id.clone(), node))
-            .collect();
         if !form.channels.is_empty() || !form.queues.is_empty() {
             return Err(PackageProgramRefusal::Unsupported(
                 ControlOperation::Channel,
@@ -321,23 +315,9 @@ impl<'a> PackageProtocolProgram<'a> {
                         .ok_or_else(|| {
                             PackageProgramRefusal::MissingIdentity((*operation).clone())
                         })?;
-                    let operation_node = package_nodes.get(*operation).ok_or_else(|| {
-                        PackageProgramRefusal::MissingIdentity((*operation).clone())
-                    })?;
-                    let operation_path = operation_node
-                        .declaration
-                        .as_ref()
-                        .map(|declaration| {
-                            declaration
-                                .qualified_name
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                        })
-                        .filter(|path| !path.is_empty())
-                        .ok_or_else(|| {
-                            PackageProgramRefusal::MissingIdentity((*operation).clone())
-                        })?;
+                    // The package identity row supplies the declaring type
+                    // and operation name; the operation anchor itself has no
+                    // declaration-qualified path.
                     (
                         Vec::new(),
                         Vec::new(),
@@ -345,7 +325,7 @@ impl<'a> PackageProtocolProgram<'a> {
                         Some((*binder).clone()),
                         Some(anchor),
                         Some(operation_declaring),
-                        Some(operation_path),
+                        None,
                         Some(operation_name),
                         *ordering,
                         contracts
