@@ -208,6 +208,7 @@ pub fn compile_model_unit(
     let mut has_value_type = false;
     let mut has_variant_type = false;
     let mut has_event_type = false;
+    let mut has_namespace = false;
     let mut index = cursor;
     while index < tokens.len() {
         let declaration_start = index;
@@ -343,6 +344,31 @@ pub fn compile_model_unit(
                 }
                 types.push(event);
                 has_event_type = true;
+                index = next;
+            }
+            Some("namespace") => {
+                let Some((namespace, name, next)) =
+                    read_namespace(&tokens, index, &identity, parsed)
+                else {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        tokens[declaration_start].span,
+                        "invalid namespace declaration",
+                    )]);
+                };
+                if !declaration_names.insert(name.clone()) {
+                    return Err(vec![diagnostic(
+                        parsed,
+                        CompleteCode::AmbiguousDeclaration,
+                        CompleteCause::AmbiguousName,
+                        tokens[declaration_start + 1].span,
+                        format!("declaration {name} is declared more than once"),
+                    )]);
+                }
+                types.push(namespace);
+                has_namespace = true;
                 index = next;
             }
             Some("dimension") => {
@@ -558,6 +584,9 @@ pub fn compile_model_unit(
     }
     if has_event_type {
         meanings.push(("event_type", "filament.meaning.model.event-type/v1"));
+    }
+    if has_namespace {
+        meanings.push(("namespace", "filament.meaning.model.namespace/v1"));
     }
     if !populations.is_empty() {
         meanings.push(("population", "filament.meaning.model.population/v1"));
@@ -1136,6 +1165,78 @@ fn read_event_type(
         object.remove("relationships");
     }
     Some((event.wire, next))
+}
+
+fn read_namespace(
+    tokens: &[Token],
+    mut index: usize,
+    package: &str,
+    parsed: &ParsedSource,
+) -> Option<(Value, String, usize)> {
+    let start = tokens.get(index)?.span.start;
+    index += 1;
+    let name = tokens.get(index)?.text.clone();
+    index += 1;
+    if tokens.get(index)?.text != "{" {
+        return None;
+    }
+    index += 1;
+    let mut members = Vec::new();
+    let mut vocabulary = Vec::new();
+    while tokens.get(index)?.text != "}" {
+        match tokens.get(index)?.text.as_str() {
+            "members" => {
+                index += 1;
+                while tokens.get(index)?.text != ";" {
+                    if tokens.get(index)?.text != "," {
+                        members.push(format!("ix://{package}/{}", tokens[index].text));
+                    }
+                    index += 1;
+                }
+                index += 1;
+            }
+            "term" => {
+                let term_start = tokens.get(index)?.span.start;
+                index += 1;
+                let term = tokens.get(index)?.text.clone();
+                index += 1;
+                if tokens.get(index)?.text != "=" {
+                    return None;
+                }
+                index += 1;
+                let doc = serde_json::from_str::<String>(&tokens.get(index)?.text).ok()?;
+                index += 1;
+                if tokens.get(index)?.text != ";" {
+                    return None;
+                }
+                let term_end = tokens.get(index)?.span.end;
+                index += 1;
+                vocabulary.push(json!({
+                    "term": term,
+                    "doc": doc,
+                    "origin": source_origin(parsed, Span { start: term_start, end: term_end }),
+                }));
+            }
+            _ => return None,
+        }
+    }
+    let end = tokens.get(index)?.span.end;
+    index += 1;
+    let identity = format!("ix://{package}/{name}");
+    Some((
+        json!({
+            "identity": identity,
+            "displayName": name,
+            "kind": {"module": package, "name": "namespace"},
+            "roles": [],
+            "origin": source_origin(parsed, Span { start, end }),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "supertypes": [], "fields": [], "operations": [], "relationships": [],
+            "identityFields": [], "members": members, "vocabulary": vocabulary,
+        }),
+        name,
+        index,
+    ))
 }
 
 fn read_dimension(
