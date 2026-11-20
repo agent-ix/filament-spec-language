@@ -418,7 +418,7 @@ fn different_frame_scopes_conflict_but_creation_and_deletion_can_share_a_type() 
         "invalid_model_binding",
         "conflicting-binding",
         &key("advance"),
-        "TypeDefinition.operations[0].frame.modifies_receiver[0]",
+        "Operation.frame.modifies_receiver[0]",
     );
     assert!(
         found[0].detail.contains(".frame.modifies_receiver[0]")
