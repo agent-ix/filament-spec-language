@@ -1324,6 +1324,22 @@ mod tests {
         )
     }
 
+    /// FR-931 package projections retain their reader slot ids and map each
+    /// id to the admitted temporal-clause binder before rendering.
+    #[test]
+    #[trace("TC-3039", "FR-931-AC-13")]
+    fn reader_binder_slot_maps_to_the_clause_name() {
+        let mut nodes = Vec::new();
+        let root = ordinary(&mut nodes, NodeKind::Local(7));
+        let expression = CheckedExpression { nodes, root };
+        assert_eq!(
+            expression
+                .render_with_slots(&[(7, "clock".to_owned())], &CanonicalRows::default())
+                .unwrap(),
+            "clock"
+        );
+    }
+
     /// The checker's FR-397 composition of `lesser < greater` (strict) or
     /// `lesser <= greater` over two operand nodes.
     fn composition(
