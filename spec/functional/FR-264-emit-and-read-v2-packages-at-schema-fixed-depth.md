@@ -64,21 +64,24 @@ limits only (ADR-030 D-4.9).
    `Limit` refusal. The published default is 16777216 bytes, supplied by the
    outer configuration (FR-255). The `body_locations` rows of a function body
    each carry their path from the body root (FSpec FR-322), so a body's rows
-   grow with the square of its depth: the emitter charges each row's path
-   length against this bound before it builds the row, and a body whose rows
-   would exceed it is refused with the same `OutputLimit`.
+   grow with the square of its depth: the emitter charges each row the bytes it
+   is written in, its path indices as they serialize and the row's other
+   members, against this bound before it builds the row, and a body whose rows
+   would exceed it is refused with the same `OutputLimit`, whose actual count
+   is the bytes of the rows written so far plus the refused row.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-264-AC-1 | On a thread with a 512 KiB stack, a package holding a 2,000-term sum (a 100,000-term sum is refused at `emit.output_bytes` for its `body_locations` rows, Behavior 5), compiled under limits raised to fit it, is emitted, read back through FSL's I2 read with `i2.*` raised to fit it, and verified at its emitted `package_id`. The `V2Read` clones, compares equal to its clone, formats for debug and drops on the same thread. | Test (TC-738) |
+| FR-264-AC-1 | On a thread with a 512 KiB stack, a package holding a 2,000-term sum, compiled under limits raised to fit it, is emitted, read back through FSL's I2 read with `i2.*` raised to fit it, and verified at its emitted `package_id`. The `V2Read` clones, compares equal to its clone, formats for debug and drops on the same thread. | Test (TC-738) |
 | FR-264-AC-2 | Every node body of every package the emitter writes for the TC-415 corpus and for AC-1 is in FR-322's stratified grammar, checked by a walk of the emitted JSON that classifies each body position as Leaf, Group, Tuple, Member or Body. | Test (TC-738) |
 | FR-264-AC-3 | A v2 artifact identical to an emitted one except that one `application` argument is an inline `application` term is refused by FSL's I2 read with code `malformed_wire`, with no limit outcome. | Test (TC-739) |
 | FR-264-AC-4 | A v2 artifact with more nodes than `i2.nodes` at bound `B` returns `StageFailure::Limit` with kind node count, bound `B`, IR's consumed count and setting `i2.nodes`, with `Locus::Artifact`; read again with `i2.nodes` raised through the v2 read limits' builder and through FR-255's settings operation given `i2.nodes=<n>` (FR-255), which the driver CLI exposes as `--limit` (ADR-029 CB-1), it verifies. | Test (TC-739) |
 | FR-264-AC-5 | On a thread with a 512 KiB stack and the default limits, a v2 artifact whose JSON is 100,000 arrays deep is refused by FSL's I2 read with code `malformed_wire`, with no limit outcome and no outcome naming a depth. | Test (TC-739) |
 | FR-264-AC-6 | A package whose canonical emitted bytes number `N` is emitted at `emit.output_bytes` `N`, with bytes equal to the bytes emitted under a larger bound. At bound `N - 1` it returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, cause `input-bytes-exceeded`, kind input bytes, bound `N - 1`, an actual count above `N - 1` and setting `emit.output_bytes`, and writes no bytes. At bound 0 it returns the same refusal with bound 0. | Test (TC-738) |
 | FR-264-AC-7 | A package emitted once and then offered again to an emit entry at a bound below its remembered byte length returns the same `OutputLimit` refusal with actual `N`; at bound `N` it returns the remembered emission. The compile lifecycle given `emit.output_bytes` `N - 1` returns `CompileRefusal::Limit` naming `emit.output_bytes`, and given `N` emits. | Test (TC-738) |
+| FR-264-AC-8 | A 100,000-term sum emitted at `emit.output_bytes` `1 << 27` returns `EmitRefusal::OutputLimit` with code `stage_limit_exceeded`, setting `emit.output_bytes`, bound `1 << 27` and an actual count above the bound, charged for its `body_locations` rows (Behavior 5), and writes no bytes. | Test (TC-738) |
 
 ## Dependencies
 

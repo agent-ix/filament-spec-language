@@ -62,6 +62,15 @@ enum Opening<'t> {
     None,
 }
 
+/// Whether `name` is the checker's reserved name of the operand binders an
+/// IEEE ordering lowers to.
+///
+/// `#[string_edge]`: binder names are the admitted wire's fixed vocabulary.
+#[ix_trace_rs::string_edge]
+pub(crate) fn is_ieee_operand(name: &str) -> bool {
+    name == "#ieee_operand"
+}
+
 /// `#[string_edge]`: operation identities are the admitted wire's fixed
 /// operation vocabulary.
 #[ix_trace_rs::string_edge]
@@ -262,8 +271,9 @@ impl<'w> Walk<'_, 'w> {
     /// `shadow` with the scope of a binder named `name` opened.
     fn scoped(&self, shadow: &Rc<Shadow>, name: &str) -> Rc<Shadow> {
         // The checker nests IEEE operand binders under one reserved name and
-        // tells them apart by level, so no scope of it hides another.
-        if name == "#ieee_operand" {
+        // tells them apart by level, so when the walk looks for them no scope
+        // of that name hides another.
+        if is_ieee_operand(name) && self.watch.is_some_and(is_ieee_operand) {
             return Rc::clone(shadow);
         }
         match self.watch {
@@ -411,5 +421,106 @@ mod tests {
             "case",
         );
         assert_eq!(found, vec!["outer", "s"]);
+    }
+    fn operand(name: &str, level: u64) -> Value {
+        let mut node = parameter(name, "#ieee_operand");
+        node["body"]["members"][1]["value"]["value"] = json!(level.to_string());
+        node
+    }
+
+    fn let_of(name: &str, value: Value, body: Value) -> Value {
+        json!({
+            "term": "application",
+            "operator": "let",
+            "operation": {"identity": "filament.op.control.let", "laws": [], "leaves": [], "member": null, "mode": null},
+            "arguments": [{"term": "binding", "name": name, "value": value}, body],
+            "result_type": id("type"),
+        })
+    }
+
+    /// The nodes of an IEEE ordering `-x < -y` over captures `x` and `y`: two
+    /// nested `#ieee_operand` lets, one binder per level, read by `lt`.
+    fn ordering_nodes(root_form: &str) -> Vec<Value> {
+        let inner = let_of("#ieee_operand", reference("y"), reference("lt"));
+        let outer = let_of("#ieee_operand", reference("x"), inner);
+        vec![
+            node(
+                "ordering",
+                "expression",
+                root_form,
+                &["x", "y", "lt"],
+                outer,
+            ),
+            node(
+                "lt",
+                "expression",
+                "call",
+                &["operand0", "operand1"],
+                json!({
+                    "term": "aggregate",
+                    "members": [reference("operand0"), reference("operand1")],
+                }),
+            ),
+            parameter("x", "x"),
+            parameter("y", "y"),
+            operand("operand0", 0),
+            operand("operand1", 1),
+        ]
+    }
+
+    /// A walk with no watched name, which a protocol slot's sources and a
+    /// temporal clause's binders make, reports the captures `x` and `y` and
+    /// neither of the two bound IEEE operand binders.
+    #[trace("FR-390-AC-68", "TC-1071")]
+    #[test]
+    fn two_bound_ieee_operands_are_no_slot_source() {
+        let found = sources(ordering_nodes("let"), "ordering");
+        assert_eq!(found, vec!["x", "y"]);
+    }
+
+    /// A temporal clause term's free binders, read the same way, hold the
+    /// captures only when its formula holds an IEEE ordering.
+    #[trace("FR-390-AC-68", "TC-1071")]
+    #[test]
+    fn two_bound_ieee_operands_are_no_temporal_clause_binder() {
+        let mut nodes = ordering_nodes("application");
+        let clause = node(
+            "clause",
+            "expression",
+            "call",
+            &["ordering"],
+            json!({"term": "aggregate", "members": [reference("ordering")]}),
+        );
+        nodes.push(clause);
+        assert_eq!(sources(nodes, "clause"), vec!["x", "y"]);
+    }
+
+    /// The reader's binder lookup watches `#ieee_operand` and reaches both
+    /// operands of the nested lets by level.
+    #[trace("FR-390-AC-68", "TC-1071")]
+    #[test]
+    fn a_watched_ieee_operand_name_reaches_every_level() {
+        let nodes: BTreeMap<CheckedNodeId, CheckedSemanticNodeV2> = ordering_nodes("let")
+            .into_iter()
+            .map(|value| {
+                let node: CheckedSemanticNodeV2 = serde_json::from_value(value).expect("a node");
+                (node.node_id.clone(), node)
+            })
+            .collect();
+        let lookup = |id: &CheckedNodeId| nodes.get(id);
+        let start: CheckedTerm = serde_json::from_value(reference("ordering")).expect("a term");
+        let mut found = Vec::new();
+        reach_term(&lookup, &start, Some("#ieee_operand"), &mut |node| {
+            if crate::reader_protocol_projection::parameter_name(&node.body)
+                == Some("#ieee_operand")
+            {
+                found.push(node.node_id.clone());
+            }
+        });
+        assert_eq!(
+            found.len(),
+            2,
+            "both operand binders are reached: {found:?}"
+        );
     }
 }

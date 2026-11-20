@@ -9,11 +9,13 @@
 //! its emitted node carries a `body` binding, which is the walk FSpec FR-322
 //! defines on the wire.
 
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedBodyLocation, CheckedBodyLocationOrigin,
-    CheckedBodySemanticLocation, CheckedNodeId, CheckedSemanticNodeV2, CheckedTerm,
+    CheckedBodySemanticLocation, CheckedNodeId, CheckedOccurrence, CheckedSemanticNodeV2,
+    CheckedTerm,
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::{
@@ -21,15 +23,57 @@ use filament_semantic_value::location::{
 };
 use fsl_semantics::check::CheckedGraph;
 
-use super::protocol_locations::{applications_at, ordered, term_rows, wire_path, PendingRow};
+use super::protocol_locations::{
+    applications_at, ordered, term_rows, wire_path, PendingRow, MAX_SAFE,
+};
 use super::EmitRefusal;
 
-/// The least bytes one row costs beyond its path.
-const ROW_BYTES: u128 = 64;
+/// The serialized bytes the path indices of a location add to a row, memoized
+/// by the address of the location's last link: a location's bytes are its
+/// parent's and its own index's.
+type PathBytes = HashMap<usize, u128>;
 
-/// The bytes charged for each index of a row's path: its spelling and the
-/// room it takes while the rows are held.
-const PATH_ENTRY_BYTES: u128 = 8;
+/// The bytes one path index takes in the canonical array: its digits, the two
+/// quotes of a position above the safe range, and the separator that follows.
+fn index_bytes(index: usize) -> u128 {
+    let digits = u128::from(index.checked_ilog10().map_or(1, |log| log + 1));
+    let quotes = if u64::try_from(index).map_or(true, |index| index > MAX_SAFE) {
+        2
+    } else {
+        0
+    };
+    digits + quotes + 1
+}
+
+/// The bytes the indices of `at`'s path add to a row whose path is empty,
+/// without building the path.
+fn path_bytes(at: &Location, memo: &mut PathBytes) -> u128 {
+    let mut walked = Vec::new();
+    let mut total = 0;
+    for (address, index) in at.ancestry() {
+        if let Some(known) = memo.get(&address) {
+            total = *known;
+            break;
+        }
+        walked.push((address, index_bytes(index)));
+    }
+    for (address, own) in walked.into_iter().rev() {
+        total += own;
+        memo.insert(address, total);
+    }
+    // An empty path is `[]`; a path of n indices adds its n indices and n - 1
+    // separators, and the row itself is followed by a separator.
+    if at.depth() == 0 {
+        1
+    } else {
+        total
+    }
+}
+
+/// The bytes a `term_ordinal` adds beyond the one digit its row is charged.
+fn ordinal_bytes(term_ordinal: u64) -> u128 {
+    u128::from(term_ordinal.checked_ilog10().unwrap_or(0))
+}
 
 /// Whether an emitted function node carries a `body` binding.
 fn has_body_binding(node: &CheckedSemanticNodeV2) -> bool {
@@ -44,21 +88,30 @@ fn has_body_binding(node: &CheckedSemanticNodeV2) -> bool {
     })
 }
 
+/// Whether `node` is a `function` node of the package named `package` that
+/// carries a `body` binding: the only nodes the reader owes rows for (FSpec
+/// FR-322).
+///
+/// `#[string_edge]`: `function` is the admitted wire's fixed node tag.
+#[ix_trace_rs::string_edge]
+fn is_local_function_with_body(node: &CheckedSemanticNodeV2, package: &str) -> bool {
+    node.node_tag.as_ref() == "function"
+        && node.node_id.package.as_ref() == package
+        && has_body_binding(node)
+}
+
 /// Every `body_locations` row of the emitted function bodies, in the
 /// (application, occurrence, `term_ordinal`) order FSpec FR-322 requires.
 pub(super) fn checked_body_locations(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
+    source_keys: &super::SourceDeclarationKeys,
     output_bytes: u64,
 ) -> Result<Vec<CheckedBodySemanticLocation>, EmitRefusal> {
     let with_body: BTreeSet<&CheckedNodeId> = nodes
         .iter()
-        .filter(|node| {
-            node.node_tag.as_ref() == "function"
-                && node.node_id.package.as_ref() == graph.package_name()
-                && has_body_binding(node)
-        })
+        .filter(|node| is_local_function_with_body(node, graph.package_name()))
         .map(|node| &node.node_id)
         .collect();
     let mut functions = Vec::new();
@@ -86,28 +139,44 @@ pub(super) fn checked_body_locations(
     let applications = applications_at(graph, &origins);
     let mut pending: Vec<PendingRow<CheckedBodyLocation>> = Vec::new();
     // Each row carries its path from the body's root, so the rows of a deep
-    // body grow with the square of its depth; the byte ceiling is charged
-    // before a path is built.
+    // body grow with the square of its depth. A row is charged the bytes it
+    // is written in, before its path is built: the row with an empty path,
+    // serialized, and the path's indices as they serialize.
     let charged = std::cell::Cell::new(0_u128);
     let exceeded = std::cell::Cell::new(false);
+    let memo = RefCell::new(PathBytes::new());
     for (id, name, index, root, origin) in &functions {
-        let wire = |at: &Location| -> Option<(String, CheckedBodyLocation)> {
+        let wire = |at: &Location,
+                    application: &CheckedNodeId,
+                    occurrence: &CheckedOccurrence|
+         -> Option<(String, CheckedBodyLocation)> {
             if &at.origin != origin {
                 return None;
             }
-            let cost = PATH_ENTRY_BYTES * u128::try_from(at.depth()).ok()? + ROW_BYTES;
+            let origin = CheckedBodyLocationOrigin::FunctionBody {
+                function: (*id).clone(),
+                name: super::emitted_function_name(name, source_keys).into(),
+                index: u64::try_from(*index).ok()?,
+            };
+            let empty = CheckedBodySemanticLocation {
+                application: application.clone(),
+                occurrence: occurrence.clone(),
+                term_ordinal: 0,
+                location: CheckedBodyLocation {
+                    origin,
+                    path: Vec::new(),
+                },
+            };
+            let row = u128::try_from(serde_json::to_vec(&empty).ok()?.len()).ok()?;
+            let cost = row.saturating_add(path_bytes(at, &mut memo.borrow_mut()));
             charged.set(charged.get().saturating_add(cost));
             if charged.get() > u128::from(output_bytes) {
                 exceeded.set(true);
                 return None;
             }
             let location = CheckedBodyLocation {
-                origin: CheckedBodyLocationOrigin::FunctionBody {
-                    function: (*id).clone(),
-                    name: name.as_str().into(),
-                    index: u64::try_from(*index).ok()?,
-                },
                 path: wire_path(at)?,
+                ..empty.location
             };
             Some((name.clone(), location))
         };
@@ -126,7 +195,7 @@ pub(super) fn checked_body_locations(
             });
         }
     }
-    Ok(ordered(
+    let rows = ordered(
         pending,
         |application, occurrence, term_ordinal, location| CheckedBodySemanticLocation {
             application,
@@ -134,5 +203,17 @@ pub(super) fn checked_body_locations(
             term_ordinal,
             location,
         },
-    ))
+    );
+    // A row was charged one digit for its `term_ordinal`, which is assigned
+    // once the rows are grouped.
+    let written = rows.iter().fold(charged.get(), |total, row| {
+        total.saturating_add(ordinal_bytes(row.term_ordinal))
+    });
+    if written > u128::from(output_bytes) {
+        return Err(EmitRefusal::OutputLimit(super::output_limit(
+            output_bytes,
+            written,
+        )));
+    }
+    Ok(rows)
 }

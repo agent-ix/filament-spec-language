@@ -1368,7 +1368,6 @@ impl Emission {
         &self.selected_operation_member_rows
     }
 
-
     /// Selected model tuple identity rows carried by this emission.
     pub fn selected_tuple_declaration_rows(
         &self,
@@ -4164,6 +4163,20 @@ fn source_declaration_identity(
     )
 }
 
+/// The name a function body's rows carry: the checker's function name with a
+/// source model's private package spelled as the package the emitted nodes
+/// carry (FSpec FR-322), so no check-time alias reaches the bytes.
+fn emitted_function_name(name: &str, source_keys: &SourceDeclarationKeys) -> String {
+    source_keys
+        .packages
+        .iter()
+        .find_map(|(package, identity)| {
+            name.strip_prefix(&format!("ix://{package}/"))
+                .map(|declaration| format!("ix://{identity}/{declaration}"))
+        })
+        .unwrap_or_else(|| name.to_owned())
+}
+
 /// Apply the source owner's declaration-key spelling to a key retained by S3.
 fn emitted_source_declaration_key(
     package: &str,
@@ -4375,8 +4388,13 @@ fn checked_term_data(
     term_data.protocol_locations =
         protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
-    term_data.body_locations =
-        body_locations::checked_body_locations(graph, emitted_node_ids, nodes, output_bytes)?;
+    term_data.body_locations = body_locations::checked_body_locations(
+        graph,
+        emitted_node_ids,
+        nodes,
+        source_keys,
+        output_bytes,
+    )?;
     Ok((!term_data.equality_decisions.is_empty()
         || !term_data.protocol_locations.is_empty()
         || !term_data.dispatch_tables.is_empty()
@@ -6119,7 +6137,10 @@ fn normalize_model_declaration_occurrences(
     for root in nodes.iter().filter(|node| {
         node.node_tag.as_ref() == CheckedNodeTag::Model.as_wire()
             && node.semantic_form.as_ref() == "model_root"
-            && matches!(node.owner.as_ref(), Some(CheckedNodeOwner::ModelRoot { .. }))
+            && matches!(
+                node.owner.as_ref(),
+                Some(CheckedNodeOwner::ModelRoot { .. })
+            )
     }) {
         let Some(CheckedNodeOwner::ModelRoot { identity }) = root.owner.as_ref() else {
             return Err(EmitRefusal::SourceMapInvariant);
@@ -6133,7 +6154,9 @@ fn normalize_model_declaration_occurrences(
             return Err(EmitRefusal::SourceMapInvariant);
         };
         if entries.next().is_some()
-            || root_regions.insert(identity.to_string(), entry.regions.clone()).is_some()
+            || root_regions
+                .insert(identity.to_string(), entry.regions.clone())
+                .is_some()
         {
             return Err(EmitRefusal::SourceMapInvariant);
         }
@@ -9059,8 +9082,8 @@ fn temporal_binding_rows(
         };
         check_selected_definition(&source, span, profile, selection)?;
         let clock = &selection.clock;
-        let clock_name = hyper_clock_name(graph, occurrence.node())
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let clock_name =
+            hyper_clock_name(graph, occurrence.node()).ok_or(EmitRefusal::SourceMapInvariant)?;
         validate_temporal_clock(&source, span, clock_name, clock)?;
         // FSpec FR-322 "Hyper clause rows": the rows are keyed on the
         // `hyperproperty` node at its `claim` occurrence, one per quantifier
@@ -9705,10 +9728,10 @@ pub use clock_selection::{
     clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
     ClockSelectionDeclaration, ClockSelectionRefusal,
 };
+mod body_locations;
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-mod body_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;

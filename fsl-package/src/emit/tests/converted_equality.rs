@@ -167,7 +167,12 @@ fn nested_equalities_each_retain_producer_facts() {
 }
 
 /// FSpec FR-149-AC-25: the emitted equality decision retains its IEEE schedule.
-#[ix_trace_rs::trace("FSpec-TC-194", "FSpec-FR-149-AC-25", "FSpec-FR-322-AC-288", "QSL-2173")]
+#[ix_trace_rs::trace(
+    "FSpec-TC-194",
+    "FSpec-FR-149-AC-25",
+    "FSpec-FR-322-AC-288",
+    "QSL-2173"
+)]
 #[test]
 fn float_equality_schedule_roundtrips_as_float() {
     let emission = emitted(
@@ -196,8 +201,7 @@ fn float_equality_schedule_roundtrips_as_float() {
         .expect("the function has a body member");
     let body = referenced(&admitted_wire, &body_member["value"]);
     assert_eq!(
-        body["body"]["operation"]["identity"],
-        "filament.op.boolean.not",
+        body["body"]["operation"]["identity"], "filament.op.boolean.not",
         "the source float != keeps its outer Boolean negation after readback"
     );
     super::assert_equality_reader_outcomes(&emission, read);

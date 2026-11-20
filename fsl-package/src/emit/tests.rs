@@ -690,9 +690,7 @@ fn assert_equality_reader_outcomes(emission: &Emission, read: Read) {
                 let expected_schedule = match decision["schedule"].as_str() {
                     Some("plan") => filament_semantic_value::declaration::EqualitySchedule::Plan,
                     Some("text") => filament_semantic_value::declaration::EqualitySchedule::Text,
-                    Some("float") => {
-                        filament_semantic_value::declaration::EqualitySchedule::Float
-                    }
+                    Some("float") => filament_semantic_value::declaration::EqualitySchedule::Float,
                     Some("enum") => filament_semantic_value::declaration::EqualitySchedule::Enum,
                     Some("quantity") => {
                         filament_semantic_value::declaration::EqualitySchedule::Quantity
@@ -4848,5 +4846,8 @@ fn every_model_declaration_node_has_one_generated_entry_at_its_roots_regions() {
         };
         assert_eq!(entry["regions"], root_entry["regions"], "{id}");
     }
-    assert!(declarations > 0, "the package holds model declaration nodes");
+    assert!(
+        declarations > 0,
+        "the package holds model declaration nodes"
+    );
 }

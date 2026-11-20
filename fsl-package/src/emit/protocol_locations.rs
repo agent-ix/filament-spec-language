@@ -30,7 +30,7 @@ use fsl_semantics::check::{
 use super::{checked_occurrence, EmitRefusal};
 
 /// The largest integer a JSON number carries exactly.
-const MAX_SAFE: u64 = 9_007_199_254_740_991;
+pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
 
 /// One row before its `term_ordinal` is assigned.
 pub(super) struct PendingRow<L = CheckedProtocolLocation> {
@@ -100,7 +100,7 @@ pub(super) fn slot_rows(
         applications,
         emitted_node_ids,
         pending,
-        &wire_location,
+        &|location, _, _| wire_location(location),
     )
 }
 
@@ -112,7 +112,7 @@ pub(super) fn term_rows<L>(
     applications: &HashMap<&Location, Vec<(NodeKey, filament_exact::Origin)>>,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     pending: &mut Vec<PendingRow<L>>,
-    wire: &dyn Fn(&Location) -> Option<(String, L)>,
+    wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>,
 ) -> Result<(), EmitRefusal> {
     let positions = walk(root);
     // The application each position names, so a position below it at
@@ -198,13 +198,16 @@ pub(super) fn term_rows<L>(
                 .copied()
                 .ok_or_else(|| refusal(application))?;
             *seen += 1;
-            let (origin_name, location) = wire(at).ok_or_else(|| refusal(application))?;
+            let row_application = emitted_node_ids
+                .get(application)
+                .cloned()
+                .ok_or_else(|| refusal(application))?;
+            let occurrence = checked_occurrence(origin).ok_or_else(|| refusal(application))?;
+            let (origin_name, location) =
+                wire(at, &row_application, &occurrence).ok_or_else(|| refusal(application))?;
             pending.push(PendingRow {
-                application: emitted_node_ids
-                    .get(application)
-                    .cloned()
-                    .ok_or_else(|| refusal(application))?,
-                occurrence: checked_occurrence(origin).ok_or_else(|| refusal(application))?,
+                application: row_application,
+                occurrence,
                 origin_name,
                 visit: pending.len(),
                 location,

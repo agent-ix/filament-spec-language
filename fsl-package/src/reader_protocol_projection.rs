@@ -195,9 +195,11 @@ impl ReaderProtocolProjection {
                 node.location = Some(location);
             }
         }
-        // A `let`, conditional or `case` is no term and has no row; the
-        // checker locates a binding it synthesizes at its body's position, so
-        // such a node takes its last child's location, children first.
+        // A `let`, conditional or `case` is no term and has no row (FSpec
+        // FR-322), so one the author wrote stays unlocated: an evaluator never
+        // invents a location. The checker locates the `let` it synthesizes
+        // for an IEEE ordering at its body's position, so that node takes its
+        // last child's location, children first.
         for function in &self.functions {
             if !has_rows.contains(&function.node) {
                 continue;
@@ -208,8 +210,8 @@ impl ReaderProtocolProjection {
                 };
                 if node.location.is_some()
                     || !matches!(
-                        node.kind,
-                        NodeKind::Let { .. } | NodeKind::If { .. } | NodeKind::Case { .. }
+                        &node.kind,
+                        NodeKind::Let { name, .. } if crate::introduced_binders::is_ieee_operand(name)
                     )
                 {
                     continue;
@@ -2117,8 +2119,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 else {
                     return Err(fault("reader-let-binder-has-name").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), body, locals)?;
                 let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), body, slot)?;
                 let value = self.project_argument(id, value, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
@@ -2404,8 +2406,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 else {
                     return Err(fault("reader-collection-query-binder-has-name").into());
                 };
-                let binder = self.binder_of(id, name.as_ref(), value, locals)?;
                 let slot = self.next_slot(context, locals);
+                let binder = self.binder_of(id, name.as_ref(), value, slot)?;
                 let source = self.project_argument(id, source_term, context, locals)?;
                 let mut body_locals = locals.clone();
                 body_locals.extend(binder.map(|binder| (binder, slot)));
@@ -2923,12 +2925,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         id: &CheckedNodeId,
         name: &str,
         scope: &CheckedTerm,
-        bound: &BTreeMap<CheckedNodeId, usize>,
+        slot: usize,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         if let Some(binder) = self.binders.get(id) {
             return Ok(binder.clone());
         }
-        let binder = self.binder_node(name, scope, bound)?;
+        let binder = self.binder_node(name, scope, slot)?;
         self.binders.insert(id.clone(), binder.clone());
         Ok(binder)
     }
@@ -2938,7 +2940,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         &self,
         name: &str,
         scope: &CheckedTerm,
-        bound: &BTreeMap<CheckedNodeId, usize>,
+        slot: usize,
     ) -> Result<Option<CheckedNodeId>, BuildError> {
         let mut found = BTreeSet::new();
         let lookup = |id: &CheckedNodeId| self.index.node(id);
@@ -2947,16 +2949,22 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 found.insert(node.node_id.clone());
             }
         });
-        if name == IEEE_OPERAND {
+        if crate::introduced_binders::is_ieee_operand(name) {
             // The checker names every operand binder of an IEEE ordering
             // lowering `#ieee_operand` and nests them, so a scope reads the
-            // binders of its enclosing lets by that one name; each let binds
-            // the lowest-level one no enclosing let has bound.
-            return Ok(found
+            // binders of its enclosing lets by that one name. A let binds the
+            // operand whose level is the let's own slot (FR-092).
+            if found.is_empty() {
+                return Ok(None);
+            }
+            let slot = u64::try_from(slot).map_err(|_| fault("reader-let-slot-is-in-range"))?;
+            return found
                 .into_iter()
-                .filter(|node| !bound.contains_key(node))
-                .min_by_key(|node| self.index.node(node).and_then(|n| parameter_level(&n.body)))
-                .or(None));
+                .find(|node| {
+                    self.index.node(node).and_then(|n| parameter_level(&n.body)) == Some(slot)
+                })
+                .map(Some)
+                .ok_or_else(|| fault("reader-ieee-operand-binder-is-at-the-let-slot").into());
         }
         let mut found = found.into_iter();
         match (found.next(), found.next()) {
@@ -3246,7 +3254,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         Ok(self.push(ReaderProjectedNode::leaf(
             NodeKind::Literal(CheckedLiteral(value)),
             value_type,
-                        )))
+        )))
     }
 }
 
@@ -3581,29 +3589,6 @@ fn collection_node_type(
 /// `#[string_edge]`: `name` is an admitted binding key in the parameter wire
 /// form.
 #[ix_trace_rs::string_edge]
-/// The checker's reserved name of the operand binders an IEEE ordering lowers
-/// to.
-const IEEE_OPERAND: &str = "#ieee_operand";
-
-/// The `level` binding of a parameter node's body.
-fn parameter_level(term: &CheckedTerm) -> Option<u64> {
-    let CheckedTerm::Aggregate { members } = term else {
-        return None;
-    };
-    members.iter().find_map(|member| {
-        let CheckedTerm::Binding { name, value } = member else {
-            return None;
-        };
-        if name.as_ref() != "level" {
-            return None;
-        }
-        match value.literal_read()?.value {
-            filament_contract_model::CheckedLiteralValue::Integer(level) => level.to_string().parse().ok(),
-            _ => None,
-        }
-    })
-}
-
 pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
     let CheckedTerm::Aggregate { members } = term else {
         return None;
@@ -3616,6 +3601,31 @@ pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
             filament_contract_model::CheckedLiteralValue::Text(name) => Some(name),
             _ => None,
         })?
+    })
+}
+
+/// The `level` binding of a parameter node's body.
+///
+/// `#[string_edge]`: `name` is an admitted binding key in the parameter wire
+/// form.
+#[ix_trace_rs::string_edge]
+fn parameter_level(term: &CheckedTerm) -> Option<u64> {
+    let CheckedTerm::Aggregate { members } = term else {
+        return None;
+    };
+    members.iter().find_map(|member| {
+        let CheckedTerm::Binding { name, value } = member else {
+            return None;
+        };
+        if name.as_ref() != "level" {
+            return None;
+        }
+        match value.literal_read()?.value {
+            filament_contract_model::CheckedLiteralValue::Integer(level) => {
+                level.to_string().parse().ok()
+            }
+            _ => None,
+        }
     })
 }
 
