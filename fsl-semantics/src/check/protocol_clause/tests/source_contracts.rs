@@ -111,11 +111,14 @@ fn repeat_with_a_real_step_admits_no_maximum_and_rejects_zero_maximum() {
         "",
         ROLES,
         &format!(
-            "sequence Main {{ repeat Deliver by Courier visible () while {{ false }} sequence Body {{ {ATTEMPT} }} }}"
+            "sequence Main {{ repeat Deliver by Courier visible (dispatched) while {{ not dispatched }} sequence Body {{ {ATTEMPT} }} }}"
         ),
     );
     super::checks(&source);
-    let invalid = source.replace("visible () while", "visible () max 0 while");
+    let invalid = source.replace(
+        "visible (dispatched) while",
+        "visible (dispatched) max 0 while",
+    );
     assert_locus(
         &invalid,
         "invalid_package",
@@ -199,12 +202,12 @@ fn compensation_template_resolves_the_named_commit_not_a_neighbouring_event() {
         &invalid,
         "missing_declaration",
         "missing-name",
-        "MissingCommit",
+        "Main::MissingCommit",
         "MissingCommit",
     );
 }
 
-#[trace("FR-218-AC-24", "FR-884-AC-5")]
+#[trace("FR-884-AC-2", "FR-884-AC-5")]
 #[test]
 fn nonadjacent_duplicate_roles_report_both_declaration_names() {
     let source = protocol("", ROLES, &format!("sequence Main {{ {ATTEMPT} }}"));
