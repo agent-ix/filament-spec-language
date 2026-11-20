@@ -4,6 +4,8 @@
 //! and rejects each tampered or false one, and settlement labels the proof
 //! `Certified` only after the checker accepts.
 
+mod completion_boundaries;
+
 use std::collections::BTreeMap;
 
 use filament_exact::{

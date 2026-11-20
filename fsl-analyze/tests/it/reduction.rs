@@ -10,6 +10,8 @@
 //! `ModelSystem`. Liveness items under a reduction, partial-order reduction
 //! (`crate::partial_order`) and the obligation identity are not covered here.
 
+mod completion_boundaries;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Cancel;
