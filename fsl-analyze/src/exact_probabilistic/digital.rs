@@ -2071,11 +2071,6 @@ impl<'c> Builder<'_, '_, 'c> {
             self.running_delays(at, state, local, &mut planned)?;
             if planned.is_empty() {
                 self.time_locked.push(at);
-            } else if !local.quiescent {
-                return Err(ProductRefusal::NotStochastic {
-                    state: Box::new(self.nodes[at].key.clone()),
-                }
-                .into());
             }
             self.decisions = true;
             return Ok(planned);
