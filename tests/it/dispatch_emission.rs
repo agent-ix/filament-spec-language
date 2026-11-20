@@ -449,15 +449,24 @@ fn producer_dispatch_table_reads_with_ordered_candidate_witnesses() {
         .unwrap()
         .remove("checked_term_data");
     let without_carrier_bytes = serde_json::to_vec(&without_carrier).unwrap();
-    let without_carrier = match CheckedPackageV2::read(
+    // `self.size() > 0` has terms, so a package without its carrier lacks their
+    // body location rows (FSpec FR-322-AC-490).
+    let refusal = match CheckedPackageV2::read(
         &without_carrier_bytes,
         CheckedPackageReadLimits::bounded(),
         &evidence(&without_carrier),
     ) {
-        CheckedPackageV2ReadResult::Admitted(package) => *package,
-        other => panic!("graph-only package remains admitted: {other:?}"),
+        CheckedPackageV2ReadResult::Refused(refusal) => refusal,
+        other => panic!("a carrier-less package with function body terms must refuse: {other:?}"),
     };
-    assert_eq!(package.graph(), without_carrier.graph());
+    assert_eq!(
+        refusal.loci[0]
+            .path
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("/checked_term_data/body_locations")
+    );
 
     let (with_precondition, precondition_decisions) = emit_with_capture(
         "body sizeA using v on Config::ConfigVersion::size() { 1 }\n\
@@ -701,4 +710,94 @@ fn operation_bodies_of_a_multi_body_model_read_back_through_the_typed_reader() {
         .count();
     assert_eq!(with_body, 4, "one body row per authored body: {rows:?}");
     assert_eq!(rows.len(), 7, "one row per operation: {rows:?}");
+}
+
+/// FR-531-AC-39: a clause function's body carries `body_locations` rows, one
+/// per term of its walk, under the checker's `Body` owner of that function; a
+/// function whose body has no term has none, and the strict reader refuses
+/// the package once the second `sqrt`'s row is removed.
+#[trace("TC-3133", "FR-531-AC-39")]
+#[test]
+fn a_clause_function_body_carries_its_location_rows() {
+    let sqrt = "filament::value::ieee::sqrt(float64(bits: 0x4000000000000000))";
+    let (bytes, _) = emit_with_capture(&format!(
+        "body sizeA using v on Config::ConfigVersion::size() {{ 1 }}\n\
+         body sizeB using v on Config::Sub::size() {{ 2 }}\n\
+         body sizeC using v on Config::Leaf::size() {{ 3 }}\n\
+         pre sqrtPre using v on Config::ConfigVersion::probe {{ {sqrt} <= {sqrt} }}\n"
+    ));
+    let package = admitted(&bytes);
+    let wire: Value = serde_json::from_slice(&bytes).unwrap();
+    let rows = wire["checked_term_data"]["body_locations"]
+        .as_array()
+        .expect("body location carrier");
+    assert!(!rows.is_empty());
+    let functions: std::collections::BTreeSet<_> = rows
+        .iter()
+        .map(|row| row["location"]["origin"]["function"].to_string())
+        .collect();
+    assert_eq!(
+        functions.len(),
+        1,
+        "only the precondition's clause function has terms"
+    );
+    let origin = &rows[0]["location"]["origin"];
+    assert_eq!(origin["kind"], "function_body");
+    let function = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["node_id"] == origin["function"])
+        .expect("the origin names a function node");
+    assert_eq!(function["node_tag"], "function");
+    assert!(function["body"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|member| member["name"] == "body"));
+    assert!(rows.iter().all(|row| row["location"]["origin"] == *origin));
+    let paths: Vec<_> = rows
+        .iter()
+        .map(|row| row["location"]["path"].clone())
+        .collect();
+    assert!(
+        paths.contains(&json!([0])) && paths.contains(&json!([1])),
+        "{paths:?}"
+    );
+    assert!(
+        !paths.contains(&json!([1, 0])),
+        "the checker's locations, not the lowered body's: {paths:?}"
+    );
+    assert_eq!(
+        package.checked_term_data().unwrap().body_locations.len(),
+        rows.len()
+    );
+
+    let mut removed = wire.clone();
+    let at = removed["checked_term_data"]["body_locations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|row| row["location"]["path"] == json!([1]))
+        .expect("the second sqrt's row");
+    removed["checked_term_data"]["body_locations"]
+        .as_array_mut()
+        .unwrap()
+        .remove(at);
+    let refusal = match CheckedPackageV2::read(
+        &serde_json::to_vec(&removed).unwrap(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence(&removed),
+    ) {
+        CheckedPackageV2ReadResult::Refused(refusal) => refusal,
+        other => panic!("a missing body location row must refuse: {other:?}"),
+    };
+    assert_eq!(
+        refusal.loci[0]
+            .path
+            .as_ref()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("/checked_term_data/body_locations")
+    );
 }

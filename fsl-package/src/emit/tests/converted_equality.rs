@@ -1059,11 +1059,18 @@ fn equality_producer_rows_are_emitted_in_checked_term_data() {
     assert_eq!(
         sidecar.keys().map(String::as_str).collect::<Vec<_>>(),
         [
+            "body_locations",
             "dispatch_tables",
             "equality_decisions",
             "probabilistic_claims",
             "protocol_locations",
         ]
+    );
+    assert!(
+        sidecar["body_locations"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        "the function bodies carry their rows"
     );
     assert_eq!(sidecar["dispatch_tables"], json!([]));
     assert_eq!(sidecar["probabilistic_claims"], json!([]));

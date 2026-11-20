@@ -1111,7 +1111,10 @@ fn source_selection_keys_are_spelled_from_the_source_owner() {
         .expect("bump's effects row")["document"]
         .clone();
     assert_eq!(document, json!(identity));
-    let text = wire.to_string();
+    // A body row's `name` is the checker's own opaque function name (FR-322).
+    let mut keyed = wire.clone();
+    keyed["checked_term_data"]["body_locations"] = json!([]);
+    let text = keyed.to_string();
     assert!(
         !text.contains("ix://source/"),
         "no key is spelled from a check-time alias"

@@ -301,6 +301,7 @@ fn one_candidate_package(
             result,
             selected_operation_owner: receiver_type,
             selected_operation: "size".to_owned(),
+            required_arity: 0,
             table: 0,
         }];
         declarations.dispatch_tables = vec![table];
@@ -1526,6 +1527,7 @@ fn d06_two_operations_sharing_one_table_report_the_operation_actually_dispatched
                 result: ValueType::Integer,
                 selected_operation_owner: receiver_type.clone(),
                 selected_operation: "size".to_owned(),
+                required_arity: 0,
                 table: 0,
             },
             DispatchOperation {
@@ -1536,6 +1538,7 @@ fn d06_two_operations_sharing_one_table_report_the_operation_actually_dispatched
                 result: ValueType::Integer,
                 selected_operation_owner: receiver_type.clone(),
                 selected_operation: "weight".to_owned(),
+                required_arity: 0,
                 table: 0,
             },
         ];

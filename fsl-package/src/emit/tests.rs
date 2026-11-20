@@ -4788,3 +4788,65 @@ fn dimension_equivalence_refuses_a_foreign_package_operand_and_keeps_local_ones(
         "same-package operands stay Local"
     );
 }
+
+/// FR-094-AC-17 (QSL-2652): over the `ConfigVersion` domain package, every
+/// `model` and `relation` declaration node of the emitted package has exactly
+/// one occurrence, `generated` at ordinal 0, exactly one `source_map` entry,
+/// and that entry's regions are the `model_root` entry's.
+#[trace("TC-3085", "FR-094-AC-17")]
+#[test]
+fn every_model_declaration_node_has_one_generated_entry_at_its_roots_regions() {
+    let emitted = emit_attempt_unit(
+        &attempt_frame_unit(
+            VERSION_UNCHANGED,
+            "Config::ConfigVersion::attemptUpdate",
+            "VersionUnchanged",
+        ),
+        true,
+    );
+    let wire = &emitted.wire;
+    let source_map = wire["source_map"].as_array().expect("source_map");
+    let entries_of = |id: &Value| -> Vec<&Value> {
+        source_map
+            .iter()
+            .filter(|entry| entry["node_id"] == *id)
+            .collect()
+    };
+    let roots: Vec<&Value> = nodes(wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "model_root")
+        .collect();
+    assert!(!roots.is_empty(), "the package selects a model");
+    let mut declarations = 0;
+    for node in nodes(wire).iter().filter(|node| {
+        matches!(node["node_tag"].as_str(), Some("model" | "relation"))
+            && node["semantic_form"] != "model_root"
+            && node["owner"]["kind"] == "model"
+    }) {
+        declarations += 1;
+        let id = &node["node_id"];
+        assert_eq!(
+            node["occurrences"],
+            json!([{"role": "generated", "ordinal": 0}]),
+            "{id}"
+        );
+        let [entry] = entries_of(id)[..] else {
+            panic!("{id}: one source_map entry, found {:?}", entries_of(id));
+        };
+        assert_eq!(entry["role"], "generated", "{id}");
+        assert_eq!(entry["ordinal"], 0, "{id}");
+        let root = roots
+            .iter()
+            .find(|root| root["owner"]["identity"] == node["owner"]["identity"])
+            .unwrap_or_else(|| panic!("{id}: its selecting model_root"));
+        let root_entries: Vec<&Value> = entries_of(&root["node_id"])
+            .into_iter()
+            .filter(|entry| entry["role"] == "generated" && entry["ordinal"] == 0)
+            .collect();
+        let [root_entry] = root_entries[..] else {
+            panic!("{id}: one generated model_root entry");
+        };
+        assert_eq!(entry["regions"], root_entry["regions"], "{id}");
+    }
+    assert!(declarations > 0, "the package holds model declaration nodes");
+}

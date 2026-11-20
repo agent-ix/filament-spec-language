@@ -18,7 +18,8 @@ use filament_checked::node::{
     NodeKind, OrderedKind, RecordField, RecordSlot, Visit,
 };
 use filament_contract_model::{
-    CheckedNodeId, CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
+    CheckedBodyLocation, CheckedBodyLocationOrigin, CheckedBodySemanticLocation, CheckedNodeId,
+    CheckedPackageV2, CheckedProtocolLocation, CheckedProtocolSemanticLocation,
     CheckedSemanticNodeV2, CheckedTerm, OperationModeKind,
 };
 use filament_exact::{
@@ -139,26 +140,89 @@ impl ReaderProtocolProjection {
         self.locate_from(self.root, owner);
     }
 
-    /// Locate each called function's body under its own `Body` owner, its
-    /// declaration index the one `indices` gives its name: the location the
-    /// source route's checked body gives each of its nodes.
-    fn locate_functions(&mut self, indices: &BTreeMap<String, usize>) {
-        let bodies: Vec<(usize, Origin)> = self
-            .functions
-            .iter()
-            .filter_map(|function| {
-                let index = *indices.get(&function.name)?;
-                Some((
-                    function.body,
-                    Origin::Body {
-                        function: function.name.clone(),
-                        index,
-                    },
-                ))
-            })
-            .collect();
-        for (body, owner) in bodies {
-            self.locate_from(body, owner);
+    /// Locate each term of every function body from the admitted
+    /// `body_locations` rows of its function (FSpec FR-322): visit `k` of an
+    /// application in the body's walk takes the application's row `k` of the
+    /// function, in (occurrence, `term_ordinal`) order. A node the wire
+    /// carries no row for keeps no location, and the evaluator faults rather
+    /// than invent one (FR-390).
+    fn locate_function_bodies(&mut self, admitted: &CheckedPackageV2) {
+        let Some(data) = admitted.checked_term_data() else {
+            return;
+        };
+        let mut rows: BTreeMap<
+            &CheckedNodeId,
+            BTreeMap<&CheckedNodeId, Vec<&CheckedBodySemanticLocation>>,
+        > = BTreeMap::new();
+        for row in &data.body_locations {
+            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+            rows.entry(function)
+                .or_default()
+                .entry(&row.application)
+                .or_default()
+                .push(row);
+        }
+        for group in rows.values_mut().flat_map(BTreeMap::values_mut) {
+            group.sort_by_key(|row| (&row.occurrence, row.term_ordinal));
+        }
+        let has_rows: BTreeSet<CheckedNodeId> = rows.keys().map(|node| (*node).clone()).collect();
+        let mut located = Vec::new();
+        for function in &self.functions {
+            let Some(applications) = rows.get(&function.node) else {
+                continue;
+            };
+            let mut seen: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
+            for position in walk(&self.nodes, function.body) {
+                let Some(node) = self.nodes.get(position) else {
+                    continue;
+                };
+                for application in node.terms() {
+                    let visit = seen.entry(application).or_default();
+                    let row = applications
+                        .get(application)
+                        .and_then(|group| group.get(*visit));
+                    *visit += 1;
+                    if node.term.as_ref() == Some(application) {
+                        if let Some(location) = row.and_then(|row| body_location(&row.location)) {
+                            located.push((position, location));
+                        }
+                    }
+                }
+            }
+        }
+        for (position, location) in located {
+            if let Some(node) = self.nodes.get_mut(position) {
+                node.location = Some(location);
+            }
+        }
+        // A `let`, conditional or `case` is no term and has no row; the
+        // checker locates a binding it synthesizes at its body's position, so
+        // such a node takes its last child's location, children first.
+        for function in &self.functions {
+            if !has_rows.contains(&function.node) {
+                continue;
+            }
+            for position in walk(&self.nodes, function.body).into_iter().rev() {
+                let Some(node) = self.nodes.get(position) else {
+                    continue;
+                };
+                if node.location.is_some()
+                    || !matches!(
+                        node.kind,
+                        NodeKind::Let { .. } | NodeKind::If { .. } | NodeKind::Case { .. }
+                    )
+                {
+                    continue;
+                }
+                let inherited = node
+                    .children
+                    .last()
+                    .and_then(|child| self.nodes.get(*child))
+                    .and_then(|child| child.location.clone());
+                if let Some(node) = self.nodes.get_mut(position) {
+                    node.location = inherited;
+                }
+            }
         }
     }
 
@@ -879,7 +943,6 @@ impl<'wire> WireIndex<'wire> {
             nodes: Vec::new(),
             functions: Vec::new(),
             function_indexes: BTreeMap::new(),
-            memo: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: request.binders.len(),
             active: None,
@@ -892,7 +955,7 @@ impl<'wire> WireIndex<'wire> {
             context: Context::Root,
             locals: std::rc::Rc::new(locals),
         })?;
-        Ok(ReaderProtocolProjection {
+        let mut projection = ReaderProtocolProjection {
             nodes: builder.nodes,
             functions: builder.functions,
             root: root_index,
@@ -900,7 +963,9 @@ impl<'wire> WireIndex<'wire> {
             selected_function_node: None,
             frame_slots: builder.root_slots,
             locals: local_keys,
-        })
+        };
+        projection.locate_function_bodies(self.admitted);
+        Ok(projection)
     }
 
     fn project_function(
@@ -913,7 +978,6 @@ impl<'wire> WireIndex<'wire> {
             nodes: Vec::new(),
             functions: Vec::new(),
             function_indexes: BTreeMap::new(),
-            memo: BTreeMap::new(),
             binders: BTreeMap::new(),
             root_slots: 0,
             active: None,
@@ -931,7 +995,7 @@ impl<'wire> WireIndex<'wire> {
             .ok_or_else(|| fault("reader-selected-function-index-is-retained"))?;
         let root = function.body;
         let frame_slots = function.slots;
-        Ok(ReaderProtocolProjection {
+        let mut projection = ReaderProtocolProjection {
             nodes: builder.nodes,
             functions: builder.functions,
             root,
@@ -939,7 +1003,9 @@ impl<'wire> WireIndex<'wire> {
             selected_function_node,
             frame_slots,
             locals: BTreeMap::new(),
-        })
+        };
+        projection.locate_function_bodies(self.admitted);
+        Ok(projection)
     }
 }
 
@@ -1368,47 +1434,8 @@ impl<'wire> BareWalker<'wire> {
             binders: binders.to_vec(),
         })?;
         projection.locate_under(owner);
-        projection.locate_functions(&self.function_indices());
+        projection.locate_function_bodies(self.index.admitted);
         Ok(projection)
-    }
-
-    /// Each pure function's declaration index among the package's functions
-    /// in source order, by its name: the rank of its `declaration`
-    /// occurrence among every pure function's, by the start of their
-    /// source-map regions.
-    fn function_indices(&self) -> BTreeMap<String, usize> {
-        let admitted = self.index.admitted;
-        let mut declared: Vec<(u64, String)> = admitted
-            .resolved_graph()
-            .nodes
-            .iter()
-            .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
-            .filter_map(|node| {
-                let name = node
-                    .declaration
-                    .as_ref()?
-                    .qualified_name
-                    .last()?
-                    .to_string();
-                let start = admitted
-                    .source_map()
-                    .iter()
-                    .filter(|entry| {
-                        entry.node_id == node.node_id
-                            && entry.role
-                                == filament_contract_model::CheckedOccurrenceRole::Declaration
-                    })
-                    .filter_map(|entry| entry.regions.first().map(|region| region.start))
-                    .min()?;
-                Some((start, name))
-            })
-            .collect();
-        declared.sort();
-        declared
-            .into_iter()
-            .enumerate()
-            .map(|(index, (_, name))| (name, index))
-            .collect()
     }
 
     /// The number of rows each type-declaration origin holds for each
@@ -1466,9 +1493,6 @@ struct ReaderBuilder<'index, 'wire> {
     nodes: Vec<ReaderProjectedNode>,
     functions: Vec<ReaderFunction>,
     function_indexes: BTreeMap<CheckedNodeId, usize>,
-    /// Function bodies share a node reached twice; the slot's own walk
-    /// holds one position per parent (FR-390).
-    memo: BTreeMap<(usize, CheckedNodeId), usize>,
     /// The binder of each `let` or query scope read so far, which a node
     /// projected again does not look up again.
     binders: BTreeMap<CheckedNodeId, Option<CheckedNodeId>>,
@@ -1590,6 +1614,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let index = self.functions.len();
             self.function_indexes.insert(node.clone(), index);
             self.functions.push(ReaderFunction {
+                node: node.clone(),
                 name: name.clone(),
                 body: usize::MAX,
                 slots: parameter_ids.len(),
@@ -1702,11 +1727,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             self.set_slots(context, self.slots(context).max(slots));
             return Ok(index);
         }
-        if let Context::Function(function) = context {
-            if let Some(index) = self.memo.get(&(function, id.clone())) {
-                return Ok(*index);
-            }
-        }
         self.suspended = vec![(
             ordinal,
             NodeRequest {
@@ -1738,9 +1758,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let known = self
                 .active
                 .as_ref()
-                .is_some_and(|frame| frame.finished.contains_key(&ordinal))
-                || matches!(context, Context::Function(function)
-                    if self.memo.contains_key(&(function, target.clone())));
+                .is_some_and(|frame| frame.finished.contains_key(&ordinal));
             if !known {
                 let locals = shared.get_or_insert_with(|| std::rc::Rc::new(locals.clone()));
                 missing.push((
@@ -1776,11 +1794,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
     /// stack holds one frame per node on the path from `root`, and each
     /// frame one entry per child.
     fn project_tree(&mut self, root: NodeRequest) -> Result<usize, BuildError> {
-        if let Context::Function(function) = root.context {
-            if let Some(index) = self.memo.get(&(function, root.id.clone())) {
-                return Ok(*index);
-            }
-        }
         let mut parents: Vec<Frame> = Vec::new();
         let mut frame = self.enter(root);
         loop {
@@ -1795,15 +1808,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 .take()
                 .ok_or_else(|| fault("reader-projection-frame-is-active"))?;
             let finished = match result {
-                Ok(index) => {
-                    if let Context::Function(function) = request.context {
-                        self.memo.insert((function, request.id.clone()), index);
-                    }
-                    Finished {
-                        index,
-                        slots: self.slots(request.context),
-                    }
-                }
+                Ok(index) => Finished {
+                    index,
+                    slots: self.slots(request.context),
+                },
                 Err(BuildError::Suspended) => {
                     self.nodes.truncate(added);
                     frame.queue = std::mem::take(&mut self.suspended);
@@ -1847,18 +1855,6 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let Some((ordinal, wanted)) = parent.queue.pop() else {
                 return Ok(None);
             };
-            if let Context::Function(function) = wanted.context {
-                if let Some(index) = self.memo.get(&(function, wanted.id.clone())) {
-                    parent.finished.insert(
-                        ordinal,
-                        Finished {
-                            index: *index,
-                            slots: 0,
-                        },
-                    );
-                    continue;
-                }
-            }
             parent.waiting = ordinal;
             return Ok(Some(self.enter(wanted)));
         }
@@ -1991,7 +1987,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             | "filament.op.control.case"
                     )
                 );
-                let term = (context == Context::Root && has_location_row).then(|| id.clone());
+                let term = has_location_row.then(|| id.clone());
                 (kind, children, term)
             }
             _ => {
@@ -2513,7 +2509,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     children,
                 ))
             }
-            Some("filament.op.numeric.convert") => {
+            Some(
+                "filament.op.numeric.convert"
+                | "filament.op.ieee.from_exact"
+                | "filament.op.ieee.to_float32"
+                | "filament.op.ieee.to_float64",
+            ) => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
                 let [operand] = children.as_slice() else {
                     return Err(fault("reader-numeric-conversion-has-one-operand").into());
@@ -3366,6 +3367,12 @@ pub(crate) fn node_value_type(
             .filter(|node| has_form(node, tag, form))
             .and_then(|_| index.graph.key(declaration).ok())
     };
+    if error.code == Code::UnsupportedExactType
+        && error.form.as_deref() == Some("bounded_domain/rational_range")
+    {
+        let declaration = scalar_at.ok_or(TypeError::Unsupported)?;
+        return rational_range_type(index.node(declaration).ok_or(TypeError::Unsupported)?);
+    }
     if unresolved && error.form.as_deref() == Some("bounded_domain/float_rounding") {
         // Only the requested node's own float type is typed here; a float
         // nested in an option, collection, tuple, record or map is refused
@@ -3448,6 +3455,37 @@ pub(crate) fn node_value_type(
 #[ix_trace_rs::string_edge]
 fn is_collection_bounds(form: &str) -> bool {
     form == "bounded_domain/collection_bounds"
+}
+
+/// The `Rational[nmin, nmax; dmin, dmax]` a `rational_range` node holds, its
+/// four bounds exact integers.
+#[ix_trace_rs::string_edge]
+fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
+    let bound = |wanted: &str| -> Option<filament_exact::Integer> {
+        let CheckedTerm::Aggregate { members } = &node.body else {
+            return None;
+        };
+        members.iter().find_map(|member| {
+            let CheckedTerm::Binding { name, value } = member else {
+                return None;
+            };
+            (name.as_ref() == wanted).then(|| match value.literal_read()?.value {
+                filament_contract_model::CheckedLiteralValue::Integer(bound) => {
+                    bound.to_string().parse().ok()
+                }
+                _ => None,
+            })?
+        })
+    };
+    let interval = |lower: &str, upper: &str| {
+        filament_exact::IntegerInterval::new(bound(lower)?, bound(upper)?).ok()
+    };
+    let numerator = interval("numerator_min", "numerator_max").ok_or(TypeError::Unsupported)?;
+    let denominator =
+        interval("denominator_min", "denominator_max").ok_or(TypeError::Unsupported)?;
+    filament_exact::RationalDomain::new(numerator, denominator)
+        .map(ValueType::Rational)
+        .map_err(|_| TypeError::Unsupported)
 }
 
 /// The integer a `min` or `max` member of a bounds node holds.
@@ -3578,6 +3616,26 @@ fn location(admitted: &CheckedProtocolLocation) -> Option<Location> {
             protocol: usize::try_from(*protocol).ok()?,
             attempt: usize::try_from(*attempt).ok()?,
         },
+    };
+    let path = admitted
+        .path
+        .iter()
+        .map(|ordinal| match ordinal {
+            filament_contract_model::CheckedKeyOrdinal::Safe(value) => usize::try_from(*value).ok(),
+            filament_contract_model::CheckedKeyOrdinal::BeyondSafe(value) => {
+                value.parse::<usize>().ok()
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Location::at(origin, &path))
+}
+
+/// The checker's location of a function-body term, as its row captured it.
+fn body_location(admitted: &CheckedBodyLocation) -> Option<Location> {
+    let CheckedBodyLocationOrigin::FunctionBody { name, index, .. } = &admitted.origin;
+    let origin = Origin::Body {
+        function: name.to_string(),
+        index: usize::try_from(*index).ok()?,
     };
     let path = admitted
         .path
@@ -3755,6 +3813,7 @@ impl ReaderProjectedNode {
 }
 
 struct ReaderFunction {
+    node: CheckedNodeId,
     name: String,
     body: usize,
     slots: usize,
