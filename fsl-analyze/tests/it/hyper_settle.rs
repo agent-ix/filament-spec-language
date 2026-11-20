@@ -589,7 +589,7 @@ fn a_reduction_outcome_settles_by_its_cause_and_a_reduced_hold_waits_for_the_che
 /// form settles nothing there. The call is made directly; that negotiation
 /// calls it for every item is tracked by QSL-1046, "Wire settle_hyper_form
 /// into negotiation (CG) and fsl-route".
-#[trace("TC-598")]
+#[trace("TC-598", "FR-173-AC-2")]
 #[test]
 fn an_other_clause_settles_unsupported_at_negotiation_with_no_run() {
     let safe = "holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b)";
@@ -655,7 +655,7 @@ fn an_other_clause_settles_unsupported_at_negotiation_with_no_run() {
 /// unsupported cause removes the registered EN-1 candidate. Negotiation then
 /// calls `settle_hyper_form` and analyze writes unsupported-requested-capability
 /// without running an engine.
-#[trace("FSpec-TC-342", "FSpec-FR-396-AC-2")]
+#[trace("FSpec-TC-342", "FSpec-FR-396-AC-2", "FR-173-AC-2")]
 #[test]
 fn routed_hp4_hyper_item_settles_unsupported_requested_capability() {
     let reason = HyperUnsupported::ExistentialBeforeUniversal;
