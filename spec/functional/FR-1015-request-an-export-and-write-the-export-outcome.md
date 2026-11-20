@@ -43,7 +43,10 @@ writes no target bytes of its own, so the two give byte-identical files.
 - The `export` member SHALL carry `profile`, `target_family` (optional),
   `obligations`, `minimum_fidelity` (default `conditional`), `observer`
   (optional), `initial` (optional, a `filament.state.snapshot/v1` file
-  resolved against the request file's directory), `limits` (optional) and
+  resolved against the request file's directory), `protocols` and
+  `universes` (optional, FSpec FR-817 "Protocol subject inputs": the
+  protocol bindings and replicated-role universes an analyze request
+  carries, read by the same reader and validation), `limits` (optional) and
   `output` (optional, `{"file": P}`), as FSpec FR-817 states.
 - `limits` SHALL be keyed by FR-255 setting name: `export.output_bytes`,
   `export.nodes` and `export.work_units`, each an unsigned integer used as
@@ -128,10 +131,19 @@ writes no target bytes of its own, so the two give byte-identical files.
   the package's source map gives that node, and `null` when the source map
   gives it none, as FR-286 writes an unlocated source refusal; FSL never
   writes another node's region or an offset-zero region in its place (FSpec
-  FR-203 "Absence"). FSL has no record, cause or exit for a construct it has not lowered.
-  Meeting one is a mapper failure, `internal-failure` with exit `30` and no
-  package or file, so the floor refuses (exit `21`) only for constructs the
-  target cannot state.
+  FR-203 "Absence"). FSL has no record or record cause for a construct it has not lowered.
+  Meeting one SHALL stop the export `refused` with FSpec FR-817's refusal
+  for a construct the build does not lower: code `unimplemented_capability`,
+  cause `unimplemented-meaning`, `capability` `export:<family>:<construct>`,
+  and the members `target`, `construct`, `node` and `locus` spelled as for
+  `target-unrepresentable`, category unsupported, exit `21`, with no package
+  or file. It is never a mapper failure (exit `30`), and the floor refuses
+  only for constructs the target cannot state.
+- A refusal that compiling the request's program or admitting its checked
+  package returns SHALL be the export's result with that refusal's own
+  `code` (`invalid_package`, `resource_exhausted`, `missing_import`, ...),
+  `cause`, payload, locus and exit, as FSpec FR-817 states, never a mapper
+  failure whose text hides the cause.
 - `obligations` SHALL be a nonempty list of the program's declared
   obligations as FSpec FR-817 states: an absent member refuses
   `missing-member` and `[]` refuses `invalid-value` at
@@ -210,6 +222,9 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-12 | Over the spine unit with invariants `Low` and `High` over `Config::ConfigVersion`, let `n(S)` be the least `export.nodes` under which the export of obligations `S` is not `incomplete`. Then `n(["Low", "High"])` is less than `n(["Low"]) + n(["High"])` and at least the greater of the two. | Test (TC-3020) |
 | FR-1015-AC-13 | Every `target-unrepresentable` cause of `SlowEnough` over `Braking` under `any` has a string `node` that reads back as a `CheckedNodeId` of the package and re-encodes to the same text, and a `locus` that is either `null` or a region with `start < end`; a cause's `node` equals the `node` of the `name_map` entry, if one exists, for the same node. | Test (TC-3020) |
 | FR-1015-AC-14 | Over the counter's `Bounded` export to TLA+ and to Lean, let N be the number of export definitions its `target_text` writes (its blank-line-separated blocks other than the header block and the footer, which include the generated helpers, the structural definitions and the TLA+ `VARIABLES` statement as one), and C the least `export.nodes` under which the export is not `incomplete` (its classification charge). Under `export.work_units` C + N the export is `assembled`, exit `0`. Under `export.work_units` C + N - 1 it is `incomplete` with `records` `[]` and `cause` `{"type": "limit-reached", "limit": "work_units", "value": C + N - 1, "setting": "export.work_units"}`, exit `22`. Writing therefore charges one unit per export definition, each before it is written: a mapper that charges per `fsl:` comment, per byte, per line or per obligation, or that skips the helpers, the structural definitions or `VARIABLES`, assembles under C + N - 1 or is `incomplete` under C + N, and fails this criterion. | Test (TC-3020) |
+| FR-1015-AC-15 | In a build whose mapper does not lower a clause over a protocol subject, exporting a temporal clause that a protocol requires on an `origin` row writes `status` `refused` and `export.refusal` with exactly `code` `unimplemented_capability`, `cause` `unimplemented-meaning`, `capability` `export:tla:` followed by the protocol clause node's `node_tag`/`semantic_form`, `target` `tla`, `construct` that `node_tag`/`semantic_form`, `node` its canonical node-id string and `locus` its region or `null`, exit `21`, with no `target_text`, no `package` and no file; the same under `minimum_fidelity` `any`; never exit `30`. | Test (TC-3020) |
+| FR-1015-AC-16 | An export whose checked package admission refuses `invalid_package`, and one whose program has a missing import, each exit with the exit their compile gives and carry a diagnostic whose `code` is `invalid_package` or `missing_import` with that refusal's own cause and locus; neither exits `30` and neither message is the export mapper's text in place of the cause. | Test (TC-3020) |
+| FR-1015-AC-17 | An export request whose `protocols` member holds the protocol binding `{"protocol": P, "over": O, "roles": {}}` that an analyze request's `subject.protocol` accepts is admitted with that binding; the same binding with an unknown member refuses at `/request/export/protocols/0` with the code and cause the analyze reader gives the same binding, exit `20`; `universes` is read by the analyze reader of `subject.universes`. | Test (TC-3020) |
 
 
 ## Dependencies
