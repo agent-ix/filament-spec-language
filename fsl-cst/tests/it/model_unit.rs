@@ -47,7 +47,7 @@ object Node identity (id) {
   invariant Bounded { self.id >= 0 };
 }
 event Placed { timestamp: Integer; occurs timestamp; }
-machine Gate { open: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
+machine Gate { active: Boolean; operation toggle(); states (Open, Shut); transition Open -> Shut on toggle emits Placed; }
 process Flow { n: Integer; operation go(); step start: begin consumes Placed; }
 store Nodes persists Node { operation save(n: Reference<Node>); }
 namespace Terms { members Node, Gate; term node = \"a node\"; }
