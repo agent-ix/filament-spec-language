@@ -253,7 +253,7 @@ fn a_transition_enabled_at_one_irrational_instant_is_fair_weakly_not_strongly() 
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn quantifier_elimination_charges_every_step_before_it_is_taken() {
-    const ELIMINATION_UNITS: u64 = 86;
+    const ELIMINATION_UNITS: u64 = 674;
     let body = compare(
         CompareOp::Eq,
         times(Exp::Variable(0), Exp::Variable(0)),
@@ -454,11 +454,11 @@ fn root_isolation_charges_each_search_step_before_it_is_taken() {
     ]);
     let (spent, roots) = spent_on(&rational(n(0)), |section| section.roots(&square));
     assert_eq!(roots.expect("unmetered").len(), 2);
-    assert_eq!(spent, 44);
+    assert_eq!(spent, 229);
 }
 
 /// A sign at a rational sample is charged by the size of the polynomial:
-/// a polynomial of 20 coefficients of 16 words each costs 20 units.
+/// a polynomial of 20 coefficients of 16 words each costs 30 units.
 #[trace("TC-3037", "FR-750-AC-12")]
 #[test]
 fn a_sign_at_a_rational_sample_is_charged_by_the_polynomial_size() {
@@ -475,5 +475,5 @@ fn a_sign_at_a_rational_sample_is_charged_by_the_polynomial_size() {
         section.sign_of(&big, &Sample::Rational(n(2)))
     });
     assert_eq!(sign, Ordering::Greater);
-    assert_eq!(spent, 20);
+    assert_eq!(spent, 30);
 }

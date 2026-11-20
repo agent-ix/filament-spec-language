@@ -11,8 +11,8 @@
 //!
 //! Work accounting (FR-450 "Exact replay": each work step is charged before
 //! it is taken, with no fixed cap, so the meter bounds the run time). A step
-//! is charged by the size of its operands: one word per coefficient and per
-//! 64 bits of the largest part of each, 16 words to a work unit and at least
+//! is charged by the size of its operands: per coefficient the square of the
+//! 64-bit words of its largest part, 200 to a work unit and at least
 //! one unit ([`super::HybridReplayMeter`]). The meter is charged before every
 //! pseudo-remainder step of a Sturm or Sturm-Tarski sequence (by the sizes of
 //! the remainder and the divisor), every start of such a sequence, every
@@ -31,9 +31,9 @@
 //!
 //! Coefficients in `t` are reduced modulo `u`'s polynomial after every step,
 //! which does not change their sign at `u` and keeps their degree below its
-//! own, and each polynomial in `x` is scaled by a positive rational so that
-//! its leading part is 1, which does not change its signs at `u` and keeps
-//! the sequences small. Root isolation separates the distinct roots of
+//! own, and each polynomial in `x` is scaled by the positive rational that
+//! makes its parts integers of gcd 1, which does not change its signs at `u`
+//! and keeps the sequences small. Root isolation separates the distinct roots of
 //! `p(u, .)` by counting them with a Sturm-Tarski query, not by a squarefree
 //! reduction.
 
@@ -164,10 +164,10 @@ impl<'u, 'm> Section<'u, 'm> {
     }
 
     /// `p` with every coefficient reduced modulo `u`'s polynomial, without
-    /// the leading coefficients that vanish at `u`, and scaled by a positive
-    /// rational so that its leading coefficient's leading part is 1 (a
-    /// positive multiple has the same sign at `u`, and the sequences built
-    /// from it stay small).
+    /// the leading coefficients that vanish at `u`, and scaled by the
+    /// positive rational that makes its parts integers of gcd 1 (a positive
+    /// multiple has the same sign at `u`, and the sequences built from it
+    /// stay small).
     fn trimmed(&self, p: &Poly2) -> Result<Poly2, HybridReplayRefusal> {
         let mut coefficients = Vec::with_capacity(p.coefficients().len());
         for c in p.coefficients() {
@@ -179,27 +179,29 @@ impl<'u, 'm> Section<'u, 'm> {
             }
             coefficients.pop();
         }
-        let top = coefficients
-            .last()
-            .and_then(|c| c.coefficients().last())
-            .cloned();
-        if let Some(top) = top {
-            let magnitude = if top.numerator().is_negative() {
-                top.neg()
-            } else {
-                top
-            };
-            if magnitude != one() {
-                self.charge_by(
-                    coefficients
-                        .iter()
-                        .map(Poly::size)
-                        .fold(0, u64::saturating_add),
-                )?;
-                let inverse = one()
-                    .div(&magnitude)
-                    .unwrap_or_else(|| unreachable!("a leading part is nonzero"));
-                coefficients = coefficients.iter().map(|c| c.scale(&inverse)).collect();
+        // The least positive multiple with integer parts of gcd 1.
+        self.charge_by(
+            coefficients
+                .iter()
+                .map(Poly::size)
+                .fold(0, u64::saturating_add)
+                .saturating_mul(2),
+        )?;
+        let mut divisor = zero();
+        let mut multiple = one();
+        for part in coefficients.iter().flat_map(|c| c.coefficients()) {
+            let numerator = part.numerator().abs();
+            divisor = Rational::from_integer(divisor.numerator().gcd(&numerator));
+            let denominator = Rational::from_integer(part.denominator().clone());
+            let shared = Rational::from_integer(multiple.numerator().gcd(denominator.numerator()));
+            multiple = multiple
+                .mul(&denominator)
+                .div(&shared)
+                .unwrap_or_else(|| unreachable!("a gcd is nonzero"));
+        }
+        if let Some(factor) = multiple.div(&divisor) {
+            if factor != one() {
+                coefficients = coefficients.iter().map(|c| c.scale(&factor)).collect();
             }
         }
         Ok(Poly2::new(coefficients))
@@ -466,6 +468,46 @@ impl<'u, 'm> Section<'u, 'm> {
             self.refine(&mut b)?;
         }
         Ok(midpoint(&a.high, &b.low))
+    }
+
+    /// Rationals that separate the ascending distinct `roots`: one below the
+    /// first, one between each two and one above the last.
+    pub(crate) fn separators(&self, roots: &[Root2]) -> Result<Vec<Rational>, HybridReplayRefusal> {
+        let (Some(first), Some(last)) = (roots.first(), roots.last()) else {
+            return Ok(Vec::new());
+        };
+        let mut separators = vec![first.low.sub(&one())];
+        for pair in roots.windows(2) {
+            separators.push(self.between(&pair[0], &pair[1])?);
+        }
+        separators.push(last.high.add(&one()));
+        Ok(separators)
+    }
+
+    /// The real number `root` is, given `over`, a rational polynomial one
+    /// of whose roots it is (the resultant of `u`'s polynomial and the
+    /// polynomial `root` is a root of): `root`'s interval is refined until
+    /// it holds one root of `over` and neither end is one.
+    pub(crate) fn real_root(
+        &self,
+        root: &Root2,
+        over: &Poly,
+    ) -> Result<ExactReal, HybridReplayRefusal> {
+        let over = over.square_free();
+        let mut root = root.clone();
+        loop {
+            self.charge_by(over.size().saturating_mul(over.size()))?;
+            let apart = over.sign_at(&root.low) != Ordering::Equal
+                && over.sign_at(&root.high) != Ordering::Equal;
+            if apart && over.roots_between(&root.low, &root.high) == 1 {
+                return Ok(over
+                    .roots_in(&root.low, &root.high)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| unreachable!("one root lies in the interval")));
+            }
+            self.refine(&mut root)?;
+        }
     }
 
     /// Add `root` to the ascending `roots` unless one is equal to it.

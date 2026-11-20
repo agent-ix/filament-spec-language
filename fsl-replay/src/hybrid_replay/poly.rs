@@ -37,6 +37,12 @@ pub(super) fn sign(value: &Rational) -> Ordering {
     }
 }
 
+/// The words-squared work of one rational operation on numbers of `words`
+/// words, with the fixed cost of the call: about 40 words squared.
+pub(crate) fn square_of_words(words: u64) -> u64 {
+    words.saturating_mul(words).saturating_add(40)
+}
+
 /// A polynomial in one variable with exact rational coefficients, lowest
 /// degree first, with no trailing zero coefficient.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,13 +88,22 @@ impl Poly {
         }
     }
 
-    /// The work of one arithmetic step on this polynomial: one unit per
-    /// coefficient plus one per 64 bits of its largest part.
+    /// The work of one arithmetic step on this polynomial: per coefficient,
+    /// the square of its words (a rational product or reduction costs the
+    /// product of its operands. words) plus the call itself.
     pub(crate) fn size(&self) -> u64 {
         self.0
             .iter()
-            .map(|c| 1 + c.max_part_bits() / 64)
+            .map(|c| square_of_words(1 + c.max_part_bits() / 64))
             .fold(0, u64::saturating_add)
+    }
+
+    /// The work of the Euclidean algorithm on `self` and `other`: a step
+    /// per pair of coefficients, on rationals that grow to the words of both
+    /// in every coefficient.
+    pub(crate) fn gcd_work(&self, other: &Self) -> u64 {
+        let steps = u64::try_from(self.0.len().saturating_mul(other.0.len())).unwrap_or(u64::MAX);
+        steps.saturating_mul(square_of_words(self.words().saturating_add(other.words())))
     }
 
     /// The words of the largest coefficient part: one per 64 bits.
@@ -98,6 +113,34 @@ impl Poly {
             .map(|c| 1 + c.max_part_bits() / 64)
             .max()
             .unwrap_or(1)
+    }
+
+    /// A rational above the absolute value of every root (Cauchy's bound).
+    pub(crate) fn root_bound(&self) -> Rational {
+        let Some(lead) = self.lead() else {
+            return one();
+        };
+        let mut bound = zero();
+        for c in &self.0[..self.0.len() - 1] {
+            let ratio = c
+                .div(lead)
+                .unwrap_or_else(|| unreachable!("a leading coefficient is nonzero"));
+            let ratio = if ratio.numerator().is_negative() {
+                ratio.neg()
+            } else {
+                ratio
+            };
+            if ratio > bound {
+                bound = ratio;
+            }
+        }
+        bound.add(&one())
+    }
+
+    /// Every real root, ascending.
+    pub(crate) fn real_roots(&self) -> Vec<ExactReal> {
+        let bound = self.root_bound();
+        self.roots_in(&bound.neg(), &bound)
     }
 
     /// The remainder by a nonzero divisor.

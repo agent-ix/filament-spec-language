@@ -11,7 +11,7 @@ use std::fmt;
 
 use filament_exact::Rational;
 
-use super::poly::{midpoint, Poly};
+use super::poly::{midpoint, square_of_words, Poly};
 
 /// An exact real number.
 #[derive(Clone, Debug)]
@@ -77,6 +77,13 @@ impl Root {
     }
 }
 
+/// The work of evaluating `p` by Horner's rule at a rational of `ends` words.
+fn evaluation_work(p: &Poly, ends: u64) -> u64 {
+    let length = u64::try_from(p.coefficients().len()).unwrap_or(u64::MAX);
+    let reach = p.words().saturating_add(length.saturating_mul(ends));
+    length.saturating_mul(square_of_words(reach))
+}
+
 impl ExactReal {
     /// `self + by`.
     pub(crate) fn shifted(&self, by: &Rational) -> Self {
@@ -131,39 +138,32 @@ impl ExactReal {
                 if poly.is_zero() {
                     return Ok(Ordering::Equal);
                 }
-                charge(poly.size().saturating_mul(root.poly.size()))?;
+                charge(poly.gcd_work(&root.poly))?;
                 if root.shares_root(poly, &root.lower, &root.upper) {
                     return Ok(Ordering::Equal);
                 }
                 let mut root = root.clone();
-                charge(poly.size().saturating_mul(poly.size()))?;
+                charge(poly.gcd_work(poly))?;
                 let square_free = poly.square_free();
                 if square_free.degree().unwrap_or(0) == 0 {
                     return Ok(poly.sign_at(&midpoint(&root.lower, &root.upper)));
                 }
                 // The Sturm sequence is built once; each bisection then
                 // evaluates it at the two ends of the interval.
-                let length = u64::try_from(square_free.coefficients().len()).unwrap_or(u64::MAX);
-                let words = square_free.words();
-                charge(
-                    length
-                        .saturating_mul(length)
-                        .saturating_mul(words)
-                        .saturating_mul(words),
-                )?;
+                charge(square_free.gcd_work(&square_free))?;
                 let sequence = square_free.sturm();
-                let evaluation = sequence.iter().map(Poly::size).fold(0, u64::saturating_add);
-                let degree = length.max(root.poly.size().min(length));
                 loop {
                     // Each bisection evaluates the Sturm sequence and the
                     // root's polynomial at the interval's ends, whose parts
-                    // gain a bit per bisection and are raised to the degree.
+                    // gain a bit per bisection: a Horner step on a
+                    // coefficient of `w` words at a point of `e` words, `k`
+                    // steps in, costs the square of `w + k * e` words.
                     let ends = 1 + root.lower.max_part_bits().max(root.upper.max_part_bits()) / 64;
-                    charge(
-                        evaluation
-                            .saturating_add(root.poly.size())
-                            .saturating_mul(degree.saturating_mul(ends).saturating_add(1)),
-                    )?;
+                    let mut work = evaluation_work(&root.poly, ends);
+                    for p in &sequence {
+                        work = work.saturating_add(evaluation_work(p, ends));
+                    }
+                    charge(work)?;
                     if square_free.roots_between_by(&sequence, &root.lower, &root.upper) == 0 {
                         return Ok(poly.sign_at(&midpoint(&root.lower, &root.upper)));
                     }
