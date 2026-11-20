@@ -148,7 +148,6 @@ fn no_counter_trace_can_stay_zero() {
 
 #[test]
 #[trace("FR-135")]
-#[ignore = "QSL-2594: the missing population diagnostic must name its member"]
 fn a_missing_population_row_names_its_population() {
     let error =
         command::compile_outcome(&corpus().join("refinement-missing-population.request.json"))

@@ -1910,6 +1910,10 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     class: RowClass::Object,
                     name,
                 } => format!("the refinement has no object row for `{name}`"),
+                RefinementCause::MissingRow {
+                    class: RowClass::Population,
+                    name,
+                } => format!("the refinement has no population row for `{name}`"),
                 _ => format!("in `refinement {}`", refusal.refinement),
             };
             message = format!("{message}: {detail}");
