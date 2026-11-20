@@ -2999,4 +2999,23 @@ fn float_snapshot_decoder_refuses_malformed_bits_and_wrong_slots() {
         refusal_of(Some(failure)),
         (Code::InvalidRuntimeInput, "duplicate-member")
     );
+    let duplicate_nan = float_snapshot(
+        &mut world,
+        "duplicate-nan",
+        json!({"levels": {"set": [
+            {"kind":"float64", "bits":"7ff8000000000001"},
+            {"kind":"float64", "bits":"7ff8000000000001"}
+        ]}}),
+    );
+    let failure = model
+        .admit_initial(
+            &world.snapshots,
+            &duplicate_nan,
+            ObservationLimits::default(),
+        )
+        .expect_err("duplicate Float NaN members refuse");
+    assert_eq!(
+        refusal_of(Some(failure)),
+        (Code::InvalidRuntimeInput, "duplicate-member")
+    );
 }
