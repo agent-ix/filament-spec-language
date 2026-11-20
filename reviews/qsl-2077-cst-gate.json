@@ -1,0 +1,25 @@
+{
+  "ticket": "QSL-2077",
+  "component": "fsl-cst",
+  "review": ["SR-1471", "SR-1472"],
+  "review_verdict": "PASS",
+  "command": "CARGO_TARGET_DIR=<own-worktree>/target CARGO_BUILD_JOBS=2 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_TEST_INCREMENTAL=false cargo test --locked -p fsl-cst -- --test-threads=1 --skip two_protocols_declaring_one_channel_name_keep_their_queues_apart --skip a_recovery_predicate_over_the_recovery_view_is_evaluated",
+  "exit_code": 0,
+  "passed": 326,
+  "failed": 0,
+  "ignored": 19,
+  "targets": {
+    "lib": {"passed": 15, "failed": 0, "ignored": 1},
+    "it": {"passed": 310, "failed": 0, "ignored": 18},
+    "doc_tests": {"passed": 1, "failed": 0, "ignored": 0}
+  },
+  "feature_cases": {"passed": 37, "failed": 0, "ignored": 0},
+  "notes": [
+    "Single final component gate after the independent review passed.",
+    "Incorporated the exact accepted PR3146 commit and its grounded stale-oracle corrections and strict pending owners before starting the gate.",
+    "The only merge conflict was module registration; both state_graph_claim and synthesis_verify registrations were retained.",
+    "Latest validated independent review artifacts were committed unchanged before the gate.",
+    "Existing strict ignored tests are not coverage and no known failure was reprobed.",
+    "No workspace, product binary, proof/Kani gate, extra lint, repeated review, later main refresh or repeated component gate."
+  ]
+}
