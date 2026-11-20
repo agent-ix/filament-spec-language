@@ -101,11 +101,13 @@ pub(super) fn slot_rows(
         emitted_node_ids,
         pending,
         &|location, _, _| wire_location(location),
+        false,
     )
 }
 
 /// The rows of the walk from `root`, appended to `pending` in visit order,
-/// each located by `wire`.
+/// each located by `wire`. `deref_by_record` keys the `deref` of every
+/// attribute the checker recorded one for, not only of a derefed one.
 pub(super) fn term_rows<L>(
     graph: &CheckedGraph,
     root: CheckedNode<'_>,
@@ -113,6 +115,7 @@ pub(super) fn term_rows<L>(
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     pending: &mut Vec<PendingRow<L>>,
     wire: &dyn Fn(&Location, &CheckedNodeId, &CheckedOccurrence) -> Option<(String, L)>,
+    deref_by_record: bool,
 ) -> Result<(), EmitRefusal> {
     let positions = walk(root);
     // The application each position names, so a position below it at
@@ -169,11 +172,16 @@ pub(super) fn term_rows<L>(
         };
         // An attribute read through `deref` lowers two terms at its one
         // position, the `project` and the `deref` it reads; each is keyed.
-        // A clause function's `self` read lowers the `deref` of an attribute
-        // the checker does not flag as derefed, so the recorded `deref`
-        // applications decide, not the flag.
+        // A function body is read from the wire, whose walk visits every
+        // `deref` node it reaches, and a clause function's `self` read lowers
+        // one for an attribute the checker does not flag as derefed; so for a
+        // body the recorded `deref` applications decide, not the flag.
         let mut claimed_here = vec![application];
-        if matches!(node.kind(), NodeKind::Attribute { .. }) {
+        let derefs = match node.kind() {
+            NodeKind::Attribute { derefed, .. } => *derefed || deref_by_record,
+            _ => false,
+        };
+        if derefs {
             claimed_here.extend(
                 applications
                     .get(at)

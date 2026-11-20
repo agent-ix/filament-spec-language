@@ -187,6 +187,7 @@ pub(super) fn checked_body_locations(
             emitted_node_ids,
             &mut pending,
             &wire,
+            true,
         ) {
             return Err(if exceeded.get() {
                 EmitRefusal::OutputLimit(super::output_limit(output_bytes, charged.get()))
