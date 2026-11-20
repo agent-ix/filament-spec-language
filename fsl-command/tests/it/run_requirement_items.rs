@@ -724,7 +724,7 @@ fn provider_run_applies_s1_node_limit_before_requirement_settlement() {
 
     assert_eq!(
         provider_error.cause.code(),
-        fsl_foundation::Code::ResourceExhausted
+        fsl_foundation::Code::StageLimitExceeded
     );
     assert!(provider_error.cause.is_incomplete());
     assert_eq!(provider_error.category().exit_code(), 22);
