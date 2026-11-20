@@ -1198,6 +1198,23 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
         resumed["summary"]["clauses"], full["summary"]["clauses"],
         "{resumed}"
     );
+    let decision_positions = |run: &Value| {
+        run["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .filter(|event| matches!(event["category"].as_str(), Some("success" | "violation")))
+            .map(|event| {
+                (
+                    event["clause"].as_str().expect("clause").to_owned(),
+                    event["position"].as_u64().expect("global position"),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected = vec![("Reaches".to_owned(), 2), ("Never".to_owned(), 2)];
+    assert_eq!(decision_positions(&full), expected, "{full}");
+    assert_eq!(decision_positions(&resumed), expected, "{resumed}");
 }
 
 /// FR-644-AC-2, AC-4 (TC-1668, TC-1669): a malformed record is reported as a
