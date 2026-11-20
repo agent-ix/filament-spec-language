@@ -56,7 +56,18 @@ fn state_core_refuses_each_division_as_one_function_declaration() {
                 &QualifiedName::unqualified("f").unwrap(),
                 vec![filament_exact::Value::Integer(8_i64.into())],
                 &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-                &mut filament_exact::Meter::new(filament_exact::ScalarLimits::default()),
+                &mut filament_exact::Meter::new(filament_exact::ScalarLimits {
+                    integer_bits: 1_000_000,
+                    decimal_digits: 1_000_000,
+                    scale_expansion: 1_000_000,
+                    text_input_bytes: 1_000_000,
+                    text_scalars: 1_000_000,
+                    normalized_scalars: 1_000_000,
+                    unit_edges: 1_000_000,
+                    value_occurrences: 1_000_000,
+                    work_units: 1_000_000,
+                    result_units: 1_000_000,
+                }),
             )
             .expect("the checked counterpart runs");
         let filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
